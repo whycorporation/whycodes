@@ -44,6 +44,12 @@ fn connect_timeout_is_finite() {
 }
 
 #[test]
+fn fallback_http_client_builds_after_builder_error() {
+    let _ = fallback_http_client_for_tests("forced builder failure");
+    let _ = client_from_builder_err_for_tests("forced builder failure");
+}
+
+#[test]
 fn plugin_identity_applies_ua_and_skips_user_agent_header() {
     use std::collections::HashMap;
     use whycodes_auth::{FlowKind, InferenceIdentity, ProviderSpec, TokenEncoding};

@@ -1,6 +1,13 @@
 use super::{
-    AnthropicProvider, anthropic_sse_from_bytes, events_for_data, usage_from_message_delta,
+    AnthropicProvider, anthropic_sse_from_bytes, events_for_data, json_parse_error_for_tests,
+    usage_from_message_delta,
 };
+
+#[test]
+fn json_parse_error_helper_formats_message() {
+    let err = json_parse_error_for_tests("eof");
+    assert!(err.to_string().contains("JSON parse error"), "{err}");
+}
 use serde_json::json;
 use whycodes_core::types::StreamEvent;
 

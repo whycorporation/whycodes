@@ -61,8 +61,20 @@ fn source_dir(provider: &str) -> Option<PathBuf> {
 pub async fn stored_extra(provider: &str, key: &str) -> Option<String> {
     let dir = source_dir(provider)?;
     let store = whycodes_auth::TokenStore::new(&dir);
-    let auth = store.get(provider).ok()??;
+    let auth = match store.get(provider) {
+        Ok(Some(auth)) => auth,
+        Ok(None) => return None,
+        Err(_store) => return None,
+    };
     auth.token.extra.get(key)?.as_str().map(str::to_string)
+}
+
+#[cfg(test)]
+pub(crate) fn poison_sources_for_tests() {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = sources().write().unwrap();
+        panic!("poison oauth sources");
+    }));
 }
 
 /// Send the request built by `build(current_key)`; on a 401 with a
@@ -74,10 +86,7 @@ pub async fn send_with_refresh_retry(
     current_key: &str,
     build: impl Fn(&str) -> reqwest::RequestBuilder,
 ) -> whycodes_core::Result<reqwest::Response> {
-    let resp = build(current_key)
-        .send()
-        .await
-        .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
+    let resp = build(current_key).send().await.map_err(http_error)?;
     if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
         return Ok(resp);
     }
@@ -95,10 +104,16 @@ pub async fn send_with_refresh_retry(
     tracing::info!(
         "401 with OAuth credential; token renewed, retrying request once provider={provider}"
     );
-    build(&fresh)
-        .send()
-        .await
-        .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))
+    build(&fresh).send().await.map_err(http_error)
+}
+
+fn http_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("HTTP error: {err}"))
+}
+
+#[cfg(test)]
+pub(crate) fn http_error_for_tests(err: &str) -> whycodes_core::Error {
+    http_error(err)
 }
 
 #[cfg(test)]

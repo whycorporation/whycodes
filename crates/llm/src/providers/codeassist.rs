@@ -167,6 +167,14 @@ pub(crate) fn cache_project_for_tests(provider: &str, id: &str) {
     cache_project(provider, id);
 }
 
+#[cfg(test)]
+pub(crate) fn poison_project_cache_for_tests() {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = project_cache().write().unwrap();
+        panic!("poison project cache");
+    }));
+}
+
 fn authorize(
     profile: &Profile,
     req: reqwest::RequestBuilder,
@@ -290,10 +298,7 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<S
     }
     let resp = post(profile, ":loadCodeAssist", api_key, &load_body).await?;
     let status = resp.status();
-    let json: Value = resp
-        .json()
-        .await
-        .map_err(|e| whycodes_core::Error::llm(format!("Code Assist loadCodeAssist: {e}")))?;
+    let json: Value = resp.json().await.map_err(load_code_assist_error)?;
     if !status.is_success() {
         let msg = json["error"]["message"].as_str().unwrap_or("unknown error");
         return Err(whycodes_core::Error::llm(format!(
@@ -321,10 +326,7 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<S
     }
     let resp = post(profile, ":onboardUser", api_key, &onboard).await?;
     let status = resp.status();
-    let op: Value = resp
-        .json()
-        .await
-        .map_err(|e| whycodes_core::Error::llm(format!("Code Assist onboardUser: {e}")))?;
+    let op: Value = resp.json().await.map_err(onboard_user_error)?;
     if !status.is_success() {
         let msg = op["error"]["message"].as_str().unwrap_or("unknown error");
         return Err(whycodes_core::Error::llm(format!(
@@ -342,10 +344,7 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<S
         };
         tokio::time::sleep(onboard_poll_sleep()).await;
         let resp = get(profile, &format!("/{name}"), api_key).await?;
-        operation = resp
-            .json()
-            .await
-            .map_err(|e| whycodes_core::Error::llm(format!("Code Assist operation poll: {e}")))?;
+        operation = resp.json().await.map_err(operation_poll_error)?;
     }
 
     let project = operation["response"]["cloudaicompanionProject"]["id"]
@@ -573,6 +572,42 @@ fn wrap_envelope(
     }
 }
 
+fn load_code_assist_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("Code Assist loadCodeAssist: {err}"))
+}
+
+fn onboard_user_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("Code Assist onboardUser: {err}"))
+}
+
+fn operation_poll_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("Code Assist operation poll: {err}"))
+}
+
+fn complete_parse_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("Code Assist parse: {err}"))
+}
+
+#[cfg(test)]
+pub(crate) fn load_code_assist_error_for_tests(err: &str) -> whycodes_core::Error {
+    load_code_assist_error(err)
+}
+
+#[cfg(test)]
+pub(crate) fn onboard_user_error_for_tests(err: &str) -> whycodes_core::Error {
+    onboard_user_error(err)
+}
+
+#[cfg(test)]
+pub(crate) fn operation_poll_error_for_tests(err: &str) -> whycodes_core::Error {
+    operation_poll_error(err)
+}
+
+#[cfg(test)]
+pub(crate) fn complete_parse_error_for_tests(err: &str) -> whycodes_core::Error {
+    complete_parse_error(err)
+}
+
 fn code_assist_http_error(
     status: impl std::fmt::Display,
     model: &str,
@@ -604,6 +639,81 @@ fn code_assist_http_error(
     format!("Code Assist error ({status}) model={model}: {reason}")
 }
 
+fn candidate_parts(candidate: &Value) -> impl Iterator<Item = &Value> {
+    candidate["content"]["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+}
+
+fn content_from_candidates(json: &Value) -> (Vec<ContentBlock>, u64) {
+    let mut content = Vec::new();
+    let mut seq = 0u64;
+    for c in json["candidates"].as_array().into_iter().flatten() {
+        for part in candidate_parts(c) {
+            if let Some(text) = part["text"].as_str() {
+                content.push(ContentBlock::Text {
+                    text: text.to_string(),
+                });
+            }
+            if let Some(call) = part.get("functionCall") {
+                seq += 1;
+                content.push(ContentBlock::ToolUse {
+                    id: format!("gcall_{seq}"),
+                    name: call["name"].as_str().unwrap_or_default().to_string(),
+                    input: call["args"].clone(),
+                });
+            }
+        }
+    }
+    (content, seq)
+}
+
+fn events_from_candidates(event: &Value, mut call_seq: u64) -> (Vec<StreamEvent>, u64) {
+    let mut events = Vec::new();
+    for c in event["candidates"].as_array().into_iter().flatten() {
+        for part in candidate_parts(c) {
+            if let Some(sig) = part["thoughtSignature"].as_str()
+                && !sig.is_empty()
+            {
+                events.push(StreamEvent::ThinkingSignature {
+                    signature: sig.to_string(),
+                });
+            }
+            let thought = part["thought"].as_bool().unwrap_or(false);
+            if thought {
+                if let Some(text) = part["text"].as_str()
+                    && !text.is_empty()
+                {
+                    events.push(StreamEvent::Thinking {
+                        text: text.to_string(),
+                    });
+                }
+                continue;
+            }
+            if let Some(text) = part["text"].as_str() {
+                events.push(StreamEvent::TextDelta {
+                    text: text.to_string(),
+                });
+            }
+            if let Some(call) = part.get("functionCall") {
+                call_seq += 1;
+                events.push(StreamEvent::ToolUse {
+                    id: format!("gcall_{call_seq}"),
+                    name: call["name"].as_str().unwrap_or_default().to_string(),
+                    input: call["args"].clone(),
+                });
+            }
+        }
+        if let Some(reason) = c["finishReason"].as_str() {
+            events.push(StreamEvent::MessageDelta {
+                delta: obj([("finishReason", jstr(reason))]),
+            });
+        }
+    }
+    (events, call_seq)
+}
+
 /// Map one Code Assist SSE chunk (a GenerateContentResponse, tolerating a
 /// `{"response": …}` wrapper) to whycodes stream events. Pure for tests.
 /// `call_seq` mints ids for function calls — Gemini does not send any, but
@@ -617,51 +727,8 @@ fn events_for_chunk(data: &str, call_seq: &mut u64) -> Vec<StreamEvent> {
     } else {
         &chunk
     };
-    let mut events = Vec::new();
-    if let Some(candidates) = event["candidates"].as_array() {
-        for c in candidates {
-            if let Some(parts) = c["content"]["parts"].as_array() {
-                for part in parts {
-                    if let Some(sig) = part["thoughtSignature"].as_str()
-                        && !sig.is_empty()
-                    {
-                        events.push(StreamEvent::ThinkingSignature {
-                            signature: sig.to_string(),
-                        });
-                    }
-                    let thought = part["thought"].as_bool().unwrap_or(false);
-                    if thought {
-                        if let Some(text) = part["text"].as_str()
-                            && !text.is_empty()
-                        {
-                            events.push(StreamEvent::Thinking {
-                                text: text.to_string(),
-                            });
-                        }
-                        continue;
-                    }
-                    if let Some(text) = part["text"].as_str() {
-                        events.push(StreamEvent::TextDelta {
-                            text: text.to_string(),
-                        });
-                    }
-                    if let Some(call) = part.get("functionCall") {
-                        *call_seq += 1;
-                        events.push(StreamEvent::ToolUse {
-                            id: format!("gcall_{call_seq}"),
-                            name: call["name"].as_str().unwrap_or_default().to_string(),
-                            input: call["args"].clone(),
-                        });
-                    }
-                }
-            }
-            if let Some(reason) = c["finishReason"].as_str() {
-                events.push(StreamEvent::MessageDelta {
-                    delta: obj([("finishReason", jstr(reason))]),
-                });
-            }
-        }
-    }
+    let (mut events, next_seq) = events_from_candidates(event, *call_seq);
+    *call_seq = next_seq;
     if let Some(usage) = event.get("usageMetadata") {
         events.push(StreamEvent::Usage {
             input_tokens: usage["promptTokenCount"].as_u64().unwrap_or(0),
@@ -710,10 +777,7 @@ async fn complete_with(
     );
     let resp = post_generate(profile, ":generateContent", api_key, &body).await?;
     let status = resp.status();
-    let json: Value = resp
-        .json()
-        .await
-        .map_err(|e| whycodes_core::Error::llm(format!("Code Assist parse: {e}")))?;
+    let json: Value = resp.json().await.map_err(complete_parse_error)?;
     if !status.is_success() {
         return Err(whycodes_core::Error::llm(code_assist_http_error(
             status,
@@ -728,29 +792,7 @@ async fn complete_with(
         json
     };
 
-    let mut content: Vec<ContentBlock> = Vec::new();
-    let mut seq = 0u64;
-    if let Some(candidates) = json["candidates"].as_array() {
-        for c in candidates {
-            if let Some(parts) = c["content"]["parts"].as_array() {
-                for part in parts {
-                    if let Some(text) = part["text"].as_str() {
-                        content.push(ContentBlock::Text {
-                            text: text.to_string(),
-                        });
-                    }
-                    if let Some(call) = part.get("functionCall") {
-                        seq += 1;
-                        content.push(ContentBlock::ToolUse {
-                            id: format!("gcall_{seq}"),
-                            name: call["name"].as_str().unwrap_or_default().to_string(),
-                            input: call["args"].clone(),
-                        });
-                    }
-                }
-            }
-        }
-    }
+    let (content, _) = content_from_candidates(&json);
     let usage = &json["usageMetadata"];
     Ok(LlmResponse {
         content,

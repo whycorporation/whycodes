@@ -77,13 +77,10 @@ impl LlmProvider for OpenAiProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
+                .map_err(http_error)?;
 
             let status = resp.status();
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| whycodes_core::Error::llm(format!("JSON parse error: {e}")))?;
+            let json: Value = resp.json().await.map_err(json_parse_error)?;
 
             if !status.is_success() {
                 let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
@@ -100,7 +97,7 @@ impl LlmProvider for OpenAiProvider {
             let usage = &json["usage"];
             Ok(LlmResponse {
                 content,
-                stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
+                stop_reason: choice["finish_reason"].as_str().map(str::to_string),
                 usage: crate::openai_compat::usage_from_chat_completion(usage),
                 model: model.to_string(),
             })
@@ -126,7 +123,7 @@ impl LlmProvider for OpenAiProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
+                .map_err(http_error)?;
 
             if !resp.status().is_success() {
                 let text = resp.text().await.unwrap_or_default();
@@ -139,6 +136,24 @@ impl LlmProvider for OpenAiProvider {
             Ok(crate::openai_compat::chat_sse_stream(resp, "openai"))
         })
     }
+}
+
+fn http_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("HTTP error: {err}"))
+}
+
+fn json_parse_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("JSON parse error: {err}"))
+}
+
+#[cfg(test)]
+pub(crate) fn http_error_for_tests(err: &str) -> whycodes_core::Error {
+    http_error(err)
+}
+
+#[cfg(test)]
+pub(crate) fn json_parse_error_for_tests(err: &str) -> whycodes_core::Error {
+    json_parse_error(err)
 }
 
 impl Default for OpenAiProvider {

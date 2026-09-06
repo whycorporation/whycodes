@@ -105,8 +105,14 @@ impl ResponseCache {
                 continue;
             }
             let s = cosine(&embed, &e.embed);
-            if s >= SEMANTIC_THRESHOLD && best.is_none_or(|(_, b)| s > b) {
-                best = Some((i, s));
+            if s >= SEMANTIC_THRESHOLD {
+                let better = match best {
+                    None => true,
+                    Some((_, b)) => s > b,
+                };
+                if better {
+                    best = Some((i, s));
+                }
             }
         }
         let (i, score) = best?;

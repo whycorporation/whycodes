@@ -1,5 +1,13 @@
 use super::*;
 use std::io::{Read, Write};
+
+#[test]
+fn http_and_json_error_helpers_format_messages() {
+    let http = http_error_for_tests("dial refused");
+    assert!(http.to_string().contains("HTTP error"), "{http}");
+    let json = json_parse_error_for_tests("eof");
+    assert!(json.to_string().contains("JSON parse error"), "{json}");
+}
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::thread;
@@ -133,6 +141,25 @@ async fn complete_http_error_is_reported() {
             || !msg.is_empty(),
         "{msg}"
     );
+}
+
+#[tokio::test]
+async fn complete_maps_finish_reason() {
+    let body = serde_json::json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "done"},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+    })
+    .to_string();
+    let base = serve_once("200 OK", &body, "application/json");
+    let provider = OpenAiProvider::from_base(Some(&base));
+    let resp = provider
+        .complete(&base_request(), "sk-test", "gpt-test")
+        .await
+        .unwrap();
+    assert_eq!(resp.stop_reason.as_deref(), Some("stop"));
 }
 
 #[tokio::test]

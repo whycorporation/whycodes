@@ -21,6 +21,22 @@ fn sources_are_per_provider() {
     unregister("prov-a");
 }
 
+#[test]
+fn poisoned_sources_lock_still_registers() {
+    poison_sources_for_tests();
+    let dir = PathBuf::from("/tmp/whycodes-test-oauth-poison");
+    register("poison-provider", dir.clone());
+    assert!(has_source("poison-provider"));
+    unregister("poison-provider");
+}
+
+#[test]
+fn http_error_helper_formats_message() {
+    let err = http_error_for_tests("dial refused");
+    assert!(err.to_string().contains("HTTP error"), "{err}");
+    assert!(err.to_string().contains("dial refused"), "{err}");
+}
+
 fn serve_status(status: &str, body: &str) -> String {
     use std::io::{Read, Write};
     use std::net::TcpListener;

@@ -39,6 +39,58 @@ fn thinking_blocks_replay_as_reasoning_content() {
 }
 
 #[test]
+fn empty_system_is_omitted_from_converted_messages() {
+    let mut req = req_with(vec![Message {
+        role: Role::User,
+        content: MessageContent::Text("hi".into()),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }]);
+    req.system.clear();
+    let msgs = convert_messages(&req);
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0]["role"], "user");
+}
+
+#[test]
+fn empty_text_and_thinking_blocks_are_dropped() {
+    let req = req_with(vec![Message {
+        role: Role::Assistant,
+        content: MessageContent::Blocks(vec![
+            ContentBlock::Text {
+                text: String::new(),
+            },
+            ContentBlock::Thinking {
+                text: String::new(),
+                signature: None,
+            },
+            ContentBlock::Text {
+                text: "kept".into(),
+            },
+        ]),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }]);
+    let msgs = convert_messages(&req);
+    assert_eq!(msgs[1]["content"].as_str().unwrap(), "kept");
+    assert!(msgs[1].get("reasoning_content").is_none());
+}
+
+#[test]
+fn tool_call_delta_without_index_uses_zero() {
+    use whycodes_core::types::StreamEvent;
+    let events = stream_events_for_tool_call_delta(&json!({
+        "function": { "arguments": "{\"q\":1}" }
+    }));
+    assert!(matches!(
+        &events[0],
+        StreamEvent::ToolUseDelta { id, .. } if id == "0"
+    ));
+}
+
+#[test]
 fn thinking_only_assistant_is_kept() {
     let req = req_with(vec![Message {
         role: Role::Assistant,

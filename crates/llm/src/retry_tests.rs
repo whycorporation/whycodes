@@ -80,6 +80,8 @@ fn jitter_and_retry_after_floor() {
     assert_eq!(full_jitter(Duration::ZERO), Duration::ZERO);
     let j = full_jitter(Duration::from_millis(20));
     assert!(j <= Duration::from_millis(20));
+    let huge = full_jitter(Duration::from_secs(u64::MAX / 2));
+    assert!(huge <= Duration::from_secs(u64::MAX / 2));
     let p = RetryPolicy {
         full_jitter: false,
         initial_backoff: Duration::from_millis(10),

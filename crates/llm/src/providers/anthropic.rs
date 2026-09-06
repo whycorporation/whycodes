@@ -375,10 +375,7 @@ impl LlmProvider for AnthropicProvider {
             .await?;
 
             let status = resp.status();
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| whycodes_core::Error::llm(format!("JSON parse error: {e}")))?;
+            let json: Value = resp.json().await.map_err(json_parse_error)?;
 
             if !status.is_success() {
                 let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
@@ -463,6 +460,15 @@ impl LlmProvider for AnthropicProvider {
             Ok(anthropic_sse(crate::openai_compat::response_bytes(resp)))
         })
     }
+}
+
+fn json_parse_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("JSON parse error: {err}"))
+}
+
+#[cfg(test)]
+pub(crate) fn json_parse_error_for_tests(err: &str) -> whycodes_core::Error {
+    json_parse_error(err)
 }
 
 impl Default for AnthropicProvider {

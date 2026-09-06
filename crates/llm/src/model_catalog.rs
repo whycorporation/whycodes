@@ -293,15 +293,12 @@ pub async fn fetch_model_context_window(
         .timeout(Duration::from_secs(3))
         .send()
         .await
-        .map_err(|e| whycodes_core::Error::llm(format!("models list HTTP: {e}")))?;
+        .map_err(catalog_http_error)?;
 
     let status = resp.status();
     // Hard cap so a runaway gateway cannot OOM the agent (typical catalog ~1–2 MB).
     const MAX_BODY: usize = 8 * 1024 * 1024;
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| whycodes_core::Error::llm(format!("models list body: {e}")))?;
+    let bytes = resp.bytes().await.map_err(catalog_body_error)?;
     if bytes.len() > MAX_BODY {
         return Err(whycodes_core::Error::llm(format!(
             "models list too large ({} bytes > {MAX_BODY})",
@@ -315,8 +312,7 @@ pub async fn fetch_model_context_window(
         )));
     }
 
-    let json: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| whycodes_core::Error::llm(format!("models list JSON: {e}")))?;
+    let json: Value = serde_json::from_slice(&bytes).map_err(catalog_json_error)?;
     Ok(context_window_for_model_id(&json, model))
 }
 
@@ -355,13 +351,10 @@ pub async fn fetch_model_catalog(
         .timeout(Duration::from_secs(20))
         .send()
         .await
-        .map_err(|e| whycodes_core::Error::llm(format!("models list HTTP: {e}")))?;
+        .map_err(catalog_http_error)?;
 
     let status = resp.status();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| whycodes_core::Error::llm(format!("models list body: {e}")))?;
+    let body = resp.text().await.map_err(catalog_body_error)?;
 
     if !status.is_success() {
         let snippet: String = body.chars().take(200).collect();
@@ -370,10 +363,36 @@ pub async fn fetch_model_catalog(
         )));
     }
 
-    let json: Value = serde_json::from_str(&body)
-        .map_err(|e| whycodes_core::Error::llm(format!("models list JSON: {e}")))?;
+    let json: Value = serde_json::from_str(&body).map_err(catalog_json_error)?;
 
     Ok(parse_models_json(&json, &url))
+}
+
+fn catalog_http_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("models list HTTP: {err}"))
+}
+
+fn catalog_body_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("models list body: {err}"))
+}
+
+fn catalog_json_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("models list JSON: {err}"))
+}
+
+#[cfg(test)]
+pub(crate) fn catalog_http_error_for_tests(err: &str) -> whycodes_core::Error {
+    catalog_http_error(err)
+}
+
+#[cfg(test)]
+pub(crate) fn catalog_body_error_for_tests(err: &str) -> whycodes_core::Error {
+    catalog_body_error(err)
+}
+
+#[cfg(test)]
+pub(crate) fn catalog_json_error_for_tests(err: &str) -> whycodes_core::Error {
+    catalog_json_error(err)
 }
 
 /// Resolve base URL for listing models from provider config fields only.

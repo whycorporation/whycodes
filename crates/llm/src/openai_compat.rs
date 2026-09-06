@@ -75,8 +75,7 @@ pub fn error_source_chain(err: &dyn std::error::Error) -> String {
         }
         let s = src.to_string();
         if !s.is_empty() && !out.contains(&s) {
-            out.push_str(": ");
-            out.push_str(&s);
+            out = format!("{out}: {s}");
         }
         cur = src.source();
     }

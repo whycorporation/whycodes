@@ -1,5 +1,13 @@
 use super::*;
 use crate::provider::LlmProvider;
+
+#[test]
+fn http_and_json_error_helpers_format_messages() {
+    let http = http_error_for_tests("dial refused");
+    assert!(http.to_string().contains("HTTP error"), "{http}");
+    let json = json_parse_error_for_tests("eof");
+    assert!(json.to_string().contains("JSON parse error"), "{json}");
+}
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;

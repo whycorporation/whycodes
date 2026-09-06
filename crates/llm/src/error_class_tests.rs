@@ -348,6 +348,30 @@ fn auth_403_long_message_is_truncated() {
 }
 
 #[test]
+fn auth_403_without_json_uses_plain_reason() {
+    let c = classify_message("LLM error: Provider (403 Forbidden): plan expired");
+    let msg = c.user_message();
+    assert!(msg.contains("Forbidden by the provider"), "{msg}");
+    assert!(msg.contains("plan expired"), "{msg}");
+}
+
+#[test]
+fn temporarily_unavailable_without_status_is_network() {
+    let c = classify_message("temporarily unavailable while dialing provider");
+    assert_eq!(c.kind, ErrorKind::Network);
+    assert!(c.retryable);
+}
+
+#[test]
+fn extract_provider_reason_gives_up_after_nested_json() {
+    let mut nested = "{\"message\":\"leaf\"}".to_string();
+    for _ in 0..5 {
+        nested = format!("{{\"message\":{nested}}}");
+    }
+    assert!(extract_provider_reason(&nested).is_none());
+}
+
+#[test]
 fn client_reason_without_model_label() {
     let c = classify_message("Request rejected (400): {\"error\":{\"message\":\"bad schema\"}}");
     let msg = c.user_message();

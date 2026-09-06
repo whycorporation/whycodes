@@ -946,6 +946,54 @@ fn remaining_wire_models_and_http_error_fallbacks() {
     assert!(empty_parts.is_empty());
 }
 
+#[test]
+fn poisoned_project_cache_still_reads_and_writes() {
+    poison_project_cache_for_tests();
+    cache_project("poison-cache", "proj-poison");
+    assert_eq!(
+        cached_project("poison-cache").as_deref(),
+        Some("proj-poison")
+    );
+}
+
+#[test]
+fn parse_error_helpers_format_messages() {
+    let load = load_code_assist_error_for_tests("eof");
+    assert!(load.to_string().contains("loadCodeAssist"), "{load}");
+    let onboard = onboard_user_error_for_tests("eof");
+    assert!(onboard.to_string().contains("onboardUser"), "{onboard}");
+    let poll = operation_poll_error_for_tests("eof");
+    assert!(poll.to_string().contains("operation poll"), "{poll}");
+    let parse = complete_parse_error_for_tests("eof");
+    assert!(parse.to_string().contains("Code Assist parse"), "{parse}");
+}
+
+#[tokio::test]
+async fn complete_skips_candidates_without_parts() {
+    cache_project("google-empty-parts", "proj-test");
+    let json = serde_json::json!({
+        "candidates": [
+            {"content": {}},
+            {"content": {"parts": [{"text": "kept"}]}, "finishReason": "STOP"}
+        ],
+        "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}
+    })
+    .to_string();
+    let profile = loopback_profile(
+        serve_once("200 OK", &json, "application/json"),
+        "google-empty-parts",
+    );
+    let resp = complete_with(&profile, &assist_request(), "ya29.test", "gemini-test")
+        .await
+        .unwrap();
+    assert!(
+        resp.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Text { text } if text == "kept")),
+        "{resp:?}"
+    );
+}
+
 #[tokio::test]
 async fn sse_from_scripted_bytes_covers_error_pending_and_done_break() {
     use crate::openai_compat::scripted_bytes;

@@ -88,13 +88,10 @@ impl LlmProvider for GoogleProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
+                .map_err(http_error)?;
 
             let status = resp.status();
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| whycodes_core::Error::llm(format!("JSON parse error: {e}")))?;
+            let json: Value = resp.json().await.map_err(json_parse_error)?;
 
             if !status.is_success() {
                 let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
@@ -104,27 +101,12 @@ impl LlmProvider for GoogleProvider {
                 )));
             }
 
-            let mut content: Vec<ContentBlock> = Vec::new();
-            if let Some(candidates) = json["candidates"].as_array() {
-                for c in candidates {
-                    if let Some(parts) = c["content"]["parts"].as_array() {
-                        for part in parts {
-                            if let Some(text) = part["text"].as_str() {
-                                content.push(ContentBlock::Text {
-                                    text: text.to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+            let content = text_blocks_from_candidates(&json);
 
             let usage = &json["usageMetadata"];
             Ok(LlmResponse {
                 content,
-                stop_reason: json["candidates"][0]["finishReason"]
-                    .as_str()
-                    .map(|s| s.to_string()),
+                stop_reason: finish_reason_from_candidates(&json),
                 usage: Usage {
                     input_tokens: usage["promptTokenCount"].as_u64().unwrap_or(0),
                     output_tokens: usage["candidatesTokenCount"].as_u64().unwrap_or(0),
@@ -156,7 +138,7 @@ impl LlmProvider for GoogleProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
+                .map_err(http_error)?;
 
             if !resp.status().is_success() {
                 let text = resp.text().await.unwrap_or_default();
@@ -251,10 +233,80 @@ impl GoogleProvider {
     }
 }
 
+fn http_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("HTTP error: {err}"))
+}
+
+fn json_parse_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("JSON parse error: {err}"))
+}
+
+#[cfg(test)]
+pub(crate) fn http_error_for_tests(err: &str) -> whycodes_core::Error {
+    http_error(err)
+}
+
+#[cfg(test)]
+pub(crate) fn json_parse_error_for_tests(err: &str) -> whycodes_core::Error {
+    json_parse_error(err)
+}
+
 impl Default for GoogleProvider {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn candidate_parts(event: &Value) -> impl Iterator<Item = &Value> {
+    event["candidates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|c| c["content"]["parts"].as_array().into_iter().flatten())
+}
+
+fn text_blocks_from_candidates(event: &Value) -> Vec<ContentBlock> {
+    candidate_parts(event)
+        .filter_map(|part| {
+            part["text"].as_str().map(|text| ContentBlock::Text {
+                text: text.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn finish_reason_from_candidates(event: &Value) -> Option<String> {
+    event["candidates"][0]["finishReason"]
+        .as_str()
+        .map(str::to_string)
+}
+
+fn text_deltas_from_candidates(event: &Value) -> Vec<StreamEvent> {
+    let mut out = Vec::new();
+    if let Some(candidates) = event["candidates"].as_array() {
+        for c in candidates {
+            out.extend(candidate_text_deltas(c));
+            if let Some(reason) = c["finishReason"].as_str() {
+                out.push(StreamEvent::MessageDelta {
+                    delta: obj([("finishReason", jstr(reason))]),
+                });
+            }
+        }
+    }
+    out
+}
+
+fn candidate_text_deltas(candidate: &Value) -> Vec<StreamEvent> {
+    candidate["content"]["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| {
+            part["text"].as_str().map(|text| StreamEvent::TextDelta {
+                text: text.to_string(),
+            })
+        })
+        .collect()
 }
 
 /// Gemini stream body is a JSON array of objects, often split as `[{…}\n,{…}]`.
@@ -271,24 +323,7 @@ fn events_from_google_stream_body(text: &str) -> Vec<whycodes_core::Result<Strea
         let Ok(event) = serde_json::from_str::<Value>(&item) else {
             continue;
         };
-        if let Some(candidates) = event["candidates"].as_array() {
-            for c in candidates {
-                if let Some(parts) = c["content"]["parts"].as_array() {
-                    for part in parts {
-                        if let Some(text) = part["text"].as_str() {
-                            pending.push(Ok(StreamEvent::TextDelta {
-                                text: text.to_string(),
-                            }));
-                        }
-                    }
-                }
-                if let Some(reason) = c["finishReason"].as_str() {
-                    pending.push(Ok(StreamEvent::MessageDelta {
-                        delta: obj([("finishReason", jstr(reason))]),
-                    }));
-                }
-            }
-        }
+        pending.extend(text_deltas_from_candidates(&event).into_iter().map(Ok));
         if let Some(usage) = event.get("usageMetadata") {
             pending.push(Ok(StreamEvent::Usage {
                 input_tokens: usage["promptTokenCount"].as_u64().unwrap_or(0),

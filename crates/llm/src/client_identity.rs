@@ -29,21 +29,41 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// No client-wide request timeout — streaming chat completions must be free to
 /// run for minutes. Call sites that need a budget (catalog) set `.timeout()` on
 /// the request builder.
+fn fallback_http_client(err: impl std::fmt::Display) -> reqwest::Client {
+    tracing::debug!("shared HTTP client builder failed, using default: {err}");
+    reqwest::Client::new()
+}
+
+fn client_from_builder<E: std::fmt::Display>(built: Result<reqwest::Client, E>) -> reqwest::Client {
+    match built {
+        Ok(client) => client,
+        Err(e) => fallback_http_client(e),
+    }
+}
+
 fn shared_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .pool_max_idle_per_host(8)
-            .tcp_nodelay(true)
-            .tcp_keepalive(std::time::Duration::from_secs(30))
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-            .unwrap_or_else(|e| {
-                tracing::debug!("shared HTTP client builder failed, using default: {e}");
-                reqwest::Client::new()
-            })
+        client_from_builder(
+            reqwest::Client::builder()
+                .user_agent(USER_AGENT)
+                .pool_max_idle_per_host(8)
+                .tcp_nodelay(true)
+                .tcp_keepalive(std::time::Duration::from_secs(30))
+                .connect_timeout(CONNECT_TIMEOUT)
+                .build(),
+        )
     })
+}
+
+#[cfg(test)]
+pub(crate) fn fallback_http_client_for_tests(err: &str) -> reqwest::Client {
+    fallback_http_client(err)
+}
+
+#[cfg(test)]
+pub(crate) fn client_from_builder_err_for_tests(err: &str) -> reqwest::Client {
+    client_from_builder(Err(err))
 }
 
 /// Shared HTTP client with the whycodes `User-Agent` as the default.

@@ -1083,6 +1083,243 @@ fn prefix_partner_errors_when_stream_is_missing() {
 }
 
 #[tokio::test]
+async fn timeout_primary_empty_after_partner_open_fail_returns_primary_error() {
+    let primary = delay("p", Duration::ZERO, "", false, false, false, false, false);
+    let race = delay(
+        "r",
+        Duration::from_millis(30),
+        "unused",
+        true,
+        false,
+        false,
+        false,
+        false,
+    );
+    let err = stream_raced(
+        &transport(),
+        StreamTarget {
+            provider: &primary,
+            api_key: "",
+            model: "sonnet",
+        },
+        Some(StreamTarget {
+            provider: &race,
+            api_key: "",
+            model: "haiku",
+        }),
+        &req(),
+        Duration::from_millis(5),
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("primary stream ended") || err.to_string().contains("boom"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn timeout_primary_error_after_partner_stream_fail_returns_primary_error() {
+    let primary = delay(
+        "p",
+        Duration::from_millis(20),
+        "p",
+        false,
+        true,
+        false,
+        false,
+        false,
+    );
+    let race = delay("r", Duration::ZERO, "r", false, true, false, false, false);
+    let err = stream_raced(
+        &transport(),
+        StreamTarget {
+            provider: &primary,
+            api_key: "",
+            model: "sonnet",
+        },
+        Some(StreamTarget {
+            provider: &race,
+            api_key: "",
+            model: "haiku",
+        }),
+        &req(),
+        Duration::from_millis(5),
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("mid") || err.to_string().contains("boom"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn timeout_hang_then_empty_primary_after_partner_open_fail() {
+    let primary = crate::scripted::ScriptedProvider::named(
+        "p",
+        [crate::scripted::ScriptedStep::Hang(Duration::from_millis(
+            20,
+        ))],
+    );
+    let race = delay(
+        "r",
+        Duration::ZERO,
+        "unused",
+        true,
+        false,
+        false,
+        false,
+        false,
+    );
+    let err = stream_raced(
+        &transport(),
+        StreamTarget {
+            provider: &primary,
+            api_key: "",
+            model: "sonnet",
+        },
+        Some(StreamTarget {
+            provider: &race,
+            api_key: "",
+            model: "haiku",
+        }),
+        &req(),
+        Duration::from_millis(5),
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("primary stream ended") || err.to_string().contains("boom"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn immediate_race_partner_fail_then_primary_errors() {
+    let primary = delay(
+        "p",
+        Duration::from_millis(20),
+        "p",
+        false,
+        true,
+        false,
+        false,
+        false,
+    );
+    let race = delay("r", Duration::ZERO, "r", false, true, false, false, false);
+    let err = stream_raced(
+        &transport(),
+        StreamTarget {
+            provider: &primary,
+            api_key: "",
+            model: "sonnet",
+        },
+        Some(StreamTarget {
+            provider: &race,
+            api_key: "",
+            model: "haiku",
+        }),
+        &req(),
+        Duration::ZERO,
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+    assert!(err.to_string().contains("mid"), "{err}");
+}
+
+#[tokio::test]
+async fn immediate_race_hang_primary_waits_for_delayed_partner() {
+    let primary = delay("p", Duration::ZERO, "p", false, false, true, false, false);
+    let race = delay(
+        "r",
+        Duration::from_millis(10),
+        "backup",
+        false,
+        false,
+        false,
+        false,
+        false,
+    );
+    let (s, outcome) = stream_raced(
+        &transport(),
+        StreamTarget {
+            provider: &primary,
+            api_key: "",
+            model: "sonnet",
+        },
+        Some(StreamTarget {
+            provider: &race,
+            api_key: "",
+            model: "haiku",
+        }),
+        &req(),
+        Duration::ZERO,
+    )
+    .await
+    .unwrap();
+    assert_eq!(collect_text(s).await, "backup");
+    assert_eq!(
+        outcome,
+        RaceOutcome::Race {
+            reason: "first_token"
+        }
+    );
+}
+
+#[tokio::test]
+async fn immediate_race_partner_wins_then_primary_errors() {
+    let primary = delay(
+        "p",
+        Duration::from_millis(30),
+        "p",
+        false,
+        true,
+        false,
+        false,
+        false,
+    );
+    let race = delay(
+        "r",
+        Duration::ZERO,
+        "backup",
+        false,
+        false,
+        false,
+        false,
+        false,
+    );
+    let (s, outcome) = stream_raced(
+        &transport(),
+        StreamTarget {
+            provider: &primary,
+            api_key: "",
+            model: "sonnet",
+        },
+        Some(StreamTarget {
+            provider: &race,
+            api_key: "",
+            model: "haiku",
+        }),
+        &req(),
+        Duration::ZERO,
+    )
+    .await
+    .unwrap();
+    assert_eq!(collect_text(s).await, "backup");
+    assert_eq!(
+        outcome,
+        RaceOutcome::Race {
+            reason: "first_token"
+        }
+    );
+}
+
+#[tokio::test]
 async fn prefix_partner_keeps_first_token_then_rest() {
     let rest: EventStream = Box::pin(futures::stream::iter([Ok(StreamEvent::MessageStop)]));
     let (mut s, outcome) =

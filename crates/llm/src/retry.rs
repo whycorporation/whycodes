@@ -88,7 +88,7 @@ impl RetryPolicy {
 
 /// Full jitter: uniform random duration in `[0, max]`.
 fn full_jitter(max: Duration) -> Duration {
-    let max_ms = max.as_millis() as u64;
+    let max_ms = max.as_millis().min(u128::from(u64::MAX)) as u64;
     if max_ms == 0 {
         return Duration::ZERO;
     }
@@ -96,7 +96,7 @@ fn full_jitter(max: Duration) -> Duration {
     let seed =
         Instant::now().elapsed().as_nanos() as u64 ^ (max_ms.wrapping_mul(0x9E37_79B9_7F4A_7C15));
     let r = seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) >> 16;
-    Duration::from_millis(r % (max_ms + 1))
+    Duration::from_millis(r % max_ms.saturating_add(1))
 }
 
 /// Run `f` with [`RetryPolicy::default`].
@@ -109,12 +109,16 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = whycodes_core::Result<T>>,
 {
-    let policy = RetryPolicy {
-        max_retries,
-        initial_backoff: Duration::from_millis(base_delay_ms),
-        ..RetryPolicy::default()
-    };
-    execute_with_policy(&policy, "llm_call", f).await
+    execute_with_policy(
+        &RetryPolicy {
+            max_retries,
+            initial_backoff: Duration::from_millis(base_delay_ms),
+            ..RetryPolicy::default()
+        },
+        "llm_call",
+        f,
+    )
+    .await
 }
 
 /// Execute an async LLM open/complete with professional retry semantics.

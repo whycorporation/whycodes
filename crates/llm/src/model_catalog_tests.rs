@@ -514,6 +514,17 @@ async fn fetch_context_window_rejects_oversized_body() {
 }
 
 #[test]
+fn catalog_error_helpers_format_messages() {
+    let http = catalog_http_error_for_tests("dial refused");
+    assert!(http.to_string().contains("models list HTTP"), "{http}");
+    assert!(http.to_string().contains("dial refused"), "{http}");
+    let body = catalog_body_error_for_tests("eof");
+    assert!(body.to_string().contains("models list body"), "{body}");
+    let json = catalog_json_error_for_tests("expected value");
+    assert!(json.to_string().contains("models list JSON"), "{json}");
+}
+
+#[test]
 fn catalog_request_falls_back_to_env_api_key() {
     use whycodes_config::Config;
     use whycodes_core::types::ProviderConfig;

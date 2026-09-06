@@ -65,13 +65,7 @@ impl ClassifiedError {
                     let m = self.message.trim().trim_start_matches("LLM error:").trim();
                     let reason = extract_provider_reason(m)
                         .map(|r| compact_reason(&r, 160))
-                        .unwrap_or_else(|| {
-                            if m.len() > 160 {
-                                format!("{}…", m.chars().take(159).collect::<String>())
-                            } else {
-                                m.to_string()
-                            }
-                        });
+                        .unwrap_or_else(|| compact_reason(m, 160));
                     return format!("Forbidden by the provider (HTTP 403): {reason}");
                 }
                 if lower.contains("code assist") {
@@ -403,13 +397,10 @@ pub fn extract_provider_reason(raw: &str) -> Option<String> {
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())?;
-        if msg.starts_with('{')
-            && let Some(nested) = first_json_value(msg)
-        {
-            current = nested;
-            continue;
+        match first_json_value(msg).filter(|_| msg.starts_with('{')) {
+            Some(nested) => current = nested,
+            None => return Some(msg.to_string()),
         }
-        return Some(msg.to_string());
     }
     None
 }
