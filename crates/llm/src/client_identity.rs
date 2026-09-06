@@ -29,15 +29,15 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// No client-wide request timeout — streaming chat completions must be free to
 /// run for minutes. Call sites that need a budget (catalog) set `.timeout()` on
 /// the request builder.
-fn fallback_http_client(err: &str) -> reqwest::Client {
-    let _ = err;
+fn fallback_http_client(err: impl std::fmt::Display) -> reqwest::Client {
+    tracing::debug!("shared HTTP client builder failed, using default: {err}");
     reqwest::Client::new()
 }
 
 fn client_from_builder<E: std::fmt::Display>(built: Result<reqwest::Client, E>) -> reqwest::Client {
     match built {
         Ok(client) => client,
-        Err(e) => fallback_http_client(&e.to_string()),
+        Err(e) => fallback_http_client(e),
     }
 }
 

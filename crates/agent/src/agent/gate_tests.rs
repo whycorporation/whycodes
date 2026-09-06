@@ -564,6 +564,43 @@ async fn invalid_question_and_background_open_work() {
 }
 
 #[tokio::test]
+async fn auto_question_refuses_when_session_todos_are_open() {
+    let mut a = agent();
+    a.set_approval_mode(ApprovalMode::Auto);
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::new(dir.path().to_path_buf(), "test".into());
+    session.id = "todo-sess".into();
+    whycodes_core::todo::save_todos(
+        dir.path(),
+        Some(&session.id),
+        &[whycodes_core::todo::TodoItem::new(
+            "1",
+            "keep going",
+            whycodes_core::todo::TodoStatus::Pending,
+        )],
+    )
+    .expect("save todos");
+    let ctx = a.tool_context(&session);
+    let q = a
+        .execute_with_permission(
+            &tc(
+                "question",
+                json!({"question": "Pick", "choices": ["A", "B"]}),
+            ),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(q.is_error, "{q:?}");
+    assert!(q.content.contains("todos"), "{}", q.content);
+}
+
+#[tokio::test]
 async fn auto_retry_emits_status() {
     let hits = Arc::new(AtomicUsize::new(0));
     let mut exec = whycodes_tools::executor::ToolExecutor::new();

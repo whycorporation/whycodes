@@ -16,7 +16,7 @@ use whycodes_core::SandboxSettings;
 use whycodes_core::network::NetworkPolicy;
 use whycodes_core::tool::ToolContext;
 use whycodes_core::types::{AgentInfo, ApprovalMode, ContentBlock, ToolCall, ToolResult};
-use whycodes_llm::provider::ProviderRegistry;
+use whycodes_llm::provider::{LlmProvider, ProviderRegistry};
 use whycodes_session::session::Session;
 use whycodes_tools::executor::ToolExecutor;
 use whycodes_tools::profile::ToolProfile;
@@ -219,14 +219,20 @@ pub(crate) fn first_stream_rule_hit<'a>(
 
 fn append_skills_catalog(system_prompt: &str, project_path: &std::path::Path) -> String {
     // `load_project` is infallible today (unreadable skill dirs are skipped).
-    let catalog = match whycodes_skill::SkillRegistry::load_project(project_path) {
-        Ok(reg) => reg.catalog_markdown(),
-        Err(_load) => String::new(),
-    };
+    let catalog = catalog_from_load(whycodes_skill::SkillRegistry::load_project(project_path));
     if catalog.is_empty() {
         return system_prompt.to_string();
     }
     format!("{system_prompt}\n\n{catalog}")
+}
+
+fn catalog_from_load(
+    loaded: Result<whycodes_skill::SkillRegistry, whycodes_skill::SkillError>,
+) -> String {
+    match loaded {
+        Ok(reg) => reg.catalog_markdown(),
+        Err(_load) => String::new(),
+    }
 }
 
 pub(crate) fn append_request_user_suffix(
@@ -675,14 +681,8 @@ impl Agent {
         };
         if n_plug > 0 || n_mcp > 0 {
             self.tool_executor = Arc::new(full);
-            if n_plug > 0 {
-                let count = n_plug;
-                tracing::info!(count, "shell plugins registered");
-            }
-            if n_mcp > 0 {
-                let count = n_mcp;
-                tracing::info!(count, "MCP tools registered");
-            }
+            log_registered_count(n_plug, "shell plugins registered");
+            log_registered_count(n_mcp, "MCP tools registered");
         }
     }
 
@@ -690,10 +690,7 @@ impl Agent {
     pub fn with_plugins(mut self, project_dir: Option<&std::path::Path>) -> Self {
         let mut exec = ToolExecutor::new();
         let n = exec.register_config_plugins(project_dir);
-        if n > 0 {
-            self.tool_executor = Arc::new(exec);
-            tracing::info!(count = n, "shell plugins registered");
-        }
+        apply_plugin_count(&mut self, exec, n);
         self
     }
 
@@ -815,19 +812,14 @@ impl Agent {
         };
         // `title_refine_target` already observed this id; treat a later miss as
         // an empty title so the arm shares the existing empty-result path.
-        let title = match self.provider_registry.get(&use_provider_name) {
-            Some(provider) => {
-                crate::title::generate_title(
-                    provider,
-                    &key,
-                    &use_model,
-                    &user,
-                    assistant.as_deref(),
-                )
-                .await
-            }
-            None => Ok(String::new()),
-        };
+        let title = title_from_optional_provider(
+            self.provider_registry.get(&use_provider_name),
+            &key,
+            &use_model,
+            &user,
+            assistant.as_deref(),
+        )
+        .await;
         match title {
             Ok(title) => crate::title::apply_refine_result(session, &title, &use_model),
             Err(e) => {
@@ -868,19 +860,14 @@ impl Agent {
         tokio::spawn(async move {
             // `title_refine_target` already observed this id; a later miss is
             // treated as an empty title (same path as a blank model reply).
-            let title = match registry.get(&use_provider_name) {
-                Some(provider) => {
-                    crate::title::generate_title(
-                        provider,
-                        &key,
-                        &use_model,
-                        &user,
-                        assistant.as_deref(),
-                    )
-                    .await
-                }
-                None => Ok(String::new()),
-            };
+            let title = title_from_optional_provider(
+                registry.get(&use_provider_name),
+                &key,
+                &use_model,
+                &user,
+                assistant.as_deref(),
+            )
+            .await;
             match title {
                 Ok(title) if !title.is_empty() => {
                     tracing::debug!(%title, model = %use_model, "session title refined (async)");
@@ -896,6 +883,36 @@ impl Agent {
             }
         });
         true
+    }
+}
+
+fn apply_plugin_count(agent: &mut Agent, exec: ToolExecutor, n: usize) {
+    if n == 0 {
+        return;
+    }
+    agent.tool_executor = Arc::new(exec);
+    log_registered_count(n, "shell plugins registered");
+}
+
+fn log_registered_count(count: usize, message: &'static str) {
+    if count == 0 {
+        return;
+    }
+    tracing::info!(count, "{message}");
+}
+
+async fn title_from_optional_provider(
+    provider: Option<&dyn LlmProvider>,
+    api_key: &str,
+    model: &str,
+    user: &str,
+    assistant: Option<&str>,
+) -> whycodes_core::Result<String> {
+    match provider {
+        Some(provider) => {
+            crate::title::generate_title(provider, api_key, model, user, assistant).await
+        }
+        None => Ok(String::new()),
     }
 }
 

@@ -66,6 +66,15 @@ fn opts(events: Option<crate::events::EventSink>) -> TurnOpts<'static> {
     }
 }
 
+#[test]
+fn next_compact_failures_increments_resets_and_stays_zero() {
+    assert_eq!(next_compact_failures(0, true), 1);
+    assert_eq!(next_compact_failures(2, true), 3);
+    assert_eq!(next_compact_failures(u32::MAX, true), u32::MAX);
+    assert_eq!(next_compact_failures(3, false), 0);
+    assert_eq!(next_compact_failures(0, false), 0);
+}
+
 fn drain_status(rx: &mut tokio::sync::mpsc::UnboundedReceiver<TurnEvent>) -> Vec<String> {
     let mut out = Vec::new();
     while let Ok(ev) = rx.try_recv() {

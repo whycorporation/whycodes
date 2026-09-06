@@ -12,6 +12,7 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 
 use tokio::time::sleep;
+use tracing::{info, warn};
 
 use crate::error_class::{ClassifiedError, classify};
 
@@ -172,14 +173,14 @@ where
                 let delay = delay.min(remaining);
 
                 log_retry_again(RetryAgainFields {
-                    _op: op,
-                    _attempt: attempt,
-                    _next_attempt: attempt + 1,
-                    _max_tries: policy.max_retries + 1,
-                    _kind: classified.kind.as_str(),
-                    _status: classified.status,
-                    _delay_ms: delay.as_millis(),
-                    _attempt_ms: attempt_ms,
+                    op,
+                    attempt,
+                    next_attempt: attempt + 1,
+                    max_tries: policy.max_retries + 1,
+                    kind: classified.kind.as_str(),
+                    status: classified.status,
+                    delay_ms: delay.as_millis(),
+                    attempt_ms,
                 });
                 sleep(delay).await;
             }
@@ -187,30 +188,48 @@ where
     }
 }
 
-fn log_retry_success(_op: &str, _attempt: usize, _elapsed_ms: u128) {}
-
-fn log_retry_give_up(
-    _op: &str,
-    _attempt: usize,
-    _kind: &str,
-    _retryable: bool,
-    _status: Option<u16>,
-    _attempt_ms: u64,
-    _elapsed_ms: u128,
-) {
+fn log_retry_success(op: &str, attempt: usize, elapsed_ms: u128) {
+    info!(op, attempt, elapsed_ms, "llm retry succeeded");
 }
 
-fn log_retry_again(_fields: RetryAgainFields<'_>) {}
+fn log_retry_give_up(
+    op: &str,
+    attempt: usize,
+    kind: &str,
+    retryable: bool,
+    status: Option<u16>,
+    attempt_ms: u64,
+    elapsed_ms: u128,
+) {
+    warn!(
+        op,
+        attempt, kind, retryable, status, attempt_ms, elapsed_ms, "llm retry giving up"
+    );
+}
+
+fn log_retry_again(fields: RetryAgainFields<'_>) {
+    warn!(
+        op = fields.op,
+        attempt = fields.attempt,
+        next_attempt = fields.next_attempt,
+        max_tries = fields.max_tries,
+        kind = fields.kind,
+        status = fields.status,
+        delay_ms = fields.delay_ms,
+        attempt_ms = fields.attempt_ms,
+        "llm retrying"
+    );
+}
 
 struct RetryAgainFields<'a> {
-    _op: &'a str,
-    _attempt: usize,
-    _next_attempt: usize,
-    _max_tries: usize,
-    _kind: &'a str,
-    _status: Option<u16>,
-    _delay_ms: u128,
-    _attempt_ms: u64,
+    op: &'a str,
+    attempt: usize,
+    next_attempt: usize,
+    max_tries: usize,
+    kind: &'a str,
+    status: Option<u16>,
+    delay_ms: u128,
+    attempt_ms: u64,
 }
 
 #[cfg(test)]
@@ -218,14 +237,14 @@ pub(crate) fn log_retry_helpers_for_tests() {
     log_retry_success("ok", 2, 1);
     log_retry_give_up("warn", 1, "http", false, Some(400), 1, 1);
     log_retry_again(RetryAgainFields {
-        _op: "warn",
-        _attempt: 1,
-        _next_attempt: 2,
-        _max_tries: 4,
-        _kind: "http",
-        _status: Some(503),
-        _delay_ms: 5,
-        _attempt_ms: 1,
+        op: "warn",
+        attempt: 1,
+        next_attempt: 2,
+        max_tries: 4,
+        kind: "http",
+        status: Some(503),
+        delay_ms: 5,
+        attempt_ms: 1,
     });
 }
 

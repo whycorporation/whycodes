@@ -117,58 +117,89 @@ pub fn spawn_post_turn_retain(
     let data_dir = whycodes_core::paths::data_dir();
 
     tokio::spawn(async move {
-        let mut saved = Vec::new();
-        if settings.auto_retain {
-            saved = run_heuristic_retain(&snap, &settings, &data_dir);
-
-            if should_llm_retain(&settings, saved.len(), snap.turn_index)
-                && let Some(provider) = registry.get(&provider_name)
-            {
-                match run_llm_retain_facts(
-                    &snap,
-                    &settings,
-                    provider,
-                    &provider_name,
-                    &model,
-                    &api_key,
-                    &data_dir,
-                )
-                .await
-                {
-                    Ok(more) => merge_facts(&mut saved, more),
-                    Err(e) => {
-                        tracing::debug!("llm retain skipped: {e}");
-                    }
-                }
-            }
-        }
+        let saved = collect_retained_facts(
+            &snap,
+            &settings,
+            &data_dir,
+            &registry,
+            &provider_name,
+            &model,
+            &api_key,
+        )
+        .await;
 
         if let Ok(svc) = MemoryService::open(&snap.project_path, &data_dir, settings.clone()) {
             index_and_consolidate(&svc, &snap);
         }
 
-        if !saved.is_empty() {
-            tracing::info!(count = saved.len(), "auto-retained memories");
-            emit(
-                &events,
-                TurnEvent::Status(format!("Remembered {} durable fact(s)", saved.len())),
-            );
-        }
+        emit_retained_facts(&saved, &events);
     });
 }
 
 fn index_and_consolidate(svc: &MemoryService, snap: &RetainSnapshot) {
-    if let Err(e) = svc.index_session_turn(
-        &snap.session_id,
-        snap.turn_index,
-        &snap.user_text,
-        &snap.assistant_text,
-    ) {
-        tracing::debug!("session chunk skip: {e}");
+    skip_if_err(
+        svc.index_session_turn(
+            &snap.session_id,
+            snap.turn_index,
+            &snap.user_text,
+            &snap.assistant_text,
+        ),
+        "session chunk skip",
+    );
+    skip_if_err(svc.consolidate().map(|_| ()), "memory consolidate skip");
+}
+
+fn skip_if_err<E: std::fmt::Display>(result: Result<(), E>, msg: &'static str) {
+    if let Err(e) = result {
+        tracing::debug!("{msg}: {e}");
     }
-    if let Err(e) = svc.consolidate() {
-        tracing::debug!("memory consolidate skip: {e}");
+}
+
+fn emit_retained_facts(saved: &[String], events: &Option<EventSink>) {
+    if saved.is_empty() {
+        return;
     }
+    tracing::info!(count = saved.len(), "auto-retained memories");
+    emit(
+        events,
+        TurnEvent::Status(format!("Remembered {} durable fact(s)", saved.len())),
+    );
+}
+
+async fn collect_retained_facts(
+    snap: &RetainSnapshot,
+    settings: &MemorySettings,
+    data_dir: &Path,
+    registry: &ProviderRegistry,
+    provider_name: &str,
+    model: &str,
+    api_key: &str,
+) -> Vec<String> {
+    if !settings.auto_retain {
+        return Vec::new();
+    }
+    let mut saved = run_heuristic_retain(snap, settings, data_dir);
+    if should_llm_retain(settings, saved.len(), snap.turn_index)
+        && let Some(provider) = registry.get(provider_name)
+    {
+        match run_llm_retain_facts(
+            snap,
+            settings,
+            provider,
+            provider_name,
+            model,
+            api_key,
+            data_dir,
+        )
+        .await
+        {
+            Ok(more) => merge_facts(&mut saved, more),
+            Err(e) => {
+                tracing::debug!("llm retain skipped: {e}");
+            }
+        }
+    }
+    saved
 }
 
 fn should_llm_retain(settings: &MemorySettings, heuristic_saved: usize, turn_index: usize) -> bool {

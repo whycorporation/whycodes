@@ -679,29 +679,27 @@ impl Agent {
             })));
             let tx_s = tx.clone();
             claims.set_stale_listener(Some(std::sync::Arc::new(move |ev| {
-                if tx_s
-                    .send(TurnEvent::FileStale {
+                send_or_debug(
+                    &tx_s,
+                    TurnEvent::FileStale {
                         path: ev.path,
                         reader: ev.reader_id,
                         writer: ev.writer_label,
-                    })
-                    .is_err()
-                {
-                    tracing::debug!("swarm stale event dropped");
-                }
+                    },
+                    "swarm stale event dropped",
+                );
             })));
             let tx_m = tx.clone();
             hub.set_listener(Some(std::sync::Arc::new(move |msg| {
-                if tx_m
-                    .send(TurnEvent::SwarmMessage {
+                send_or_debug(
+                    &tx_m,
+                    TurnEvent::SwarmMessage {
                         from: msg.from,
                         to: msg.to,
                         text: msg.text,
-                    })
-                    .is_err()
-                {
-                    tracing::debug!("swarm message event dropped");
-                }
+                    },
+                    "swarm message event dropped",
+                );
             })));
         }
 
@@ -1056,9 +1054,10 @@ impl Agent {
                         if !merge_txt.is_empty() {
                             body = format!("{body}\n\n{merge_txt}");
                         }
-                        if let Err(e) = crate::swarm_worktree::remove_worktree(&wt) {
-                            body = format!("{body}\n\n_Worktree cleanup warning: {e}_");
-                        }
+                        body = append_cleanup_warning(
+                            body,
+                            crate::swarm_worktree::remove_worktree(&wt),
+                        );
                     }
 
                     if success {
@@ -1295,6 +1294,20 @@ impl Agent {
             },
             is_error: !result.success,
         }
+    }
+}
+
+fn send_or_debug(tx: &EventSink, event: TurnEvent, dropped: &'static str) {
+    if tx.send(event).is_ok() {
+        return;
+    }
+    tracing::debug!("{dropped}");
+}
+
+fn append_cleanup_warning(body: String, err: Result<(), String>) -> String {
+    match err {
+        Ok(()) => body,
+        Err(e) => format!("{body}\n\n_Worktree cleanup warning: {e}_"),
     }
 }
 

@@ -152,21 +152,7 @@ fn mask_non_prose(text: &str) -> String {
                 }
             }
             if !is_close {
-                while i < n {
-                    if chars[i] == '<' && i + 1 < n && chars[i + 1] == '/' {
-                        while i < n {
-                            out.push(if chars[i] == '\n' { '\n' } else { ' ' });
-                            let done = chars[i] == '>';
-                            i += 1;
-                            if done {
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                    out.push(if chars[i] == '\n' { '\n' } else { ' ' });
-                    i += 1;
-                }
+                i = mask_until_close_tag(&chars, i, n, &mut out);
             }
             continue;
         }
@@ -174,6 +160,25 @@ fn mask_non_prose(text: &str) -> String {
         i += 1;
     }
     out
+}
+
+fn mask_until_close_tag(chars: &[char], mut i: usize, n: usize, out: &mut String) -> usize {
+    while i < n {
+        if chars[i] == '<' && i + 1 < n && chars[i + 1] == '/' {
+            while i < n {
+                out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+                let done = chars[i] == '>';
+                i += 1;
+                if done {
+                    break;
+                }
+            }
+            break;
+        }
+        out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+        i += 1;
+    }
+    i
 }
 
 fn fence_open(chars: &[char], i: usize) -> bool {

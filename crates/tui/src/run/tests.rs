@@ -927,6 +927,7 @@ fn apply_turn_event_covers_every_variant() {
         },
     );
     assert_eq!(app.todos[0].status, whycodes_core::TodoStatus::Completed);
+
     apply_turn_event(
         &mut app,
         TurnEvent::ToolStart {
@@ -940,6 +941,33 @@ fn apply_turn_event_covers_every_variant() {
     );
     assert_eq!(app.todos.len(), 1);
     assert_eq!(app.todos[0].id, "z");
+}
+
+#[test]
+fn shown_tool_name_maps_aliases() {
+    assert_eq!(shown_tool_name("bash"), "run");
+    assert_eq!(shown_tool_name("shell"), "run");
+    assert_eq!(shown_tool_name("run_terminal_command"), "run");
+    assert_eq!(shown_tool_name("read_file"), "read");
+    assert_eq!(shown_tool_name("search_code"), "grep");
+    assert_eq!(shown_tool_name("rg"), "grep");
+    assert_eq!(shown_tool_name("custom_tool"), "custom_tool");
+}
+
+#[test]
+fn apply_background_event_covers_every_status() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_background_event(&mut app, "j1", "running", "sleep 1");
+    assert_eq!(app.bg_running_count, 1);
+    apply_background_event(&mut app, "j1", "done", "ok");
+    assert_eq!(app.bg_running_count, 0);
+    apply_background_event(&mut app, "j2", "running", "x");
+    apply_background_event(&mut app, "j2", "failed", "boom");
+    apply_background_event(&mut app, "j3", "running", "x");
+    apply_background_event(&mut app, "j3", "killed", "");
+    apply_background_event(&mut app, "j4", "queued", "later");
+    assert!(app.status_message.contains("j4"));
+    assert!(app.status_message.contains("queued"));
 }
 
 #[test]

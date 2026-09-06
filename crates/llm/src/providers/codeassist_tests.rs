@@ -640,7 +640,11 @@ async fn load_current_tier_uses_default_project() {
         &resp.content[1],
         ContentBlock::ToolUse { name, .. } if name == "read"
     ));
-    assert_eq!(cached_project(provider).as_deref(), Some("whycodes"));
+    let expected = std::env::var("GOOGLE_CLOUD_PROJECT")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| "whycodes".to_string());
+    assert_eq!(cached_project(provider).as_deref(), Some(expected.as_str()));
 }
 
 #[tokio::test]

@@ -3812,13 +3812,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
         TurnEvent::ToolStart { id, name, input } => {
             app.finish_open_thinking();
             // Grok-style labels in the busy strip (`bash` → `run`).
-            let shown = match name.as_str() {
-                "bash" | "shell" | "run_terminal_command" => "run",
-                "read_file" => "read",
-                "search_code" | "rg" => "grep",
-                other => other,
-            };
-            app.status_message = format!("tool: {shown}");
+            app.status_message = format!("tool: {}", shown_tool_name(&name));
             if matches!(name.as_str(), "todowrite" | "todo")
                 && let Some(next) = whycodes_core::todo::apply_todowrite_args(&app.todos, &input)
             {
@@ -3920,45 +3914,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             status,
             summary,
         } => {
-            match status.as_str() {
-                "running" => {
-                    app.bg_running_count = app.bg_running_count.saturating_add(1);
-                    app.upsert_bg_job(&id, "running", &summary);
-                    app.status_message = format!("bg {id} started");
-                    app.toasts.push(
-                        crate::toast::ToastKind::Info,
-                        truncate_toast(&format!("bg {id}: {summary}"), 56),
-                    );
-                }
-                "done" => {
-                    app.bg_running_count = app.bg_running_count.saturating_sub(1);
-                    app.upsert_bg_job(&id, "done", &summary);
-                    app.toasts.push(
-                        crate::toast::ToastKind::Success,
-                        truncate_toast(&format!("bg {id} done · {summary}"), 56),
-                    );
-                }
-                "failed" => {
-                    app.bg_running_count = app.bg_running_count.saturating_sub(1);
-                    app.upsert_bg_job(&id, "failed", &summary);
-                    app.toasts.push(
-                        crate::toast::ToastKind::Warning,
-                        truncate_toast(&format!("bg {id} failed · {summary}"), 64),
-                    );
-                }
-                "killed" => {
-                    app.bg_running_count = app.bg_running_count.saturating_sub(1);
-                    app.upsert_bg_job(&id, "killed", &summary);
-                    app.toasts.push(
-                        crate::toast::ToastKind::Info,
-                        truncate_toast(&format!("bg {id} killed"), 40),
-                    );
-                }
-                _ => {
-                    app.upsert_bg_job(&id, &status, &summary);
-                    app.status_message = format!("bg {id} {status}");
-                }
-            }
+            apply_background_event(app, &id, &status, &summary);
             app.mark_dirty();
         }
         TurnEvent::EnqueuePrompt { text } => {
@@ -4413,6 +4369,57 @@ fn resume_after_question(
     } else {
         app.current_agent_state = AgentState::Generating;
         app.status_message = "Answered — continuing…".into();
+    }
+}
+
+fn shown_tool_name(name: &str) -> &str {
+    match name {
+        "bash" | "shell" | "run_terminal_command" => "run",
+        "read_file" => "read",
+        "search_code" | "rg" => "grep",
+        other => other,
+    }
+}
+
+fn apply_background_event(app: &mut TuiApp, id: &str, status: &str, summary: &str) {
+    match status {
+        "running" => {
+            app.bg_running_count = app.bg_running_count.saturating_add(1);
+            app.upsert_bg_job(id, "running", summary);
+            app.status_message = format!("bg {id} started");
+            app.toasts.push(
+                crate::toast::ToastKind::Info,
+                truncate_toast(&format!("bg {id}: {summary}"), 56),
+            );
+        }
+        "done" => {
+            app.bg_running_count = app.bg_running_count.saturating_sub(1);
+            app.upsert_bg_job(id, "done", summary);
+            app.toasts.push(
+                crate::toast::ToastKind::Success,
+                truncate_toast(&format!("bg {id} done · {summary}"), 56),
+            );
+        }
+        "failed" => {
+            app.bg_running_count = app.bg_running_count.saturating_sub(1);
+            app.upsert_bg_job(id, "failed", summary);
+            app.toasts.push(
+                crate::toast::ToastKind::Warning,
+                truncate_toast(&format!("bg {id} failed · {summary}"), 64),
+            );
+        }
+        "killed" => {
+            app.bg_running_count = app.bg_running_count.saturating_sub(1);
+            app.upsert_bg_job(id, "killed", summary);
+            app.toasts.push(
+                crate::toast::ToastKind::Info,
+                truncate_toast(&format!("bg {id} killed"), 40),
+            );
+        }
+        _ => {
+            app.upsert_bg_job(id, status, summary);
+            app.status_message = format!("bg {id} {status}");
+        }
     }
 }
 

@@ -1,5 +1,7 @@
 use super::*;
+use crate::events::TurnEvent;
 use whycodes_core::types::ContentBlock;
+use whycodes_llm::ProviderRegistry;
 use whycodes_memory::MemorySettings;
 
 fn make_session() -> Session {
@@ -490,4 +492,40 @@ fn index_and_consolidate_runs_after_open() {
     };
     let svc = MemoryService::open(&snap.project_path, dir.path(), settings).expect("open");
     index_and_consolidate(&svc, &snap);
+}
+
+#[test]
+fn skip_if_err_ok_and_err() {
+    skip_if_err(Ok::<(), &str>(()), "unused");
+    skip_if_err(Err("boom"), "session chunk skip");
+    skip_if_err(Err("full"), "memory consolidate skip");
+}
+
+#[test]
+fn emit_retained_facts_skips_empty_and_emits_saved() {
+    emit_retained_facts(&[], &None);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    emit_retained_facts(&["fact".into()], &Some(tx));
+    match rx.try_recv() {
+        Ok(TurnEvent::Status(s)) => assert!(s.to_lowercase().contains("remember"), "{s}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn collect_retained_facts_skips_when_auto_retain_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+    session.add_user_message("please remember we use sqlite");
+    let snap = RetainSnapshot::from_session(&session, "ok");
+    let settings = MemorySettings {
+        enabled: true,
+        auto_retain: false,
+        session_inject: true,
+        ..MemorySettings::default()
+    };
+    let registry = ProviderRegistry::new();
+    let saved =
+        collect_retained_facts(&snap, &settings, dir.path(), &registry, "script", "m", "k").await;
+    assert!(saved.is_empty());
 }

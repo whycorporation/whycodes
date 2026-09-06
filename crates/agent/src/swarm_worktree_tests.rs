@@ -503,6 +503,36 @@ fn remove_worktree_path_remains_when_replaced_with_readonly_file() {
 }
 
 #[test]
+fn after_git_remove_failed_ok_when_gone_and_err_when_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let gone = dir.path().join("missing-wt");
+    after_git_remove_failed(&gone, "stderr").expect("gone path is Ok");
+    let stuck = dir.path().join("stuck");
+    std::fs::write(&stuck, b"x").unwrap();
+    let err = after_git_remove_failed(&stuck, "still there").unwrap_err();
+    assert!(err.contains("path remains"), "{err}");
+    assert!(err.contains("still there"), "{err}");
+}
+
+#[test]
+fn merge_changed_path_skips_vanished_untracked() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("gone.txt");
+    let mut report = MergeReport::default();
+    merge_changed_path(
+        "gone.txt".into(),
+        &missing,
+        &missing,
+        dir.path(),
+        "deadbeef",
+        &mut report,
+    );
+    assert!(report.applied.is_empty());
+    assert!(report.deleted.is_empty());
+    assert!(report.conflicts.is_empty());
+}
+
+#[test]
 fn merge_skips_vanished_untracked_path() {
     let (_keep, root) = init_repo();
     let dest = root

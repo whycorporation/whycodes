@@ -93,4 +93,7 @@ fn unclosed_html_and_short_fence_are_safe() {
     // Open tag with no close tag: inner while runs to EOF (line 170).
     assert!(!scan("<note>please ultrathink forever", &on()).ultrathink);
     assert!(!scan("<p>ultrathink</", &on()).ultrathink);
+    // Close tag with no following inner markup: `is_close` skips the inner while.
+    assert!(scan("</note> please ultrathink", &on()).ultrathink);
+    assert!(!scan("</note> no keyword here", &on()).ultrathink);
 }

@@ -2558,6 +2558,23 @@ description = "coverage plugin"
     );
 }
 
+#[test]
+fn apply_plugin_count_skips_zero_and_replaces_on_hit() {
+    let mut a = test_agent();
+    let before = Arc::as_ptr(&a.tool_executor);
+    apply_plugin_count(&mut a, ToolExecutor::new(), 0);
+    assert_eq!(Arc::as_ptr(&a.tool_executor), before);
+
+    apply_plugin_count(&mut a, ToolExecutor::new(), 2);
+    assert_ne!(Arc::as_ptr(&a.tool_executor), before);
+}
+
+#[test]
+fn log_registered_count_skips_zero() {
+    log_registered_count(0, "shell plugins registered");
+    log_registered_count(3, "MCP tools registered");
+}
+
 #[tokio::test]
 async fn maybe_refine_title_returns_when_target_none() {
     let a = test_agent();
@@ -2578,6 +2595,22 @@ async fn spawn_title_refine_skips_when_target_none() {
     s.add_user_message("hi");
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     assert!(!a.spawn_title_refine(&s, "script", "m", "k", None, tx));
+}
+
+#[test]
+fn catalog_from_load_ok_and_err() {
+    let empty = catalog_from_load(Ok(whycodes_skill::SkillRegistry::new()));
+    assert!(empty.is_empty());
+    let failed = catalog_from_load(Err(whycodes_skill::SkillError::msg("load failed")));
+    assert!(failed.is_empty());
+}
+
+#[tokio::test]
+async fn title_from_optional_provider_none_is_empty() {
+    let title = title_from_optional_provider(None, "k", "m", "user", None)
+        .await
+        .expect("none provider is Ok empty");
+    assert!(title.is_empty(), "{title}");
 }
 
 #[tokio::test]

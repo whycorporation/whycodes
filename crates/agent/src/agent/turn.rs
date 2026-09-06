@@ -216,26 +216,25 @@ impl Agent {
                             "auto-compact before LLM step"
                         );
                     }
-                    if outcome.still_over(self.compaction_threshold) {
-                        compact_failures = compact_failures.saturating_add(1);
-                        if compact_failures >= MAX_CONSECUTIVE_COMPACT_FAILURES {
-                            compact_paused = true;
-                            emit(
-                                &events,
-                                TurnEvent::Status(format!(
-                                    "Auto-compact paused after {MAX_CONSECUTIVE_COMPACT_FAILURES} \
-                                     passes (~{} tok still over threshold)",
-                                    outcome.tokens_after
-                                )),
-                            );
-                            tracing::warn!(
-                                failures = compact_failures,
-                                tokens = outcome.tokens_after,
-                                "autocompact circuit breaker tripped"
-                            );
-                        }
-                    } else if compact_failures > 0 {
-                        compact_failures = 0;
+                    compact_failures = next_compact_failures(
+                        compact_failures,
+                        outcome.still_over(self.compaction_threshold),
+                    );
+                    if compact_failures >= MAX_CONSECUTIVE_COMPACT_FAILURES && !compact_paused {
+                        compact_paused = true;
+                        emit(
+                            &events,
+                            TurnEvent::Status(format!(
+                                "Auto-compact paused after {MAX_CONSECUTIVE_COMPACT_FAILURES} \
+                                 passes (~{} tok still over threshold)",
+                                outcome.tokens_after
+                            )),
+                        );
+                        tracing::warn!(
+                            failures = compact_failures,
+                            tokens = outcome.tokens_after,
+                            "autocompact circuit breaker tripped"
+                        );
                     }
                 }
             }
@@ -843,6 +842,14 @@ impl Agent {
         );
 
         Ok(final_text)
+    }
+}
+
+fn next_compact_failures(failures: u32, still_over: bool) -> u32 {
+    if still_over {
+        failures.saturating_add(1)
+    } else {
+        0
     }
 }
 
