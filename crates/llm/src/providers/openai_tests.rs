@@ -343,9 +343,7 @@ async fn stream_truncated_body_and_delayed_chunks() {
             let mut buf = [0u8; 2048];
             let _ = stream.read(&mut buf);
             let body = "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n";
-            let header = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n"
-            );
+            let header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n".to_string();
             let _ = stream.write_all(header.as_bytes());
             let _ = stream.write_all(body.as_bytes());
         }

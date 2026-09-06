@@ -947,6 +947,61 @@ fn remaining_wire_models_and_http_error_fallbacks() {
 }
 
 #[tokio::test]
+async fn sse_from_scripted_bytes_covers_error_pending_and_done_break() {
+    use crate::openai_compat::scripted_bytes;
+    use futures::StreamExt;
+    use std::time::Duration;
+
+    let first = format!(
+        "data: {}\n",
+        serde_json::json!({"candidates":[{"content":{"parts":[{"text":"he"}]}}]})
+    )
+    .into_bytes();
+    let mut stream =
+        codeassist_sse_from_bytes(scripted_bytes([Ok(first), Err("chunk fail".into())]));
+    let mut text = String::new();
+    let mut saw_err = false;
+    while let Some(ev) = stream.next().await {
+        match ev {
+            Ok(StreamEvent::TextDelta { text: d }) => text.push_str(&d),
+            Err(_) => saw_err = true,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "he");
+    assert!(saw_err);
+
+    let rest = format!(
+        "data: {}\nleftover",
+        serde_json::json!({
+            "candidates":[{"content":{"parts":[{"text":"hi"}]}}],
+            "usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1}
+        })
+    );
+    let extra = format!(
+        "data: {}\n",
+        serde_json::json!({"candidates":[{"content":{"parts":[{"text":"x"}]}}]})
+    );
+    let payload = format!("{rest}{extra}");
+    let mut delayed = codeassist_sse_from_bytes(Box::pin(async_stream::stream! {
+        yield Ok(payload.as_bytes()[..20].to_vec());
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        yield Ok(payload.as_bytes()[20..].to_vec());
+    }));
+    let mut text = String::new();
+    let mut saw_stop = false;
+    while let Some(ev) = delayed.next().await {
+        match ev.unwrap() {
+            StreamEvent::TextDelta { text: d } => text.push_str(&d),
+            StreamEvent::MessageStop => saw_stop = true,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "hi");
+    assert!(saw_stop);
+}
+
+#[tokio::test]
 async fn stored_extra_project_id_is_cached_without_prior_cache() {
     let provider = unique_provider("stored-extra");
     let dir = std::env::temp_dir().join(format!(

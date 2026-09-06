@@ -257,5 +257,9 @@ mod tests {
         assert!(file_tool_path(&call("apply_patch", json!({"path": "a.rs"}))).is_some());
         assert!(file_tool_path(&call("write", json!({"path": ""}))).is_none());
         assert!(SHELL_TOOLS.contains(&"bash"));
+        let one_liner = format_permission_detail(&json!({"meta": true}));
+        assert!(one_liner.contains("meta:"), "{one_liner}");
+        let bool_nested = format_permission_detail(&json!({"flag": serde_json::Value::Bool(true)}));
+        assert!(bool_nested.contains("flag:"), "{bool_nested}");
     }
 }

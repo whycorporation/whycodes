@@ -426,3 +426,47 @@ fn events_from_object_without_message_are_empty() {
     let (events, _) = events_from_ollama_object(&event);
     assert_eq!(events.len(), 3);
 }
+
+#[tokio::test]
+async fn ndjson_from_scripted_bytes_covers_error_pending_and_done_break() {
+    use crate::openai_compat::scripted_bytes;
+    use futures::StreamExt;
+    use std::time::Duration;
+
+    let first = format!("{}\n", serde_json::json!({"message": {"content": "he"}})).into_bytes();
+    let mut stream =
+        ollama_ndjson_from_bytes(scripted_bytes([Ok(first), Err("chunk fail".into())]));
+    let mut text = String::new();
+    let mut saw_err = false;
+    while let Some(ev) = stream.next().await {
+        match ev {
+            Ok(StreamEvent::TextDelta { text: d }) => text.push_str(&d),
+            Err(_) => saw_err = true,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "he");
+    assert!(saw_err);
+
+    let rest = format!(
+        "{}\n{}\nleftover",
+        serde_json::json!({"message": {"content": "hi"}}),
+        serde_json::json!({"message": {"content": ""}, "done": true, "prompt_eval_count": 1, "eval_count": 1})
+    );
+    let mut delayed = ollama_ndjson_from_bytes(Box::pin(async_stream::stream! {
+        yield Ok(rest.as_bytes()[..12].to_vec());
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        yield Ok(rest.as_bytes()[12..].to_vec());
+    }));
+    let mut text = String::new();
+    let mut saw_stop = false;
+    while let Some(ev) = delayed.next().await {
+        match ev.unwrap() {
+            StreamEvent::TextDelta { text: d } => text.push_str(&d),
+            StreamEvent::MessageStop => saw_stop = true,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "hi");
+    assert!(saw_stop);
+}

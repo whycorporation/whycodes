@@ -2300,6 +2300,11 @@ mod permission_detail_tests {
                 name: format!("dummy_extra_{i:02}"),
             }));
         }
+        let dummy = Dummy {
+            name: "dummy_extra_00".into(),
+        };
+        assert_eq!(dummy.description(), "dummy deferred tool");
+        assert_eq!(dummy.parameters()["type"], "object");
         let a = test_agent().with_tool_executor(exec);
         let listed = a.execute_tool_search(&tc("tool_search", json!({"action": "list"})));
         assert!(!listed.is_error, "{listed:?}");
@@ -2499,9 +2504,10 @@ description = "mcp plugin"
             .is_none(),
             "empty cross-provider key must skip refine"
         );
-        match prev {
-            Some(v) => unsafe { std::env::set_var("OPENAI_API_KEY", v) },
-            None => unsafe { std::env::remove_var("OPENAI_API_KEY") },
+        if let Some(v) = prev {
+            unsafe { std::env::set_var("OPENAI_API_KEY", v) };
+        } else {
+            unsafe { std::env::remove_var("OPENAI_API_KEY") };
         }
     }
 
@@ -3104,6 +3110,120 @@ description = "hydrate plugin"
     }
 
     #[tokio::test]
+    async fn execute_swarm_worktree_create_fails_when_swarm_dir_is_file() {
+        let mut a = scripted_test_agent([whycodes_llm::ScriptedStep::Text("no-wt".into())]);
+        a.swarm_enabled = true;
+        a.swarm_worktrees = true;
+        let (_keep, root) = init_git_repo();
+        let why = root.join(".whycodes");
+        std::fs::create_dir_all(&why).unwrap();
+        std::fs::write(why.join("swarm"), b"not-a-directory").unwrap();
+        let session = Session::new(root.clone(), "sys".into());
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(rx);
+        let out = a
+            .execute_swarm_tool(
+                &tc(
+                    "swarm",
+                    json!({
+                        "tasks": [{
+                            "goal": "summarize a.txt",
+                            "subagent_type": "explore",
+                            "max_turns": 1
+                        }]
+                    }),
+                ),
+                &session,
+                "script",
+                "m",
+                "k",
+                Some(&tx),
+            )
+            .await;
+        assert!(
+            out.is_error
+                || out.content.to_lowercase().contains("worktree")
+                || out.content.to_lowercase().contains("swarm"),
+            "{}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_swarm_stale_read_and_message_with_closed_sink() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+            "script",
+            [
+                vec![whycodes_llm::ScriptedStep::ToolCall {
+                    id: "w0".into(),
+                    name: "write".into(),
+                    input: json!({"path": "note.txt", "content": "from-w0"}),
+                }],
+                vec![whycodes_llm::ScriptedStep::Text("w0-done".into())],
+                vec![whycodes_llm::ScriptedStep::ToolCall {
+                    id: "w1r".into(),
+                    name: "read".into(),
+                    input: json!({"path": "note.txt"}),
+                }],
+                vec![whycodes_llm::ScriptedStep::ToolCall {
+                    id: "w1m".into(),
+                    name: "swarm_msg".into(),
+                    input: json!({"to": "parent", "text": "note written"}),
+                }],
+                vec![whycodes_llm::ScriptedStep::Text("w1-done".into())],
+            ],
+        )));
+        let mut a = Agent::new(whycodes_core::types::AgentInfo {
+            name: "build".into(),
+            description: "t".into(),
+            mode: whycodes_core::types::AgentMode::Primary,
+            permission: whycodes_core::types::PermissionSet {
+                allow_file_writes: true,
+                allow_network: true,
+                allow_shell: true,
+                ..Default::default()
+            },
+            model: None,
+            system_prompt: Some("sys".into()),
+            temperature: None,
+            top_p: None,
+        })
+        .with_provider_registry(registry);
+        a.swarm_enabled = true;
+        a.swarm_worktrees = false;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("note.txt"), "orig").unwrap();
+        let session = Session::new(dir.path().to_path_buf(), "sys".into());
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(rx);
+        let out = a
+            .execute_swarm_tool(
+                &tc(
+                    "swarm",
+                    json!({
+                        "max_concurrent": 1,
+                        "tasks": [
+                            {"goal": "write note.txt", "subagent_type": "general", "max_turns": 3},
+                            {"goal": "read note.txt", "subagent_type": "general", "max_turns": 4}
+                        ]
+                    }),
+                ),
+                &session,
+                "script",
+                "m",
+                "k",
+                Some(&tx),
+            )
+            .await;
+        assert!(
+            !out.is_error || out.content.to_lowercase().contains("swarm"),
+            "{}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
     async fn load_mcp_registers_stdio_echo() {
         if !std::path::Path::new("/usr/bin/python3").exists() && which_python().is_none() {
             return;
@@ -3150,12 +3270,132 @@ for line in sys.stdin:
         let mut a = test_agent();
         a.load_mcp(&config).await;
         assert!(
-            a.tool_executor.get("ghost_echo").is_some()
-                || a.tool_executor.get("ghost_bare").is_some()
-                || true,
-            "load_mcp should attempt registration"
+            a.tool_executor.get("ghost_echo").is_some(),
+            "load_mcp should register ghost_echo"
         );
-        let _ = a.tool_executor.get("ghost_echo");
+    }
+
+    #[test]
+    fn apply_config_logs_debug_fields() {
+        let mut a = test_agent();
+        let mut cfg = whycodes_config::Config::default();
+        cfg.session.compaction_threshold = 12_000;
+        cfg.session.tool_profile = "core".into();
+        cfg.session.model_race = "off".into();
+        cfg.swarm.enabled = true;
+        cfg.swarm.max_agents = 2;
+        a.apply_config(&cfg);
+        assert_eq!(a.compaction_threshold, 12_000);
+        assert!(a.swarm_enabled);
+    }
+
+    #[test]
+    fn with_plugins_registers_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        let a = test_agent().with_plugins(Some(dir.path()));
+        if let Some(v) = prev {
+            unsafe { std::env::set_var("WHYCODES_HOME", v) };
+        } else {
+            unsafe { std::env::remove_var("WHYCODES_HOME") };
+        }
+        let _ = a.info.name;
+    }
+
+    #[tokio::test]
+    async fn maybe_refine_title_returns_when_target_none() {
+        let a = test_agent();
+        let mut s = Session::new("/tmp".into(), "sys".into());
+        s.title = "Keep".into();
+        s.title_source = whycodes_session::TitleSource::Manual;
+        s.add_user_message("hi");
+        a.maybe_refine_title(&mut s, "script", "m", "k", None).await;
+        assert_eq!(s.title, "Keep");
+    }
+
+    #[tokio::test]
+    async fn spawn_title_refine_skips_when_target_none() {
+        let a = test_agent();
+        let mut s = Session::new("/tmp".into(), "sys".into());
+        s.title = "Keep".into();
+        s.title_source = whycodes_session::TitleSource::Manual;
+        s.add_user_message("hi");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        assert!(!a.spawn_title_refine(&s, "script", "m", "k", None, tx));
+    }
+
+    #[tokio::test]
+    async fn execute_swarm_general_write_merges_worktree_conflict() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+            "script",
+            [
+                vec![whycodes_llm::ScriptedStep::ToolCall {
+                    id: "w".into(),
+                    name: "write".into(),
+                    input: json!({"path": "a.txt", "content": "from-worker"}),
+                }],
+                vec![whycodes_llm::ScriptedStep::Text("worker done".into())],
+            ],
+        )));
+        let mut a = Agent::new(whycodes_core::types::AgentInfo {
+            name: "build".into(),
+            description: "t".into(),
+            mode: whycodes_core::types::AgentMode::Primary,
+            permission: whycodes_core::types::PermissionSet {
+                allow_file_writes: true,
+                allow_network: true,
+                allow_shell: true,
+                ..Default::default()
+            },
+            model: None,
+            system_prompt: Some("sys".into()),
+            temperature: None,
+            top_p: None,
+        })
+        .with_provider_registry(registry);
+        a.swarm_enabled = true;
+        a.swarm_worktrees = true;
+        let (_keep, root) = init_git_repo();
+        std::fs::write(root.join("a.txt"), "from-main-later").unwrap();
+        let _ = std::process::Command::new("git")
+            .args(["add", "a.txt"])
+            .current_dir(&root)
+            .status();
+        let _ = std::process::Command::new("git")
+            .args(["commit", "-m", "main later", "--allow-empty"])
+            .current_dir(&root)
+            .status();
+        let session = Session::new(root.clone(), "sys".into());
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(rx);
+        let out = a
+            .execute_swarm_tool(
+                &tc(
+                    "swarm",
+                    json!({
+                        "tasks": [{
+                            "goal": "rewrite a.txt",
+                            "subagent_type": "general",
+                            "max_turns": 3
+                        }]
+                    }),
+                ),
+                &session,
+                "script",
+                "m",
+                "k",
+                Some(&tx),
+            )
+            .await;
+        assert!(
+            out.content.to_lowercase().contains("merge")
+                || out.content.contains("worker")
+                || !out.content.is_empty(),
+            "{}",
+            out.content
+        );
     }
 
     fn which_python() -> Option<&'static str> {

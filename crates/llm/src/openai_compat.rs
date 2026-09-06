@@ -114,8 +114,12 @@ pub(crate) fn response_bytes(resp: reqwest::Response) -> ByteStream {
 }
 
 pub fn chat_sse_stream(resp: reqwest::Response, provider: &str) -> ProviderEventStream {
+    chat_sse_from_bytes(response_bytes(resp), provider)
+}
+
+pub(crate) fn chat_sse_from_bytes(bytes: ByteStream, provider: &str) -> ProviderEventStream {
     Box::pin(ChatSse {
-        bytes: response_bytes(resp),
+        bytes,
         buffer: String::new(),
         pending: std::collections::VecDeque::new(),
         provider: provider.to_string(),
@@ -768,6 +772,14 @@ pub fn convert_tools(tools: &[ToolDefinition]) -> Vec<Value> {
             ])
         })
         .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn scripted_bytes(
+    chunks: impl IntoIterator<Item = Result<Vec<u8>, String>>,
+) -> ByteStream {
+    let chunks: Vec<_> = chunks.into_iter().collect();
+    Box::pin(futures::stream::iter(chunks))
 }
 
 #[cfg(test)]

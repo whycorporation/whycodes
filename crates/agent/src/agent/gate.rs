@@ -1789,4 +1789,133 @@ mod tests {
         assert_eq!(asks.asks.load(Ordering::SeqCst), 0, "{result:?}");
         assert!(!result.content.contains("User denied"), "{result:?}");
     }
+
+    #[tokio::test]
+    async fn shell_ask_rule_allows_and_sets_risk_confirmed() {
+        let asks = Arc::new(CountingAllowPrompter {
+            asks: AtomicUsize::new(0),
+        });
+        let mut info = info("build");
+        info.permission
+            .rules
+            .insert("bash".into(), PermissionAction::Ask);
+        let mut a = Agent::new(info).with_permission_prompter(asks.clone());
+        a.set_approval_mode(ApprovalMode::Manual);
+        let dir = tempfile::tempdir().unwrap();
+        let session = Session::new(dir.path().to_path_buf(), "test".into());
+        let ctx = a.tool_context(&session);
+        let result = a
+            .execute_with_permission(
+                &tc("bash", json!({"command": "echo hello-ask"})),
+                &session,
+                &ctx,
+                "script",
+                "m",
+                "k",
+                None,
+                None,
+            )
+            .await;
+        assert_eq!(asks.asks.load(Ordering::SeqCst), 1, "{result:?}");
+        assert!(!result.is_error, "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn path_ask_allows_without_prior_confirm() {
+        let asks = Arc::new(CountingAllowPrompter {
+            asks: AtomicUsize::new(0),
+        });
+        let mut info = info("build");
+        info.permission
+            .rules
+            .insert("write(docs/**)".into(), PermissionAction::Ask);
+        let mut a = Agent::new(info).with_permission_prompter(asks.clone());
+        a.set_approval_mode(ApprovalMode::Manual);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("docs")).unwrap();
+        let session = Session::new(dir.path().to_path_buf(), "test".into());
+        let ctx = a.tool_context(&session);
+        let result = a
+            .execute_with_permission(
+                &tc("write", json!({"path": "docs/a.md", "content": "ok"})),
+                &session,
+                &ctx,
+                "script",
+                "m",
+                "k",
+                None,
+                None,
+            )
+            .await;
+        assert_eq!(asks.asks.load(Ordering::SeqCst), 1, "{result:?}");
+        assert!(!result.content.contains("User denied"), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn path_ask_denied_without_prior_confirm() {
+        let asks = Arc::new(CountingDenyPrompter {
+            asks: AtomicUsize::new(0),
+        });
+        let mut info = info("build");
+        info.permission
+            .rules
+            .insert("write(docs/**)".into(), PermissionAction::Ask);
+        let mut a = Agent::new(info).with_permission_prompter(asks.clone());
+        a.set_approval_mode(ApprovalMode::Manual);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("docs")).unwrap();
+        let session = Session::new(dir.path().to_path_buf(), "test".into());
+        let ctx = a.tool_context(&session);
+        let result = a
+            .execute_with_permission(
+                &tc("write", json!({"path": "docs/a.md", "content": "ok"})),
+                &session,
+                &ctx,
+                "script",
+                "m",
+                "k",
+                None,
+                None,
+            )
+            .await;
+        assert_eq!(asks.asks.load(Ordering::SeqCst), 1, "{result:?}");
+        assert!(result.is_error, "{result:?}");
+        assert!(
+            result.content.contains("User denied permission"),
+            "{}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn intent_refuse_does_not_prompt() {
+        let asks = Arc::new(CountingAllowPrompter {
+            asks: AtomicUsize::new(0),
+        });
+        let mut a = Agent::new(info("ask")).with_permission_prompter(asks.clone());
+        a.set_approval_mode(ApprovalMode::Manual);
+        a.intent_guidance = crate::intent::IntentGuidanceMode::Always;
+        let (session, ctx) = session_ctx(&a);
+        let q = crate::intent::classify_user_intent("how does auth work?");
+        let result = a
+            .execute_with_permission(
+                &tc("write", json!({"path": "docs/a.md", "content": "nope"})),
+                &session,
+                &ctx,
+                "script",
+                "m",
+                "k",
+                Some(&q),
+                None,
+            )
+            .await;
+        assert!(result.is_error, "{result:?}");
+        assert!(
+            result.content.to_lowercase().contains("intent")
+                || result.content.to_lowercase().contains("refused"),
+            "{}",
+            result.content
+        );
+        assert_eq!(asks.asks.load(Ordering::SeqCst), 0, "{result:?}");
+    }
 }

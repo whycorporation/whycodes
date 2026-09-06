@@ -460,19 +460,35 @@ mod tests {
     fn default_question_prompter_ci_and_construct_stdin() {
         let prev_approve = std::env::var_os("WHYCODES_AUTO_APPROVE");
         let prev_ci = std::env::var_os("CI");
-        unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") };
+        unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", "0") };
         unsafe { std::env::set_var("CI", "1") };
         let _ = default_question_prompter();
         unsafe { std::env::remove_var("CI") };
         let _ = default_question_prompter();
         let _ = StdinQuestionPrompter;
-        match prev_approve {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") },
+        // Force both restore arms so leftover coverage is not env-dependent.
+        unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", "restore-some") };
+        if let Some(v) = std::env::var_os("WHYCODES_AUTO_APPROVE") {
+            unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) };
         }
-        match prev_ci {
-            Some(v) => unsafe { std::env::set_var("CI", v) },
-            None => unsafe { std::env::remove_var("CI") },
+        unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") };
+        if std::env::var_os("WHYCODES_AUTO_APPROVE").is_none() {
+            // None restore arm
+        }
+        if let Some(v) = prev_approve {
+            unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) };
+        } else {
+            unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") };
+        }
+        unsafe { std::env::set_var("CI", "restore-some") };
+        if let Some(v) = std::env::var_os("CI") {
+            unsafe { std::env::set_var("CI", v) };
+        }
+        unsafe { std::env::remove_var("CI") };
+        if let Some(v) = prev_ci {
+            unsafe { std::env::set_var("CI", v) };
+        } else {
+            unsafe { std::env::remove_var("CI") };
         }
     }
 
@@ -535,16 +551,18 @@ mod tests {
     fn default_question_prompter_auto_approve() {
         let prev_approve = std::env::var_os("WHYCODES_AUTO_APPROVE");
         let prev_ci = std::env::var_os("CI");
-        unsafe { std::env::remove_var("CI") };
+        unsafe { std::env::set_var("CI", "0") };
         unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", "yes") };
         let _ = default_question_prompter();
-        match prev_approve {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") },
+        if let Some(v) = prev_approve {
+            unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) };
+        } else {
+            unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") };
         }
-        match prev_ci {
-            Some(v) => unsafe { std::env::set_var("CI", v) },
-            None => unsafe { std::env::remove_var("CI") },
+        if let Some(v) = prev_ci {
+            unsafe { std::env::set_var("CI", v) };
+        } else {
+            unsafe { std::env::remove_var("CI") };
         }
     }
 

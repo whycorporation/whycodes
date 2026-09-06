@@ -449,4 +449,10 @@ mod tests {
         apply_refine_result(&mut session, "Retry Loop", "gpt-4o-mini");
         assert_eq!(session.title, "Keep me");
     }
+
+    #[test]
+    fn openrouter_non_gemini_non_gpt_falls_to_mini() {
+        let (_, m) = resolve_title_model("openrouter", "qwen/qwen-plus", None);
+        assert_eq!(m, "openai/gpt-4o-mini");
+    }
 }

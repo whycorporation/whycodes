@@ -533,9 +533,10 @@ mod tests {
             "do the thing",
             &whycodes_memory::MemorySettings::default(),
         );
-        match prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_NO_MEMORY", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_NO_MEMORY") },
+        if let Some(v) = prev {
+            unsafe { std::env::set_var("WHYCODES_NO_MEMORY", v) };
+        } else {
+            unsafe { std::env::remove_var("WHYCODES_NO_MEMORY") };
         }
         assert_eq!(out, "base prompt");
     }
@@ -782,13 +783,15 @@ mod tests {
             "do the thing",
             &memory,
         );
-        match prev_no {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_NO_MEMORY", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_NO_MEMORY") },
+        if let Some(v) = prev_no {
+            unsafe { std::env::set_var("WHYCODES_NO_MEMORY", v) };
+        } else {
+            unsafe { std::env::remove_var("WHYCODES_NO_MEMORY") };
         }
-        match prev_banks {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_SUBAGENT_BANKS", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_SUBAGENT_BANKS") },
+        if let Some(v) = prev_banks {
+            unsafe { std::env::set_var("WHYCODES_SUBAGENT_BANKS", v) };
+        } else {
+            unsafe { std::env::remove_var("WHYCODES_SUBAGENT_BANKS") };
         }
         assert!(out.contains("base prompt"), "{out}");
         let _ = scripted_runner([whycodes_llm::ScriptedStep::Text("x".into())]);

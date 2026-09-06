@@ -235,9 +235,9 @@ mod tests {
         emit(&None, TurnEvent::Status("nope".into()));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         emit(&Some(tx), TurnEvent::Status("hi".into()));
-        match rx.try_recv() {
-            Ok(TurnEvent::Status(s)) => assert_eq!(s, "hi"),
-            other => panic!("{other:?}"),
-        }
+        let Ok(TurnEvent::Status(s)) = rx.try_recv() else {
+            panic!("expected status");
+        };
+        assert_eq!(s, "hi");
     }
 }

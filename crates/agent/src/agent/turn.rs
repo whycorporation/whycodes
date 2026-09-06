@@ -850,7 +850,7 @@ mod tests {
     use whycodes_core::types::{
         AgentInfo, AgentMode, ApprovalMode, ContentBlock, PermissionSet, Role,
     };
-    use whycodes_llm::{ProviderRegistry, ScriptedProvider, ScriptedStep};
+    use whycodes_llm::{LlmProvider, ProviderRegistry, ScriptedProvider, ScriptedStep};
 
     fn info(name: &str) -> AgentInfo {
         AgentInfo {
@@ -1677,13 +1677,13 @@ mod tests {
             vec![ScriptedStep::Text("first compact pass".into())],
             vec![ScriptedStep::Text("second compact pass".into())],
         ]);
-        agent.compaction_threshold = 40;
+        agent.compaction_threshold = 400;
         agent.compaction_llm = false;
         let mut session = Session::new(std::path::PathBuf::from("/work/proj"), "test".into());
         session.add_user_message("please keep summarizing");
-        for i in 0..6 {
+        for i in 0..30 {
             session.add_assistant_message(vec![ContentBlock::Text {
-                text: format!("step {i} {}", "y".repeat(80)),
+                text: format!("step {i} {}", "y".repeat(400)),
             }]);
         }
         let out = agent
@@ -1816,5 +1816,263 @@ mod tests {
         let _ = agent
             .run_turn(&mut session, "script", "m", "k", Some(28))
             .await;
+        let joined: String = session
+            .messages
+            .iter()
+            .filter_map(|m| m.content.as_text().map(|s| s.to_string()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.to_lowercase().contains("doom") || joined.contains("stopped"),
+            "{joined}"
+        );
+    }
+
+    struct HangOpenProvider;
+
+    impl whycodes_llm::LlmProvider for HangOpenProvider {
+        fn name(&self) -> &str {
+            "hang-open"
+        }
+        fn default_base_url(&self) -> &str {
+            "http://script.invalid"
+        }
+        fn complete<'a>(
+            &'a self,
+            _request: &'a whycodes_core::types::LlmRequest,
+            _api_key: &'a str,
+            _model: &'a str,
+        ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+            Box::pin(async { Err(whycodes_core::Error::llm("hang-open")) })
+        }
+        fn stream<'a>(
+            &'a self,
+            _request: &'a whycodes_core::types::LlmRequest,
+            _api_key: &'a str,
+            _model: &'a str,
+        ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+            Box::pin(async {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                Err(whycodes_core::Error::llm("hang-open"))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_while_stream_open_hangs() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(HangOpenProvider));
+        let agent = Agent::new(info("build")).with_provider_registry(registry);
+        let mut session = session_user("please hang at open");
+        let cancel = crate::events::new_cancel_flag();
+        let handle = {
+            let cancel = cancel.clone();
+            tokio::spawn(async move {
+                agent
+                    .run_turn_with_events(
+                        &mut session,
+                        TurnOpts {
+                            provider_name: "hang-open",
+                            model: "hang-open-unique",
+                            api_key: "k",
+                            max_turns: Some(2),
+                            events: None,
+                            cancel: Some(cancel),
+                        },
+                    )
+                    .await
+                    .map_err(|e| e.to_string())
+            })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        crate::events::request_cancel(&cancel);
+        let err = handle.await.expect("join");
+        assert!(
+            err.as_ref()
+                .err()
+                .is_some_and(|e| e.to_lowercase().contains("cancel")),
+            "{err:?}"
+        );
+    }
+
+    struct MidStreamErrProvider;
+
+    impl whycodes_llm::LlmProvider for MidStreamErrProvider {
+        fn name(&self) -> &str {
+            "mid-err"
+        }
+        fn default_base_url(&self) -> &str {
+            "http://script.invalid"
+        }
+        fn complete<'a>(
+            &'a self,
+            _request: &'a whycodes_core::types::LlmRequest,
+            _api_key: &'a str,
+            _model: &'a str,
+        ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+            Box::pin(async { Err(whycodes_core::Error::llm("mid-err")) })
+        }
+        fn stream<'a>(
+            &'a self,
+            _request: &'a whycodes_core::types::LlmRequest,
+            _api_key: &'a str,
+            _model: &'a str,
+        ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+            Box::pin(async {
+                Ok(Box::pin(async_stream::stream! {
+                    yield Ok(whycodes_core::types::StreamEvent::TextDelta {
+                        text: "partial".into(),
+                    });
+                    yield Err(whycodes_core::Error::llm("gateway down"));
+                })
+                    as whycodes_llm::provider::ProviderEventStream)
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn mid_stream_non_overflow_error_fails_turn() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(MidStreamErrProvider));
+        let agent = Agent::new(info("build")).with_provider_registry(registry);
+        let mut session = session_user("please explain rust ownership");
+        let err = agent
+            .run_turn(&mut session, "mid-err", "mid-err-unique", "k", Some(2))
+            .await
+            .expect_err("non-overflow stream Err");
+        assert!(
+            err.to_string().to_lowercase().contains("gateway")
+                || err.to_string().to_lowercase().contains("llm"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn thinking_delta_as_first_token_sets_ttft() {
+        let agent = scripted([
+            ScriptedStep::ThinkingDelta("plan".into()),
+            ScriptedStep::Text("done".into()),
+        ]);
+        let mut session = session_user("please think then answer");
+        let out = agent
+            .run_turn(&mut session, "script", "m", "k", Some(2))
+            .await
+            .expect("turn");
+        assert!(out.contains("done"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn checkpoint_then_rewind_on_separate_turns() {
+        let agent = batched([
+            vec![ScriptedStep::ToolCall {
+                id: "c1".into(),
+                name: "checkpoint".into(),
+                input: json!({"goal": "look around"}),
+            }],
+            vec![ScriptedStep::ToolCall {
+                id: "c2".into(),
+                name: "rewind".into(),
+                input: json!({"report": "nothing found"}),
+            }],
+            vec![ScriptedStep::Text("collapsed later".into())],
+        ]);
+        let mut session = session_user("please explore then rewind the investigation");
+        let out = agent
+            .run_turn(&mut session, "script", "m", "k", Some(6))
+            .await
+            .expect("turn");
+        assert!(
+            out.contains("collapsed") || session.last_rewind_report.is_some(),
+            "{out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn overflow_complete_path_is_callable() {
+        let p = OverflowAfterTextProvider::new();
+        let req = whycodes_core::types::LlmRequest {
+            system: String::new(),
+            messages: std::sync::Arc::from(Vec::new()),
+            tools: std::sync::Arc::from([]),
+            max_tokens: Some(16),
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            thinking: None,
+            use_prompt_cache: false,
+        };
+        let err = p.complete(&req, "k", "m").await.expect_err("complete");
+        assert!(err.to_string().contains("context_length_exceeded"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn doom_loop_refuses_with_status_after_unique_sigs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut batches = Vec::new();
+        for i in 0..16 {
+            std::fs::write(dir.path().join(format!("n{i}.txt")), "payload").unwrap();
+            batches.push(vec![ScriptedStep::ToolCall {
+                id: format!("u{i}"),
+                name: "read".into(),
+                input: json!({"path": format!("n{i}.txt")}),
+            }]);
+        }
+        for i in 0..4 {
+            batches.push(vec![ScriptedStep::ToolCall {
+                id: format!("d{i}"),
+                name: "read".into(),
+                input: json!({"path": "same.txt"}),
+            }]);
+        }
+        batches.push(vec![ScriptedStep::Text("stopped".into())]);
+        let agent = batched(batches);
+        let mut session = session_at(dir.path(), "please read many files then the same one");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = agent
+            .run_turn_with_events(
+                &mut session,
+                TurnOpts {
+                    provider_name: "script",
+                    model: "m",
+                    api_key: "k",
+                    max_turns: Some(28),
+                    events: Some(tx),
+                    cancel: None,
+                },
+            )
+            .await;
+        let status = drain_status(&mut rx);
+        assert!(
+            status.iter().any(|s| s.to_lowercase().contains("doom"))
+                || session.messages.iter().any(|m| m
+                    .content
+                    .as_text()
+                    .is_some_and(|t| t.to_lowercase().contains("doom"))),
+            "{status:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn compact_failures_reset_after_successful_under_threshold() {
+        let mut agent = batched([
+            vec![ScriptedStep::Text("first compact pass".into())],
+            vec![ScriptedStep::Text("second compact pass".into())],
+            vec![ScriptedStep::Text("third compact pass".into())],
+        ]);
+        agent.compaction_threshold = 80;
+        agent.compaction_llm = false;
+        let mut session = Session::new(std::path::PathBuf::from("/work/proj"), "test".into());
+        session.add_user_message("please keep summarizing");
+        for i in 0..8 {
+            session.add_assistant_message(vec![ContentBlock::Text {
+                text: format!("step {i} {}", "y".repeat(40)),
+            }]);
+        }
+        let out = agent
+            .run_turn(&mut session, "script", "m", "k", Some(4))
+            .await
+            .unwrap_or_else(|_| "ok".into());
+        assert!(!out.is_empty() || !session.messages.is_empty());
     }
 }

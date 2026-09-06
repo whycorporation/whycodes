@@ -460,12 +460,7 @@ impl LlmProvider for AnthropicProvider {
                 )));
             }
 
-            Ok(Box::pin(AnthropicSse {
-                bytes: crate::openai_compat::response_bytes(resp),
-                buffer: String::new(),
-                pending: std::collections::VecDeque::new(),
-                done: false,
-            }) as ProviderEventStream)
+            Ok(anthropic_sse(crate::openai_compat::response_bytes(resp)))
         })
     }
 }
@@ -533,6 +528,22 @@ impl Stream for AnthropicSse {
             }
         }
     }
+}
+
+fn anthropic_sse(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
+    Box::pin(AnthropicSse {
+        bytes,
+        buffer: String::new(),
+        pending: std::collections::VecDeque::new(),
+        done: false,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn anthropic_sse_from_bytes(
+    bytes: crate::openai_compat::ByteStream,
+) -> ProviderEventStream {
+    anthropic_sse(bytes)
 }
 
 #[cfg(test)]

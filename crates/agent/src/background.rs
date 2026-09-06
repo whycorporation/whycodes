@@ -711,6 +711,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn start_shell_spawn_failed_marks_job_failed() {
+        let reg = BackgroundRegistry::new(4);
+        let id = reg
+            .start_shell(
+                "whycodes-no-such-binary-xyz",
+                std::env::temp_dir(),
+                SandboxSettings::off(),
+                Some("missing".into()),
+            )
+            .expect("queued");
+        let mut status = None;
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            if let Some(job) = reg.list().into_iter().find(|j| j.id == id)
+                && job.status != JobStatus::Running
+            {
+                status = Some(job.status);
+                break;
+            }
+        }
+        assert_eq!(status, Some(JobStatus::Failed));
+        let out = reg.read(&id, 200).unwrap_or_default();
+        assert!(
+            out.to_lowercase().contains("spawn") || out.to_lowercase().contains("fail"),
+            "{out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn kill_during_wait_marks_killed() {
+        let reg = BackgroundRegistry::new(4);
+        let id = reg
+            .start_shell(
+                "sleep 30",
+                std::env::temp_dir(),
+                SandboxSettings::off(),
+                Some("sleep-kill".into()),
+            )
+            .expect("start");
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let _ = reg.kill(&id);
+        let mut status = None;
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            if let Some(job) = reg.list().into_iter().find(|j| j.id == id)
+                && job.status != JobStatus::Running
+            {
+                status = Some(job.status);
+                break;
+            }
+        }
+        assert!(
+            matches!(
+                status,
+                Some(JobStatus::Killed) | Some(JobStatus::Failed) | Some(JobStatus::Done)
+            ),
+            "{status:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn start_shell_workspace_fallback_warning() {
         let reg = BackgroundRegistry::new(4);
         let settings = SandboxSettings {

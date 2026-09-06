@@ -355,12 +355,7 @@ impl LlmProvider for OllamaProvider {
                 )));
             }
 
-            Ok(Box::pin(OllamaNdjson {
-                bytes: crate::openai_compat::response_bytes(resp),
-                buffer: String::new(),
-                pending: VecDeque::new(),
-                done: false,
-            }) as ProviderEventStream)
+            Ok(ollama_ndjson(crate::openai_compat::response_bytes(resp)))
         })
     }
 }
@@ -452,6 +447,22 @@ impl Stream for OllamaNdjson {
             }
         }
     }
+}
+
+fn ollama_ndjson(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
+    Box::pin(OllamaNdjson {
+        bytes,
+        buffer: String::new(),
+        pending: VecDeque::new(),
+        done: false,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn ollama_ndjson_from_bytes(
+    bytes: crate::openai_compat::ByteStream,
+) -> ProviderEventStream {
+    ollama_ndjson(bytes)
 }
 
 #[cfg(test)]

@@ -1142,18 +1142,30 @@ mod tests {
             IntentGuidanceMode::Auto,
         );
         assert!(applied.is_some());
-        match &req.messages[0].content {
-            MessageContent::Blocks(blocks) => {
-                assert!(
-                    blocks.iter().any(|b| matches!(
-                        b,
-                        whycodes_core::types::ContentBlock::Text { text } if text.contains("whycodes_intent")
-                    )),
-                    "{blocks:?}"
-                );
-            }
-            other => panic!("{other:?}"),
-        }
+        let MessageContent::Blocks(blocks) = &req.messages[0].content else {
+            panic!("expected blocks");
+        };
+        assert!(
+            blocks.iter().any(|b| matches!(
+                b,
+                whycodes_core::types::ContentBlock::Text { text } if text.contains("whycodes_intent")
+            )),
+            "{blocks:?}"
+        );
+    }
+
+    #[test]
+    fn qmark_without_change_and_bare_imperative() {
+        let q = classify_user_intent("huh?");
+        assert_eq!(q.intent, UserIntent::Question);
+        let c = classify_user_intent("please");
+        assert!(
+            matches!(c.intent, UserIntent::Change | UserIntent::Ambiguous),
+            "{c:?}"
+        );
+        let t = classify_user_intent("hi");
+        assert_eq!(t.intent, UserIntent::Trivial);
+        assert_eq!(t.confidence, 0.95);
     }
 
     #[test]

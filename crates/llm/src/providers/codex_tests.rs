@@ -372,6 +372,49 @@ async fn stream_synthesizes_stop_from_done_without_completed() {
 }
 
 #[tokio::test]
+async fn sse_from_scripted_bytes_covers_error_pending_and_done_break() {
+    use crate::openai_compat::scripted_bytes;
+    use futures::StreamExt;
+    use std::time::Duration;
+
+    let first = b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"he\"}\n".to_vec();
+    let mut stream = codex_sse_from_bytes(scripted_bytes([Ok(first), Err("chunk fail".into())]));
+    let mut text = String::new();
+    let mut saw_err = false;
+    while let Some(ev) = stream.next().await {
+        match ev {
+            Ok(StreamEvent::TextDelta { text: d }) => text.push_str(&d),
+            Err(_) => saw_err = true,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "he");
+    assert!(saw_err);
+
+    let rest = concat!(
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n",
+        "data: [DONE]\n",
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n",
+    );
+    let mut delayed = codex_sse_from_bytes(Box::pin(async_stream::stream! {
+        yield Ok(rest.as_bytes()[..20].to_vec());
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        yield Ok(rest.as_bytes()[20..].to_vec());
+    }));
+    let mut text = String::new();
+    let mut saw_stop = false;
+    while let Some(ev) = delayed.next().await {
+        match ev.unwrap() {
+            StreamEvent::TextDelta { text: d } => text.push_str(&d),
+            StreamEvent::MessageStop => saw_stop = true,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "hi");
+    assert!(saw_stop);
+}
+
+#[tokio::test]
 async fn complete_sends_chatgpt_account_id_from_stored_extra() {
     let dir = std::env::temp_dir().join(format!(
         "whycodes-codex-acct-{}-{}",

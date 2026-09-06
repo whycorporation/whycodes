@@ -364,12 +364,7 @@ pub(crate) async fn stream_at(
         )));
     }
 
-    Ok(Box::pin(CodexSse {
-        bytes: crate::openai_compat::response_bytes(resp),
-        buffer: String::new(),
-        pending: VecDeque::new(),
-        done: false,
-    }) as ProviderEventStream)
+    Ok(codex_sse(crate::openai_compat::response_bytes(resp)))
 }
 
 struct CodexSse {
@@ -443,6 +438,20 @@ impl Stream for CodexSse {
             }
         }
     }
+}
+
+fn codex_sse(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
+    Box::pin(CodexSse {
+        bytes,
+        buffer: String::new(),
+        pending: VecDeque::new(),
+        done: false,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn codex_sse_from_bytes(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
+    codex_sse(bytes)
 }
 
 #[cfg(test)]

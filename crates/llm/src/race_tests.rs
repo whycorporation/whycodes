@@ -422,6 +422,7 @@ async fn same_model_skips_race() {
     assert_eq!(opens.load(Ordering::SeqCst), 1);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn delay(
     name: &str,
     delay: Duration,
@@ -1071,6 +1072,32 @@ async fn delay_provider_complete_and_default_url() {
     assert_eq!(p.default_base_url(), "http://example.invalid");
     let resp = p.complete(&req(), "", "m").await.unwrap();
     assert_eq!(resp.model, "m");
+}
+
+#[test]
+fn prefix_partner_errors_when_stream_is_missing() {
+    let err = prefix_partner(StreamEvent::MessageStop, None)
+        .map(|_| ())
+        .unwrap_err();
+    assert!(err.to_string().contains("partner stream missing"), "{err}");
+}
+
+#[tokio::test]
+async fn prefix_partner_keeps_first_token_then_rest() {
+    let rest: EventStream = Box::pin(futures::stream::iter([Ok(StreamEvent::MessageStop)]));
+    let (mut s, outcome) =
+        prefix_partner(StreamEvent::TextDelta { text: "hi".into() }, Some(rest)).unwrap();
+    assert_eq!(
+        outcome,
+        RaceOutcome::Race {
+            reason: "first_token"
+        }
+    );
+    assert!(matches!(
+        s.next().await,
+        Some(Ok(StreamEvent::TextDelta { text })) if text == "hi"
+    ));
+    assert!(matches!(s.next().await, Some(Ok(StreamEvent::MessageStop))));
 }
 
 #[tokio::test]

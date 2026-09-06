@@ -226,6 +226,27 @@ async fn complete_candidates_without_parts_are_empty() {
     assert_eq!(resp.content.len(), 2, "{resp:?}");
 }
 
+#[test]
+fn stream_body_skips_candidates_without_parts() {
+    let body = serde_json::json!({
+        "candidates": [
+            {"content": {}},
+            {"content": {"parts": [{"text": "kept"}]}, "finishReason": "STOP"}
+        ],
+        "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}
+    })
+    .to_string();
+    let events = events_from_google_stream_body(&body);
+    let text: String = events
+        .iter()
+        .filter_map(|ev| match ev {
+            Ok(StreamEvent::TextDelta { text }) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "kept");
+}
+
 #[tokio::test]
 async fn oauth_token_diverts_to_codeassist() {
     use crate::providers::codeassist::{TEST_GEMINI_BASES, cache_project_for_tests};

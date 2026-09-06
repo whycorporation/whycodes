@@ -235,7 +235,9 @@ async fn post_generate(
         if resp.status().is_success() || last || !failover_http(resp.status().as_u16()) {
             return Ok(resp);
         }
-        let _ = resp.bytes().await;
+        if let Err(_drain) = resp.bytes().await {
+            // Failover: the unsuccessful body is discarded before the next base.
+        }
     }
 }
 
@@ -812,13 +814,7 @@ async fn stream_with(
         )));
     }
 
-    Ok(Box::pin(CodeAssistSse {
-        bytes: crate::openai_compat::response_bytes(resp),
-        buffer: String::new(),
-        pending: VecDeque::new(),
-        call_seq: 0,
-        done: false,
-    }) as ProviderEventStream)
+    Ok(codeassist_sse(crate::openai_compat::response_bytes(resp)))
 }
 
 struct CodeAssistSse {
@@ -885,6 +881,24 @@ impl Stream for CodeAssistSse {
     }
 }
 
+fn codeassist_sse(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
+    Box::pin(CodeAssistSse {
+        bytes,
+        buffer: String::new(),
+        pending: VecDeque::new(),
+        call_seq: 0,
+        done: false,
+    })
+}
+
 #[cfg(test)]
+pub(crate) fn codeassist_sse_from_bytes(
+    bytes: crate::openai_compat::ByteStream,
+) -> ProviderEventStream {
+    codeassist_sse(bytes)
+}
+
+#[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 #[path = "codeassist_tests.rs"]
 mod tests;

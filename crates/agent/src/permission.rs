@@ -209,17 +209,20 @@ mod tests {
         assert!(!p.ask("bash", "x").await, "piped stdin must deny");
 
         // Restore.
-        match prev_approve {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") },
+        if let Some(v) = prev_approve {
+            unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) };
+        } else {
+            unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") };
         }
-        match prev_deny {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_AUTO_DENY", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") },
+        if let Some(v) = prev_deny {
+            unsafe { std::env::set_var("WHYCODES_AUTO_DENY", v) };
+        } else {
+            unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") };
         }
-        match prev_ci {
-            Some(v) => unsafe { std::env::set_var("CI", v) },
-            None => unsafe { std::env::remove_var("CI") },
+        if let Some(v) = prev_ci {
+            unsafe { std::env::set_var("CI", v) };
+        } else {
+            unsafe { std::env::remove_var("CI") };
         }
     }
 
@@ -237,17 +240,20 @@ mod tests {
         unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") };
         assert!(atty_stderr());
         let _ = default_prompter();
-        match prev_ci {
-            Some(v) => unsafe { std::env::set_var("CI", v) },
-            None => unsafe { std::env::remove_var("CI") },
+        if let Some(v) = prev_ci {
+            unsafe { std::env::set_var("CI", v) };
+        } else {
+            unsafe { std::env::remove_var("CI") };
         }
-        match prev_approve {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") },
+        if let Some(v) = prev_approve {
+            unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) };
+        } else {
+            unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") };
         }
-        match prev_deny {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_AUTO_DENY", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") },
+        if let Some(v) = prev_deny {
+            unsafe { std::env::set_var("WHYCODES_AUTO_DENY", v) };
+        } else {
+            unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") };
         }
     }
 

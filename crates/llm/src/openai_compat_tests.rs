@@ -516,7 +516,7 @@ fn error_source_chain_walks_nested_sources() {
     let chain = error_source_chain(&Outer(Inner));
     assert!(chain.contains("error decoding response body"), "{chain}");
     assert!(chain.contains("unexpected EOF"), "{chain}");
-    let err = stream_chunk_error("grokv", Outer(Inner));
+    let err = stream_chunk_error("grokv", &chain);
     let s = err.to_string();
     assert!(s.contains("Stream:"), "{s}");
     assert!(s.contains("unexpected EOF"), "{s}");
@@ -708,11 +708,10 @@ fn ensure_object_arguments_coerces_non_objects() {
         ensure_object_arguments(&json!("{\"a\":1}")),
         json!({"a": 1})
     );
-    assert_eq!(
+    assert!(
         arguments_stream_fragment(&json!({"q": "x"}))
             .unwrap()
-            .contains("q"),
-        true
+            .contains("q")
     );
     assert!(arguments_stream_fragment(&json!("")).is_none());
     let events = stream_events_for_tool_call_delta(&json!({
@@ -782,4 +781,57 @@ fn ensure_object_arguments_coerces_non_objects() {
         "content": "hi"
     }));
     assert!(matches!(&blocks[0], ContentBlock::Thinking { text, .. } if text == "leaf"));
+}
+
+#[tokio::test]
+async fn chat_sse_from_scripted_bytes_covers_pending_error_and_done_break() {
+    use futures::StreamExt;
+    use std::time::Duration;
+
+    let first = b"data: {\"choices\":[{\"delta\":{\"content\":\"he\"}}]}\n".to_vec();
+    let rest = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"llo\"}}]}\n",
+        "data: [DONE]\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ignored\"}}]}\n",
+    )
+    .as_bytes()
+    .to_vec();
+    let mut stream = chat_sse_from_bytes(
+        scripted_bytes([Ok(first), Err("chunk fail".into()), Ok(rest.clone())]),
+        "openai",
+    );
+    let mut text = String::new();
+    let mut saw_err = false;
+    let mut saw_stop = false;
+    while let Some(ev) = stream.next().await {
+        match ev {
+            Ok(StreamEvent::TextDelta { text: d }) => text.push_str(&d),
+            Ok(StreamEvent::MessageStop) => saw_stop = true,
+            Err(_) => saw_err = true,
+            _ => {}
+        }
+    }
+    assert!(saw_err);
+    assert_eq!(text, "hello");
+    assert!(saw_stop);
+
+    let mut delayed = chat_sse_from_bytes(
+        Box::pin(async_stream::stream! {
+            yield Ok(b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n".to_vec());
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            yield Ok(b"data: [DONE]\nextra-without-newline".to_vec());
+        }),
+        "openai",
+    );
+    let mut text = String::new();
+    let mut saw_stop = false;
+    while let Some(ev) = delayed.next().await {
+        match ev.unwrap() {
+            StreamEvent::TextDelta { text: d } => text.push_str(&d),
+            StreamEvent::MessageStop => saw_stop = true,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "hi");
+    assert!(saw_stop);
 }

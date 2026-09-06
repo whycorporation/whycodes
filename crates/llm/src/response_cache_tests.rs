@@ -246,7 +246,7 @@ fn exact_key_hashes_roles_and_blocks() {
             parameters: serde_json::json!({"type": "object"}),
         }],
     );
-    assert!(ResponseCache::eligible(&r) == false);
+    assert!(!ResponseCache::eligible(&r));
     let key = exact_key(&r, "haiku");
     assert_ne!(key, 0);
     assert_eq!(tool_sig(&r), tool_sig(&r));
@@ -260,9 +260,11 @@ fn store_returns_when_lock_is_poisoned() {
         panic!("poison response cache");
     }));
     cache.store(&req("sys", "q"), "haiku", "answer");
-    assert_eq!(cache.len(), 0);
+    assert_eq!(cache.len(), 1);
+    let hit = cache.lookup(&req("sys", "q"), "haiku").expect("recovered");
+    assert_eq!(hit.text, "answer");
     cache.clear();
-    assert!(cache.lookup(&req("sys", "q"), "haiku").is_none());
+    assert!(cache.is_empty());
 }
 
 #[test]

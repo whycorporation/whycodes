@@ -1,4 +1,6 @@
-use super::{AnthropicProvider, events_for_data, usage_from_message_delta};
+use super::{
+    AnthropicProvider, anthropic_sse_from_bytes, events_for_data, usage_from_message_delta,
+};
 use serde_json::json;
 use whycodes_core::types::StreamEvent;
 
@@ -489,6 +491,50 @@ async fn stream_parses_sse_and_done() {
     let mut text = String::new();
     let mut saw_stop = false;
     while let Some(ev) = stream.next().await {
+        match ev.unwrap() {
+            StreamEvent::TextDelta { text: d } => text.push_str(&d),
+            StreamEvent::MessageStop => saw_stop = true,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "hi");
+    assert!(saw_stop);
+}
+
+#[tokio::test]
+async fn sse_from_scripted_bytes_covers_error_pending_and_done_break() {
+    use crate::openai_compat::scripted_bytes;
+    use futures::StreamExt;
+    use std::time::Duration;
+
+    let first = b"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"he\"}}\n".to_vec();
+    let mut stream =
+        anthropic_sse_from_bytes(scripted_bytes([Ok(first), Err("chunk fail".into())]));
+    let mut text = String::new();
+    let mut saw_err = false;
+    while let Some(ev) = stream.next().await {
+        match ev {
+            Ok(StreamEvent::TextDelta { text: d }) => text.push_str(&d),
+            Err(_) => saw_err = true,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "he");
+    assert!(saw_err);
+
+    let rest = concat!(
+        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n",
+        "data: [DONE]\n",
+        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}\n",
+    );
+    let mut delayed = anthropic_sse_from_bytes(Box::pin(async_stream::stream! {
+        yield Ok(rest.as_bytes()[..20].to_vec());
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        yield Ok(rest.as_bytes()[20..].to_vec());
+    }));
+    let mut text = String::new();
+    let mut saw_stop = false;
+    while let Some(ev) = delayed.next().await {
         match ev.unwrap() {
             StreamEvent::TextDelta { text: d } => text.push_str(&d),
             StreamEvent::MessageStop => saw_stop = true,

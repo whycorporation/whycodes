@@ -142,10 +142,10 @@ mod tests {
         acc.push_text("ab");
         acc.push_text("abcd");
         let blocks = acc.into_blocks();
-        match &blocks[0] {
-            ContentBlock::Thinking { text, .. } => assert_eq!(text, "abcd"),
-            other => panic!("{other:?}"),
-        }
+        let ContentBlock::Thinking { text, .. } = &blocks[0] else {
+            panic!("expected thinking");
+        };
+        assert_eq!(text, "abcd");
     }
 
     #[test]
@@ -154,13 +154,11 @@ mod tests {
         acc.push_text("plan");
         acc.push_signature("sig-1");
         let blocks = acc.into_blocks();
-        match &blocks[0] {
-            ContentBlock::Thinking { text, signature } => {
-                assert_eq!(text, "plan");
-                assert_eq!(signature.as_deref(), Some("sig-1"));
-            }
-            other => panic!("{other:?}"),
-        }
+        let ContentBlock::Thinking { text, signature } = &blocks[0] else {
+            panic!("expected thinking");
+        };
+        assert_eq!(text, "plan");
+        assert_eq!(signature.as_deref(), Some("sig-1"));
     }
 
     #[test]
@@ -277,23 +275,21 @@ mod tests {
         assert_eq!(t["reasoning_effort"], "high");
     }
 
+    fn assert_thinking(blocks: &[ContentBlock]) {
+        let ContentBlock::Thinking { .. } = &blocks[0] else {
+            panic!("expected thinking");
+        };
+    }
+
     #[test]
     fn leftover_panic_arms_are_reachable() {
         let mut acc = ThinkingAccumulator::new();
         acc.push_text("hello");
-        let blocks = acc.into_blocks();
-        match &blocks[0] {
-            ContentBlock::Thinking { text, .. } => assert_eq!(text, "hello"),
-            other => panic!("{other:?}"),
-        }
+        assert_thinking(&acc.into_blocks());
 
         let mut acc = ThinkingAccumulator::new();
         acc.push_text("plan");
         acc.push_signature("sig");
-        let blocks = acc.into_blocks();
-        match &blocks[0] {
-            ContentBlock::Thinking { .. } => {}
-            other => panic!("{other:?}"),
-        }
+        assert_thinking(&acc.into_blocks());
     }
 }

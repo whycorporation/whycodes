@@ -602,6 +602,54 @@ mod tests {
             "k",
             Some(tx),
         );
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    }
+
+    struct NonTextRetainProvider;
+
+    impl whycodes_llm::LlmProvider for NonTextRetainProvider {
+        fn name(&self) -> &str {
+            "retain-nontext"
+        }
+        fn default_base_url(&self) -> &str {
+            "http://script.invalid"
+        }
+        fn complete<'a>(
+            &'a self,
+            _request: &'a whycodes_core::types::LlmRequest,
+            _api_key: &'a str,
+            model: &'a str,
+        ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+            Box::pin(async move {
+                Ok(whycodes_core::types::LlmResponse {
+                    content: vec![ContentBlock::RedactedThinking {
+                        data: "opaque".into(),
+                    }],
+                    stop_reason: Some("end_turn".into()),
+                    usage: Default::default(),
+                    model: model.into(),
+                })
+            })
+        }
+        fn stream<'a>(
+            &'a self,
+            _request: &'a whycodes_core::types::LlmRequest,
+            _api_key: &'a str,
+            _model: &'a str,
+        ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+            Box::pin(async { Err(whycodes_core::Error::llm("complete-only")) })
+        }
+    }
+
+    #[tokio::test]
+    async fn llm_extract_facts_filters_non_text() {
+        let p = NonTextRetainProvider;
+        let raw = llm_extract_facts(&p, "retain-nontext", "m", "k", "user", "asst")
+            .await
+            .expect("ok");
+        assert!(raw.is_empty(), "{raw}");
+        let (p_name, m_id) = crate::title::resolve_title_model("openai", "gpt-4o", None);
+        assert_ne!(m_id, "gpt-4o");
+        let _ = p_name;
     }
 }

@@ -490,6 +490,14 @@ mod tests {
         assert!(jobs.is_empty());
         maybe_start(&mut jobs, "c1", "read", "{\n  \"path\": \"\"\n}", &c);
         assert!(jobs.is_empty());
+        maybe_start(
+            &mut jobs,
+            "c2",
+            "read",
+            "{\n  \"path\": \"\",\n  \"offset\": 1\n}",
+            &c,
+        );
+        assert!(jobs.is_empty());
     }
 
     #[test]
