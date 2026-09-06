@@ -56,39 +56,32 @@ impl Tool for DisplayTool {
             let content = args["content"].as_str().unwrap_or("");
             let language = args["language"].as_str().unwrap_or("");
             let format = args["format"].as_str().unwrap_or("code");
-
-            let result = match format {
-                "code" => {
-                    // If language is empty and content looks like a path, try to detect
-                    let lang = if language.is_empty() {
-                        whycodes_format::highlight::detect_language(
-                            content.lines().next().unwrap_or(""),
-                        )
-                        .unwrap_or("")
-                    } else {
-                        language
-                    };
-                    if lang.is_empty() {
-                        // No language — return as plain text
-                        content.to_string()
-                    } else {
-                        whycodes_format::highlight::highlight_code(content, lang)
-                    }
-                }
-                "diff" => whycodes_format::diff::render_diff_unified(content),
-                "table" => {
-                    // Parse content as simple newline-and-comma table
-                    content.to_string()
-                }
-                _ => content.to_string(),
-            };
-
             ToolResult {
                 tool_call_id: String::new(),
-                content: result,
+                content: format_display_content(content, language, format),
                 is_error: false,
             }
         })
+    }
+}
+
+fn format_display_content(content: &str, language: &str, format: &str) -> String {
+    match format {
+        "code" => {
+            let lang = if language.is_empty() {
+                whycodes_format::highlight::detect_language(content.lines().next().unwrap_or(""))
+                    .unwrap_or("")
+            } else {
+                language
+            };
+            if lang.is_empty() {
+                content.to_string()
+            } else {
+                whycodes_format::highlight::highlight_code(content, lang)
+            }
+        }
+        "diff" => whycodes_format::diff::render_diff_unified(content),
+        _ => content.to_string(),
     }
 }
 

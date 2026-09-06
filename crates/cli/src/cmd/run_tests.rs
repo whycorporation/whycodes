@@ -157,4 +157,12 @@ fn slash_info_cost_doctor_and_resume_helpers() {
     }
     assert!(thinking_display_label(true).contains("ON"));
     assert!(thinking_display_label(false).contains("OFF"));
+    assert!(matches!(parse_effort_slash(""), EffortSlash::Show));
+    assert!(matches!(
+        parse_effort_slash("high"),
+        EffortSlash::Set(whycodes_llm::ReasoningEffort::High)
+    ));
+    assert!(matches!(parse_effort_slash("nope"), EffortSlash::Unknown));
+    assert_eq!(masked_api_key_prefix("abcdefghij"), "abcdefgh");
+    assert_eq!(masked_api_key_prefix("ab"), "ab");
 }

@@ -108,3 +108,16 @@ async fn text_format_passes_through() {
     assert!(!out.is_error);
     assert_eq!(out.content, "plain");
 }
+
+#[test]
+fn format_display_content_covers_code_diff_and_passthrough() {
+    let rust = format_display_content("fn main() {}", "rust", "code");
+    assert!(rust.contains('\x1b'), "{rust}");
+    assert_eq!(format_display_content("hello", "", "code"), "hello");
+    let detected = format_display_content("main.rs\nfn main() {}", "", "code");
+    assert!(detected.contains('\x1b'), "{detected}");
+    let diff = format_display_content("@@ -1 +1 @@\n-old\n+new", "", "diff");
+    assert!(diff.contains('\x1b'), "{diff}");
+    assert_eq!(format_display_content("a,b", "", "table"), "a,b");
+    assert_eq!(format_display_content("raw", "", "text"), "raw");
+}

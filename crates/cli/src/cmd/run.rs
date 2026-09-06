@@ -104,6 +104,26 @@ pub(crate) fn thinking_display_label(show_thinking: bool) -> String {
     }
 }
 
+pub(crate) enum EffortSlash {
+    Show,
+    Set(whycodes_llm::ReasoningEffort),
+    Unknown,
+}
+
+pub(crate) fn parse_effort_slash(rest: &str) -> EffortSlash {
+    if rest.is_empty() {
+        EffortSlash::Show
+    } else if let Some(parsed) = whycodes_llm::ReasoningEffort::parse(rest) {
+        EffortSlash::Set(parsed)
+    } else {
+        EffortSlash::Unknown
+    }
+}
+
+pub(crate) fn masked_api_key_prefix(api_key: &str) -> String {
+    api_key.chars().take(8).collect()
+}
+
 pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     let msg = e.to_string();
     if msg.contains("No such device")
@@ -769,47 +789,51 @@ pub(crate) async fn cmd_run(
                     continue;
                 }
                 "/effort" => {
-                    if rest.is_empty() {
-                        let current = config
-                            .session
-                            .reasoning_effort
-                            .as_deref()
-                            .unwrap_or("medium (default)");
-                        println!("Reasoning effort: {}", current.cyan());
-                        println!("Set with /effort low|medium|high|xhigh");
-                    } else if let Some(parsed) = whycodes_llm::ReasoningEffort::parse(rest) {
-                        let resolved = whycodes_llm::ThinkingConfig::resolve_effort(
-                            &provider,
-                            &model,
-                            Some(parsed.as_str()),
-                        );
-                        match resolved {
-                            Some(level) => {
-                                let value = level.as_str().to_string();
-                                config.session.reasoning_effort = Some(value.clone());
-                                agent.set_reasoning_effort(Some(value.clone()));
-                                if let Err(e) = config.save() {
-                                    eprintln!("{} Could not persist: {e}", "✗".red());
+                    match parse_effort_slash(rest) {
+                        EffortSlash::Show => {
+                            let current = config
+                                .session
+                                .reasoning_effort
+                                .as_deref()
+                                .unwrap_or("medium (default)");
+                            println!("Reasoning effort: {}", current.cyan());
+                            println!("Set with /effort low|medium|high|xhigh");
+                        }
+                        EffortSlash::Set(parsed) => {
+                            let resolved = whycodes_llm::ThinkingConfig::resolve_effort(
+                                &provider,
+                                &model,
+                                Some(parsed.as_str()),
+                            );
+                            match resolved {
+                                Some(level) => {
+                                    let value = level.as_str().to_string();
+                                    config.session.reasoning_effort = Some(value.clone());
+                                    agent.set_reasoning_effort(Some(value.clone()));
+                                    if let Err(e) = config.save() {
+                                        eprintln!("{} Could not persist: {e}", "✗".red());
+                                    }
+                                    println!(
+                                        "{} Reasoning effort → {}",
+                                        "✓".green(),
+                                        level.label().cyan()
+                                    );
                                 }
-                                println!(
-                                    "{} Reasoning effort → {}",
-                                    "✓".green(),
-                                    level.label().cyan()
-                                );
-                            }
-                            None => {
-                                println!(
-                                    "{} This model has no reasoning-effort levels",
-                                    "·".dimmed()
-                                );
+                                None => {
+                                    println!(
+                                        "{} This model has no reasoning-effort levels",
+                                        "·".dimmed()
+                                    );
+                                }
                             }
                         }
-                    } else {
-                        eprintln!(
-                            "{} Unknown effort '{}' (low, medium, high, xhigh)",
-                            "✗".red(),
-                            rest
-                        );
+                        EffortSlash::Unknown => {
+                            eprintln!(
+                                "{} Unknown effort '{}' (low, medium, high, xhigh)",
+                                "✗".red(),
+                                rest
+                            );
+                        }
                     }
                     continue;
                 }
@@ -846,7 +870,7 @@ pub(crate) async fn cmd_run(
                             "{} API key loaded for {} ({}…)",
                             "✓".green(),
                             provider.cyan(),
-                            api_key.chars().take(8).collect::<String>()
+                            masked_api_key_prefix(&api_key)
                         );
                     } else {
                         println!("Add a provider:");
