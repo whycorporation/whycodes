@@ -128,39 +128,5 @@ impl RateLimiter {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_retry_after_seconds() {
-        assert_eq!(parse_retry_after("30"), Duration::from_secs(30));
-        assert_eq!(parse_retry_after(" 60 "), Duration::from_secs(60));
-    }
-
-    #[test]
-    fn test_parse_retry_after_fallback() {
-        assert_eq!(parse_retry_after("invalid"), Duration::from_secs(5));
-    }
-
-    #[test]
-    fn test_is_rate_limited() {
-        assert!(is_rate_limited(429));
-        assert!(!is_rate_limited(200));
-        assert!(!is_rate_limited(500));
-    }
-
-    #[test]
-    fn test_rate_limiter_acquire_fast() {
-        let limiter = RateLimiter::new(1_000_000.0);
-        assert_eq!(limiter.acquire(), Duration::ZERO);
-    }
-
-    #[test]
-    fn test_rate_limiter_pause() {
-        let limiter = RateLimiter::new(100.0);
-        limiter.pause(Duration::from_secs(1));
-        assert!(limiter.is_paused());
-        let wait = limiter.acquire();
-        assert!(wait > Duration::ZERO);
-    }
-}
+#[path = "rate_limit_tests.rs"]
+mod tests;

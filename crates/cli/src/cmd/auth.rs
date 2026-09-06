@@ -38,30 +38,21 @@ pub(crate) async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
                 whycodes_auth::providers::login(provider, &store, !no_browser).await?;
             }
             println!(
-                "{} Logged in to {} — credential stored in {}",
-                "✓".green(),
-                provider.cyan(),
-                store.path().display()
+                "{}",
+                logged_in_line(provider, &store.path().display().to_string())
             );
         }
         AuthCmd::Logout { provider } => {
             if store.remove(provider)? {
-                println!(
-                    "{} Removed stored credentials for {}",
-                    "✓".green(),
-                    provider.cyan()
-                );
+                println!("{}", logout_removed_line(provider));
             } else {
-                println!("No stored credentials for `{provider}`.");
+                println!("{}", logout_missing_line(provider));
             }
         }
         AuthCmd::Status => {
             let entries = store.list()?;
             if entries.is_empty() {
-                println!(
-                    "No OAuth logins yet. Run: whycodes auth login <{}>",
-                    oauth_provider_list()
-                );
+                println!("{}", auth_status_empty_line(&oauth_provider_list()));
             } else {
                 println!("{} OAuth logins ({}):", "🔑".bold(), store.path().display());
                 for (name, auth) in entries {
@@ -89,12 +80,14 @@ pub(crate) async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Resul
     let found = scan(&consent);
     if found.is_empty() {
         println!(
-            "No credentials from other CLIs found (looked for {}).",
-            whycodes_auth::discover::KNOWN_SOURCES
-                .iter()
-                .map(|s| s.label)
-                .collect::<Vec<_>>()
-                .join(", ")
+            "{}",
+            import_none_found_line(
+                &whycodes_auth::discover::KNOWN_SOURCES
+                    .iter()
+                    .map(|s| s.label)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         );
         return Ok(());
     }
@@ -150,7 +143,7 @@ pub(crate) async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Resul
                 let mut line = String::new();
                 super::helpers::read_repl_line(&mut line)?;
                 let answer = line;
-                let yes = matches!(answer.trim().to_lowercase().as_str(), "y" | "yes");
+                let yes = import_prompt_yes(&answer);
                 consent.record(&f.path, yes)?;
                 if yes {
                     match import(&store, &consent, f) {
@@ -162,20 +155,60 @@ pub(crate) async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Resul
                     }
                 } else {
                     println!(
-                        "Skipped (won't ask again — delete {} to reset)",
-                        consent.path().display()
+                        "{}",
+                        skipped_consent_line(&consent.path().display().to_string())
                     );
                 }
             }
         }
     }
     if imported > 0 {
-        println!(
-            "\n{} {imported} credential(s) ready — `whycodes auth status` lists them.",
-            "✓".green()
-        );
+        println!("{}", imported_count_line(imported));
     }
     Ok(())
+}
+
+pub(crate) fn logged_in_line(provider: &str, store_path: &str) -> String {
+    format!(
+        "{} Logged in to {} — credential stored in {store_path}",
+        "✓".green(),
+        provider.cyan()
+    )
+}
+
+pub(crate) fn logout_removed_line(provider: &str) -> String {
+    format!(
+        "{} Removed stored credentials for {}",
+        "✓".green(),
+        provider.cyan()
+    )
+}
+
+pub(crate) fn logout_missing_line(provider: &str) -> String {
+    format!("No stored credentials for `{provider}`.")
+}
+
+pub(crate) fn auth_status_empty_line(list: &str) -> String {
+    format!("No OAuth logins yet. Run: whycodes auth login <{list}>")
+}
+
+pub(crate) fn import_none_found_line(looked_for: &str) -> String {
+    format!("No credentials from other CLIs found (looked for {looked_for}).")
+}
+
+pub(crate) fn import_prompt_yes(answer: &str) -> bool {
+    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+pub(crate) fn skipped_consent_line(consent_path: &str) -> String {
+    format!("Skipped (won't ask again — delete {consent_path} to reset)")
+}
+
+pub(crate) fn imported_count_line(imported: usize) -> String {
+    format!(
+        "\n{} {imported} credential(s) ready — `whycodes auth status` lists them.",
+        "✓".green()
+    )
 }
 
 /// Human expiry label for `auth status` / `debug` — never token material.
@@ -204,21 +237,5 @@ pub(crate) fn auth_expiry_label(auth: &whycodes_auth::ProviderAuth) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn expiry_label_none_is_none() {
-        let tok = whycodes_auth::OAuthToken {
-            access_token: "t".into(),
-            refresh_token: None,
-            expires_at: None,
-            extra: Default::default(),
-        };
-        let auth = whycodes_auth::ProviderAuth {
-            method: "oauth".into(),
-            token: tok,
-        };
-        assert!(!auth_expiry_label(&auth).is_empty());
-    }
-}
+#[path = "auth_tests.rs"]
+mod tests;

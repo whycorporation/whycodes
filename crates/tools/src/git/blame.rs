@@ -77,13 +77,10 @@ impl Tool for GitBlameTool {
                     cmd.arg(rev);
                 }
 
-                let line_start = args["line_start"].as_u64();
-                let line_end = args["line_end"].as_u64();
-
-                if let (Some(start), Some(end)) = (line_start, line_end) {
-                    cmd.arg("-L").arg(format!("{},{}", start, end));
-                } else if let Some(start) = line_start {
-                    cmd.arg("-L").arg(format!("{},", start));
+                if let Some(range) =
+                    blame_line_args(args["line_start"].as_u64(), args["line_end"].as_u64())
+                {
+                    cmd.arg("-L").arg(range);
                 }
 
                 cmd.arg("--").arg(&file);
@@ -126,55 +123,15 @@ impl Tool for GitBlameTool {
     }
 }
 
-#[cfg(test)]
-#[allow(clippy::await_holding_lock)]
-mod tests {
-    use super::*;
-    use crate::tool::ToolContext;
-    use serde_json::json;
-
-    #[test]
-    fn blame_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-
-    #[tokio::test]
-    async fn blame_line_start_only_and_missing_file() {
-        let t = GitBlameTool;
-        assert_eq!(t.name(), "git_blame");
-        assert!(!t.description().is_empty());
-        let _ = t.parameters();
-        let missing = t.execute(json!({}), &ToolContext::new(".")).await;
-        assert!(missing.is_error, "{}", missing.content);
-        let dir = tempfile::TempDir::new().unwrap();
-        let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
-        let err = t
-            .execute(json!({"file": "a.txt", "line_start": 1}), &ctx)
-            .await;
-        assert!(err.is_error, "{}", err.content);
-    }
-
-    #[tokio::test]
-    async fn blame_fails_when_git_missing_from_path() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var_os("PATH");
-        unsafe { std::env::set_var("PATH", "/nonexistent-whycodes-path") };
-        let dir = tempfile::TempDir::new().unwrap();
-        let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
-        let out = GitBlameTool::new()
-            .execute(json!({"file": "a.txt"}), &ctx)
-            .await;
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("PATH", v),
-                None => std::env::remove_var("PATH"),
-            }
-        }
-        assert!(out.is_error, "{}", out.content);
-        assert!(
-            out.content.contains("Failed to run git blame"),
-            "{}",
-            out.content
-        );
+fn blame_line_args(line_start: Option<u64>, line_end: Option<u64>) -> Option<String> {
+    match (line_start, line_end) {
+        (Some(start), Some(end)) => Some(format!("{start},{end}")),
+        (Some(start), None) => Some(format!("{start},")),
+        _ => None,
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::await_holding_lock)]
+#[path = "blame_tests.rs"]
+mod tests;

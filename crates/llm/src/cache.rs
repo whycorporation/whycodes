@@ -13,6 +13,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::json_value;
+
 /// How aggressively to mark cache breakpoints on Anthropic/Bedrock bodies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -84,14 +86,12 @@ impl CacheConfig {
     }
 
     pub fn cache_control_value() -> Value {
-        serde_json::json!({ "type": "ephemeral" })
+        json_value::obj([("type", json_value::str("ephemeral"))])
     }
 }
 
-const EPHEMERAL: &str = r#"{"type":"ephemeral"}"#;
-
 fn ephemeral() -> Value {
-    serde_json::from_str(EPHEMERAL).unwrap_or_else(|_| serde_json::json!({"type": "ephemeral"}))
+    CacheConfig::cache_control_value()
 }
 
 /// Apply OpenCode-style cache breakpoints onto a fully built Anthropic request body.
@@ -123,11 +123,11 @@ pub fn apply_anthropic_cache_policy(body: &mut Value, cfg: &CacheConfig) {
     if cfg.system && budget > 0 {
         match body.get("system") {
             Some(Value::String(s)) if !s.is_empty() => {
-                body["system"] = serde_json::json!([{
-                    "type": "text",
-                    "text": s,
-                    "cache_control": hint,
-                }]);
+                body["system"] = json_value::arr([json_value::obj([
+                    ("type", json_value::str("text")),
+                    ("text", json_value::str(s.clone())),
+                    ("cache_control", hint.clone()),
+                ])]);
                 budget = budget.saturating_sub(1);
             }
             Some(Value::Array(_)) => {
@@ -166,11 +166,11 @@ fn mark_latest_user_message(body: &mut Value, hint: &Value) {
     else {
         // String content — upgrade to block so we can attach cache_control
         if let Some(Value::String(text)) = messages[user_idx].get("content").cloned() {
-            messages[user_idx]["content"] = serde_json::json!([{
-                "type": "text",
-                "text": text,
-                "cache_control": hint,
-            }]);
+            messages[user_idx]["content"] = json_value::arr([json_value::obj([
+                ("type", json_value::str("text")),
+                ("text", json_value::str(text)),
+                ("cache_control", hint.clone()),
+            ])]);
         }
         return;
     };
@@ -190,55 +190,5 @@ fn mark_latest_user_message(body: &mut Value, hint: &Value) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn auto_marks_system_tools_and_latest_user() {
-        let mut body = serde_json::json!({
-            "system": "You are WhyCodes.",
-            "tools": [
-                {"name": "read", "description": "r", "input_schema": {"type": "object"}},
-                {"name": "grep", "description": "g", "input_schema": {"type": "object"}},
-            ],
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "first"}]},
-                {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
-                {"role": "user", "content": [{"type": "text", "text": "latest"}]},
-            ]
-        });
-        apply_anthropic_cache_policy(&mut body, &CacheConfig::default());
-
-        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
-        assert!(body["tools"][0].get("cache_control").is_none());
-        assert_eq!(body["tools"][1]["cache_control"]["type"], "ephemeral");
-        assert!(
-            body["messages"][0]["content"][0]
-                .get("cache_control")
-                .is_none()
-        );
-        assert_eq!(
-            body["messages"][2]["content"][0]["cache_control"]["type"],
-            "ephemeral"
-        );
-    }
-
-    #[test]
-    fn none_policy_leaves_body() {
-        let mut body = serde_json::json!({
-            "system": "x",
-            "tools": [{"name": "a", "input_schema": {}}],
-            "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
-        });
-        apply_anthropic_cache_policy(&mut body, &CacheConfig::disabled());
-        assert_eq!(body["system"], "x");
-        assert!(body["tools"][0].get("cache_control").is_none());
-    }
-
-    #[test]
-    fn parse_policy() {
-        assert_eq!(CachePolicy::parse("auto"), CachePolicy::Auto);
-        assert_eq!(CachePolicy::parse("none"), CachePolicy::None);
-        assert_eq!(CachePolicy::parse("off"), CachePolicy::None);
-    }
-}
+#[path = "cache_tests.rs"]
+mod tests;

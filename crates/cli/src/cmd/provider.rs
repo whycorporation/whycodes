@@ -6,43 +6,179 @@ use colored::*;
 use whycodes_config::Config;
 use whycodes_core::types::{ModelConfig, ProviderConfig};
 
+pub(crate) fn provider_key_status(has_key: bool) -> &'static str {
+    if has_key { "set" } else { "not set" }
+}
+
+pub(crate) fn provider_base_url<'a>(
+    base_url: Option<&'a str>,
+    api_base: Option<&'a str>,
+) -> &'a str {
+    base_url.or(api_base).unwrap_or("(default)")
+}
+
+pub(crate) fn provider_add_summary(has_key: bool) -> &'static str {
+    if has_key {
+        "added with API key"
+    } else {
+        "added (no API key — set via env var or --api-key)"
+    }
+}
+
+pub(crate) fn parse_provider_headers(raw: &str) -> std::collections::HashMap<String, String> {
+    let mut headers_map = std::collections::HashMap::new();
+    for pair in raw.split(',') {
+        let parts: Vec<&str> = pair.splitn(2, '=').collect();
+        if parts.len() == 2 {
+            headers_map.insert(parts[0].trim().to_string(), parts[1].trim().to_string());
+        }
+    }
+    headers_map
+}
+
+pub(crate) fn agent_default_marker(name: &str, default_agent: &str) -> String {
+    if name == default_agent {
+        " (default)".dimmed().to_string()
+    } else {
+        String::new()
+    }
+}
+
+pub(crate) fn provider_updating_line(name: &str) -> String {
+    format!(
+        "{} Provider '{}' already exists. Updating...",
+        "⚠".yellow(),
+        name.cyan()
+    )
+}
+
+pub(crate) fn provider_saved_line(name: &str, summary: &str) -> String {
+    format!("{} Provider '{}' {}", "✓".green(), name.cyan(), summary)
+}
+
+pub(crate) fn provider_removed_line(name: &str) -> String {
+    format!("{} Provider '{}' removed.", "✓".green(), name.cyan())
+}
+
+pub(crate) fn provider_not_found_line(name: &str) -> String {
+    format!("{} Provider '{}' not found.", "✗".red(), name.cyan())
+}
+
+pub(crate) fn provider_default_set_line(name: &str) -> String {
+    format!("{} Default provider set to '{}'.", "✓".green(), name.cyan())
+}
+
+pub(crate) fn provider_default_use_line(name: &str) -> String {
+    format!("  Use: whycodes -P {name} ...")
+}
+
+pub(crate) fn provider_default_missing_line(name: &str) -> String {
+    format!(
+        "{} Provider '{}' not found. Add it first: whycodes provider add {name}",
+        "✗".red(),
+        name.cyan()
+    )
+}
+
+pub(crate) fn model_default_set_line(provider: &str, model: &str) -> String {
+    format!(
+        "{} Default model set to {}/{}",
+        "✓".green(),
+        provider.cyan(),
+        model.cyan()
+    )
+}
+
+pub(crate) fn agent_not_found_line(name: &str) -> String {
+    format!("{} Agent '{}' not found.", "✗".red(), name)
+}
+
+pub(crate) fn provider_none_lines(built_in: &str) -> Vec<String> {
+    vec![
+        format!("{} No providers configured.", "ℹ".cyan()),
+        String::new(),
+        "Add a provider:".into(),
+        "  whycodes provider add <name> --api-key <key> --base-url <url>".into(),
+        String::new(),
+        format!("Built-in providers supported: {built_in}"),
+    ]
+}
+
+pub(crate) fn provider_list_header() -> String {
+    format!("{} Configured providers:", "🔌".bold())
+}
+
+pub(crate) fn model_none_lines(config_path: Option<&str>) -> Vec<String> {
+    let mut lines = vec![
+        format!("{} No models configured.", "ℹ".cyan()),
+        String::new(),
+        "Configure models in your config file:".into(),
+    ];
+    if let Some(path) = config_path {
+        lines.push(format!("  {path}"));
+    }
+    lines
+}
+
+pub(crate) fn model_list_header() -> String {
+    format!("{} Configured models:", "🔌".bold())
+}
+
+pub(crate) fn plugins_empty_lines() -> Vec<String> {
+    vec![
+        format!("{} No shell plugins configured.", "🔌".bold()),
+        "TOML: ~/.config/whycodes/plugins.toml or".into(),
+        "      .whycodes/plugins.toml".into(),
+        String::new(),
+        "  [[plugins]]".into(),
+        "  name = \"hello\"".into(),
+        "  command = \"echo hello from plugin\"".into(),
+        "  description = \"Demo plugin\"".into(),
+        String::new(),
+        "Or a directory plugin:".into(),
+        "  .whycodes/plugins/hello/plugin.json".into(),
+        "  {\"name\":\"hello\",\"command\":\"./run.sh\",\"description\":\"Demo\"}".into(),
+        String::new(),
+        "Tools appear as plugin_<name> (tool_profile=full or tool_search).".into(),
+    ]
+}
+
+pub(crate) fn plugins_header(n: usize) -> String {
+    format!("{} Shell plugins ({n}):", "🔌".bold())
+}
+
+pub(crate) fn no_agents_configured_line() -> &'static str {
+    "  (no agents configured)"
+}
+
 pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
     let mut config = Config::load()?;
 
     match cmd {
         ProviderCmd::List => {
             if config.providers.is_empty() {
-                println!("{} No providers configured.", "ℹ".cyan());
-                println!();
-                println!("Add a provider:");
-                println!("  whycodes provider add <name> --api-key <key> --base-url <url>");
-                println!();
-                println!(
-                    "Built-in providers supported: {}",
-                    whycodes_llm::ProviderRegistry::default().names().join(", ")
-                );
+                for line in provider_none_lines(
+                    &whycodes_llm::ProviderRegistry::default().names().join(", "),
+                ) {
+                    println!("{line}");
+                }
             } else {
-                println!("{} Configured providers:", "🔑".bold());
+                println!("{}", provider_list_header());
                 for (name, provider) in &config.providers {
                     let key_status = if provider.api_key.is_some() {
                         "✓".green()
                     } else {
                         "✗".red()
                     };
-                    let url = provider
-                        .base_url
-                        .as_deref()
-                        .or(provider.api_base.as_deref())
-                        .unwrap_or("(default)");
+                    let url = provider_base_url(
+                        provider.base_url.as_deref(),
+                        provider.api_base.as_deref(),
+                    );
                     println!(
                         "  {} {}  API key: {}  Base URL: {}",
                         name.cyan(),
                         key_status,
-                        if provider.api_key.is_some() {
-                            "set"
-                        } else {
-                            "not set"
-                        },
+                        provider_key_status(provider.api_key.is_some()),
                         url
                     );
                 }
@@ -54,16 +190,10 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
             base_url,
             headers,
         } => {
-            let mut headers_map = std::collections::HashMap::new();
-            if let Some(h) = headers {
-                for pair in h.split(',') {
-                    let parts: Vec<&str> = pair.splitn(2, '=').collect();
-                    if parts.len() == 2 {
-                        headers_map
-                            .insert(parts[0].trim().to_string(), parts[1].trim().to_string());
-                    }
-                }
-            }
+            let headers_map = headers
+                .as_deref()
+                .map(parse_provider_headers)
+                .unwrap_or_default();
 
             let provider = ProviderConfig {
                 name: name.clone(),
@@ -81,47 +211,32 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
             };
 
             if config.providers.contains_key(name) {
-                println!(
-                    "{} Provider '{}' already exists. Updating...",
-                    "⚠".yellow(),
-                    name.cyan()
-                );
+                println!("{}", provider_updating_line(name));
             }
 
             config.providers.insert(name.clone(), provider);
             config.save()?;
             println!(
-                "{} Provider '{}' {}",
-                "✓".green(),
-                name.cyan(),
-                if api_key.is_some() {
-                    "added with API key"
-                } else {
-                    "added (no API key — set via env var or --api-key)"
-                }
+                "{}",
+                provider_saved_line(name, provider_add_summary(api_key.is_some()))
             );
         }
         ProviderCmd::Remove { name } => {
             if config.providers.remove(name).is_some() {
                 config.save()?;
-                println!("{} Provider '{}' removed.", "✓".green(), name.cyan());
+                println!("{}", provider_removed_line(name));
             } else {
-                eprintln!("{} Provider '{}' not found.", "✗".red(), name.cyan());
+                eprintln!("{}", provider_not_found_line(name));
             }
         }
         ProviderCmd::Default { name } => {
             if config.providers.contains_key(name) {
                 // Save provider name as metadata
                 config.save()?;
-                println!("{} Default provider set to '{}'.", "✓".green(), name.cyan());
-                println!("  Use: whycodes -P {} ...", name);
+                println!("{}", provider_default_set_line(name));
+                println!("{}", provider_default_use_line(name));
             } else {
-                eprintln!(
-                    "{} Provider '{}' not found. Add it first: whycodes provider add {}",
-                    "✗".red(),
-                    name.cyan(),
-                    name
-                );
+                eprintln!("{}", provider_default_missing_line(name));
             }
         }
     }
@@ -136,14 +251,12 @@ pub(crate) async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
     match cmd {
         ModelCmd::List => {
             if config.models.is_empty() {
-                println!("{} No models configured.", "ℹ".cyan());
-                println!();
-                println!("Configure models in your config file:");
-                if let Ok(path) = Config::default_path() {
-                    println!("  {}", path.display());
+                let path = Config::default_path().ok().map(|p| p.display().to_string());
+                for line in model_none_lines(path.as_deref()) {
+                    println!("{line}");
                 }
             } else {
-                println!("{} Configured models:", "🤖".bold());
+                println!("{}", model_list_header());
                 for (key, model) in &config.models {
                     println!(
                         "  {} → {}/{}",
@@ -171,12 +284,7 @@ pub(crate) async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
                 supports_images: None,
             });
             config.save()?;
-            println!(
-                "{} Default model set to {}/{}",
-                "✓".green(),
-                provider.cyan(),
-                model.cyan()
-            );
+            println!("{}", model_default_set_line(provider, model));
         }
     }
 
@@ -189,23 +297,12 @@ pub(crate) async fn cmd_plugins(cli: &Cli, cmd: Option<&PluginsCmd>) -> anyhow::
     let project = resolve_dir(cli);
     let listed = whycodes_tools::list_shell_plugins(Some(&project));
     if listed.is_empty() {
-        println!("{} No shell plugins configured.", "🔌".bold());
-        println!("TOML: ~/.config/whycodes/plugins.toml or");
-        println!("      .whycodes/plugins.toml");
-        println!();
-        println!("  [[plugins]]");
-        println!("  name = \"hello\"");
-        println!("  command = \"echo hello from plugin\"");
-        println!("  description = \"Demo plugin\"");
-        println!();
-        println!("Or a directory plugin:");
-        println!("  .whycodes/plugins/hello/plugin.json");
-        println!("  {{\"name\":\"hello\",\"command\":\"./run.sh\",\"description\":\"Demo\"}}");
-        println!();
-        println!("Tools appear as plugin_<name> (tool_profile=full or tool_search).");
+        for line in plugins_empty_lines() {
+            println!("{line}");
+        }
         return Ok(());
     }
-    println!("{} Shell plugins ({}):", "🔌".bold(), listed.len());
+    println!("{}", plugins_header(listed.len()));
     for p in &listed {
         println!(
             "  {} → {} — {} ({})",
@@ -240,7 +337,7 @@ pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
                     println!("  Model: {}/{}", model.provider_id, model.model_id);
                 }
             } else {
-                eprintln!("{} Agent '{}' not found.", "✗".red(), name);
+                eprintln!("{}", agent_not_found_line(name));
                 println!();
                 println!("Available agents:");
                 for a in &config.agents {
@@ -251,11 +348,7 @@ pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
         None => {
             println!("{} Available agents:", "🤖".bold());
             for agent in &config.agents {
-                let default_marker = if agent.name == config.default_agent {
-                    " (default)".dimmed()
-                } else {
-                    "".into()
-                };
+                let default_marker = agent_default_marker(&agent.name, &config.default_agent);
                 println!(
                     "  {}{} — {}",
                     agent.name.cyan(),
@@ -264,7 +357,7 @@ pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
                 );
             }
             if config.agents.is_empty() {
-                println!("  (no agents configured)");
+                println!("{}", no_agents_configured_line());
             }
         }
     }
@@ -273,11 +366,5 @@ pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn default_config_has_named_agents() {
-        let cfg = whycodes_config::Config::default();
-        assert!(cfg.get_agent("build").is_some());
-        assert!(cfg.get_agent("plan").is_some());
-    }
-}
+#[path = "provider_tests.rs"]
+mod tests;

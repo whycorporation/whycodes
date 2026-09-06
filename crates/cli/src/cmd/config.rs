@@ -10,24 +10,20 @@ pub(crate) async fn cmd_config(cmd: &ConfigCmd) -> anyhow::Result<()> {
     match cmd {
         ConfigCmd::Show => {
             let config_path = Config::default_path()?;
-            println!(
-                "{} Config path: {}",
-                "⚙".bold(),
-                config_path.display().to_string().cyan()
-            );
+            println!("{}", config_path_line(&config_path.display().to_string()));
             println!();
             let text = toml::to_string_pretty(&config)?;
             println!("{}", text);
         }
         ConfigCmd::Get { key } => match get_config_value(&config, key) {
             Some(val) => println!("{}", val),
-            None => eprintln!("{} Key '{}' not found.", "✗".red(), key),
+            None => eprintln!("{}", config_key_missing_line(key)),
         },
         ConfigCmd::Set { key, value } => {
             let mut config = config.clone();
             set_config_value(&mut config, key, value)?;
             config.save()?;
-            println!("{} Set '{}' = '{}'", "✓".green(), key.cyan(), value);
+            println!("{}", config_set_line(key, value));
         }
         ConfigCmd::Path => {
             let config_path = Config::default_path()?;
@@ -36,6 +32,18 @@ pub(crate) async fn cmd_config(cmd: &ConfigCmd) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+pub(crate) fn config_path_line(path: &str) -> String {
+    format!("{} Config path: {}", "⚙".bold(), path.cyan())
+}
+
+pub(crate) fn config_key_missing_line(key: &str) -> String {
+    format!("{} Key '{}' not found.", "✗".red(), key)
+}
+
+pub(crate) fn config_set_line(key: &str, value: &str) -> String {
+    format!("{} Set '{}' = '{}'", "✓".green(), key.cyan(), value)
 }
 
 pub(crate) fn get_config_value(config: &Config, key: &str) -> Option<String> {
@@ -73,12 +81,5 @@ pub(crate) fn set_config_value(config: &mut Config, key: &str, value: &str) -> a
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn get_unknown_key_is_none() {
-        let cfg = whycodes_config::Config::default();
-        assert!(get_config_value(&cfg, "nope.nope").is_none());
-    }
-}
+#[path = "config_tests.rs"]
+mod tests;

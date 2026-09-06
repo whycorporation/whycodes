@@ -140,33 +140,5 @@ pub fn format_swarm_header(n: usize, ok: usize, wall_secs: f64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn parse_two_tasks() {
-        let args = json!({
-            "tasks": [
-                {"goal": "audit A", "paths": ["a.rs"]},
-                {"goal": "audit B", "subagent_type": "explore"}
-            ]
-        });
-        let specs = parse_swarm_tasks(&args).unwrap();
-        assert_eq!(specs.len(), 2);
-        assert_eq!(specs[0].paths, vec!["a.rs"]);
-        assert_eq!(specs[1].subagent_type, "explore");
-    }
-
-    #[test]
-    fn tldr_injected_for_long_body() {
-        let body = "x".repeat(SWARM_TLDR_REQUIRED_OVER_CHARS + 50);
-        let out = ensure_tldr(&body);
-        assert!(out.starts_with("TLDR:"), "{out}");
-    }
-
-    #[test]
-    fn short_body_unchanged() {
-        assert_eq!(ensure_tldr("done"), "done");
-    }
-}
+#[path = "swarm_tests.rs"]
+mod tests;

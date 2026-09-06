@@ -84,12 +84,13 @@ impl ToolCallAssembler {
         }
         .or(self.active);
 
-        if let Some(i) = target {
-            self.arg_bufs[i].push_str(fragment);
-            self.active = Some(i);
-            if !id.is_empty() {
-                self.keys.entry(id.to_string()).or_insert(i);
-            }
+        let Some(i) = target else {
+            return;
+        };
+        self.arg_bufs[i].push_str(fragment);
+        self.active = Some(i);
+        if !id.is_empty() {
+            self.keys.entry(id.to_string()).or_insert(i);
         }
     }
 
@@ -143,65 +144,5 @@ impl ToolCallAssembler {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn openai_style_stream_merges_index_deltas() {
-        let mut a = ToolCallAssembler::new();
-        a.on_tool_use(
-            "call_abc".into(),
-            "websearch".into(),
-            Value::String(String::new()),
-        );
-        a.on_tool_use_delta("0", r#"{"query":"#);
-        a.on_tool_use_delta("0", r#""nuxt latest"}"#);
-        let calls = a.finish();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "websearch");
-        assert_eq!(calls[0].arguments["query"], "nuxt latest");
-    }
-
-    #[test]
-    fn first_chunk_may_include_full_json_string() {
-        let mut a = ToolCallAssembler::new();
-        a.on_tool_use(
-            "c1".into(),
-            "websearch".into(),
-            Value::String(r#"{"query":"nuxt"}"#.into()),
-        );
-        let calls = a.finish();
-        assert_eq!(calls[0].arguments["query"], "nuxt");
-    }
-
-    #[test]
-    fn anthropic_style_empty_id_deltas() {
-        let mut a = ToolCallAssembler::new();
-        a.on_tool_use("tu_1".into(), "bash".into(), json!({}));
-        a.on_tool_use_delta("", r#"{"command":"#);
-        a.on_tool_use_delta("", r#""ls"}"#);
-        let calls = a.finish();
-        assert_eq!(calls[0].arguments["command"], "ls");
-    }
-
-    #[test]
-    fn parallel_tools_by_index() {
-        let mut a = ToolCallAssembler::new();
-        a.on_tool_use("c0".into(), "a".into(), Value::Null);
-        a.on_tool_use("c1".into(), "b".into(), Value::Null);
-        a.on_tool_use_delta("1", r#"{"x":1}"#);
-        a.on_tool_use_delta("0", r#"{"y":2}"#);
-        let calls = a.finish();
-        assert_eq!(calls[0].arguments["y"], 2);
-        assert_eq!(calls[1].arguments["x"], 1);
-    }
-
-    #[test]
-    fn pre_parsed_object_kept_without_deltas() {
-        let mut a = ToolCallAssembler::new();
-        a.on_tool_use("c".into(), "read".into(), json!({"path": "x.rs"}));
-        let calls = a.finish();
-        assert_eq!(calls[0].arguments["path"], "x.rs");
-    }
-}
+#[path = "tool_stream_tests.rs"]
+mod tests;

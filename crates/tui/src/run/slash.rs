@@ -20,6 +20,39 @@ pub struct SlashContext<'a> {
     pub pending_compact: &'a mut Option<String>,
 }
 
+pub(super) const LOOP_USAGE: &str = "Usage: /loop N prompt…  |  /loop stop";
+
+pub(super) enum LoopSlash {
+    Stop,
+    Queue { n: usize, prompt: String },
+    Usage,
+}
+
+/// `/loop stop|clear` or `/loop N prompt…` (N defaults to 3, clamped 1..=20).
+pub(super) fn parse_loop_slash(rest: &str) -> LoopSlash {
+    let rest = rest.trim();
+    if rest == "stop" || rest == "clear" {
+        return LoopSlash::Stop;
+    }
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let first = parts.next().unwrap_or("").trim();
+    let rest_prompt = parts.next().unwrap_or("").trim();
+    let (n, prompt) = if let Ok(count) = first.parse::<usize>() {
+        (count, rest_prompt.to_string())
+    } else if !rest.is_empty() {
+        (3usize, rest.to_string())
+    } else {
+        return LoopSlash::Usage;
+    };
+    if prompt.is_empty() {
+        return LoopSlash::Usage;
+    }
+    LoopSlash::Queue {
+        n: n.clamp(1, 20),
+        prompt,
+    }
+}
+
 /// Slash line to run, if the prompt currently holds a `/command`.
 pub(super) fn slash_command_from_prompt(app: &TuiApp) -> Option<String> {
     let mut text = app.input_buffer.trim().to_string();
@@ -225,34 +258,16 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.status_message = "Usage: /bg | /bg kill <id>".into();
             }
         }
-        "/loop" => {
-            let rest = rest.trim();
-            if rest == "stop" || rest == "clear" {
+        "/loop" => match parse_loop_slash(rest) {
+            LoopSlash::Stop => {
                 let n = ctx.app.pending_auto_prompts.len();
                 ctx.app.pending_auto_prompts.clear();
                 ctx.app.toasts.push(
                     crate::toast::ToastKind::Info,
                     format!("Cleared {n} queued loop prompt(s)"),
                 );
-            } else {
-                // /loop N prompt…  or  /loop prompt… (N=3)
-                let mut parts = rest.splitn(2, char::is_whitespace);
-                let first = parts.next().unwrap_or("").trim();
-                let rest_prompt = parts.next().unwrap_or("").trim();
-                let (n, prompt) = if let Ok(count) = first.parse::<usize>() {
-                    (count, rest_prompt.to_string())
-                } else if !rest.is_empty() {
-                    (3usize, rest.to_string())
-                } else {
-                    ctx.app.status_message = "Usage: /loop N prompt…  |  /loop stop".into();
-                    return;
-                };
-                if prompt.is_empty() {
-                    ctx.app.status_message = "Usage: /loop N prompt…  |  /loop stop".into();
-                    return;
-                }
-                let n = n.clamp(1, 20);
-                // First runs now; remaining N-1 queued.
+            }
+            LoopSlash::Queue { n, prompt } => {
                 ctx.app.add_message(ChatRole::User, &prompt);
                 ctx.app.pending_prompt = Some(prompt.clone());
                 for _ in 1..n {
@@ -262,7 +277,10 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     .toasts
                     .push(crate::toast::ToastKind::Info, format!("Loop ×{n} queued"));
             }
-        }
+            LoopSlash::Usage => {
+                ctx.app.status_message = LOOP_USAGE.into();
+            }
+        },
         "/remember" => {
             let text = rest.trim();
             if text.is_empty() {
@@ -780,30 +798,5 @@ pub(super) fn maybe_spawn_prompt_suggestion(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::TuiAppConfig;
-
-    #[test]
-    fn slash_command_from_prompt_and_consume() {
-        let mut app = TuiApp::from_config(TuiAppConfig::default());
-        assert!(slash_command_from_prompt(&app).is_none());
-        app.input_buffer = "/help".into();
-        assert_eq!(slash_command_from_prompt(&app).as_deref(), Some("/help"));
-        consume_slash_draft(&mut app);
-        assert!(app.input_buffer.is_empty());
-        assert_eq!(app.input_cursor, 0);
-        assert!(slash_command_from_prompt(&app).is_none());
-    }
-
-    #[test]
-    fn expand_at_files_inlines_and_keeps_bare_at() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("note.txt"), "hello-at").unwrap();
-        let out = expand_at_files("see @note.txt please", dir.path());
-        assert!(out.contains("hello-at"), "{out}");
-        assert!(out.contains("note.txt"), "{out}");
-        assert_eq!(expand_at_files("keep @ alone", dir.path()), "keep @ alone");
-        assert_eq!(expand_at_files("no mentions", dir.path()), "no mentions");
-    }
-}
+#[path = "slash_tests.rs"]
+mod tests;

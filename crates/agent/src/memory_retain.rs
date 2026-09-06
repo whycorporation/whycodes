@@ -117,52 +117,89 @@ pub fn spawn_post_turn_retain(
     let data_dir = whycodes_core::paths::data_dir();
 
     tokio::spawn(async move {
-        let mut saved = Vec::new();
-        if settings.auto_retain {
-            saved = run_heuristic_retain(&snap, &settings, &data_dir);
-
-            if should_llm_retain(&settings, saved.len(), snap.turn_index)
-                && let Some(provider) = registry.get(&provider_name)
-            {
-                match run_llm_retain_facts(
-                    &snap,
-                    &settings,
-                    provider,
-                    &provider_name,
-                    &model,
-                    &api_key,
-                    &data_dir,
-                )
-                .await
-                {
-                    Ok(more) => merge_facts(&mut saved, more),
-                    Err(e) => tracing::debug!("llm retain skipped: {e}"),
-                }
-            }
-        }
+        let saved = collect_retained_facts(
+            &snap,
+            &settings,
+            &data_dir,
+            &registry,
+            &provider_name,
+            &model,
+            &api_key,
+        )
+        .await;
 
         if let Ok(svc) = MemoryService::open(&snap.project_path, &data_dir, settings.clone()) {
-            if let Err(e) = svc.index_session_turn(
-                &snap.session_id,
-                snap.turn_index,
-                &snap.user_text,
-                &snap.assistant_text,
-            ) {
-                tracing::debug!("session chunk skip: {e}");
-            }
-            if let Err(e) = svc.consolidate() {
-                tracing::debug!("memory consolidate skip: {e}");
-            }
+            index_and_consolidate(&svc, &snap);
         }
 
-        if !saved.is_empty() {
-            tracing::info!(count = saved.len(), "auto-retained memories");
-            emit(
-                &events,
-                TurnEvent::Status(format!("Remembered {} durable fact(s)", saved.len())),
-            );
-        }
+        emit_retained_facts(&saved, &events);
     });
+}
+
+fn index_and_consolidate(svc: &MemoryService, snap: &RetainSnapshot) {
+    skip_if_err(
+        svc.index_session_turn(
+            &snap.session_id,
+            snap.turn_index,
+            &snap.user_text,
+            &snap.assistant_text,
+        ),
+        "session chunk skip",
+    );
+    skip_if_err(svc.consolidate().map(|_| ()), "memory consolidate skip");
+}
+
+fn skip_if_err<E: std::fmt::Display>(result: Result<(), E>, msg: &'static str) {
+    if let Err(e) = result {
+        tracing::debug!("{msg}: {e}");
+    }
+}
+
+fn emit_retained_facts(saved: &[String], events: &Option<EventSink>) {
+    if saved.is_empty() {
+        return;
+    }
+    tracing::info!(count = saved.len(), "auto-retained memories");
+    emit(
+        events,
+        TurnEvent::Status(format!("Remembered {} durable fact(s)", saved.len())),
+    );
+}
+
+async fn collect_retained_facts(
+    snap: &RetainSnapshot,
+    settings: &MemorySettings,
+    data_dir: &Path,
+    registry: &ProviderRegistry,
+    provider_name: &str,
+    model: &str,
+    api_key: &str,
+) -> Vec<String> {
+    if !settings.auto_retain {
+        return Vec::new();
+    }
+    let mut saved = run_heuristic_retain(snap, settings, data_dir);
+    if should_llm_retain(settings, saved.len(), snap.turn_index)
+        && let Some(provider) = registry.get(provider_name)
+    {
+        match run_llm_retain_facts(
+            snap,
+            settings,
+            provider,
+            provider_name,
+            model,
+            api_key,
+            data_dir,
+        )
+        .await
+        {
+            Ok(more) => merge_facts(&mut saved, more),
+            Err(e) => {
+                tracing::debug!("llm retain skipped: {e}");
+            }
+        }
+    }
+    saved
 }
 
 fn should_llm_retain(settings: &MemorySettings, heuristic_saved: usize, turn_index: usize) -> bool {
@@ -236,14 +273,10 @@ async fn llm_extract_facts(
     assistant: &str,
 ) -> whycodes_core::Result<String> {
     // Prefer a cheap sibling model (same strategy as title refine).
-    let (p_name, m_id) = resolve_title_model(provider_name, model, None);
-    let use_provider = if p_name == provider_name {
-        provider
-    } else {
-        // Caller only passed one provider handle; stick to the session provider.
-        let _ = p_name;
-        provider
-    };
+    // `resolve_title_model` without an override never remaps the provider name,
+    // so the session provider handle is always the one we call.
+    let (_p_name, m_id) = resolve_title_model(provider_name, model, None);
+    let use_provider = provider;
     let use_model = if m_id != model {
         m_id
     } else {
@@ -300,138 +333,5 @@ async fn llm_extract_facts(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use whycodes_core::types::ContentBlock;
-    use whycodes_memory::MemorySettings;
-
-    fn make_session() -> Session {
-        let mut s = Session::new(PathBuf::from("/work/proj"), "sys".into());
-        s.add_user_message("fix the auth bug");
-        s.add_assistant_message(vec![ContentBlock::Text {
-            text: "I patched it".into(),
-        }]);
-        s.add_user_message("also add retries");
-        s.add_assistant_message(vec![ContentBlock::Text {
-            text: "done, plus retries".into(),
-        }]);
-        s
-    }
-
-    #[test]
-    fn snapshot_captures_last_user_turn() {
-        let session = make_session();
-        let snap = RetainSnapshot::from_session(&session, "final answer");
-        assert_eq!(snap.project_path, PathBuf::from("/work/proj"));
-        assert_eq!(snap.session_id, session.id);
-        assert_eq!(snap.user_text, "also add retries");
-        assert_eq!(snap.assistant_text, "final answer");
-        assert_eq!(snap.turn_index, 2);
-    }
-
-    #[test]
-    fn snapshot_empty_user_text_when_no_user_message() {
-        let session = Session::new(PathBuf::from("/work/proj"), "sys".into());
-        let snap = RetainSnapshot::from_session(&session, "hi");
-        assert_eq!(snap.user_text, "");
-        assert_eq!(snap.turn_index, 1, "turn_index floors at 1");
-    }
-
-    #[test]
-    #[allow(clippy::field_reassign_with_default)]
-    fn llm_retain_gate_respects_settings() {
-        let mut s = MemorySettings::default();
-        // Disabled → never.
-        s.enabled = false;
-        assert!(!should_llm_retain(&s, 0, 1));
-        s.enabled = true;
-        // auto_retain off → never.
-        s.auto_retain = false;
-        assert!(!should_llm_retain(&s, 0, 1));
-        s.auto_retain = true;
-        // retain_llm off → never.
-        s.retain_llm = false;
-        assert!(!should_llm_retain(&s, 0, 1));
-        s.retain_llm = true;
-        // Every-N: turn 1 with N=2 skips, turn 2 runs.
-        s.retain_every_n = 2;
-        assert!(!should_llm_retain(&s, 0, 1));
-        assert!(should_llm_retain(&s, 0, 2));
-        // Heuristic found facts and always=false → skip.
-        s.retain_every_n = 1;
-        assert!(!should_llm_retain(&s, 3, 1));
-        // retain_llm_always overrides heuristic.
-        s.retain_llm_always = true;
-        assert!(should_llm_retain(&s, 3, 1));
-    }
-
-    #[test]
-    fn merge_facts_dedupes_case_insensitively() {
-        let mut saved = vec!["Fix auth".to_string()];
-        merge_facts(
-            &mut saved,
-            vec!["fix AUTH".to_string(), "new fact".to_string()],
-        );
-        assert_eq!(saved, vec!["Fix auth", "new fact"]);
-    }
-
-    #[tokio::test]
-    async fn post_turn_retain_skips_when_disabled() {
-        let session = make_session();
-        let settings = MemorySettings::disabled();
-        let registry = whycodes_llm::ProviderRegistry::default();
-        let provider = registry.get("anthropic").expect("built-in provider");
-        let saved = run_post_turn_retain(
-            &session,
-            "answer",
-            &settings,
-            provider,
-            "anthropic",
-            "claude-sonnet-4-5",
-            "",
-            std::path::Path::new("/tmp"),
-        )
-        .await;
-        assert!(saved.is_empty());
-    }
-
-    #[test]
-    fn spawn_retain_is_noop_when_disabled() {
-        let session = make_session();
-        let settings = MemorySettings::disabled();
-        let registry = Arc::new(whycodes_llm::ProviderRegistry::default());
-        // Must not panic or spawn anything — just returns early.
-        spawn_post_turn_retain(
-            &session,
-            "answer",
-            &settings,
-            registry,
-            "anthropic",
-            "m",
-            "k",
-            None,
-        );
-    }
-
-    #[test]
-    fn spawn_retain_skips_when_no_retain_and_no_inject() {
-        let session = make_session();
-        let settings = MemorySettings {
-            enabled: true,
-            auto_retain: false,
-            session_inject: false,
-            ..MemorySettings::default()
-        };
-        let registry = Arc::new(whycodes_llm::ProviderRegistry::default());
-        spawn_post_turn_retain(
-            &session,
-            "answer",
-            &settings,
-            registry,
-            "anthropic",
-            "m",
-            "k",
-            None,
-        );
-    }
-}
+#[path = "memory_retain_tests.rs"]
+mod tests;

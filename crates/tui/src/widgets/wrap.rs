@@ -196,80 +196,9 @@ pub fn wrap_text(buf: &str, width: u16) -> Vec<WrappedRow> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use ratatui::style::{Color, Modifier};
-
-    #[test]
-    fn wrap_spans_preserves_style_across_rows() {
-        let bold = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
-        let spans = vec![
-            Span::styled("hello ".to_string(), bold),
-            Span::styled("world and friends".to_string(), Style::default()),
-        ];
-        let lines = wrap_spans(spans, 10);
-        assert!(lines.len() >= 2, "expected soft-wrap, got {}", lines.len());
-        // First row should still carry the bold "hello" style.
-        let first_has_bold = lines[0]
-            .spans
-            .iter()
-            .any(|s| s.style.add_modifier.contains(Modifier::BOLD));
-        assert!(first_has_bold);
-    }
-
-    #[test]
-    fn wrap_plain_breaks_long_words() {
-        let lines = wrap_plain("abcdefghij", 4, Style::default());
-        assert!(lines.len() >= 2);
-    }
-}
+#[path = "wrap_tests.rs"]
+mod tests;
 
 #[cfg(test)]
-mod overflow_props {
-    use super::*;
-    use unicode_width::UnicodeWidthChar;
-
-    fn row_display_width(buf: &str, row: &WrappedRow) -> usize {
-        buf[row.byte_range.0..row.byte_range.1]
-            .chars()
-            .map(|c| c.width().unwrap_or(0).max(1))
-            .sum()
-    }
-
-    #[test]
-    fn no_row_exceeds_width_for_randomish_inputs() {
-        let samples = [
-            "a".repeat(500),
-            "word ".repeat(200),
-            "şğüiöç ".repeat(100),
-            "漢字かな ".repeat(80),
-            format!("{}\n{}", "x".repeat(200), "y".repeat(200)),
-            "a  b   c    d".repeat(50),
-            "\t".repeat(20) + &"z".repeat(100),
-            "endwithspace ".repeat(30),
-            "  leadspace".to_string() + &"m".repeat(100),
-        ];
-        for width in [1u16, 2, 3, 5, 8, 10, 20, 40, 80] {
-            for s in &samples {
-                let rows = wrap_text(s, width);
-                for (i, r) in rows.iter().enumerate() {
-                    let w = row_display_width(s, r);
-                    let slice = &s[r.byte_range.0..r.byte_range.1];
-                    // A single glyph may be wider than the row (CJK on 1-col);
-                    // every other row must fit.
-                    let single_wide = slice.chars().count() == 1
-                        && slice
-                            .chars()
-                            .next()
-                            .map(|c| c.width().unwrap_or(0).max(1))
-                            .unwrap_or(0)
-                            > width as usize;
-                    assert!(
-                        w <= width as usize || single_wide,
-                        "width={width} row={i} display={w} slice={slice:?}"
-                    );
-                }
-            }
-        }
-    }
-}
+#[path = "wrap_overflow_tests.rs"]
+mod overflow_props;

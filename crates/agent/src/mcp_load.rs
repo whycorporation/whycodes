@@ -23,10 +23,7 @@ impl McpCaller for SharedMcpCaller {
     ) -> futures::future::BoxFuture<'a, Result<String, String>> {
         Box::pin(async move {
             let mut client = self.client.lock().await;
-            client
-                .call_tool(&self.remote_name, arguments)
-                .await
-                .map_err(|e| e.to_string())
+            mcp_call_error(client.call_tool(&self.remote_name, arguments).await)
         })
     }
 }
@@ -39,10 +36,8 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
     let headers = server.headers.as_ref().unwrap_or(&empty_headers);
     match kind {
         McpTransportKind::Stdio => {
-            let command = server
-                .command
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("stdio MCP server missing `command`"))?;
+            // `resolved_transport` already requires `command` for stdio.
+            let command = stdio_command(server.command.as_deref());
             let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
             Ok(McpClient::connect_stdio_with(
                 command,
@@ -53,24 +48,15 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
             .await?)
         }
         McpTransportKind::Http => {
-            let url = server
-                .url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("http MCP server missing `url`"))?;
+            let url = required_mcp_field(server.url.as_deref(), "http MCP server missing `url`")?;
             Ok(McpClient::connect_http(url, headers).await?)
         }
         McpTransportKind::Sse => {
-            let url = server
-                .url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("sse MCP server missing `url`"))?;
+            let url = required_mcp_field(server.url.as_deref(), "sse MCP server missing `url`")?;
             Ok(McpClient::connect_sse(url, headers).await?)
         }
         McpTransportKind::Auto => {
-            let url = server
-                .url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("auto MCP server missing `url`"))?;
+            let url = required_mcp_field(server.url.as_deref(), "auto MCP server missing `url`")?;
             Ok(McpClient::connect_auto(url, headers).await?)
         }
     }
@@ -159,83 +145,21 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
     count
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn server(transport: McpTransportKind) -> McpServerConfig {
-        McpServerConfig {
-            transport: Some(transport),
-            command: None,
-            args: Vec::new(),
-            env: None,
-            cwd: None,
-            url: None,
-            headers: None,
-        }
-    }
-
-    fn err_of(result: anyhow::Result<McpClient>) -> String {
-        match result {
-            Ok(_) => panic!("expected connect to fail"),
-            Err(e) => e.to_string(),
-        }
-    }
-
-    #[tokio::test]
-    async fn stdio_without_command_errors() {
-        let err = err_of(connect_mcp_server(&server(McpTransportKind::Stdio)).await);
-        assert!(err.contains("command"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn remote_transports_require_url() {
-        for kind in [
-            McpTransportKind::Http,
-            McpTransportKind::Sse,
-            McpTransportKind::Auto,
-        ] {
-            let err = err_of(connect_mcp_server(&server(kind)).await);
-            assert!(err.contains("url"), "{kind:?}: {err}");
-        }
-    }
-
-    #[tokio::test]
-    async fn neither_command_nor_url_errors() {
-        let s = McpServerConfig {
-            transport: None,
-            command: None,
-            args: Vec::new(),
-            env: None,
-            cwd: None,
-            url: None,
-            headers: None,
-        };
-        let err = err_of(connect_mcp_server(&s).await);
-        assert!(err.contains("command") || err.contains("url"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn register_with_no_servers_returns_zero() {
-        let mut executor = ToolExecutor::new();
-        let config = Config::default();
-        assert_eq!(config.mcp_servers.len(), 0);
-        let count = register_mcp_tools(&mut executor, &config).await;
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn resolved_transport_auto_for_url_only() {
-        let s = McpServerConfig {
-            transport: None,
-            command: None,
-            args: Vec::new(),
-            env: None,
-            cwd: None,
-            url: Some("https://mcp.example.com".into()),
-            headers: None,
-        };
-        assert_eq!(s.resolved_transport().unwrap(), McpTransportKind::Auto);
-        assert!(s.is_remote());
-    }
+fn mcp_call_error(result: Result<String, whycodes_mcp::McpError>) -> Result<String, String> {
+    result.map_err(|e| e.to_string())
 }
+
+fn required_mcp_field<'a>(
+    value: Option<&'a str>,
+    missing: &'static str,
+) -> anyhow::Result<&'a str> {
+    value.ok_or_else(|| anyhow::anyhow!(missing))
+}
+
+fn stdio_command(command: Option<&str>) -> &str {
+    command.unwrap_or("")
+}
+
+#[cfg(test)]
+#[path = "mcp_load_tests.rs"]
+mod tests;

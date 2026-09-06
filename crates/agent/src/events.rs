@@ -161,15 +161,14 @@ pub fn request_cancel(flag: &CancelFlag) {
 /// LLM stream is idle between tokens (the previous code only checked cancel
 /// *after* the next SSE event arrived, which is why "Cancelling…" could hang).
 pub async fn wait_until_cancelled(flag: &Option<CancelFlag>) {
-    let Some(f) = flag else {
-        std::future::pending::<()>().await;
-        return;
-    };
-    loop {
-        if f.load(Ordering::Acquire) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(40)).await;
+    match flag {
+        None => std::future::pending::<()>().await,
+        Some(f) => loop {
+            if f.load(Ordering::Acquire) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        },
     }
 }
 
@@ -180,41 +179,5 @@ pub fn emit(sink: &Option<EventSink>, event: TurnEvent) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Instant;
-
-    #[test]
-    fn turn_opts_new_defaults() {
-        let opts = TurnOpts::new("p", "m", "k");
-        assert_eq!(opts.provider_name, "p");
-        assert_eq!(opts.model, "m");
-        assert_eq!(opts.api_key, "k");
-        assert!(opts.max_turns.is_none());
-        assert!(opts.events.is_none());
-        assert!(opts.cancel.is_none());
-    }
-
-    #[tokio::test]
-    async fn wait_until_cancelled_resolves_when_flag_set() {
-        let flag = new_cancel_flag();
-        let opt = Some(Arc::clone(&flag));
-        let t0 = Instant::now();
-        let waiter = tokio::spawn(async move {
-            wait_until_cancelled(&opt).await;
-        });
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        request_cancel(&flag);
-        waiter.await.expect("join");
-        assert!(t0.elapsed() < Duration::from_secs(2));
-    }
-
-    #[test]
-    fn request_cancel_is_visible_to_is_cancelled() {
-        let flag = new_cancel_flag();
-        let opt = Some(Arc::clone(&flag));
-        assert!(!is_cancelled(&opt));
-        request_cancel(&flag);
-        assert!(is_cancelled(&opt));
-    }
-}
+#[path = "events_tests.rs"]
+mod tests;

@@ -49,17 +49,5 @@ pub fn spawn_need_input_wait(cfg: &NotifyConfig, kind: &str, detail: &str) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn spawn_is_noop_when_off() {
-        let cfg = NotifyConfig::default();
-        spawn_turn_done(&cfg, "t", "b", Some("abc"));
-        spawn_need_input_wait(&cfg, "permission", "bash rm");
-        let mut on = cfg;
-        on.on = vec!["need_input".into()];
-        spawn_need_input_wait(&on, "question", "");
-        spawn_need_input_wait(&on, "permission", &"x".repeat(400));
-    }
-}
+#[path = "notify_tests.rs"]
+mod tests;

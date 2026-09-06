@@ -60,27 +60,14 @@ impl Tool for GitLogTool {
             let working_dir = ctx.working_dir.clone();
             crate::blocking::tool(move || {
                 let count = args["count"].as_u64().unwrap_or(10);
-                let author = args["author"].as_str();
-                let since = args["since"].as_str();
-                let path_filter = args["path"].as_str();
-
+                let argv = git_log_argv(
+                    count,
+                    args["author"].as_str(),
+                    args["since"].as_str(),
+                    args["path"].as_str(),
+                );
                 let mut cmd = Command::new("git");
-                cmd.arg("log")
-                    .arg("--oneline")
-                    .arg("-n")
-                    .arg(count.to_string());
-
-                if let Some(a) = author {
-                    cmd.arg("--author").arg(a);
-                }
-
-                if let Some(s) = since {
-                    cmd.arg("--since").arg(s);
-                }
-
-                if let Some(path) = path_filter {
-                    cmd.arg("--").arg(path);
-                }
+                cmd.args(argv);
 
                 cmd.current_dir(&working_dir);
 
@@ -121,105 +108,34 @@ impl Tool for GitLogTool {
     }
 }
 
+fn git_log_argv(
+    count: u64,
+    author: Option<&str>,
+    since: Option<&str>,
+    path: Option<&str>,
+) -> Vec<String> {
+    let mut argv = vec![
+        "log".into(),
+        "--oneline".into(),
+        "-n".into(),
+        count.to_string(),
+    ];
+    if let Some(a) = author {
+        argv.push("--author".into());
+        argv.push(a.to_string());
+    }
+    if let Some(s) = since {
+        argv.push("--since".into());
+        argv.push(s.to_string());
+    }
+    if let Some(path) = path {
+        argv.push("--".into());
+        argv.push(path.to_string());
+    }
+    argv
+}
+
 #[cfg(test)]
 #[allow(clippy::await_holding_lock)]
-mod tests {
-    use super::*;
-    use crate::tool::ToolContext;
-    use serde_json::json;
-    use std::process::Command;
-
-    #[test]
-    fn log_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-
-    #[tokio::test]
-    async fn log_filters_and_empty() {
-        let t = GitLogTool;
-        assert_eq!(t.name(), "git_log");
-        assert!(!t.description().is_empty());
-        let _ = t.parameters();
-        let dir = tempfile::TempDir::new().unwrap();
-        let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
-        let err = t
-            .execute(
-                json!({"count": 1, "author": "x", "since": "2020-01-01", "path": "a.txt"}),
-                &ctx,
-            )
-            .await;
-        assert!(err.is_error, "{}", err.content);
-    }
-
-    fn init_repo() -> tempfile::TempDir {
-        let dir = tempfile::TempDir::new().unwrap();
-        assert!(
-            Command::new("git")
-                .args(["init"])
-                .current_dir(dir.path())
-                .status()
-                .unwrap()
-                .success()
-        );
-        let _ = Command::new("git")
-            .args(["config", "user.email", "test@whycodes.local"])
-            .current_dir(dir.path())
-            .status();
-        let _ = Command::new("git")
-            .args(["config", "user.name", "whycodes-test"])
-            .current_dir(dir.path())
-            .status();
-        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
-        assert!(
-            Command::new("git")
-                .args(["add", "."])
-                .current_dir(dir.path())
-                .status()
-                .unwrap()
-                .success()
-        );
-        assert!(
-            Command::new("git")
-                .args(["commit", "-m", "init"])
-                .current_dir(dir.path())
-                .status()
-                .unwrap()
-                .success()
-        );
-        dir
-    }
-
-    #[tokio::test]
-    async fn log_no_commits_for_unmatched_author() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = init_repo();
-        let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
-        let out = GitLogTool::new()
-            .execute(json!({"author": "nobody-xyz-unmatched"}), &ctx)
-            .await;
-        assert!(!out.is_error, "{}", out.content);
-        assert!(out.content.contains("No commits found"), "{}", out.content);
-    }
-
-    #[tokio::test]
-    async fn log_fails_when_git_missing_from_path() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var_os("PATH");
-        unsafe { std::env::set_var("PATH", "/nonexistent-whycodes-path") };
-        let dir = tempfile::TempDir::new().unwrap();
-        let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
-        let out = GitLogTool::new().execute(json!({}), &ctx).await;
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("PATH", v),
-                None => std::env::remove_var("PATH"),
-            }
-        }
-        assert!(out.is_error, "{}", out.content);
-        assert!(
-            out.content.contains("Failed to run git log"),
-            "{}",
-            out.content
-        );
-    }
-}
+#[path = "log_tests.rs"]
+mod tests;

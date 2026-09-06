@@ -226,9 +226,10 @@ pub fn maybe_start(
         return;
     };
     if let Some(job) = spawn_speculative_read(call_id.to_string(), path, offset, limit, ctx) {
+        let path_display = job.path.display().to_string();
         tracing::debug!(
             id = %job.call_id,
-            path = %job.path.display(),
+            path = %path_display,
             offset = job.offset,
             limit = job.limit,
             "speculative early read started"
@@ -238,116 +239,5 @@ pub fn maybe_start(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_path_only() {
-        let (p, o, l) = try_parse_read_args(r#"{"path": "crates/foo/src/lib.rs"}"#).unwrap();
-        assert_eq!(p, "crates/foo/src/lib.rs");
-        assert_eq!(o, 1);
-        assert_eq!(l, DEFAULT_LIMIT);
-    }
-
-    #[test]
-    fn parse_with_window() {
-        let (p, o, l) = try_parse_read_args(r#"{"path":"a.rs","offset":10,"limit":50}"#).unwrap();
-        assert_eq!(p, "a.rs");
-        assert_eq!(o, 10);
-        assert_eq!(l, 50);
-    }
-
-    #[test]
-    fn incomplete_path_returns_none() {
-        assert!(try_parse_read_args(r#"{"path": "crates/fo"#).is_none());
-    }
-
-    #[test]
-    fn escaped_path() {
-        let (p, _, _) = try_parse_read_args(r#"{"path": "dir\\file.rs"}"#).unwrap();
-        assert_eq!(p, "dir\\file.rs");
-    }
-
-    #[test]
-    fn field_order_path_last() {
-        let (p, o, l) =
-            try_parse_read_args(r#"{"offset": 2, "limit": 10, "path": "z.rs"}"#).unwrap();
-        assert_eq!(p, "z.rs");
-        assert_eq!(o, 2);
-        assert_eq!(l, 10);
-    }
-
-    #[test]
-    fn window_clamped_to_hard_limit() {
-        let (_, _, l) = try_parse_read_args(r#"{"path": "a.rs", "limit": 99999}"#).unwrap();
-        assert_eq!(l, HARD_LIMIT);
-        let (_, _, l) = try_parse_read_args(r#"{"path": "a.rs", "limit": 0}"#).unwrap();
-        assert_eq!(l, 1);
-        let (_, o, _) = try_parse_read_args(r#"{"path": "a.rs", "offset": 0}"#).unwrap();
-        assert_eq!(o, 1, "offset floors at 1");
-    }
-
-    #[test]
-    fn unicode_escape_incomplete_waits() {
-        // `\u` escape unfinished → path still streaming.
-        assert!(try_parse_read_args(r#"{"path": "caf\u"#).is_none());
-    }
-
-    #[test]
-    fn trailing_backslash_waits_for_escape() {
-        assert!(try_parse_read_args(r#"{"path": "dir\"#).is_none());
-    }
-
-    #[test]
-    fn non_string_path_returns_none() {
-        assert!(try_parse_read_args(r#"{"path": 123}"#).is_none());
-    }
-
-    #[test]
-    fn window_from_args_matches_tool_semantics() {
-        let v = serde_json::json!({"path": "a.rs"});
-        assert_eq!(window_from_args(&v), (1, DEFAULT_LIMIT));
-        let v = serde_json::json!({"path": "a.rs", "offset": 5, "limit": 100});
-        assert_eq!(window_from_args(&v), (5, 100));
-        let v = serde_json::json!({"offset": 0, "limit": 0});
-        let (o, l) = window_from_args(&v);
-        assert_eq!(o, 1);
-        assert_eq!(l, 1);
-    }
-
-    #[test]
-    fn abort_all_drains_jobs() {
-        let mut jobs = Vec::new();
-        abort_all(&mut jobs);
-        assert!(jobs.is_empty());
-    }
-
-    #[test]
-    fn spawn_skips_internal_schemes() {
-        let ctx = whycodes_core::ToolContext::new("/tmp");
-        assert!(spawn_speculative_read("c1".into(), "skill://demo".into(), 1, 10, &ctx).is_none());
-        assert!(
-            spawn_speculative_read("c1".into(), "agent://task-1".into(), 1, 10, &ctx).is_none()
-        );
-    }
-
-    #[test]
-    fn maybe_start_ignores_non_read_tools() {
-        let mut jobs = Vec::new();
-        let ctx = whycodes_core::ToolContext {
-            working_dir: "/work/proj".into(),
-            session_id: None,
-            sandbox: whycodes_core::SandboxSettings::off(),
-            network: whycodes_core::NetworkPolicy::unrestricted(),
-            file_claims: None,
-            agent_id: None,
-            agent_label: None,
-            file_index: None,
-            panel: None,
-            todo_sink: None,
-            swarm_hub: None,
-        };
-        maybe_start(&mut jobs, "tc-1", "grep", r#"{"pattern": "x"}"#, &ctx);
-        assert!(jobs.is_empty());
-    }
-}
+#[path = "speculative_read_tests.rs"]
+mod tests;

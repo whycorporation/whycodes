@@ -12,6 +12,354 @@ use whycodes_config::Config;
 use whycodes_core::types::AgentInfo;
 use whycodes_protocol::{CiEvent, OutputFormat, ResultMeta};
 
+pub(crate) fn force_plain_mode(cli_plain: bool) -> bool {
+    cli_plain || std::env::var_os("WHYCODES_PLAIN").is_some()
+}
+
+pub(crate) fn should_use_tui(force_plain: bool, stub_tui: bool, tui_available: bool) -> bool {
+    !force_plain && (stub_tui || tui_available)
+}
+
+pub(crate) fn is_repl_interactive(prompt: Option<&str>, structured: bool) -> bool {
+    prompt.is_none_or(str::is_empty) && !structured
+}
+
+pub(crate) fn resume_missing_label(want: &str) -> &str {
+    if want == whycodes_tui::RESUME_LATEST {
+        "none saved yet"
+    } else {
+        want
+    }
+}
+
+pub(crate) fn session_token_label(
+    usage_empty: bool,
+    estimated: usize,
+    input: u64,
+    output: u64,
+    total: u64,
+) -> String {
+    if usage_empty {
+        format!("Tokens≈{estimated} (est)")
+    } else {
+        format!("Tokens: {input} in / {output} out / {total} total")
+    }
+}
+
+pub(crate) fn session_cost_line(
+    usage_empty: bool,
+    estimated: usize,
+    input: u64,
+    output: u64,
+    total: u64,
+) -> String {
+    if usage_empty {
+        format!("  session: ~{estimated} tokens (estimated)")
+    } else {
+        format!("  session: {input} in / {output} out · total {total}")
+    }
+}
+
+pub(crate) fn doctor_api_key_status(key_ok: bool, api_key_empty: bool) -> &'static str {
+    if key_ok {
+        if api_key_empty { "not required" } else { "set" }
+    } else {
+        "MISSING"
+    }
+}
+
+pub(crate) enum ResumeSlash {
+    List,
+    Id(String),
+}
+
+pub(crate) fn resume_slash_want(cmd: &str, rest: &str) -> ResumeSlash {
+    if !rest.is_empty() {
+        ResumeSlash::Id(rest.to_string())
+    } else if cmd == "/continue" {
+        ResumeSlash::Id(whycodes_tui::RESUME_LATEST.to_string())
+    } else {
+        ResumeSlash::List
+    }
+}
+
+pub(crate) enum ModelsSlash {
+    ProviderModel(String, String),
+    ModelOnly(String),
+}
+
+pub(crate) fn parse_models_slash(rest: &str) -> ModelsSlash {
+    if let Some((p, m)) = rest.split_once('/') {
+        ModelsSlash::ProviderModel(p.to_string(), m.to_string())
+    } else {
+        ModelsSlash::ModelOnly(rest.to_string())
+    }
+}
+
+pub(crate) fn thinking_display_label(show_thinking: bool) -> String {
+    if show_thinking {
+        "ON".green().to_string()
+    } else {
+        "OFF".dimmed().to_string()
+    }
+}
+
+pub(crate) enum EffortSlash {
+    Show,
+    Set(whycodes_llm::ReasoningEffort),
+    Unknown,
+}
+
+pub(crate) fn parse_effort_slash(rest: &str) -> EffortSlash {
+    if rest.is_empty() {
+        EffortSlash::Show
+    } else if let Some(parsed) = whycodes_llm::ReasoningEffort::parse(rest) {
+        EffortSlash::Set(parsed)
+    } else {
+        EffortSlash::Unknown
+    }
+}
+
+pub(crate) fn masked_api_key_prefix(api_key: &str) -> String {
+    api_key.chars().take(8).collect()
+}
+
+pub(crate) fn unknown_slash_line(cmd: &str) -> String {
+    format!("Unknown command: {cmd}. Type /help")
+}
+
+pub(crate) fn new_session_line(title: &str) -> String {
+    format!("{} New session started ({})", "✓".green(), title.dimmed())
+}
+
+pub(crate) fn rename_usage_line(title: &str, source: impl std::fmt::Debug) -> String {
+    format!(
+        "Title: {} ({source:?}) — usage: /rename <name>",
+        title.cyan()
+    )
+}
+
+pub(crate) fn renamed_line(title: &str) -> String {
+    format!("{} Renamed to '{}'", "✓".green(), title.cyan())
+}
+
+pub(crate) fn undid_turn_line(n: usize) -> String {
+    format!("{} Undid last turn ({n} messages left).", "↩".cyan())
+}
+
+pub(crate) fn redid_turn_line(n: usize) -> String {
+    format!("{} Redid turn ({n} messages).", "↪".cyan())
+}
+
+pub(crate) fn compact_ok_line(
+    messages_before: usize,
+    messages_after: usize,
+    tokens_before: usize,
+    tokens_after: usize,
+) -> String {
+    format!(
+        "{} Conversation compacted ({messages_before} → {messages_after} messages, ~{tokens_before} → ~{tokens_after} tok).",
+        "✓".green()
+    )
+}
+
+pub(crate) fn context_report_lines(
+    message_count: usize,
+    estimated: usize,
+    compaction_threshold: usize,
+    compaction_llm: &str,
+    tool_profile: &str,
+) -> Vec<String> {
+    vec![
+        "Context".bold().to_string(),
+        format!("  messages: {message_count}"),
+        format!("  estimate: ~{estimated} tok"),
+        format!("  compact:  threshold={compaction_threshold} llm={compaction_llm}"),
+        format!("  tools:    profile={tool_profile}"),
+    ]
+}
+
+pub(crate) fn doctor_report_lines(
+    provider: &str,
+    model: &str,
+    project: &str,
+    api_key: &str,
+    sandbox: &str,
+    sandbox_network: bool,
+    tool_profile: &str,
+) -> Vec<String> {
+    vec![
+        "Doctor".bold().to_string(),
+        format!("  provider: {provider}"),
+        format!("  model:    {model}"),
+        format!("  project:  {project}"),
+        format!("  api_key:  {api_key}"),
+        format!("  sandbox:  {sandbox} network={sandbox_network}"),
+        format!("  tools:    profile={tool_profile}"),
+    ]
+}
+
+pub(crate) fn resumed_line(title: &str, id: &str, n: usize) -> String {
+    format!(
+        "{} Resumed {} ({}) — {n} messages",
+        "✓".green(),
+        title.cyan(),
+        id.chars().take(8).collect::<String>().dimmed()
+    )
+}
+
+pub(crate) fn switched_model_line(provider: &str, model: &str) -> String {
+    format!(
+        "{} Switched model to {}/{}",
+        "✓".green(),
+        provider.cyan(),
+        model.cyan()
+    )
+}
+
+pub(crate) fn model_set_line(model: &str) -> String {
+    format!("{} Model set to {}", "✓".green(), model.cyan())
+}
+
+pub(crate) fn effort_unknown_line(rest: &str) -> String {
+    format!(
+        "{} Unknown effort '{rest}' (low, medium, high, xhigh)",
+        "✗".red()
+    )
+}
+
+pub(crate) fn effort_no_levels_line() -> String {
+    format!("{} This model has no reasoning-effort levels", "·".dimmed())
+}
+
+pub(crate) fn switched_agent_line(name: &str) -> String {
+    format!("{} Switched to agent '{}'", "✓".green(), name.cyan())
+}
+
+pub(crate) fn api_key_loaded_line(provider: &str, prefix: &str) -> String {
+    format!(
+        "{} API key loaded for {} ({prefix}…)",
+        "✓".green(),
+        provider.cyan()
+    )
+}
+
+pub(crate) fn connect_missing_key_lines(provider: &str, oauth: bool) -> Vec<String> {
+    let mut lines = vec![
+        "Add a provider:".into(),
+        format!("  whycodes provider add {provider} --api-key <key>"),
+        format!("  or set env {}", provider_env_var(provider)),
+    ];
+    if oauth {
+        lines.push(format!(
+            "  or log in with your subscription: whycodes auth login {provider}"
+        ));
+    }
+    lines.push(String::new());
+    lines.push(
+        "Env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY, ...".into(),
+    );
+    lines
+}
+
+pub(crate) fn login_connected_label(connected: bool) -> String {
+    if connected {
+        "connected".green().to_string()
+    } else {
+        "not connected".dimmed().to_string()
+    }
+}
+
+pub(crate) fn oauth_unavailable_line(arg: &str, list: &str) -> String {
+    format!(
+        "OAuth login is not available for `{arg}` — choose from: {list}",
+        arg = arg.red()
+    )
+}
+
+pub(crate) fn themes_set_hint(first: &str) -> String {
+    format!("Set in config: [tui] theme = \"{first}\"")
+}
+
+pub(crate) fn tools_list_header(n: usize) -> String {
+    format!("{} Available tools ({n}):", "🔧".bold())
+}
+
+pub(crate) fn remembered_line(id: &str, text: &str) -> String {
+    format!(
+        "{} Remembered {} — {text}",
+        "✓".green(),
+        id.chars().take(8).collect::<String>().cyan()
+    )
+}
+
+pub(crate) fn repl_memory_status(enabled: bool, n: usize, path: impl std::fmt::Display) -> String {
+    format!("Memory: enabled={enabled}  entries={n}  path={path}")
+}
+
+pub(crate) fn nothing_to_undo_line() -> String {
+    format!("{} Nothing to undo.", "ℹ".cyan())
+}
+
+pub(crate) fn nothing_to_redo_line() -> String {
+    format!("{} Nothing to redo.", "ℹ".cyan())
+}
+
+pub(crate) fn init_wrote_line(path: &str) -> String {
+    format!(
+        "{} Wrote project instructions: {}",
+        "✓".green(),
+        path.cyan()
+    )
+}
+
+pub(crate) fn init_failed_line(err: &str) -> String {
+    format!("{} /init failed: {}", "✗".red(), err)
+}
+
+pub(crate) fn session_exported_line(path: &str) -> String {
+    format!("{} Session exported: {}", "✓".green(), path.cyan())
+}
+
+pub(crate) fn export_failed_line(err: &str) -> String {
+    format!("{} Export failed: {}", "✗".red(), err)
+}
+
+pub(crate) fn skip_prompt_cache_line() -> String {
+    format!(
+        "{} Next turn will skip the provider prompt cache.",
+        "✓".green()
+    )
+}
+
+pub(crate) fn nothing_to_compact_line() -> String {
+    format!("{} Nothing to compact.", "ℹ".cyan())
+}
+
+pub(crate) fn compacting_line() -> String {
+    format!("{} Compacting conversation…", "…".dimmed())
+}
+
+pub(crate) fn bang_usage_line() -> &'static str {
+    "Usage: ! <shell command>"
+}
+
+pub(crate) fn bang_echo_line(cmd: &str) -> String {
+    format!("{} {}", "$".dimmed(), cmd.dimmed())
+}
+
+pub(crate) fn custom_command_line(name: &str) -> String {
+    format!("{} /{} → prompt", "⚡".bold(), name.cyan())
+}
+
+pub(crate) fn git_unavailable_line(err: &str) -> String {
+    format!("{} git unavailable: {}", "✗".red(), err)
+}
+
+pub(crate) fn git_status_failed_line(stderr: &str) -> String {
+    format!("{} git status: {stderr}", "✗".red())
+}
+
 pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     let msg = e.to_string();
     if msg.contains("No such device")
@@ -70,10 +418,10 @@ pub(crate) async fn cmd_run(
     // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
     // while still having a controlling terminal — tui_available() opens
     // /dev/tty (Unix) or CONOUT$ (Windows) in that case so the TUI still works.
-    let force_plain = cli.plain || std::env::var_os("WHYCODES_PLAIN").is_some();
+    let force_plain = force_plain_mode(cli.plain);
     let stub_tui = cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some();
-    let use_tui = !force_plain && (stub_tui || whycodes_tui::tui_available());
-    let interactive = prompt.is_none_or(str::is_empty) && !format.is_structured();
+    let use_tui = should_use_tui(force_plain, stub_tui, whycodes_tui::tui_available());
+    let interactive = is_repl_interactive(prompt, format.is_structured());
     // TUI owns first-run import as a home-screen confirm (same chrome as
     // the update offer). `--plain` REPL still asks on stdin before the loop.
     match super::import::maybe_first_run_import(interactive && !use_tui) {
@@ -192,11 +540,7 @@ pub(crate) async fn cmd_run(
                 eprintln!(
                     "{} No session to resume ({}).",
                     "ℹ".yellow(),
-                    if want == whycodes_tui::RESUME_LATEST {
-                        "none saved yet"
-                    } else {
-                        want.as_str()
-                    }
+                    resume_missing_label(want)
                 );
             }
             Err(e) => eprintln!("{} Resume failed: {e}", "✗".red()),
@@ -322,10 +666,10 @@ pub(crate) async fn cmd_run(
         if let Some(cmd) = input.strip_prefix('!') {
             let cmd = cmd.trim();
             if cmd.is_empty() {
-                println!("Usage: ! <shell command>");
+                println!("{}", bang_usage_line());
                 continue;
             }
-            println!("{} {}", "$".dimmed(), cmd.dimmed());
+            println!("{}", bang_echo_line(cmd));
             let output = run_shell_capture(cmd, &project_dir);
             println!("{}", output);
             session.add_user_message(&format!(
@@ -345,7 +689,7 @@ pub(crate) async fn cmd_run(
                 if !ensure_api_key(&mut api_key, &provider, &config).await {
                     continue;
                 }
-                println!("{} /{} → prompt", "⚡".bold(), name.cyan());
+                println!("{}", custom_command_line(name));
                 history.push_before_turn(&session.messages, &project_dir);
                 refresh_session_memory(
                     &mut session,
@@ -386,19 +730,14 @@ pub(crate) async fn cmd_run(
                             None,
                         ),
                     );
-                    println!(
-                        "{} New session started ({})",
-                        "✓".green(),
-                        session.title.dimmed()
-                    );
+                    println!("{}", new_session_line(&session.title));
                     continue;
                 }
                 "/rename" => {
                     if rest.is_empty() {
                         println!(
-                            "Title: {} ({:?}) — usage: /rename <name>",
-                            session.title.cyan(),
-                            session.title_source
+                            "{}",
+                            rename_usage_line(&session.title, session.title_source)
                         );
                     } else {
                         session.set_title_manual(rest);
@@ -407,7 +746,7 @@ pub(crate) async fn cmd_run(
                         {
                             tracing::warn!(error = %err, "failed to persist session title");
                         }
-                        println!("{} Renamed to '{}'", "✓".green(), session.title.cyan());
+                        println!("{}", renamed_line(&session.title));
                     }
                     continue;
                 }
@@ -417,16 +756,13 @@ pub(crate) async fn cmd_run(
                     // character heuristic only otherwise, and labelled as an
                     // estimate. They are different measurements and printing
                     // them the same way would suggest they are not.
-                    let tokens = if session.usage.is_empty() {
-                        format!("Tokens≈{} (est)", session.token_count())
-                    } else {
-                        format!(
-                            "Tokens: {} in / {} out / {} total",
-                            session.usage.input_tokens,
-                            session.usage.output_tokens,
-                            session.usage.total()
-                        )
-                    };
+                    let tokens = session_token_label(
+                        session.usage.is_empty(),
+                        session.token_count(),
+                        session.usage.input_tokens,
+                        session.usage.output_tokens,
+                        session.usage.total(),
+                    );
                     println!("Title: {} ({:?})", i.title.cyan(), session.title_source);
                     println!(
                         "ID: {} | Messages: {} | {} | Agent: {} | {}/{}",
@@ -450,12 +786,8 @@ pub(crate) async fn cmd_run(
                     match run_init_agents_md(&project_dir, &agent, &provider, &model, &api_key)
                         .await
                     {
-                        Ok(path) => println!(
-                            "{} Wrote project instructions: {}",
-                            "✓".green(),
-                            path.cyan()
-                        ),
-                        Err(e) => eprintln!("{} /init failed: {}", "✗".red(), e),
+                        Ok(path) => println!("{}", init_wrote_line(&path)),
+                        Err(e) => eprintln!("{}", init_failed_line(&e.to_string())),
                     }
                     // Reload system prompt with new AGENTS.md + memory
                     session.set_system_prompt(&with_project_memory(
@@ -472,57 +804,42 @@ pub(crate) async fn cmd_run(
                 "/undo" => {
                     if let Some(msgs) = history.undo(&session.messages, &project_dir) {
                         session.set_messages(msgs);
-                        println!(
-                            "{} Undid last turn ({} messages left).",
-                            "↩".cyan(),
-                            session.messages.len()
-                        );
+                        println!("{}", undid_turn_line(session.messages.len()));
                     } else if session.undo_last_turn() > 0 {
-                        println!(
-                            "{} Undid last turn ({} messages left).",
-                            "↩".cyan(),
-                            session.messages.len()
-                        );
+                        println!("{}", undid_turn_line(session.messages.len()));
                     } else {
-                        println!("{} Nothing to undo.", "ℹ".cyan());
+                        println!("{}", nothing_to_undo_line());
                     }
                     continue;
                 }
                 "/redo" => {
                     if let Some(msgs) = history.redo(&session.messages, &project_dir) {
                         session.set_messages(msgs);
-                        println!(
-                            "{} Redid turn ({} messages).",
-                            "↪".cyan(),
-                            session.messages.len()
-                        );
+                        println!("{}", redid_turn_line(session.messages.len()));
                     } else {
-                        println!("{} Nothing to redo.", "ℹ".cyan());
+                        println!("{}", nothing_to_redo_line());
                     }
                     continue;
                 }
                 "/share" | "/export" => {
                     match session.export_share() {
-                        Ok(path) => println!("{} Session exported: {}", "✓".green(), path.cyan()),
-                        Err(e) => eprintln!("{} Export failed: {}", "✗".red(), e),
+                        Ok(path) => println!("{}", session_exported_line(&path)),
+                        Err(e) => eprintln!("{}", export_failed_line(&e.to_string())),
                     }
                     continue;
                 }
                 "/fresh" => {
                     agent.skip_prompt_cache_next();
-                    println!(
-                        "{} Next turn will skip the provider prompt cache.",
-                        "✓".green()
-                    );
+                    println!("{}", skip_prompt_cache_line());
                     continue;
                 }
                 "/compact" | "/summarize" => {
                     if session.messages.is_empty() {
-                        println!("{} Nothing to compact.", "ℹ".cyan());
+                        println!("{}", nothing_to_compact_line());
                         continue;
                     }
                     let note = rest.trim();
-                    println!("{} Compacting conversation…", "…".dimmed());
+                    println!("{}", compacting_line());
                     let outcome = agent
                         .compact_session(
                             &mut session,
@@ -533,12 +850,13 @@ pub(crate) async fn cmd_run(
                         )
                         .await;
                     println!(
-                        "{} Conversation compacted ({} → {} messages, ~{} → ~{} tok).",
-                        "✓".green(),
-                        outcome.messages_before,
-                        outcome.messages_after,
-                        outcome.tokens_before,
-                        outcome.tokens_after
+                        "{}",
+                        compact_ok_line(
+                            outcome.messages_before,
+                            outcome.messages_after,
+                            outcome.tokens_before,
+                            outcome.tokens_after,
+                        )
                     );
                     if let Some(last) = session.messages.last()
                         && let Some(text) = last.content.as_text()
@@ -569,64 +887,54 @@ pub(crate) async fn cmd_run(
                             }
                         }
                         Ok(o) => eprintln!(
-                            "{} git status: {}",
-                            "✗".red(),
-                            String::from_utf8_lossy(&o.stderr).trim()
+                            "{}",
+                            git_status_failed_line(String::from_utf8_lossy(&o.stderr).trim())
                         ),
-                        Err(e) => eprintln!("{} git unavailable: {}", "✗".red(), e),
+                        Err(e) => eprintln!("{}", git_unavailable_line(&e.to_string())),
                     }
                     continue;
                 }
                 "/cost" | "/usage" => {
                     let u = &session.usage;
                     println!("{}", "Cost / usage".bold());
-                    if u.is_empty() {
-                        println!("  session: ~{} tokens (estimated)", session.token_count());
-                    } else {
-                        println!(
-                            "  session: {} in / {} out · total {}",
+                    println!(
+                        "{}",
+                        session_cost_line(
+                            u.is_empty(),
+                            session.token_count(),
                             u.input_tokens,
                             u.output_tokens,
-                            u.total()
-                        );
-                    }
+                            u.total(),
+                        )
+                    );
                     continue;
                 }
                 "/context" => {
-                    println!("{}", "Context".bold());
-                    println!("  messages: {}", session.messages.len());
-                    println!("  estimate: ~{} tok", session.token_count());
-                    println!(
-                        "  compact:  threshold={} llm={}",
-                        config.session.compaction_threshold, config.session.compaction_llm
-                    );
-                    println!("  tools:    profile={}", config.session.tool_profile);
+                    for line in context_report_lines(
+                        session.messages.len(),
+                        session.token_count(),
+                        config.session.compaction_threshold,
+                        &config.session.compaction_llm,
+                        &config.session.tool_profile,
+                    ) {
+                        println!("{line}");
+                    }
                     continue;
                 }
                 "/doctor" => {
-                    println!("{}", "Doctor".bold());
-                    println!("  provider: {provider}");
-                    println!("  model:    {model}");
-                    println!("  project:  {}", project_dir.display());
                     let key_ok = !api_key.is_empty()
                         || !whycodes_llm::provider_requires_api_key(&provider, Some(&config));
-                    println!(
-                        "  api_key:  {}",
-                        if key_ok {
-                            if api_key.is_empty() {
-                                "not required"
-                            } else {
-                                "set"
-                            }
-                        } else {
-                            "MISSING"
-                        }
-                    );
-                    println!(
-                        "  sandbox:  {} network={}",
-                        config.security.sandbox, config.security.sandbox_network
-                    );
-                    println!("  tools:    profile={}", config.session.tool_profile);
+                    for line in doctor_report_lines(
+                        &provider,
+                        &model,
+                        &project_dir.display().to_string(),
+                        doctor_api_key_status(key_ok, api_key.is_empty()),
+                        &config.security.sandbox,
+                        config.security.sandbox_network,
+                        &config.session.tool_profile,
+                    ) {
+                        println!("{line}");
+                    }
                     continue;
                 }
                 "/sessions" => {
@@ -636,27 +944,23 @@ pub(crate) async fn cmd_run(
                     continue;
                 }
                 "/resume" | "/continue" => {
-                    let want = if !rest.is_empty() {
-                        rest.to_string()
-                    } else if cmd == "/continue" {
-                        whycodes_tui::RESUME_LATEST.to_string()
-                    } else {
-                        // /resume with no id → list, same as /sessions
-                        if let Err(err) = super::session::cmd_session(&SessionCmd::List).await {
-                            eprintln!("{} {}", "✗".red(), err);
+                    let want = match resume_slash_want(cmd, rest) {
+                        ResumeSlash::Id(id) => id,
+                        ResumeSlash::List => {
+                            // /resume with no id → list, same as /sessions
+                            if let Err(err) = super::session::cmd_session(&SessionCmd::List).await {
+                                eprintln!("{} {}", "✗".red(), err);
+                            }
+                            println!("{}", "Tip: /resume <id> or /continue (latest)".dimmed());
+                            continue;
                         }
-                        println!("{}", "Tip: /resume <id> or /continue (latest)".dimmed());
-                        continue;
                     };
                     match resume_session_into(&mut session, &want) {
                         Ok(true) => {
                             history = whycodes_session::SessionHistory::new();
                             println!(
-                                "{} Resumed {} ({}) — {} messages",
-                                "✓".green(),
-                                session.title.cyan(),
-                                session.id.chars().take(8).collect::<String>().dimmed(),
-                                session.messages.len()
+                                "{}",
+                                resumed_line(&session.title, &session.id, session.messages.len())
                             );
                         }
                         Ok(false) => {
@@ -670,68 +974,62 @@ pub(crate) async fn cmd_run(
                     let _ = super::provider::cmd_model(&ModelCmd::List).await;
                     println!("Current: {}/{}", provider.cyan(), model.cyan());
                     if !rest.is_empty() {
-                        // /models provider/model
-                        if let Some((p, m)) = rest.split_once('/') {
-                            whycodes_llm::oauth_refresh::unregister(&provider);
-                            provider = p.to_string();
-                            model = m.to_string();
-                            api_key = get_api_key(&provider, &config).await.unwrap_or_default();
-                            println!(
-                                "{} Switched model to {}/{}",
-                                "✓".green(),
-                                provider.cyan(),
-                                model.cyan()
-                            );
-                            maybe_inject_test_llm(&mut agent, &provider);
-                        } else {
-                            model = rest.to_string();
-                            println!("{} Model set to {}", "✓".green(), model.cyan());
+                        match parse_models_slash(rest) {
+                            ModelsSlash::ProviderModel(p, m) => {
+                                whycodes_llm::oauth_refresh::unregister(&provider);
+                                provider = p;
+                                model = m;
+                                api_key = get_api_key(&provider, &config).await.unwrap_or_default();
+                                println!("{}", switched_model_line(&provider, &model));
+                                maybe_inject_test_llm(&mut agent, &provider);
+                            }
+                            ModelsSlash::ModelOnly(m) => {
+                                model = m;
+                                println!("{}", model_set_line(&model));
+                            }
                         }
                     }
                     continue;
                 }
                 "/effort" => {
-                    if rest.is_empty() {
-                        let current = config
-                            .session
-                            .reasoning_effort
-                            .as_deref()
-                            .unwrap_or("medium (default)");
-                        println!("Reasoning effort: {}", current.cyan());
-                        println!("Set with /effort low|medium|high|xhigh");
-                    } else if let Some(parsed) = whycodes_llm::ReasoningEffort::parse(rest) {
-                        let resolved = whycodes_llm::ThinkingConfig::resolve_effort(
-                            &provider,
-                            &model,
-                            Some(parsed.as_str()),
-                        );
-                        match resolved {
-                            Some(level) => {
-                                let value = level.as_str().to_string();
-                                config.session.reasoning_effort = Some(value.clone());
-                                agent.set_reasoning_effort(Some(value.clone()));
-                                if let Err(e) = config.save() {
-                                    eprintln!("{} Could not persist: {e}", "✗".red());
+                    match parse_effort_slash(rest) {
+                        EffortSlash::Show => {
+                            let current = config
+                                .session
+                                .reasoning_effort
+                                .as_deref()
+                                .unwrap_or("medium (default)");
+                            println!("Reasoning effort: {}", current.cyan());
+                            println!("Set with /effort low|medium|high|xhigh");
+                        }
+                        EffortSlash::Set(parsed) => {
+                            let resolved = whycodes_llm::ThinkingConfig::resolve_effort(
+                                &provider,
+                                &model,
+                                Some(parsed.as_str()),
+                            );
+                            match resolved {
+                                Some(level) => {
+                                    let value = level.as_str().to_string();
+                                    config.session.reasoning_effort = Some(value.clone());
+                                    agent.set_reasoning_effort(Some(value.clone()));
+                                    if let Err(e) = config.save() {
+                                        eprintln!("{} Could not persist: {e}", "✗".red());
+                                    }
+                                    println!(
+                                        "{} Reasoning effort → {}",
+                                        "✓".green(),
+                                        level.label().cyan()
+                                    );
                                 }
-                                println!(
-                                    "{} Reasoning effort → {}",
-                                    "✓".green(),
-                                    level.label().cyan()
-                                );
-                            }
-                            None => {
-                                println!(
-                                    "{} This model has no reasoning-effort levels",
-                                    "·".dimmed()
-                                );
+                                None => {
+                                    println!("{}", effort_no_levels_line());
+                                }
                             }
                         }
-                    } else {
-                        eprintln!(
-                            "{} Unknown effort '{}' (low, medium, high, xhigh)",
-                            "✗".red(),
-                            rest
-                        );
+                        EffortSlash::Unknown => {
+                            eprintln!("{}", effort_unknown_line(rest));
+                        }
                     }
                     continue;
                 }
@@ -746,11 +1044,7 @@ pub(crate) async fn cmd_run(
                                 agent = new_agent;
                                 maybe_inject_test_llm(&mut agent, &provider);
                                 session.set_system_prompt(&prompt);
-                                println!(
-                                    "{} Switched to agent '{}'",
-                                    "✓".green(),
-                                    agent_name.cyan()
-                                );
+                                println!("{}", switched_agent_line(&agent_name));
                             }
                             Err(e) => eprintln!("{} {}", "✗".red(), e),
                         }
@@ -765,25 +1059,16 @@ pub(crate) async fn cmd_run(
                     if let Some(k) = get_api_key(&provider, &config).await {
                         api_key = k;
                         println!(
-                            "{} API key loaded for {} ({}…)",
-                            "✓".green(),
-                            provider.cyan(),
-                            api_key.chars().take(8).collect::<String>()
+                            "{}",
+                            api_key_loaded_line(&provider, &masked_api_key_prefix(&api_key))
                         );
                     } else {
-                        println!("Add a provider:");
-                        println!("  whycodes provider add {} --api-key <key>", provider);
-                        println!("  or set env {}", provider_env_var(&provider));
-                        if whycodes_auth::providers::supports_oauth(&provider) {
-                            println!(
-                                "  or log in with your subscription: whycodes auth login {}",
-                                provider
-                            );
+                        for line in connect_missing_key_lines(
+                            &provider,
+                            whycodes_auth::providers::supports_oauth(&provider),
+                        ) {
+                            println!("{line}");
                         }
-                        println!();
-                        println!(
-                            "Env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY, ..."
-                        );
                         let _ = super::provider::cmd_provider(&ProviderCmd::List).await;
                     }
                     continue;
@@ -798,11 +1083,9 @@ pub(crate) async fn cmd_run(
                                 let label = whycodes_auth::providers::spec_for(&name)
                                     .map(|s| s.label)
                                     .unwrap_or_else(|_| name.clone());
-                                let status = if store.get(&name).ok().flatten().is_some() {
-                                    "connected".green()
-                                } else {
-                                    "not connected".dimmed()
-                                };
+                                let status = login_connected_label(
+                                    store.get(&name).ok().flatten().is_some(),
+                                );
                                 println!(
                                     "  {} {} — {}",
                                     format!("{name:<15}").cyan(),
@@ -831,11 +1114,7 @@ pub(crate) async fn cmd_run(
                             api_key = k;
                         }
                     } else {
-                        println!(
-                            "OAuth login is not available for `{}` — choose from: {}",
-                            arg.red(),
-                            oauth_provider_list()
-                        );
+                        println!("{}", oauth_unavailable_line(arg, &oauth_provider_list()));
                     }
                     continue;
                 }
@@ -843,13 +1122,8 @@ pub(crate) async fn cmd_run(
                     show_thinking = !show_thinking;
                     println!(
                         "Thinking display: {}",
-                        if show_thinking {
-                            "ON".green().to_string()
-                        } else {
-                            "OFF".dimmed().to_string()
-                        }
+                        thinking_display_label(show_thinking)
                     );
-                    let _ = show_thinking; // reserved for TUI streaming
                     continue;
                 }
                 "/themes" => {
@@ -859,13 +1133,13 @@ pub(crate) async fn cmd_run(
                         .collect();
                     println!("{} Themes (TUI), {}:", "🎨".bold(), names.len());
                     println!("  {}", names.join(", "));
-                    println!("Set in config: [tui] theme = \"{}\"", names[0]);
+                    println!("{}", themes_set_hint(names[0]));
                     continue;
                 }
                 "/tools" => {
                     let tools =
                         whycodes_tools::ToolExecutor::new().get_definitions(&agent.info.permission);
-                    println!("{} Available tools ({}):", "🔧".bold(), tools.len());
+                    println!("{}", tools_list_header(tools.len()));
                     for t in tools.iter() {
                         println!("  {} — {}", t.name.cyan(), t.description);
                     }
@@ -881,12 +1155,7 @@ pub(crate) async fn cmd_run(
                             memory_settings(&config),
                         ) {
                             Ok(svc) => match svc.remember(rest, Some(&session.id)) {
-                                Ok(id) => println!(
-                                    "{} Remembered {} — {}",
-                                    "✓".green(),
-                                    id.chars().take(8).collect::<String>().cyan(),
-                                    rest
-                                ),
+                                Ok(id) => println!("{}", remembered_line(&id, rest)),
                                 Err(e) => eprintln!("{} {e}", "✗".red()),
                             },
                             Err(e) => eprintln!("{} {e}", "✗".red()),
@@ -903,10 +1172,12 @@ pub(crate) async fn cmd_run(
                         Ok(svc) => {
                             let n = svc.list(1000).map(|r| r.len()).unwrap_or(0);
                             println!(
-                                "Memory: enabled={}  entries={}  path={}",
-                                config.memory.enabled,
-                                n,
-                                svc.memory_md_path().display()
+                                "{}",
+                                repl_memory_status(
+                                    config.memory.enabled,
+                                    n,
+                                    svc.memory_md_path().display()
+                                )
                             );
                             println!("  project_key={}", svc.project_key.dimmed());
                             println!("  CLI: whycodes memory list|search|add|delete|clear");
@@ -925,7 +1196,7 @@ pub(crate) async fn cmd_run(
                     continue;
                 }
                 other => {
-                    println!("Unknown command: {}. Type /help", other);
+                    println!("{}", unknown_slash_line(other));
                     continue;
                 }
             }
@@ -1465,85 +1736,5 @@ pub(crate) fn emit_parallel_outcome(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fold_parallel_joins_ok_and_fail() {
-        fold_parallel_joins([Ok(false)], false).unwrap();
-        assert!(fold_parallel_joins([Ok(true)], false).is_err());
-        assert!(fold_parallel_joins([Err("x".into())], true).is_err());
-        assert!(fold_parallel_joins([Err("x".into())], false).is_err());
-    }
-
-    #[test]
-    fn emit_parallel_outcome_covers_formats() {
-        let meta = ResultMeta {
-            session_id: "s".into(),
-            provider: "p".into(),
-            model: "m".into(),
-            agent: "a".into(),
-            usage: Default::default(),
-            duration_ms: 1,
-        };
-        let wrap = |ev: CiEvent| ev;
-        assert!(!emit_parallel_outcome(
-            OutputFormat::Text,
-            Ok("ok".into()),
-            meta.clone(),
-            &wrap
-        ));
-        assert!(!emit_parallel_outcome(
-            OutputFormat::Text,
-            Ok(String::new()),
-            meta.clone(),
-            &wrap
-        ));
-        assert!(!emit_parallel_outcome(
-            OutputFormat::Json,
-            Ok("j".into()),
-            meta.clone(),
-            &wrap
-        ));
-        assert!(!emit_parallel_outcome(
-            OutputFormat::StreamJson,
-            Ok("s".into()),
-            meta.clone(),
-            &wrap
-        ));
-        assert!(emit_parallel_outcome(
-            OutputFormat::Text,
-            Err("boom".into()),
-            meta.clone(),
-            &wrap
-        ));
-        assert!(emit_parallel_outcome(
-            OutputFormat::Json,
-            Err("jerr".into()),
-            meta.clone(),
-            &wrap
-        ));
-        assert!(emit_parallel_outcome(
-            OutputFormat::StreamJson,
-            Err("cancel me".into()),
-            meta.clone(),
-            &wrap
-        ));
-        assert!(emit_parallel_outcome(
-            OutputFormat::StreamJson,
-            Err("provider down".into()),
-            meta,
-            &wrap
-        ));
-    }
-
-    #[test]
-    fn helpers_all_prompts_and_fan_out() {
-        assert!(all_prompts_empty(&[String::new(), String::new()]));
-        assert!(!all_prompts_empty(&["x".into()]));
-        assert!(!should_fan_out(&["a".into()]));
-        assert!(should_fan_out(&["a".into(), "b".into()]));
-        let mapped = map_tui_run_error(anyhow::anyhow!("os error 6"));
-        assert!(mapped.to_string().contains("TUI needs a real terminal"));
-    }
-}
+#[path = "run_tests.rs"]
+mod tests;

@@ -376,6 +376,21 @@ async fn handshake_rejects_wrong_protocol_and_missing_route() {
 }
 
 #[tokio::test]
+async fn handshake_maps_non_success_health_to_internal() {
+    async fn unhealthy() -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+    let app = Router::new().route("/v1/health", get(unhealthy));
+    let (base, _server) = bind_app(app).await;
+    let err = match WhyCodesClient::connect(&base).await {
+        Err(e) => e,
+        Ok(_) => panic!("expected health failure"),
+    };
+    assert_eq!(err.code, ErrorCode::Internal);
+    assert!(err.message.contains("health failed"), "{err:?}");
+}
+
+#[tokio::test]
 async fn connect_refused_is_disconnected() {
     let err = match WhyCodesClient::connect("127.0.0.1:1").await {
         Err(e) => e,
@@ -982,4 +997,202 @@ async fn run_structured_schema_retry_and_success_paths() {
         .await
         .unwrap_err();
     assert_eq!(schema_fail.code, ErrorCode::StructuredOutputInvalid);
+}
+
+fn write_fake_binary(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
+    let path = dir.join("whycodes");
+    let script = format!("#!/usr/bin/env python3\n{body}\n");
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(script.as_bytes()).unwrap();
+        f.sync_all().unwrap();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path
+}
+
+fn is_busy_exec(err: &crate::SdkError) -> bool {
+    err.code == ErrorCode::ServeNotFound && err.message.to_ascii_lowercase().contains("busy")
+}
+
+async fn launch_or_retry_busy(opts: LaunchOptions) -> WhyCodesClient {
+    let mut last = None;
+    for i in 0..8 {
+        match WhyCodesClient::launch(opts.clone()).await {
+            Ok(client) => return client,
+            Err(e) if is_busy_exec(&e) => {
+                last = Some(e);
+                tokio::time::sleep(Duration::from_millis(20 * (i + 1))).await;
+            }
+            Err(e) => panic!("{e:?}"),
+        }
+    }
+    panic!("{}", last.expect("busy retries exhausted"));
+}
+
+/// Retry `launch` while the fake binary is ETXTBSY, then return the
+/// non-busy error. Parallel coverage instrumentation races write+exec.
+async fn launch_expecting_err(opts: LaunchOptions) -> crate::SdkError {
+    let mut last_busy = None;
+    for i in 0..8 {
+        match WhyCodesClient::launch(opts.clone()).await {
+            Ok(_) => panic!("expected launch error"),
+            Err(e) if is_busy_exec(&e) => {
+                last_busy = Some(e);
+                tokio::time::sleep(Duration::from_millis(20 * (i + 1))).await;
+            }
+            Err(e) => return e,
+        }
+    }
+    panic!("{}", last_busy.expect("busy retries exhausted"));
+}
+
+const PY_HEALTH: &str = r#"
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+PORT = int(sys.argv[2])
+PROTO = int(__import__("os").environ.get("FAKE_PROTO", "1"))
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.split("?", 1)[0] == "/v1/health":
+            body = json.dumps({
+                "protocol": PROTO,
+                "version": "test",
+                "healthy": True,
+                "project": "/tmp",
+                "uptime_secs": 1,
+                "sessions_in_memory": 0,
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+    def log_message(self, *args):
+        pass
+HTTPServer(("127.0.0.1", PORT), H).serve_forever()
+"#;
+
+#[tokio::test]
+async fn launch_isolated_home_and_tempdir_connect() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = write_fake_binary(dir.path(), PY_HEALTH);
+    let home = dir.path().join("home");
+    let client = launch_or_retry_busy(LaunchOptions {
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(binary.clone()),
+        inherit_logins: false,
+        home: Some(home.clone()),
+        startup_timeout: Duration::from_secs(5),
+        port: None,
+    })
+    .await;
+    assert!(home.is_dir());
+    assert!(client.base_url().starts_with("http://127.0.0.1:"));
+    client.close().await.unwrap();
+
+    let inherit_home = dir.path().join("inherit-home");
+    let client = launch_or_retry_busy(LaunchOptions {
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(binary.clone()),
+        inherit_logins: true,
+        home: Some(inherit_home.clone()),
+        startup_timeout: Duration::from_secs(5),
+        port: Some(crate::client::ephemeral_port_for_test()),
+    })
+    .await;
+    assert!(inherit_home.is_dir());
+    client.close().await.unwrap();
+
+    let client = launch_or_retry_busy(LaunchOptions {
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(binary),
+        inherit_logins: false,
+        home: None,
+        startup_timeout: Duration::from_secs(5),
+        port: Some(crate::client::ephemeral_port_for_test()),
+    })
+    .await;
+    client.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn launch_inherited_logins_retries_until_healthy() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = format!("import time\ntime.sleep(0.12)\n{PY_HEALTH}");
+    let binary = write_fake_binary(dir.path(), &body);
+    let client = launch_or_retry_busy(LaunchOptions {
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(binary),
+        inherit_logins: true,
+        home: None,
+        startup_timeout: Duration::from_secs(5),
+        port: Some(crate::client::ephemeral_port_for_test()),
+    })
+    .await;
+    client.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn launch_unsupported_version_does_not_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = format!("import os\nos.environ['FAKE_PROTO']='99'\n{PY_HEALTH}");
+    let err = launch_expecting_err(LaunchOptions {
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(write_fake_binary(dir.path(), &script)),
+        inherit_logins: false,
+        home: Some(dir.path().join("home3")),
+        startup_timeout: Duration::from_secs(5),
+        port: Some(crate::client::ephemeral_port_for_test()),
+    })
+    .await;
+    assert_eq!(err.code, ErrorCode::UnsupportedVersion);
+}
+
+#[tokio::test]
+async fn launch_child_exit_is_startup_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = write_fake_binary(
+        dir.path(),
+        "import sys\nsys.stderr.write('nope\\n')\nraise SystemExit(7)\n",
+    );
+    let err = launch_expecting_err(LaunchOptions {
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(binary),
+        inherit_logins: false,
+        home: None,
+        startup_timeout: Duration::from_secs(3),
+        port: Some(crate::client::ephemeral_port_for_test()),
+    })
+    .await;
+    assert_eq!(err.code, ErrorCode::StartupFailed);
+    assert!(err.message.contains("nope") || err.message.contains("exited"));
+}
+
+#[tokio::test]
+async fn launch_timeout_closes_stderr_then_hangs() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = write_fake_binary(
+        dir.path(),
+        "import os, sys, time\nsys.stderr.write('waiting\\n')\nsys.stderr.flush()\nos.close(2)\ntime.sleep(30)\n",
+    );
+    let err = launch_expecting_err(LaunchOptions {
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(binary),
+        inherit_logins: false,
+        home: None,
+        startup_timeout: Duration::from_millis(250),
+        port: Some(crate::client::ephemeral_port_for_test()),
+    })
+    .await;
+    assert_eq!(err.code, ErrorCode::StartupTimeout);
+    assert!(err.message.contains("waiting") || err.message.contains("did not become healthy"));
 }

@@ -55,19 +55,5 @@ impl Default for AntigravityProvider {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn identity() {
-        let p = AntigravityProvider::new();
-        assert_eq!(p.name(), "google-antigravity");
-        assert_eq!(
-            p.default_base_url(),
-            "https://daily-cloudcode-pa.googleapis.com/v1internal"
-        );
-        let via_default = AntigravityProvider::default();
-        assert_eq!(via_default.name(), p.name());
-        assert_eq!(via_default.default_base_url(), p.default_base_url());
-    }
-}
+#[path = "antigravity_tests.rs"]
+mod tests;

@@ -24,32 +24,33 @@ fn sources() -> &'static RwLock<HashMap<String, PathBuf>> {
     SOURCES.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+fn write_sources() -> std::sync::RwLockWriteGuard<'static, HashMap<String, PathBuf>> {
+    sources().write().unwrap_or_else(|e| e.into_inner())
+}
+
+fn read_sources() -> std::sync::RwLockReadGuard<'static, HashMap<String, PathBuf>> {
+    sources().read().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Mark that `provider`'s current credential came from the OAuth token
 /// store under `data_dir`, so a 401 may trigger one forced refresh.
 pub fn register(provider: &str, data_dir: PathBuf) {
-    if let Ok(mut map) = sources().write() {
-        map.insert(provider.to_string(), data_dir);
-    }
+    write_sources().insert(provider.to_string(), data_dir);
 }
 
 /// Drop the registration — an explicit API key replaced the OAuth token
 /// (or the user logged out), so a 401 must surface without a retry.
 pub fn unregister(provider: &str) {
-    if let Ok(mut map) = sources().write() {
-        map.remove(provider);
-    }
+    write_sources().remove(provider);
 }
 
 /// True when `provider` has a registered OAuth credential source.
 pub fn has_source(provider: &str) -> bool {
-    sources()
-        .read()
-        .map(|map| map.contains_key(provider))
-        .unwrap_or(false)
+    read_sources().contains_key(provider)
 }
 
 fn source_dir(provider: &str) -> Option<PathBuf> {
-    sources().read().ok()?.get(provider).cloned()
+    read_sources().get(provider).cloned()
 }
 
 /// Read a provider-specific extra stored with the OAuth credential (e.g.
@@ -60,8 +61,37 @@ fn source_dir(provider: &str) -> Option<PathBuf> {
 pub async fn stored_extra(provider: &str, key: &str) -> Option<String> {
     let dir = source_dir(provider)?;
     let store = whycodes_auth::TokenStore::new(&dir);
-    let auth = store.get(provider).ok()??;
-    auth.token.extra.get(key)?.as_str().map(str::to_string)
+    auth_from_store(store.get(provider))?
+        .token
+        .extra
+        .get(key)?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn auth_from_store(
+    got: Result<Option<whycodes_auth::ProviderAuth>, whycodes_auth::AuthError>,
+) -> Option<whycodes_auth::ProviderAuth> {
+    match got {
+        Ok(Some(auth)) => Some(auth),
+        Ok(None) => None,
+        Err(_store) => None,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn auth_from_store_err_for_tests() -> Option<whycodes_auth::ProviderAuth> {
+    auth_from_store(Err(whycodes_auth::AuthError::Json(
+        serde_json::from_str::<serde_json::Value>("{").unwrap_err(),
+    )))
+}
+
+#[cfg(test)]
+pub(crate) fn poison_sources_for_tests() {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = sources().write().unwrap();
+        panic!("poison oauth sources");
+    }));
 }
 
 /// Send the request built by `build(current_key)`; on a 401 with a
@@ -71,12 +101,20 @@ pub async fn stored_extra(provider: &str, key: &str) -> Option<String> {
 pub async fn send_with_refresh_retry(
     provider: &str,
     current_key: &str,
-    build: impl Fn(&str) -> reqwest::RequestBuilder,
+    build: impl Fn(&str) -> reqwest::RequestBuilder + Send + Sync,
 ) -> whycodes_core::Result<reqwest::Response> {
-    let resp = build(current_key)
-        .send()
-        .await
-        .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
+    send_with_refresh_retry_dyn(provider, current_key, &build).await
+}
+
+async fn send_with_refresh_retry_dyn(
+    provider: &str,
+    current_key: &str,
+    build: &(dyn Fn(&str) -> reqwest::RequestBuilder + Send + Sync),
+) -> whycodes_core::Result<reqwest::Response> {
+    let resp = match build(current_key).send().await {
+        Ok(resp) => resp,
+        Err(err) => return Err(http_error(&err.to_string())),
+    };
     if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
         return Ok(resp);
     }
@@ -91,83 +129,24 @@ pub async fn send_with_refresh_retry(
         // the same 401. Hand the original response to the error path.
         return Ok(resp);
     }
-    tracing::info!(
-        provider,
-        "401 with OAuth credential; token renewed, retrying request once"
-    );
-    build(&fresh)
-        .send()
-        .await
-        .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))
+    let _ = provider;
+    match build(&fresh).send().await {
+        Ok(resp) => Ok(resp),
+        Err(err) => Err(http_error(&err.to_string())),
+    }
+}
+
+fn http_error(err: &str) -> whycodes_core::Error {
+    let mut msg = String::from("HTTP error: ");
+    msg.push_str(err);
+    whycodes_core::Error::llm(msg)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn register_unregister_roundtrip() {
-        let dir = PathBuf::from("/tmp/whycodes-test-oauth-src");
-        assert!(!has_source("test-provider"));
-        register("test-provider", dir.clone());
-        assert!(has_source("test-provider"));
-        assert_eq!(source_dir("test-provider"), Some(dir));
-        unregister("test-provider");
-        assert!(!has_source("test-provider"));
-        assert_eq!(source_dir("test-provider"), None);
-    }
-
-    #[test]
-    fn sources_are_per_provider() {
-        let dir = PathBuf::from("/tmp/whycodes-test-oauth-src-2");
-        register("prov-a", dir.clone());
-        assert!(has_source("prov-a"));
-        assert!(!has_source("prov-b"));
-        unregister("prov-a");
-    }
-
-    fn serve_status(status: &str, body: &str) -> String {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-        use std::thread;
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let header = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        let payload = format!("{header}{body}");
-        thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 2048];
-                let _ = stream.read(&mut buf);
-                let _ = stream.write_all(payload.as_bytes());
-            }
-        });
-        format!("http://{addr}/")
-    }
-
-    #[tokio::test]
-    async fn send_returns_success_and_401_without_refresh_source() {
-        let ok_url = serve_status("200 OK", "ok");
-        let ok = send_with_refresh_retry("no-such-provider", "token", |key| {
-            crate::client_identity::http_client()
-                .post(&ok_url)
-                .bearer_auth(key)
-        })
-        .await
-        .unwrap();
-        assert_eq!(ok.status().as_u16(), 200);
-
-        let err_url = serve_status("401 Unauthorized", "nope");
-        let err = send_with_refresh_retry("no-such-provider", "token", |key| {
-            crate::client_identity::http_client()
-                .post(&err_url)
-                .bearer_auth(key)
-        })
-        .await
-        .unwrap();
-        assert_eq!(err.status().as_u16(), 401);
-        assert_eq!(err.text().await.unwrap(), "nope");
-    }
+pub(crate) fn http_error_for_tests(err: &str) -> whycodes_core::Error {
+    http_error(err)
 }
+
+#[cfg(test)]
+#[path = "oauth_refresh_tests.rs"]
+mod tests;

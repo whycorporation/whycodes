@@ -3,9 +3,84 @@ use crate::Cli;
 use crate::args::*;
 use colored::*;
 
+pub(crate) fn acp_stub_lines() -> Vec<String> {
+    vec![
+        format!("{} ACP mode — not yet implemented.", "ℹ".cyan()),
+        "Agent Client Protocol (editor ↔ agent) is planned after product launch.".into(),
+    ]
+}
+
+pub(crate) fn pr_create_header_lines(title: &str, base: &str) -> Vec<String> {
+    vec![
+        format!("{} Creating pull request...", "🔀".bold()),
+        format!("  Title: {}", title.cyan()),
+        format!("  Base:  {}", base.cyan()),
+        String::new(),
+    ]
+}
+
+pub(crate) fn pr_created_line() -> String {
+    format!("{} PR created successfully!", "✓".green())
+}
+
+pub(crate) fn pr_created_short_line() -> String {
+    format!("{} PR created!", "✓".green())
+}
+
+pub(crate) fn pr_create_failed_lines(title: &str, base: &str) -> Vec<String> {
+    vec![
+        format!(
+            "{} Could not create PR. Install GitHub CLI: {}",
+            "⚠".yellow(),
+            "https://cli.github.com/".cyan()
+        ),
+        format!(
+            "  Or run: gh pr create --title \"{}\" --base \"{}\"",
+            title, base
+        ),
+    ]
+}
+
+pub(crate) fn pr_list_header_line() -> String {
+    format!("{} Listing pull requests...", "🔀".bold())
+}
+
+pub(crate) fn gh_cli_missing_line() -> String {
+    format!(
+        "{} GitHub CLI not available. Install: {}",
+        "⚠".yellow(),
+        "https://cli.github.com/".cyan()
+    )
+}
+
+pub(crate) fn pr_view_header_line(number: u64) -> String {
+    format!("{} Viewing PR #{}...", "🔀".bold(), number)
+}
+
+pub(crate) fn pr_view_failed_line() -> String {
+    format!("{} Could not view PR.", "⚠".yellow())
+}
+
+pub(crate) fn pr_create_failed_short_line() -> String {
+    format!("{} Could not create PR.", "⚠".yellow())
+}
+
+pub(crate) fn issue_view_header_line(number: u64) -> String {
+    format!("{} Viewing issue #{}...", "🔀".bold(), number)
+}
+
+pub(crate) fn issue_list_header_line() -> String {
+    format!("{} Listing issues...", "🔀".bold())
+}
+
+pub(crate) fn gh_status_ok(status: Result<std::process::ExitStatus, std::io::Error>) -> bool {
+    matches!(status, Ok(s) if s.success())
+}
+
 pub(crate) async fn cmd_acp(_cli: &Cli) -> anyhow::Result<()> {
-    println!("{} ACP mode — not yet implemented.", "ℹ".cyan());
-    println!("Agent Client Protocol (editor ↔ agent) is planned after product launch.");
+    for line in acp_stub_lines() {
+        println!("{line}");
+    }
     Ok(())
 }
 
@@ -18,30 +93,20 @@ pub(crate) async fn cmd_pr(
     let title = title.unwrap_or("Auto-generated PR");
     let base = base.unwrap_or("main");
 
-    println!("{} Creating pull request...", "🔀".bold());
-    println!("  Title: {}", title.cyan());
-    println!("  Base:  {}", base.cyan());
-    println!();
+    for line in pr_create_header_lines(title, base) {
+        println!("{line}");
+    }
 
     // Try to use gh CLI if available
     let status = std::process::Command::new("gh")
         .args(["pr", "create", "--title", title, "--base", base, "--fill"])
         .status();
 
-    match status {
-        Ok(s) if s.success() => {
-            println!("{} PR created successfully!", "✓".green());
-        }
-        _ => {
-            println!(
-                "{} Could not create PR. Install GitHub CLI: {}",
-                "⚠".yellow(),
-                "https://cli.github.com/".cyan()
-            );
-            println!(
-                "  Or run: gh pr create --title \"{}\" --base \"{}\"",
-                title, base
-            );
+    if gh_status_ok(status) {
+        println!("{}", pr_created_line());
+    } else {
+        for line in pr_create_failed_lines(title, base) {
+            println!("{line}");
         }
     }
 
@@ -53,31 +118,21 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
     match cmd {
         GithubCmd::Pr { action } => match action {
             Some(PrAction::List) | None => {
-                println!("{} Listing pull requests...", "📋".bold());
+                println!("{}", pr_list_header_line());
                 let status = std::process::Command::new("gh")
                     .args(["pr", "list"])
                     .status();
-                match status {
-                    Ok(s) if s.success() => {}
-                    _ => {
-                        println!(
-                            "{} GitHub CLI not available. Install: {}",
-                            "⚠".yellow(),
-                            "https://cli.github.com/".cyan()
-                        );
-                    }
+                if !gh_status_ok(status) {
+                    println!("{}", gh_cli_missing_line());
                 }
             }
             Some(PrAction::View { number }) => {
-                println!("{} Viewing PR #{}...", "👁".bold(), number);
+                println!("{}", pr_view_header_line(*number));
                 let status = std::process::Command::new("gh")
                     .args(["pr", "view", &number.to_string()])
                     .status();
-                match status {
-                    Ok(s) if s.success() => {}
-                    _ => {
-                        println!("{} Could not view PR.", "⚠".yellow());
-                    }
+                if !gh_status_ok(status) {
+                    println!("{}", pr_view_failed_line());
                 }
             }
             Some(PrAction::Create { title, base }) => {
@@ -86,19 +141,16 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
                 let status = std::process::Command::new("gh")
                     .args(["pr", "create", "--title", title, "--base", base, "--fill"])
                     .status();
-                match status {
-                    Ok(s) if s.success() => {
-                        println!("{} PR created!", "✓".green());
-                    }
-                    _ => {
-                        println!("{} Could not create PR.", "⚠".yellow());
-                    }
+                if gh_status_ok(status) {
+                    println!("{}", pr_created_short_line());
+                } else {
+                    println!("{}", pr_create_failed_short_line());
                 }
             }
         },
         GithubCmd::Issue { number } => {
             if let Some(n) = number {
-                println!("{} Viewing issue #{}...", "📝".bold(), n);
+                println!("{}", issue_view_header_line(*n));
                 match std::process::Command::new("gh")
                     .args(["issue", "view", &n.to_string()])
                     .status()
@@ -108,7 +160,7 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
                     Err(e) => tracing::warn!(error = %e, "gh issue view failed to start"),
                 }
             } else {
-                println!("{} Listing issues...", "📝".bold());
+                println!("{}", issue_list_header_line());
                 match std::process::Command::new("gh")
                     .args(["issue", "list"])
                     .status()
@@ -124,23 +176,5 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
 }
 
 #[cfg(test)]
-mod tests {
-    #[tokio::test]
-    async fn acp_stub_runs() {
-        let cli = crate::Cli {
-            command: None,
-            provider: None,
-            model: None,
-            agent_flag: None,
-            dir: None,
-            plain: true,
-            continue_session: false,
-            resume: None,
-            debug: false,
-            no_auto_update: true,
-            no_memory: true,
-        };
-        super::cmd_acp(&cli).await.unwrap();
-        super::cmd_pr(&cli, Some("t"), Some("dev")).await.unwrap();
-    }
-}
+#[path = "github_tests.rs"]
+mod tests;

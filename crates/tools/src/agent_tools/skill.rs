@@ -67,30 +67,15 @@ impl Tool for SkillTool {
                         }
                     };
 
-                    if registry.skills.is_empty() {
-                        return ToolResult {
-                            tool_call_id: String::new(),
-                            content: "No skills found.".to_string(),
-                            is_error: false,
-                        };
-                    }
-
-                    let mut lines = Vec::new();
-                    lines.push(format!("Available skills ({}):", registry.skills.len()));
-                    for skill in &registry.skills {
-                        lines.push(format!(
-                            "  - {}: {}",
-                            skill.name,
-                            if skill.description.is_empty() {
-                                "(no description)"
-                            } else {
-                                &skill.description
-                            }
-                        ));
-                    }
                     ToolResult {
                         tool_call_id: String::new(),
-                        content: lines.join("\n"),
+                        content: format_skill_list(
+                            registry
+                                .skills
+                                .iter()
+                                .map(|s| (s.name.as_str(), s.description.as_str()))
+                                .collect(),
+                        ),
                         is_error: false,
                     }
                 }
@@ -118,25 +103,23 @@ impl Tool for SkillTool {
                     match registry.get_ignore_ascii_case(name) {
                         Some(skill) => ToolResult {
                             tool_call_id: String::new(),
-                            content: format!(
-                                "Loaded skill '{}':\n\n{}\n\n{}",
-                                skill.name, skill.description, skill.prompt
+                            content: format_loaded_skill(
+                                &skill.name,
+                                &skill.description,
+                                &skill.prompt,
                             ),
                             is_error: false,
                         },
                         None => ToolResult {
                             tool_call_id: String::new(),
-                            content: format!(
-                                "Skill '{}' not found. Use action='list' to see available skills.",
-                                name
-                            ),
+                            content: skill_not_found(name),
                             is_error: true,
                         },
                     }
                 }
                 _ => ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Unknown action '{}'. Valid actions: list, load", action),
+                    content: unknown_skill_action(action),
                     is_error: true,
                 },
             }
@@ -144,65 +127,40 @@ impl Tool for SkillTool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tool::ToolContext;
-
-    #[tokio::test]
-    async fn list_and_load_use_project_working_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        let skills = dir.path().join(".skills");
-        std::fs::create_dir(&skills).unwrap();
-        std::fs::write(
-            skills.join("demo.skill.md"),
-            "---\nname: Demo\ndescription: d\n---\n\nTHE BODY\n",
-        )
-        .unwrap();
-        let ctx = ToolContext::new(dir.path().to_string_lossy());
-        let tool = SkillTool::new();
-        let listed = tool.execute(json!({"action": "list"}), &ctx).await;
-        assert!(!listed.is_error, "{}", listed.content);
-        assert!(listed.content.contains("Demo"), "{}", listed.content);
-        let loaded = tool
-            .execute(json!({"action": "load", "name": "demo"}), &ctx)
-            .await;
-        assert!(!loaded.is_error, "{}", loaded.content);
-        assert!(loaded.content.contains("THE BODY"), "{}", loaded.content);
-        let missing = tool
-            .execute(json!({"action": "load", "name": "nope"}), &ctx)
-            .await;
-        assert!(missing.is_error);
-
-        let empty_dir = tempfile::tempdir().unwrap();
-        let empty_ctx = ToolContext::new(empty_dir.path().to_string_lossy());
-        let none = tool.execute(json!({"action": "list"}), &empty_ctx).await;
-        assert!(!none.is_error, "{}", none.content);
-        assert!(none.content.contains("No skills found"), "{}", none.content);
-
-        let bad = tool.execute(json!({"action": "nope"}), &ctx).await;
-        assert!(bad.is_error, "{}", bad.content);
-        assert!(bad.content.contains("Unknown action"), "{}", bad.content);
-    }
-
-    #[tokio::test]
-    async fn load_requires_name_and_empty_description() {
-        let t = SkillTool;
-        assert_eq!(t.name(), "skill");
-        assert!(!t.description().is_empty());
-        let _ = t.parameters();
-        let dir = tempfile::tempdir().unwrap();
-        let skills = dir.path().join(".skills");
-        std::fs::create_dir(&skills).unwrap();
-        std::fs::write(
-            skills.join("bare.skill.md"),
-            "---\nname: Bare\n---\n\nBODY\n",
-        )
-        .unwrap();
-        let ctx = ToolContext::new(dir.path().to_string_lossy());
-        let listed = t.execute(json!({"action": "list"}), &ctx).await;
-        assert!(listed.content.contains("(no description)") || listed.content.contains("Bare"));
-        let missing_name = t.execute(json!({"action": "load"}), &ctx).await;
-        assert!(missing_name.is_error, "{}", missing_name.content);
+fn skill_description_label(description: &str) -> &str {
+    if description.is_empty() {
+        "(no description)"
+    } else {
+        description
     }
 }
+
+fn format_skill_list(skills: Vec<(&str, &str)>) -> String {
+    if skills.is_empty() {
+        return "No skills found.".to_string();
+    }
+    let mut lines = vec![format!("Available skills ({}):", skills.len())];
+    for (name, description) in skills {
+        lines.push(format!(
+            "  - {name}: {}",
+            skill_description_label(description)
+        ));
+    }
+    lines.join("\n")
+}
+
+fn format_loaded_skill(name: &str, description: &str, prompt: &str) -> String {
+    format!("Loaded skill '{name}':\n\n{description}\n\n{prompt}")
+}
+
+fn skill_not_found(name: &str) -> String {
+    format!("Skill '{name}' not found. Use action='list' to see available skills.")
+}
+
+fn unknown_skill_action(action: &str) -> String {
+    format!("Unknown action '{action}'. Valid actions: list, load")
+}
+
+#[cfg(test)]
+#[path = "skill_tests.rs"]
+mod tests;

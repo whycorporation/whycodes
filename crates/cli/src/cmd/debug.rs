@@ -140,78 +140,64 @@ pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!("{} Debug Information:", "🔍".bold());
+    println!("{}", debug_header_line());
     println!("  Version:     {}", VERSION_LONG.cyan());
 
     // Config path
     match Config::default_path() {
-        Ok(p) => {
-            let exists = if p.exists() {
-                "✓".green()
-            } else {
-                "✗ (not found)".red()
-            };
-            println!("  Config:      {} {}", p.display(), exists);
-        }
-        Err(e) => {
-            println!("  Config:      error: {}", e);
-        }
+        Ok(p) => println!(
+            "{}",
+            debug_config_line(&p.display().to_string(), p.exists())
+        ),
+        Err(e) => println!("{}", debug_path_error_line("Config", &e.to_string())),
     }
 
     // Data directory + log paths (Grok-style)
     match Config::data_dir() {
         Ok(p) => {
-            let exists = if p.exists() {
-                "✓".green()
-            } else {
-                "✗".red()
-            };
-            println!("  Data dir:    {} {}", p.display(), exists);
+            println!(
+                "{}",
+                debug_data_dir_line(&p.display().to_string(), p.exists())
+            );
             let dirs = whycodes_core::logging::LogDirs::from_data_dir(&p);
             println!(
-                "  JSONL log:   {} {}",
-                dirs.unified_jsonl().display(),
-                if dirs.unified_jsonl().exists() {
-                    "✓".green()
-                } else {
-                    "·".dimmed()
-                }
+                "{}",
+                debug_jsonl_line(
+                    &dirs.unified_jsonl().display().to_string(),
+                    dirs.unified_jsonl().exists()
+                )
             );
-            println!("  Crash dir:   {}", dirs.crash.display());
             println!(
-                "  Debug log:   {} (or WHYCODES_LOG_FILE / --debug)",
-                dirs.debug.join("latest.log").display()
+                "{}",
+                debug_crash_dir_line(&dirs.crash.display().to_string())
+            );
+            println!(
+                "{}",
+                debug_log_line(&dirs.debug.join("latest.log").display().to_string())
             );
         }
-        Err(e) => {
-            println!("  Data dir:    error: {}", e);
-        }
+        Err(e) => println!("{}", debug_path_error_line("Data dir", &e.to_string())),
     }
 
     // Current directory
     match std::env::current_dir() {
-        Ok(p) => println!("  CWD:         {}", p.display()),
-        Err(e) => println!("  CWD:         error: {}", e),
+        Ok(p) => println!("{}", debug_cwd_line(&p.display().to_string())),
+        Err(e) => println!("{}", debug_path_error_line("CWD", &e.to_string())),
     }
 
     // Home directory
     if let Ok(home) = std::env::var("HOME") {
-        println!("  HOME:        {}", home);
+        println!("{}", debug_home_line(&home));
     }
 
     // Rust toolchain
-    if let Ok(rustc) = std::process::Command::new("rustc")
-        .arg("--version")
-        .output()
-    {
-        let ver = String::from_utf8_lossy(&rustc.stdout).trim().to_string();
-        println!("  Rust:        {}", ver);
+    if let Some(ver) = cmd_version("rustc") {
+        println!("{}", debug_tool_line("Rust", &ver));
     }
 
     // Git info
-    if let Ok(git) = std::process::Command::new("git").arg("--version").output() {
-        let ver = String::from_utf8_lossy(&git.stdout).trim().to_string();
-        println!("  Git:         {}", ver);
+    if let Some(ver) = cmd_version("git") {
+        println!("{}", debug_tool_line("Git", &ver));
     }
 
     // Relevant environment variables. Secrets are masked; `--json` only
@@ -219,12 +205,8 @@ pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
     println!("  Environment:");
     for var in DEBUG_ENV_VARS {
         match std::env::var(var) {
-            Ok(val) => {
-                println!("    {} = {} (set)", var, mask_secret(&val).dimmed());
-            }
-            Err(_unset) => {
-                println!("    {} = (not set)", var.dimmed());
-            }
+            Ok(val) => println!("{}", debug_env_set_line(var, &mask_secret(&val))),
+            Err(_unset) => println!("{}", debug_env_unset_line(var)),
         }
     }
 
@@ -235,25 +217,127 @@ pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
             let store = whycodes_auth::TokenStore::new(&dir);
             match store.list() {
                 Ok(entries) if entries.is_empty() => {
-                    println!("    (none — `whycodes auth login <provider>`)");
+                    println!("{}", debug_oauth_empty_line());
                 }
                 Ok(entries) => {
                     for (name, auth) in entries {
                         println!(
-                            "    {:<15} {} · {}",
-                            name,
-                            auth.method,
-                            super::auth::auth_expiry_label(&auth)
+                            "{}",
+                            debug_oauth_entry_line(
+                                &name,
+                                &auth.method,
+                                &super::auth::auth_expiry_label(&auth)
+                            )
                         );
                     }
                 }
-                Err(e) => println!("    error reading store: {e}"),
+                Err(e) => println!("{}", debug_oauth_store_error_line(&e.to_string())),
             }
         }
-        Err(e) => println!("    data dir error: {e}"),
+        Err(e) => println!("{}", debug_oauth_data_dir_error_line(&e.to_string())),
     }
 
     Ok(())
+}
+
+pub(crate) fn debug_header_line() -> String {
+    format!("{} Debug Information:", "🔍".bold())
+}
+
+pub(crate) fn debug_exists_mark(exists: bool) -> String {
+    if exists {
+        "✓".green().to_string()
+    } else {
+        "✗ (not found)".red().to_string()
+    }
+}
+
+pub(crate) fn debug_dir_exists_mark(exists: bool) -> String {
+    if exists {
+        "✓".green().to_string()
+    } else {
+        "✗".red().to_string()
+    }
+}
+
+pub(crate) fn debug_jsonl_mark(exists: bool) -> String {
+    if exists {
+        "✓".green().to_string()
+    } else {
+        "·".dimmed().to_string()
+    }
+}
+
+pub(crate) fn debug_config_line(path: &str, exists: bool) -> String {
+    format!("  Config:      {path} {}", debug_exists_mark(exists))
+}
+
+pub(crate) fn debug_data_dir_line(path: &str, exists: bool) -> String {
+    format!("  Data dir:    {path} {}", debug_dir_exists_mark(exists))
+}
+
+pub(crate) fn debug_jsonl_line(path: &str, exists: bool) -> String {
+    format!("  JSONL log:   {path} {}", debug_jsonl_mark(exists))
+}
+
+pub(crate) fn debug_crash_dir_line(path: &str) -> String {
+    format!("  Crash dir:   {path}")
+}
+
+pub(crate) fn debug_log_line(path: &str) -> String {
+    format!("  Debug log:   {path} (or WHYCODES_LOG_FILE / --debug)")
+}
+
+pub(crate) fn debug_path_error_line(label: &str, err: &str) -> String {
+    format!("  {label}:      error: {err}")
+}
+
+pub(crate) fn debug_cwd_line(path: &str) -> String {
+    format!("  CWD:         {path}")
+}
+
+pub(crate) fn debug_home_line(home: &str) -> String {
+    format!("  HOME:        {home}")
+}
+
+pub(crate) fn debug_tool_line(label: &str, ver: &str) -> String {
+    format!("  {label}:        {ver}")
+}
+
+pub(crate) fn debug_env_set_line(var: &str, masked: &str) -> String {
+    format!("    {var} = {} (set)", masked.dimmed())
+}
+
+pub(crate) fn debug_env_unset_line(var: &str) -> String {
+    format!("    {} = (not set)", var.dimmed())
+}
+
+pub(crate) fn debug_oauth_empty_line() -> String {
+    "    (none — `whycodes auth login <provider>`)".into()
+}
+
+pub(crate) fn debug_oauth_entry_line(name: &str, method: &str, expiry: &str) -> String {
+    format!("    {name:<15} {method} · {expiry}")
+}
+
+pub(crate) fn debug_oauth_store_error_line(err: &str) -> String {
+    format!("    error reading store: {err}")
+}
+
+pub(crate) fn debug_oauth_data_dir_error_line(err: &str) -> String {
+    format!("    data dir error: {err}")
+}
+
+pub(crate) fn after_tui_upgrade_skip_line() -> &'static str {
+    "whycodes: already on the latest release"
+}
+
+pub(crate) fn after_tui_upgrade_ok_line(current: &str, version: &str) -> String {
+    format!("whycodes: updated {current} → {version} — restart to use it")
+}
+
+pub(crate) fn after_tui_upgrade_failed_line(err: &str) -> String {
+    format!("whycodes: update failed: {err}")
 }
 
 /// Ask GitHub for a newer tag in the background. The TUI paints first; if a
@@ -306,21 +390,18 @@ pub(crate) async fn after_tui_exit(exit: whycodes_tui::TuiExit) -> anyhow::Resul
             #[cfg(feature = "self-update")]
             {
                 if std::env::var_os("WHYCODES_TEST_SKIP_UPGRADE").is_some() {
-                    eprintln!("whycodes: already on the latest release");
+                    eprintln!("{}", after_tui_upgrade_skip_line());
                     return Ok(());
                 }
                 match crate::upgrade::run().await {
                     Ok(Some(version)) => {
-                        eprintln!(
-                            "whycodes: updated {} → {version} — restart to use it",
-                            PKG_VERSION
-                        );
+                        eprintln!("{}", after_tui_upgrade_ok_line(PKG_VERSION, &version));
                     }
                     Ok(None) => {
-                        eprintln!("whycodes: already on the latest release");
+                        eprintln!("{}", after_tui_upgrade_skip_line());
                     }
                     Err(e) => {
-                        eprintln!("whycodes: update failed: {e}");
+                        eprintln!("{}", after_tui_upgrade_failed_line(&e.to_string()));
                     }
                 }
             }
@@ -360,69 +441,5 @@ pub(crate) fn should_auto_update_with_env(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::args::Cli;
-    use clap::Parser;
-
-    #[test]
-    fn auto_update_off_when_cli_flag() {
-        let cli = Cli::try_parse_from(["whycodes", "--no-auto-update"]).unwrap();
-        assert!(!should_auto_update_with_env(
-            &cli, true, false, false, false
-        ));
-    }
-
-    #[test]
-    fn debug_dump_keys_are_camel_case() {
-        let dump = collect_debug();
-        let v = serde_json::to_value(&dump).unwrap();
-        for key in [
-            "version",
-            "gitHash",
-            "configPath",
-            "configExists",
-            "dataDir",
-            "jsonlLog",
-            "crashDir",
-            "debugLog",
-            "cwd",
-            "env",
-            "oauth",
-        ] {
-            assert!(v.get(key).is_some(), "missing {key} in {v}");
-        }
-        assert!(v.get("git_hash").is_none());
-        let env = v["env"].as_array().expect("env array");
-        assert!(!env.is_empty());
-        for entry in env {
-            assert!(entry.get("name").is_some());
-            assert!(entry.get("set").and_then(|s| s.as_bool()).is_some());
-            assert!(entry.get("value").is_none(), "env must not leak values");
-        }
-    }
-
-    #[test]
-    fn auto_update_on_for_interactive_run_and_off_otherwise() {
-        let run = Cli::try_parse_from(["whycodes", "run"]).unwrap();
-        assert!(should_auto_update_with_env(&run, true, false, false, false));
-        let json = Cli::try_parse_from(["whycodes", "run", "--format", "json", "hi"]).unwrap();
-        assert!(!should_auto_update_with_env(
-            &json, true, false, false, false
-        ));
-        let stats = Cli::try_parse_from(["whycodes", "stats"]).unwrap();
-        assert!(!should_auto_update_with_env(
-            &stats, true, false, false, false
-        ));
-        assert!(!should_auto_update_with_env(
-            &run, false, false, false, false
-        ));
-        assert!(!should_auto_update_with_env(&run, true, true, false, false));
-        assert!(!should_auto_update_with_env(&run, true, false, true, false));
-        assert!(!should_auto_update_with_env(&run, true, false, false, true));
-        let dump = collect_debug();
-        let _ = cmd_version("rustc");
-        let _ = cmd_version("definitely-missing-bin");
-        assert!(!dump.version.is_empty());
-    }
-}
+#[path = "debug_tests.rs"]
+mod tests;

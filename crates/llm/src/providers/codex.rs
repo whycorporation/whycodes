@@ -13,10 +13,11 @@
 //! may attach an `originator` header via `inference.headers`.
 
 use crate::provider::ProviderEventStream;
-use async_stream::stream;
 use futures::stream::{Stream, StreamExt};
-use serde_json::{Value, json};
+use serde_json::Value;
+use std::collections::VecDeque;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 use whycodes_core::types::{
     ContentBlock, ImageSource, LlmRequest, LlmResponse, Message, MessageContent, Role, StreamEvent,
     ToolDefinition, Usage,
@@ -25,6 +26,20 @@ use whycodes_core::types::{
 /// Responses-API endpoint of the ChatGPT backend that Codex-client
 /// subscription tokens authorize.
 pub const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_CODEX_URL: std::cell::RefCell<Option<&'static str>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn codex_responses_url() -> &'static str {
+    #[cfg(test)]
+    if let Some(url) = TEST_CODEX_URL.with(|c| *c.borrow()) {
+        return url;
+    }
+    CODEX_RESPONSES_URL
+}
 
 /// True when `key` is a ChatGPT-subscription OAuth access token (a JWT)
 /// rather than an OpenAI API key (`sk-…`). JWTs are rejected by
@@ -36,19 +51,30 @@ pub fn is_chatgpt_oauth_token(key: &str) -> bool {
 /// Responses-API request body. The backend mandates `store: false` +
 /// `stream: true`; the system prompt travels as `instructions`.
 pub fn build_body(request: &LlmRequest, model: &str) -> Value {
-    let mut body = json!({
-        "model": model,
-        "store": false,
-        "stream": true,
-        "input": convert_input(&request.messages),
-    });
+    let mut body = crate::json_value::obj([
+        ("model", crate::json_value::str(model)),
+        ("store", Value::Bool(false)),
+        ("stream", Value::Bool(true)),
+        (
+            "input",
+            crate::json_value::arr(convert_input(&request.messages)),
+        ),
+    ]);
     if !request.system.is_empty() {
-        body["instructions"] = Value::String(request.system.clone());
+        crate::json_value::insert(
+            &mut body,
+            "instructions",
+            crate::json_value::str(&request.system),
+        );
     }
     if !request.tools.is_empty() {
-        body["tools"] = Value::Array(convert_tools(&request.tools));
-        body["tool_choice"] = json!("auto");
-        body["parallel_tool_calls"] = json!(true);
+        crate::json_value::insert(
+            &mut body,
+            "tools",
+            crate::json_value::arr(convert_tools(&request.tools)),
+        );
+        crate::json_value::insert(&mut body, "tool_choice", crate::json_value::str("auto"));
+        crate::json_value::insert(&mut body, "parallel_tool_calls", Value::Bool(true));
     }
     body
 }
@@ -79,19 +105,21 @@ fn convert_input(messages: &[Message]) -> Vec<Value> {
                         ContentBlock::Image { source } => {
                             flush_message(&mut items, role, &mut texts);
                             if let Some(part) = image_part(role, source) {
-                                items.push(json!({
-                                    "type": "message", "role": role, "content": [part]
-                                }));
+                                items.push(crate::json_value::obj([
+                                    ("type", crate::json_value::str("message")),
+                                    ("role", crate::json_value::str(role)),
+                                    ("content", crate::json_value::arr([part])),
+                                ]));
                             }
                         }
                         ContentBlock::ToolUse { id, name, input } => {
                             flush_message(&mut items, role, &mut texts);
-                            items.push(json!({
-                                "type": "function_call",
-                                "call_id": id,
-                                "name": name,
-                                "arguments": input.to_string(),
-                            }));
+                            items.push(crate::json_value::obj([
+                                ("type", crate::json_value::str("function_call")),
+                                ("call_id", crate::json_value::str(id)),
+                                ("name", crate::json_value::str(name)),
+                                ("arguments", crate::json_value::str(input.to_string())),
+                            ]));
                         }
                         ContentBlock::ToolResult {
                             tool_use_id,
@@ -99,11 +127,11 @@ fn convert_input(messages: &[Message]) -> Vec<Value> {
                             ..
                         } => {
                             flush_message(&mut items, role, &mut texts);
-                            items.push(json!({
-                                "type": "function_call_output",
-                                "call_id": tool_use_id,
-                                "output": content,
-                            }));
+                            items.push(crate::json_value::obj([
+                                ("type", crate::json_value::str("function_call_output")),
+                                ("call_id", crate::json_value::str(tool_use_id)),
+                                ("output", crate::json_value::str(content)),
+                            ]));
                         }
                         ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {}
                     }
@@ -130,11 +158,17 @@ fn message_item(role: &str, text: &str) -> Value {
     } else {
         "input_text"
     };
-    json!({
-        "type": "message",
-        "role": role,
-        "content": [{ "type": part_type, "text": text }],
-    })
+    crate::json_value::obj([
+        ("type", crate::json_value::str("message")),
+        ("role", crate::json_value::str(role)),
+        (
+            "content",
+            crate::json_value::arr([crate::json_value::obj([
+                ("type", crate::json_value::str(part_type)),
+                ("text", crate::json_value::str(text)),
+            ])]),
+        ),
+    ])
 }
 
 /// Responses takes images as data URLs inside `input_image` parts.
@@ -146,19 +180,22 @@ fn image_part(role: &str, source: &ImageSource) -> Option<Value> {
         ImageSource::Base64 { media_type, data } => format!("data:{media_type};base64,{data}"),
         ImageSource::Url { url } => url.clone(),
     };
-    Some(json!({ "type": "input_image", "image_url": url }))
+    Some(crate::json_value::obj([
+        ("type", crate::json_value::str("input_image")),
+        ("image_url", crate::json_value::str(url)),
+    ]))
 }
 
 fn convert_tools(tools: &[ToolDefinition]) -> Vec<Value> {
     tools
         .iter()
         .map(|t| {
-            json!({
-                "type": "function",
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.parameters,
-            })
+            crate::json_value::obj([
+                ("type", crate::json_value::str("function")),
+                ("name", crate::json_value::str(&t.name)),
+                ("description", crate::json_value::str(&t.description)),
+                ("parameters", t.parameters.clone()),
+            ])
         })
         .collect()
 }
@@ -172,7 +209,7 @@ async fn post_at(
 ) -> whycodes_core::Result<reqwest::Response> {
     let account_id = crate::oauth_refresh::stored_extra("openai", "openai_account_id").await;
     crate::oauth_refresh::send_with_refresh_retry("openai", api_key, |key| {
-        let req = if url == CODEX_RESPONSES_URL {
+        let req = if url == CODEX_RESPONSES_URL || url == codex_responses_url() {
             crate::client_identity::post_for_provider(url, "openai")
         } else {
             crate::client_identity::post(url)
@@ -249,7 +286,7 @@ pub async fn complete(
     api_key: &str,
     model: &str,
 ) -> whycodes_core::Result<LlmResponse> {
-    complete_at(CODEX_RESPONSES_URL, request, api_key, model).await
+    complete_at(codex_responses_url(), request, api_key, model).await
 }
 
 pub(crate) async fn complete_at(
@@ -306,7 +343,7 @@ pub async fn stream(
     api_key: &str,
     model: &str,
 ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>> {
-    stream_at(CODEX_RESPONSES_URL, request, api_key, model).await
+    stream_at(codex_responses_url(), request, api_key, model).await
 }
 
 pub(crate) async fn stream_at(
@@ -327,305 +364,96 @@ pub(crate) async fn stream_at(
         )));
     }
 
-    let s = stream! {
-        let mut byte_stream = resp.bytes_stream();
-        let mut buffer = String::new();
-        let mut stopped = false;
+    Ok(codex_sse(crate::openai_compat::response_bytes(resp)))
+}
 
-        while let Some(chunk) = byte_stream.next().await {
-            match chunk {
-                Ok(bytes) => {
-                    buffer.push_str(&String::from_utf8_lossy(&bytes));
-                    while let Some(pos) = buffer.find('\n') {
-                        let line = buffer[..pos].trim().to_string();
-                        buffer = buffer[pos + 1..].to_string();
+struct CodexSse {
+    bytes: crate::openai_compat::ByteStream,
+    buffer: String,
+    pending: VecDeque<whycodes_core::Result<StreamEvent>>,
+    done: bool,
+}
 
-                        if line.is_empty() || !line.starts_with("data: ") {
-                            continue;
-                        }
-                        let data = &line[6..];
-                        if data == "[DONE]" {
+impl CodexSse {
+    fn push_data_line(&mut self, line: &str) {
+        if line.is_empty() || !line.starts_with("data: ") {
+            return;
+        }
+        let data = &line[6..];
+        if data == "[DONE]" {
+            if !self.done {
+                self.pending.push_back(Ok(StreamEvent::MessageStop));
+                self.done = true;
+            }
+            return;
+        }
+        for ev in events_for_payload(data) {
+            if matches!(ev, StreamEvent::MessageStop) {
+                self.done = true;
+            }
+            self.pending.push_back(Ok(ev));
+        }
+    }
+}
+
+impl Stream for CodexSse {
+    type Item = whycodes_core::Result<StreamEvent>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        loop {
+            if let Some(ev) = this.pending.pop_front() {
+                return Poll::Ready(Some(ev));
+            }
+            if this.done {
+                return Poll::Ready(None);
+            }
+            match this.bytes.as_mut().poll_next(cx) {
+                Poll::Ready(Some(Ok(bytes))) => {
+                    this.buffer.push_str(&String::from_utf8_lossy(&bytes));
+                    while let Some(pos) = this.buffer.find('\n') {
+                        let line = this.buffer[..pos].trim().to_string();
+                        this.buffer = this.buffer[pos + 1..].to_string();
+                        this.push_data_line(&line);
+                        if this.done {
                             break;
-                        }
-                        for ev in events_for_payload(data) {
-                            if matches!(ev, StreamEvent::MessageStop) {
-                                stopped = true;
-                            }
-                            yield Ok(ev);
-                        }
-                        if stopped {
-                            return;
                         }
                     }
                 }
-                Err(e) => {
-                    yield Err(crate::openai_compat::stream_chunk_error("openai-codex", e));
+                Poll::Ready(Some(Err(e))) => {
+                    return Poll::Ready(Some(Err(crate::openai_compat::stream_chunk_error(
+                        "openai-codex",
+                        e,
+                    ))));
                 }
+                Poll::Ready(None) => {
+                    // The backend closes the connection after `response.completed`;
+                    // tolerate a missing one so the agent still finishes its turn.
+                    if !this.done {
+                        this.pending.push_back(Ok(StreamEvent::MessageStop));
+                        this.done = true;
+                    }
+                }
+                Poll::Pending => return Poll::Pending,
             }
         }
-        // The backend closes the connection after `response.completed`;
-        // tolerate a missing one so the agent still finishes its turn.
-        if !stopped {
-            yield Ok(StreamEvent::MessageStop);
-        }
-    };
+    }
+}
 
-    Ok(Box::pin(s) as ProviderEventStream)
+fn codex_sse(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
+    Box::pin(CodexSse {
+        bytes,
+        buffer: String::new(),
+        pending: VecDeque::new(),
+        done: false,
+    })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn jwt_shape_detection() {
-        assert!(is_chatgpt_oauth_token("eyJhbGciOiJ.eyJzdWIiOiJx.sig"));
-        assert!(!is_chatgpt_oauth_token("sk-proj-abc123"));
-        assert!(!is_chatgpt_oauth_token("sk-ant-oat01-xyz"));
-        assert!(!is_chatgpt_oauth_token("eyJnoDots"));
-        assert!(!is_chatgpt_oauth_token(""));
-    }
-
-    fn request_with_tools() -> LlmRequest {
-        LlmRequest {
-            system: "You are whycodes.".to_string(),
-            messages: std::sync::Arc::from(vec![
-                Message {
-                    role: Role::User,
-                    content: MessageContent::Text("hi".to_string()),
-                    tool_call_id: None,
-                    name: None,
-                    created_at: None,
-                },
-                Message {
-                    role: Role::Assistant,
-                    tool_call_id: None,
-                    name: None,
-                    created_at: None,
-                    content: MessageContent::Blocks(vec![
-                        ContentBlock::Text {
-                            text: "let me check".to_string(),
-                        },
-                        ContentBlock::ToolUse {
-                            id: "call_1".to_string(),
-                            name: "read".to_string(),
-                            input: json!({"path": "a.rs"}),
-                        },
-                    ]),
-                },
-                Message {
-                    role: Role::User,
-                    tool_call_id: None,
-                    name: None,
-                    created_at: None,
-                    content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
-                        tool_use_id: "call_1".to_string(),
-                        content: "fn main() {}".to_string(),
-                        is_error: Some(false),
-                    }]),
-                },
-            ]),
-            tools: vec![ToolDefinition {
-                name: "read".to_string(),
-                description: "Read a file".to_string(),
-                parameters: json!({"type": "object"}),
-            }]
-            .into(),
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: true,
-        }
-    }
-
-    #[test]
-    fn body_matches_backend_contract() {
-        let body = build_body(&request_with_tools(), "gpt-5.1-codex");
-        assert_eq!(body["model"], "gpt-5.1-codex");
-        assert_eq!(body["store"], false);
-        assert_eq!(body["stream"], true);
-        assert_eq!(body["instructions"], "You are whycodes.");
-        assert_eq!(body["tool_choice"], "auto");
-        assert_eq!(body["parallel_tool_calls"], true);
-        assert_eq!(body["tools"][0]["type"], "function");
-        assert_eq!(body["tools"][0]["name"], "read");
-        assert_eq!(body["tools"][0]["parameters"]["type"], "object");
-
-        let input = body["input"].as_array().unwrap();
-        assert_eq!(input[0]["role"], "user");
-        assert_eq!(input[0]["content"][0]["type"], "input_text");
-        assert_eq!(input[1]["role"], "assistant");
-        assert_eq!(input[1]["content"][0]["type"], "output_text");
-        assert_eq!(input[2]["type"], "function_call");
-        assert_eq!(input[2]["call_id"], "call_1");
-        assert_eq!(input[2]["name"], "read");
-        // arguments travel as a JSON *string*.
-        assert_eq!(
-            input[2]["arguments"].as_str().unwrap(),
-            json!({"path": "a.rs"}).to_string()
-        );
-        assert_eq!(input[3]["type"], "function_call_output");
-        assert_eq!(input[3]["call_id"], "call_1");
-        assert_eq!(input[3]["output"], "fn main() {}");
-    }
-
-    #[test]
-    fn text_delta_maps_to_stream_event() {
-        let events = events_for_payload(r#"{"type":"response.output_text.delta","delta":"hel"}"#);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            StreamEvent::TextDelta { text } => assert_eq!(text, "hel"),
-            other => panic!("unexpected: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn function_call_item_maps_to_tool_use() {
-        let payload = r#"{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_9","name":"bash","arguments":"{\"cmd\":\"ls\"}"}}"#;
-        let events = events_for_payload(payload);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            StreamEvent::ToolUse { id, name, input } => {
-                assert_eq!(id, "call_9");
-                assert_eq!(name, "bash");
-                assert_eq!(input["cmd"], "ls");
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn completed_maps_usage_without_openai_subset_cache() {
-        let payload = r#"{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":4,"input_tokens_details":{"cached_tokens":6}}}}"#;
-        let events = events_for_payload(payload);
-        assert_eq!(events.len(), 2);
-        assert!(matches!(
-            events[0],
-            StreamEvent::Usage {
-                input_tokens: 10,
-                output_tokens: 4
-            }
-        ));
-        assert!(matches!(events[1], StreamEvent::MessageStop));
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, StreamEvent::CacheUsage { .. })),
-            "cached_tokens is inside input_tokens — must not become additive CacheUsage"
-        );
-    }
-
-    #[test]
-    fn failed_maps_to_error_event() {
-        let payload = r#"{"type":"response.failed","response":{"error":{"message":"boom"}}}"#;
-        let events = events_for_payload(payload);
-        assert!(matches!(&events[0], StreamEvent::Error { message } if message == "boom"));
-    }
-
-    #[test]
-    fn unknown_events_are_ignored() {
-        assert!(events_for_payload(r#"{"type":"response.created"}"#).is_empty());
-        assert!(events_for_payload("not json").is_empty());
-    }
-
-    fn serve_sse(status: &str, body: &str) -> String {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-        use std::thread;
-        use std::time::Duration;
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let header = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        let payload = format!("{header}{body}");
-        thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 2048];
-                let _ = stream.read(&mut buf);
-                let _ = stream.write_all(payload.as_bytes());
-                thread::sleep(Duration::from_millis(20));
-            }
-        });
-        format!("http://{addr}/codex/responses")
-    }
-
-    fn simple_request() -> LlmRequest {
-        LlmRequest {
-            system: String::new(),
-            messages: std::sync::Arc::from(vec![Message {
-                role: Role::User,
-                content: MessageContent::Text("hi".into()),
-                tool_call_id: None,
-                name: None,
-                created_at: None,
-            }]),
-            tools: vec![].into(),
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: false,
-        }
-    }
-
-    fn sse_hello() -> String {
-        format!(
-            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
-            serde_json::json!({"type":"response.output_text.delta","delta":"hello"}),
-            serde_json::json!({
-                "type":"response.completed",
-                "response":{"usage":{"input_tokens":1,"output_tokens":2}}
-            })
-        )
-    }
-
-    #[tokio::test]
-    async fn complete_and_stream_against_loopback() {
-        let url = serve_sse("200 OK", &sse_hello());
-        let req = simple_request();
-        let resp = complete_at(&url, &req, "eyJhbGciOiJ.eyJzdWIiOiJx.sig", "gpt-test")
-            .await
-            .unwrap();
-        assert!(
-            resp.content
-                .iter()
-                .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("hello"))),
-            "{resp:?}"
-        );
-        assert_eq!(resp.usage.input_tokens, 1);
-        assert_eq!(resp.usage.output_tokens, 2);
-
-        let err_url = serve_sse("401 Unauthorized", "nope");
-        let err = complete_at(&err_url, &req, "eyJhbGciOiJ.eyJzdWIiOiJx.sig", "gpt-test")
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("401") || !err.to_string().is_empty(),
-            "{err}"
-        );
-
-        let stream_url = serve_sse("200 OK", &sse_hello());
-        let mut stream = stream_at(
-            &stream_url,
-            &req,
-            "eyJhbGciOiJ.eyJzdWIiOiJx.sig",
-            "gpt-test",
-        )
-        .await
-        .unwrap();
-        let mut text = String::new();
-        while let Some(ev) = stream.next().await {
-            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
-                text.push_str(&d);
-            }
-        }
-        assert_eq!(text, "hello");
-    }
+pub(crate) fn codex_sse_from_bytes(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
+    codex_sse(bytes)
 }
+
+#[cfg(test)]
+#[path = "codex_tests.rs"]
+mod tests;

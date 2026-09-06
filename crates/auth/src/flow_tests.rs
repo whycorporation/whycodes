@@ -1,5 +1,5 @@
 use super::*;
-use std::io::Read;
+use std::io::{BufRead, Read};
 use std::net::TcpStream;
 use std::thread;
 
@@ -190,16 +190,34 @@ fn listener_and_port_maps_bind_errors() {
     assert!(matches!(err, AuthError::Io(_)));
     let (listener, port) = bind_loopback().unwrap();
     assert_eq!(port_from_addr(listener.local_addr()).unwrap(), port);
+    let (listener, _) = bind_loopback().unwrap();
+    let err = listener_with_port(listener, &mut |_| Err(std::io::Error::other("addr failed")))
+        .unwrap_err();
+    assert!(matches!(err, AuthError::Io(_)));
 }
 
 #[test]
 fn accept_connection_surfaces_io_errors() {
-    let err = accept_connection(|| Err(std::io::Error::other("accept failed"))).unwrap_err();
+    let err = accept_connection(&mut || Err(std::io::Error::other("accept failed"))).unwrap_err();
     assert!(matches!(err, AuthError::Io(_)));
-    let none =
-        accept_connection(|| Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "later")))
-            .unwrap();
+    let none = accept_connection(&mut || {
+        Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "later"))
+    })
+    .unwrap();
     assert!(none.is_none());
+
+    let (listener, _) = bind_loopback().unwrap();
+    let addr = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let handle = thread::spawn(move || TcpStream::connect(addr));
+    let accepted = loop {
+        match accept_connection(&mut || listener.accept()).unwrap() {
+            Some(pair) => break pair,
+            None => thread::sleep(Duration::from_millis(1)),
+        }
+    };
+    handle.join().unwrap().unwrap();
+    drop(accepted);
 }
 
 #[test]
@@ -294,4 +312,44 @@ fn cors_headers_allow_known_origin_and_fallback() {
         none.contains("Access-Control-Allow-Origin: https://accounts.x.ai"),
         "{none}"
     );
+}
+
+#[test]
+fn io_helpers_map_errors() {
+    io_result(Ok(())).unwrap();
+    assert!(matches!(
+        io_result::<()>(Err(std::io::Error::other("fail"))),
+        Err(AuthError::Io(_))
+    ));
+
+    struct FailRead;
+    impl Read for FailRead {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("fail"))
+        }
+    }
+    impl BufRead for FailRead {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            Err(std::io::Error::other("fail"))
+        }
+        fn consume(&mut self, _: usize) {}
+    }
+    let mut buf = String::new();
+    assert!(matches!(
+        read_http_line(&mut FailRead, &mut buf),
+        Err(AuthError::Io(_))
+    ));
+    let mut cursor = std::io::Cursor::new(b"GET / HTTP/1.1\r\n");
+    buf.clear();
+    assert_eq!(read_http_line(&mut cursor, &mut buf).unwrap(), 16);
+}
+
+#[test]
+fn wait_for_callback_with_surfaces_accept_errors() {
+    let (listener, _) = bind_loopback().unwrap();
+    let err = wait_for_callback_with(&listener, "st", Duration::from_secs(1), &mut || {
+        Err(std::io::Error::other("accept failed"))
+    })
+    .unwrap_err();
+    assert!(matches!(err, AuthError::Io(_)));
 }

@@ -3,9 +3,5 @@
 pub use whycodes_lsp::tool::LspTool;
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn lsp_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-}
+#[path = "lsp_tests.rs"]
+mod tests;

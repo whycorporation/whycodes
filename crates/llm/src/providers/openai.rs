@@ -1,13 +1,10 @@
 /// OpenAI-compatible LLM provider.
 /// Works with OpenAI, xAI (Grok), DeepSeek, OpenRouter, and other
 /// OpenAI-compatible APIs.
-use async_stream::stream;
 use serde_json::Value;
-use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use whycodes_core::types::{LlmRequest, LlmResponse};
 
-use crate::provider::{
-    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
-};
+use crate::provider::{LlmProvider, ProviderResponseFuture, ProviderStreamFuture};
 
 pub struct OpenAiProvider {
     name: String,
@@ -34,37 +31,11 @@ impl OpenAiProvider {
     }
 
     pub fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": self.convert_messages(request),
-            "stream": true,
-        });
-
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = max_tokens.into();
-        }
-
-        if !request.tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(self.convert_tools(&request.tools));
-            body["tool_choice"] = serde_json::json!("auto");
-            // Encourage the model to emit independent tool calls in one step
-            // so our agent can fan them out (Codex / OpenAI latency guide).
-            body["parallel_tool_calls"] = serde_json::json!(true);
-        }
-
-        crate::openai_compat::apply_sampling(&mut body, request);
-
-        crate::thinking::ThinkingConfig::apply_openai_effort(&mut body, request.thinking.as_ref());
-
-        body
+        crate::openai_compat::chat_completions_body(request, model, self.convert_messages(request))
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {
         crate::openai_compat::convert_messages(request)
-    }
-
-    fn convert_tools(&self, tools: &[whycodes_core::types::ToolDefinition]) -> Vec<Value> {
-        crate::openai_compat::convert_tools(tools)
     }
 }
 
@@ -106,13 +77,10 @@ impl LlmProvider for OpenAiProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
+                .map_err(http_error)?;
 
             let status = resp.status();
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| whycodes_core::Error::llm(format!("JSON parse error: {e}")))?;
+            let json: Value = resp.json().await.map_err(json_parse_error)?;
 
             if !status.is_success() {
                 let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
@@ -129,7 +97,7 @@ impl LlmProvider for OpenAiProvider {
             let usage = &json["usage"];
             Ok(LlmResponse {
                 content,
-                stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
+                stop_reason: choice["finish_reason"].as_str().map(str::to_string),
                 usage: crate::openai_compat::usage_from_chat_completion(usage),
                 model: model.to_string(),
             })
@@ -155,7 +123,7 @@ impl LlmProvider for OpenAiProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
+                .map_err(http_error)?;
 
             if !resp.status().is_success() {
                 let text = resp.text().await.unwrap_or_default();
@@ -165,56 +133,27 @@ impl LlmProvider for OpenAiProvider {
                 )));
             }
 
-            let s = stream! {
-                let mut stream = resp.bytes_stream();
-                let mut buffer = String::new();
-
-                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                    match chunk {
-                        Ok(bytes) => {
-                            buffer.push_str(&String::from_utf8_lossy(&bytes));
-                            while let Some(pos) = buffer.find('\n') {
-                                let line = buffer[..pos].trim().to_string();
-                                buffer = buffer[pos + 1..].to_string();
-
-                                if line.is_empty() || !line.starts_with("data: ") {
-                                    continue;
-                                }
-
-                                let data = &line[6..];
-                                if data == "[DONE]" {
-                                    yield Ok(StreamEvent::MessageStop);
-                                    return;
-                                }
-
-                                if let Ok(event) = serde_json::from_str::<Value>(data) {
-                                    let choice = &event["choices"][0];
-                                    let delta = &choice["delta"];
-
-                                    for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
-                                        yield Ok(ev);
-                                    }
-
-                                    // Final include_usage chunk often has empty choices —
-                                    // do not require finish_reason.
-                                    if let Some(ev) =
-                                        crate::openai_compat::stream_usage_from_chunk(&event)
-                                    {
-                                        yield Ok(ev);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            yield Err(crate::openai_compat::stream_chunk_error("openai", e));
-                        }
-                    }
-                }
-            };
-
-            Ok(Box::pin(s) as ProviderEventStream)
+            Ok(crate::openai_compat::chat_sse_stream(resp, "openai"))
         })
     }
+}
+
+fn http_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("HTTP error: {err}"))
+}
+
+fn json_parse_error(err: impl std::fmt::Display) -> whycodes_core::Error {
+    whycodes_core::Error::llm(format!("JSON parse error: {err}"))
+}
+
+#[cfg(test)]
+pub(crate) fn http_error_for_tests(err: &str) -> whycodes_core::Error {
+    http_error(err)
+}
+
+#[cfg(test)]
+pub(crate) fn json_parse_error_for_tests(err: &str) -> whycodes_core::Error {
+    json_parse_error(err)
 }
 
 impl Default for OpenAiProvider {
@@ -224,259 +163,5 @@ impl Default for OpenAiProvider {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::sync::Arc;
-    use std::thread;
-    use std::time::Duration;
-    use tokio_stream::StreamExt;
-    use whycodes_core::types::{ContentBlock, LlmRequest, Message, MessageContent, Role};
-
-    #[test]
-    fn from_base_and_from_config_normalize_urls() {
-        let def = OpenAiProvider::new();
-        assert_eq!(def.name(), "openai");
-        assert_eq!(
-            def.default_base_url(),
-            "https://api.openai.com/v1/chat/completions"
-        );
-        let via_default = OpenAiProvider::default();
-        assert_eq!(via_default.name(), "openai");
-
-        let custom = OpenAiProvider::from_base(Some("http://127.0.0.1:9/v1"));
-        assert!(
-            custom.default_base_url().ends_with("/chat/completions"),
-            "{}",
-            custom.default_base_url()
-        );
-
-        let cfg = whycodes_core::types::ProviderConfig {
-            name: "openai".into(),
-            api_key: None,
-            api_base: None,
-            base_url: Some("http://example.invalid/v1".into()),
-            headers: None,
-            models: vec![],
-            tool_arguments: None,
-            extra: Default::default(),
-        };
-        let from_cfg = OpenAiProvider::from_config(&cfg);
-        assert!(from_cfg.default_base_url().contains("example.invalid"));
-
-        let blank = OpenAiProvider::from_base(Some("   "));
-        assert_eq!(
-            blank.default_base_url(),
-            "https://api.openai.com/v1/chat/completions"
-        );
-        let via_api_base = OpenAiProvider::from_config(&whycodes_core::types::ProviderConfig {
-            name: "openai".into(),
-            api_key: None,
-            api_base: Some("http://127.0.0.1:9/v1".into()),
-            base_url: None,
-            headers: None,
-            models: vec![],
-            tool_arguments: None,
-            extra: Default::default(),
-        });
-        assert!(
-            via_api_base.default_base_url().contains("127.0.0.1:9"),
-            "{}",
-            via_api_base.default_base_url()
-        );
-    }
-
-    fn base_request() -> LlmRequest {
-        LlmRequest {
-            system: "sys".into(),
-            messages: Arc::from(vec![Message {
-                role: Role::User,
-                content: MessageContent::Text("hi".into()),
-                tool_call_id: None,
-                name: None,
-                created_at: None,
-            }]),
-            tools: Arc::from([]),
-            max_tokens: Some(32),
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: false,
-        }
-    }
-
-    fn serve_once(status: &str, body: &str, content_type: &str) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let header = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        let payload = format!("{header}{body}");
-        thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 1024];
-                let _ = stream.read(&mut buf);
-                let _ = stream.write_all(payload.as_bytes());
-            }
-        });
-        format!("http://{addr}/v1")
-    }
-
-    #[tokio::test]
-    async fn complete_parses_chat_completion_json() {
-        let body = serde_json::json!({
-            "choices": [{
-                "message": {"role": "assistant", "content": "hello-openai"}
-            }],
-            "usage": {"prompt_tokens": 3, "completion_tokens": 2}
-        })
-        .to_string();
-        let base = serve_once("200 OK", &body, "application/json");
-        let provider = OpenAiProvider::from_base(Some(&base));
-        let req = base_request();
-        let resp = provider
-            .complete(&req, "sk-test", "gpt-test")
-            .await
-            .unwrap();
-        assert!(
-            resp.content
-                .iter()
-                .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("hello-openai"))),
-            "{resp:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn complete_http_error_is_reported() {
-        let base = serve_once("401 Unauthorized", "nope", "text/plain");
-        let provider = OpenAiProvider::from_base(Some(&base));
-        let req = base_request();
-        let err = provider
-            .complete(&req, "sk-bad", "gpt-test")
-            .await
-            .unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.to_lowercase().contains("401")
-                || msg.to_lowercase().contains("openai")
-                || !msg.is_empty(),
-            "{msg}"
-        );
-    }
-
-    #[tokio::test]
-    async fn stream_parses_sse_deltas() {
-        let sse = concat!(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"he\"}}]}\n\n",
-            "data: {\"choices\":[{\"delta\":{\"content\":\"llo\"}}]}\n\n",
-            "data: [DONE]\n\n",
-        );
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let header = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            sse.len()
-        );
-        let payload = format!("{header}{sse}");
-        thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 2048];
-                let _ = stream.read(&mut buf);
-                let _ = stream.write_all(payload.as_bytes());
-                thread::sleep(Duration::from_millis(20));
-            }
-        });
-        let provider = OpenAiProvider::from_base(Some(&format!("http://{addr}/v1")));
-        let req = base_request();
-        let mut stream = provider.stream(&req, "sk-test", "gpt-test").await.unwrap();
-        let mut text = String::new();
-        while let Some(ev) = stream.next().await {
-            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
-                text.push_str(&d);
-            }
-        }
-        assert_eq!(text, "hello");
-    }
-
-    #[tokio::test]
-    async fn complete_json_parse_and_unknown_error_and_empty_key() {
-        let parse = serve_once("200 OK", "not-json", "text/plain");
-        let err = OpenAiProvider::from_base(Some(&parse))
-            .complete(&base_request(), "", "gpt-test")
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().to_lowercase().contains("json") || !err.to_string().is_empty(),
-            "{err}"
-        );
-
-        let unknown = serve_once("400 Bad Request", "{}", "application/json");
-        let err = OpenAiProvider::from_base(Some(&unknown))
-            .complete(&base_request(), "sk", "gpt-test")
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("Unknown") || err.to_string().contains("400"),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn stream_http_error_and_skips_noise_lines() {
-        let err_base = serve_once("401 Unauthorized", "nope", "text/plain");
-        let err = match OpenAiProvider::from_base(Some(&err_base))
-            .stream(&base_request(), "sk", "gpt-test")
-            .await
-        {
-            Ok(_) => panic!("expected stream http error"),
-            Err(e) => e,
-        };
-        assert!(
-            err.to_string().contains("nope") || !err.to_string().is_empty(),
-            "{err}"
-        );
-
-        let sse = concat!(
-            ": comment\n",
-            "\n",
-            "data: not-json\n\n",
-            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2}}\n\n",
-            "data: [DONE]\n\n",
-        );
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let header = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            sse.len()
-        );
-        let payload = format!("{header}{sse}");
-        thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 2048];
-                let _ = stream.read(&mut buf);
-                let _ = stream.write_all(payload.as_bytes());
-                thread::sleep(Duration::from_millis(20));
-            }
-        });
-        let provider = OpenAiProvider::from_base(Some(&format!("http://{addr}/v1")));
-        let mut stream = provider
-            .stream(&base_request(), "sk-test", "gpt-test")
-            .await
-            .unwrap();
-        let mut text = String::new();
-        let mut saw_usage = false;
-        while let Some(ev) = stream.next().await {
-            match ev.unwrap() {
-                StreamEvent::TextDelta { text: d } => text.push_str(&d),
-                StreamEvent::Usage { .. } => saw_usage = true,
-                _ => {}
-            }
-        }
-        assert_eq!(text, "hi");
-        assert!(saw_usage);
-    }
-}
+#[path = "openai_tests.rs"]
+mod tests;

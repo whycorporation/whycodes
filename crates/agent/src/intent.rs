@@ -159,25 +159,21 @@ pub fn classify_user_intent(text: &str) -> IntentAssessment {
         q += 0.3;
     }
 
+    // `has_qmark` always lifts `q` to ≥ 1.2 and `imperative` always lifts `c`
+    // to ≥ 1.4, so those fallbacks are unreachable here.
+    // Scores below every threshold stay Ambiguous (e.g. "please" with no
+    // change starter / marker). `has_qmark` and true imperatives never land here.
     let (intent, raw) = if p >= q && p >= c && p >= 1.5 {
         (UserIntent::Plan, p)
     } else if q >= c && q >= p && q >= 1.2 {
         (UserIntent::Question, q)
     } else if c >= q && c >= p && c >= 1.0 {
         (UserIntent::Change, c)
-    } else if has_qmark && c < 1.0 {
-        (
-            UserIntent::Question,
-            1.0 + if starts_question { 0.5 } else { 0.0 },
-        )
-    } else if imperative {
-        (UserIntent::Change, 1.2)
     } else {
         (UserIntent::Ambiguous, 0.4)
     };
 
     let confidence = match intent {
-        UserIntent::Trivial => 0.95,
         UserIntent::Ambiguous => 0.35,
         _ => (raw / 4.0).clamp(0.4, 0.95),
     };
@@ -287,21 +283,15 @@ pub fn apply_intent_to_request(
 
 /// Short chrome badge when confidence is high enough to show.
 pub fn badge_label(assessment: &IntentAssessment) -> Option<&'static str> {
-    if matches!(
-        assessment.intent,
-        UserIntent::Trivial | UserIntent::Ambiguous
-    ) {
-        return None;
-    }
     if !assessment.is_high() {
         return None;
     }
-    Some(match assessment.intent {
-        UserIntent::Question => "Q",
-        UserIntent::Change => "chg",
-        UserIntent::Plan => "plan",
-        UserIntent::Trivial | UserIntent::Ambiguous => unreachable!(),
-    })
+    match assessment.intent {
+        UserIntent::Question => Some("Q"),
+        UserIntent::Change => Some("chg"),
+        UserIntent::Plan => Some("plan"),
+        UserIntent::Trivial | UserIntent::Ambiguous => None,
+    }
 }
 
 /// Toast severity for TUI (`info` / `warning`).
@@ -815,254 +805,5 @@ fn count_path_hints(text: &str) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn explains_as_question() {
-        let a = classify_user_intent("How does session compaction work?");
-        assert_eq!(a.intent, UserIntent::Question);
-        assert!(a.is_high(), "{a:?}");
-    }
-
-    #[test]
-    fn turkish_question() {
-        let a = classify_user_intent("Compaction nasıl çalışıyor?");
-        assert_eq!(a.intent, UserIntent::Question);
-    }
-
-    #[test]
-    fn fix_is_change() {
-        let a = classify_user_intent("Fix the auth bug in session.rs");
-        assert_eq!(a.intent, UserIntent::Change);
-        assert!(a.confidence >= 0.5, "{a:?}");
-    }
-
-    #[test]
-    fn turkish_fix() {
-        let a = classify_user_intent("Auth bug'ını düzelt");
-        assert_eq!(a.intent, UserIntent::Change);
-    }
-
-    #[test]
-    fn design_is_plan() {
-        let a = classify_user_intent(
-            "Design the architecture for multi-tenant billing and write a plan",
-        );
-        assert_eq!(a.intent, UserIntent::Plan);
-        assert!(a.is_high(), "{a:?}");
-    }
-
-    #[test]
-    fn can_we_fix_is_not_blind_change() {
-        // Clarification-shaped: question mark + change verb → question posture.
-        let a = classify_user_intent("Can we fix the flaky test?");
-        assert!(
-            matches!(a.intent, UserIntent::Question | UserIntent::Ambiguous),
-            "expected question-ish, got {a:?}"
-        );
-    }
-
-    #[test]
-    fn create_roadmap_is_plan_not_change() {
-        let a = classify_user_intent("Create a roadmap for provider parity");
-        assert_eq!(a.intent, UserIntent::Plan, "{a:?}");
-    }
-
-    #[test]
-    fn best_approach_question_is_plan() {
-        let a = classify_user_intent("What's the best approach for session resume?");
-        assert_eq!(a.intent, UserIntent::Plan, "{a:?}");
-    }
-
-    #[test]
-    fn write_migration_plan_is_plan() {
-        let a = classify_user_intent("Write a migration plan");
-        assert_eq!(a.intent, UserIntent::Plan, "{a:?}");
-    }
-
-    #[test]
-    fn trivial_greeting() {
-        let a = classify_user_intent("selam");
-        assert_eq!(a.intent, UserIntent::Trivial);
-    }
-
-    #[test]
-    fn posture_none_for_ask_agent() {
-        let a = classify_user_intent("How does X work?");
-        assert!(posture_suffix(&a, "ask").is_none());
-        assert!(posture_suffix(&a, "build").is_some());
-    }
-
-    #[test]
-    fn apply_mutates_request_not_empty() {
-        let mut req = LlmRequest {
-            system: "sys".into(),
-            messages: std::sync::Arc::from(vec![whycodes_core::types::Message {
-                role: Role::User,
-                content: MessageContent::Text("How does auth work?".into()),
-                tool_call_id: None,
-                name: None,
-                created_at: None,
-            }]),
-            tools: std::sync::Arc::from([]),
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: true,
-        };
-        let applied = apply_intent_to_request(
-            &mut req,
-            "How does auth work?",
-            "build",
-            IntentGuidanceMode::Auto,
-        );
-        assert!(applied.is_some());
-        let text = req.messages[0].content.as_text().unwrap();
-        assert!(text.contains("whycodes_intent"));
-        assert!(text.contains("How does auth work?"));
-    }
-
-    #[test]
-    fn off_mode_skips() {
-        let mut req = LlmRequest {
-            system: "sys".into(),
-            messages: std::sync::Arc::from(vec![whycodes_core::types::Message {
-                role: Role::User,
-                content: MessageContent::Text("How does auth work?".into()),
-                tool_call_id: None,
-                name: None,
-                created_at: None,
-            }]),
-            tools: std::sync::Arc::from([]),
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: true,
-        };
-        assert!(
-            apply_intent_to_request(
-                &mut req,
-                "How does auth work?",
-                "build",
-                IntentGuidanceMode::Off
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn parse_mode() {
-        assert_eq!(IntentGuidanceMode::parse("auto"), IntentGuidanceMode::Auto);
-        assert_eq!(IntentGuidanceMode::parse("off"), IntentGuidanceMode::Off);
-        assert_eq!(
-            IntentGuidanceMode::parse("always"),
-            IntentGuidanceMode::Always
-        );
-    }
-
-    #[test]
-    fn badge_for_high_question() {
-        let a = classify_user_intent("How does session compaction work?");
-        assert_eq!(badge_label(&a), Some("Q"));
-    }
-
-    #[test]
-    fn mismatch_toast_is_warning() {
-        let a = classify_user_intent("Fix the auth bug in session.rs");
-        let n = intent_notice(&a, "ask").expect("notice");
-        assert_eq!(n.kind, IntentNoticeKind::Warning);
-        assert!(n.message.contains("build"));
-    }
-
-    #[test]
-    fn read_only_shell_ls() {
-        assert!(is_read_only_shell("ls -la"));
-        assert!(is_read_only_shell("git status"));
-        assert!(is_read_only_shell("rg foo src"));
-        assert!(!is_read_only_shell("rm -rf target"));
-        assert!(!is_read_only_shell("git push origin main"));
-    }
-
-    #[test]
-    fn authorize_blocks_edit_on_question_in_build() {
-        let a = classify_user_intent("How does auth work?");
-        let d = authorize_tool(&a, "build", "edit", None, IntentGuidanceMode::Auto);
-        assert!(matches!(d, ToolAuthDecision::Confirm { .. }), "{d:?}");
-    }
-
-    #[test]
-    fn authorize_allows_ls_on_question() {
-        let a = classify_user_intent("How does auth work?");
-        let d = authorize_tool(
-            &a,
-            "build",
-            "bash",
-            Some("ls -la src"),
-            IntentGuidanceMode::Auto,
-        );
-        assert_eq!(d, ToolAuthDecision::Allow);
-    }
-
-    #[test]
-    fn authorize_confirms_rm_on_question() {
-        let a = classify_user_intent("How does auth work?");
-        let d = authorize_tool(
-            &a,
-            "build",
-            "bash",
-            Some("rm -rf /tmp/x"),
-            IntentGuidanceMode::Auto,
-        );
-        assert!(matches!(d, ToolAuthDecision::Confirm { .. }), "{d:?}");
-    }
-
-    #[test]
-    fn authorize_refuses_write_on_ask_agent() {
-        let a = classify_user_intent("Fix the bug");
-        let d = authorize_tool(&a, "ask", "write", None, IntentGuidanceMode::Auto);
-        assert!(matches!(d, ToolAuthDecision::Refuse { .. }), "{d:?}");
-    }
-
-    #[test]
-    fn authorize_allows_change_intent_edits() {
-        let a = classify_user_intent("Fix the auth bug in session.rs");
-        let d = authorize_tool(&a, "build", "edit", None, IntentGuidanceMode::Auto);
-        assert_eq!(d, ToolAuthDecision::Allow);
-    }
-
-    #[test]
-    fn authorize_off_skips() {
-        let a = classify_user_intent("How does auth work?");
-        let d = authorize_tool(&a, "build", "edit", None, IntentGuidanceMode::Off);
-        assert_eq!(d, ToolAuthDecision::Allow);
-    }
-
-    #[test]
-    fn authorize_confirms_plan_write_without_high_confidence() {
-        let a = IntentAssessment {
-            intent: UserIntent::Plan,
-            confidence: 0.5,
-            reasons: vec!["plan_marker"],
-        };
-        let d = authorize_tool(&a, "build", "write", None, IntentGuidanceMode::Auto);
-        assert!(matches!(d, ToolAuthDecision::Confirm { .. }), "{d:?}");
-    }
-
-    #[test]
-    fn authorize_always_confirms_ambiguous_write() {
-        let a = IntentAssessment {
-            intent: UserIntent::Ambiguous,
-            confidence: 0.35,
-            reasons: vec![],
-        };
-        let d = authorize_tool(&a, "build", "write", None, IntentGuidanceMode::Always);
-        assert!(matches!(d, ToolAuthDecision::Confirm { .. }), "{d:?}");
-    }
-}
+#[path = "intent_tests.rs"]
+mod tests;

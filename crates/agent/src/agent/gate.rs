@@ -521,9 +521,10 @@ impl Agent {
             ) {
                 crate::intent::ToolAuthDecision::Allow => {}
                 crate::intent::ToolAuthDecision::Refuse { reason } => {
+                    let intent_s = intent.intent.as_str();
                     tracing::info!(
                         tool = %tc.name,
-                        intent = intent.intent.as_str(),
+                        intent = intent_s,
                         "intent auth refused tool"
                     );
                     return ToolResult {
@@ -685,40 +686,5 @@ impl Agent {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gate_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-
-    #[test]
-    fn retryable_skips_policy_and_question() {
-        let err = |c: &str| ToolResult {
-            tool_call_id: "t".into(),
-            content: c.into(),
-            is_error: true,
-        };
-        assert!(!tool_error_is_retryable(
-            "read",
-            &ToolResult {
-                tool_call_id: "t".into(),
-                content: "ok".into(),
-                is_error: false,
-            }
-        ));
-        assert!(tool_error_is_retryable("read", &err("transient fail 1")));
-        assert!(!tool_error_is_retryable("question", &err("do not ask")));
-        assert!(!tool_error_is_retryable("task", &err("subagent failed")));
-        assert!(!tool_error_is_retryable(
-            "read",
-            &err("Permission denied for tool 'read'.")
-        ));
-        assert!(!tool_error_is_retryable(
-            "bash",
-            &err("Refused: catastrophic")
-        ));
-        assert_eq!(AUTO_TOOL_RETRY_LIMIT, 2);
-    }
-}
+#[path = "gate_tests.rs"]
+mod tests;

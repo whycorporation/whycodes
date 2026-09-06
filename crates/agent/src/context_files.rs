@@ -97,19 +97,23 @@ fn render(files: &[ContextFile]) -> String {
 
 fn scan_dirs(project_path: &Path) -> Vec<PathBuf> {
     let mut dirs = vec![project_path.to_path_buf()];
-    if let Some(root) = git_root(project_path) {
-        let mut cur = project_path.to_path_buf();
-        while cur != root {
-            match cur.parent() {
-                Some(parent) => {
-                    cur = parent.to_path_buf();
-                    dirs.push(cur.clone());
-                }
-                None => break,
-            }
-        }
+    let Some(root) = git_root(project_path) else {
+        return dirs;
+    };
+    let mut cur = project_path.to_path_buf();
+    while cur != root {
+        // `git_root` only returns an ancestor; jumping to `root` ends the walk
+        // if a parent is ever missing (filesystem root).
+        cur = parent_or(&root, cur.parent());
+        dirs.push(cur.clone());
     }
     dirs
+}
+
+fn parent_or(root: &Path, parent: Option<&Path>) -> PathBuf {
+    parent
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.to_path_buf())
 }
 
 fn git_root(start: &Path) -> Option<PathBuf> {
@@ -165,132 +169,16 @@ fn push_glob_files(dir: PathBuf, ext: &str, out: &mut Vec<PathBuf>) {
 fn label_for(path: &Path, project_path: &Path) -> String {
     path.strip_prefix(project_path)
         .map(|rel| rel.display().to_string())
-        .unwrap_or_else(|_| {
-            path.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string())
-        })
+        .unwrap_or_else(|_| file_name_or_display(path))
         .replace('\\', "/")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn empty_project_discovers_nothing() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(discover(dir.path()).is_empty());
-        let prompt = append_project_instructions("base", dir.path());
-        assert_eq!(prompt, "base");
-        assert!(!prompt.contains("Project Instructions"));
-    }
-
-    #[test]
-    fn agents_md_keeps_existing_heading() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("AGENTS.md"), "  \nProject rules here\n  ").unwrap();
-        let with = append_project_instructions("base", dir.path());
-        assert!(with.contains("Project Instructions (AGENTS.md)"), "{with}");
-        assert!(with.contains("Project rules here"), "{with}");
-    }
-
-    #[test]
-    fn lowercase_agents_md_when_canonical_absent() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("agents.md"), "lowercase rules").unwrap();
-        let with = append_project_instructions("base", dir.path());
-        assert!(with.contains("lowercase rules"), "{with}");
-    }
-
-    #[test]
-    fn whycodes_nested_agents_md() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".whycodes")).unwrap();
-        std::fs::write(dir.path().join(".whycodes/AGENTS.md"), "nested rules").unwrap();
-        let with = append_project_instructions("base", dir.path());
-        assert!(with.contains("nested rules"), "{with}");
-        assert!(with.contains(".whycodes/AGENTS.md"), "{with}");
-    }
-
-    #[test]
-    fn sibling_claude_and_copilot_files_are_concatenated() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("AGENTS.md"), "native").unwrap();
-        std::fs::write(dir.path().join("CLAUDE.md"), "claude rules").unwrap();
-        std::fs::create_dir(dir.path().join(".github")).unwrap();
-        std::fs::write(
-            dir.path().join(".github/copilot-instructions.md"),
-            "copilot rules",
-        )
-        .unwrap();
-        let files = discover(dir.path());
-        let joined: String = files.iter().map(|f| f.content.as_str()).collect();
-        assert!(joined.contains("native"));
-        assert!(joined.contains("claude rules"));
-        assert!(joined.contains("copilot rules"));
-        let rendered = render(&files);
-        assert!(rendered.contains("Additional instructions (CLAUDE.md)"));
-    }
-
-    #[test]
-    fn duplicate_content_is_skipped() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("AGENTS.md"), "same body").unwrap();
-        std::fs::write(dir.path().join("CLAUDE.md"), "same body").unwrap();
-        let files = discover(dir.path());
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].label, "AGENTS.md");
-    }
-
-    #[test]
-    fn cursor_mdc_and_clinerules_dir_are_picked_up() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join(".cursor/rules")).unwrap();
-        std::fs::write(
-            dir.path().join(".cursor/rules/rust.mdc"),
-            "always use cargo fmt",
-        )
-        .unwrap();
-        std::fs::create_dir(dir.path().join(".clinerules")).unwrap();
-        std::fs::write(dir.path().join(".clinerules/style.md"), "no unwrap").unwrap();
-        std::fs::write(dir.path().join(".cursorrules"), "cursor root").unwrap();
-        let files = discover(dir.path());
-        let labels: Vec<&str> = files.iter().map(|f| f.label.as_str()).collect();
-        assert!(labels.iter().any(|l| l.contains("rust.mdc")), "{labels:?}");
-        assert!(labels.iter().any(|l| l.contains("style.md")), "{labels:?}");
-        assert!(labels.contains(&".cursorrules"), "{labels:?}");
-    }
-
-    #[test]
-    fn git_root_walk_collects_ancestor_agents() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
-        std::fs::write(dir.path().join("AGENTS.md"), "root rules").unwrap();
-        let pkg = dir.path().join("pkg");
-        std::fs::create_dir(&pkg).unwrap();
-        std::fs::write(pkg.join("CLAUDE.md"), "pkg rules").unwrap();
-        let files = discover(&pkg);
-        let joined: String = files.iter().map(|f| f.content.as_str()).collect();
-        assert!(joined.contains("pkg rules"), "{joined}");
-        assert!(joined.contains("root rules"), "{joined}");
-    }
-
-    #[test]
-    fn empty_files_are_ignored() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("AGENTS.md"), "   \n").unwrap();
-        std::fs::write(dir.path().join("CLAUDE.md"), "keep").unwrap();
-        let files = discover(dir.path());
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].content, "keep");
-    }
-
-    #[test]
-    fn label_falls_back_to_file_name_outside_project() {
-        assert_eq!(
-            label_for(Path::new("/tmp/CLAUDE.md"), Path::new("/proj")),
-            "CLAUDE.md"
-        );
-    }
+fn file_name_or_display(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
+
+#[cfg(test)]
+#[path = "context_files_tests.rs"]
+mod tests;

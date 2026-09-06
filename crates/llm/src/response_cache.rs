@@ -55,14 +55,16 @@ impl ResponseCache {
         CACHE.get_or_init(Self::new)
     }
 
+    fn lock(&self) -> std::sync::MutexGuard<'_, VecDeque<Entry>> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn clear(&self) {
-        if let Ok(mut g) = self.inner.lock() {
-            g.clear();
-        }
+        self.lock().clear();
     }
 
     pub fn len(&self) -> usize {
-        self.inner.lock().map(|g| g.len()).unwrap_or(0)
+        self.lock().len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -86,7 +88,7 @@ impl ResponseCache {
         let embed = embed(query, DIM);
         let now = Instant::now();
 
-        let mut guard = self.inner.lock().ok()?;
+        let mut guard = self.lock();
         evict_expired(&mut guard, now);
 
         if let Some(pos) = guard.iter().position(|e| e.exact == exact)
@@ -103,19 +105,33 @@ impl ResponseCache {
                 continue;
             }
             let s = cosine(&embed, &e.embed);
-            if s >= SEMANTIC_THRESHOLD && best.is_none_or(|(_, b)| s > b) {
-                best = Some((i, s));
+            if s >= SEMANTIC_THRESHOLD {
+                best = better_semantic(best, i, s);
             }
         }
-        let (i, score) = best?;
-        let e = guard.remove(i)?;
-        let text = e.text.clone();
-        guard.push_back(e);
-        tracing::debug!(score, "response_cache.semantic_hit");
-        Some(CachedText { text })
+        take_semantic_hit(&mut guard, best)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn better_semantic_for_tests(
+        best: Option<(usize, f32)>,
+        i: usize,
+        score: f32,
+    ) -> Option<(usize, f32)> {
+        better_semantic(best, i, score)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_semantic_hit_none_for_tests() -> Option<CachedText> {
+        let mut empty = VecDeque::new();
+        take_semantic_hit(&mut empty, Some((0, 1.0)))
     }
 
     pub fn store(&self, request: &LlmRequest, model: &str, text: &str) {
+        self.store_at(request, model, text, Instant::now());
+    }
+
+    fn store_at(&self, request: &LlmRequest, model: &str, text: &str, now: Instant) {
         if !Self::eligible(request) {
             return;
         }
@@ -124,11 +140,7 @@ impl ResponseCache {
             return;
         }
         let exact = exact_key(request, model);
-        let now = Instant::now();
-        let Ok(mut guard) = self.inner.lock() else {
-            tracing::warn!("response_cache.store: lock poisoned");
-            return;
-        };
+        let mut guard = self.lock();
         evict_expired(&mut guard, now);
         if guard.iter().any(|e| e.exact == exact) {
             return;
@@ -190,6 +202,26 @@ pub fn text_only_response(resp: &LlmResponse) -> Option<String> {
     } else {
         Some(text.to_string())
     }
+}
+
+fn better_semantic(best: Option<(usize, f32)>, i: usize, score: f32) -> Option<(usize, f32)> {
+    match best {
+        None => Some((i, score)),
+        Some((_, b)) if score > b => Some((i, score)),
+        other => other,
+    }
+}
+
+fn take_semantic_hit(
+    guard: &mut VecDeque<Entry>,
+    best: Option<(usize, f32)>,
+) -> Option<CachedText> {
+    let (i, score) = best?;
+    let e = guard.remove(i)?;
+    let text = e.text.clone();
+    guard.push_back(e);
+    tracing::debug!("response_cache.semantic_hit score={score}");
+    Some(CachedText { text })
 }
 
 fn evict_expired(entries: &mut VecDeque<Entry>, now: Instant) {
@@ -349,106 +381,5 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use whycodes_core::types::{Message, ToolDefinition};
-
-    fn req(system: &str, user: &str) -> LlmRequest {
-        LlmRequest {
-            system: system.into(),
-            messages: std::sync::Arc::from(vec![Message {
-                role: Role::User,
-                content: MessageContent::Text(user.into()),
-                tool_call_id: None,
-                name: None,
-                created_at: None,
-            }]),
-            tools: std::sync::Arc::from([]),
-            max_tokens: Some(64),
-            temperature: Some(0.2),
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: false,
-        }
-    }
-
-    #[test]
-    fn exact_hit_replays() {
-        let cache = ResponseCache::new();
-        let r = req("sys", "what is the default port");
-        assert!(cache.lookup(&r, "haiku").is_none());
-        cache.store(&r, "haiku", "8080");
-        let hit = cache.lookup(&r, "haiku").expect("exact");
-        assert_eq!(hit.text, "8080");
-    }
-
-    #[test]
-    fn different_model_misses() {
-        let cache = ResponseCache::new();
-        let r = req("sys", "default port");
-        cache.store(&r, "haiku", "8080");
-        assert!(cache.lookup(&r, "sonnet").is_none());
-    }
-
-    #[test]
-    fn semantic_paraphrase_hits_same_system() {
-        let cache = ResponseCache::new();
-        let a = req("sys", "what is the default port");
-        cache.store(&a, "haiku", "8080");
-        let b = req("sys", "what's the default port");
-        let hit = cache.lookup(&b, "haiku").expect("semantic");
-        assert_eq!(hit.text, "8080");
-    }
-
-    #[test]
-    fn different_system_does_not_semantic_hit() {
-        let cache = ResponseCache::new();
-        cache.store(
-            &req("project-a", "what is the default port"),
-            "haiku",
-            "8080",
-        );
-        assert!(
-            cache
-                .lookup(&req("project-b", "what is the default port"), "haiku")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn tools_in_request_never_cache() {
-        let cache = ResponseCache::new();
-        let mut r = req("sys", "read src/main.rs");
-        r.tools = vec![ToolDefinition {
-            name: "read".into(),
-            description: "read a file".into(),
-            parameters: serde_json::json!({"type": "object"}),
-        }]
-        .into();
-        cache.store(&r, "haiku", "fn main() {}");
-        assert!(cache.lookup(&r, "haiku").is_none());
-        assert_eq!(cache.len(), 0);
-    }
-
-    #[test]
-    fn text_only_skips_tool_use_responses() {
-        let resp = LlmResponse {
-            content: vec![
-                ContentBlock::Text {
-                    text: "calling".into(),
-                },
-                ContentBlock::ToolUse {
-                    id: "1".into(),
-                    name: "read".into(),
-                    input: serde_json::json!({}),
-                },
-            ],
-            stop_reason: None,
-            usage: Usage::default(),
-            model: "x".into(),
-        };
-        assert!(text_only_response(&resp).is_none());
-    }
-}
+#[path = "response_cache_tests.rs"]
+mod tests;

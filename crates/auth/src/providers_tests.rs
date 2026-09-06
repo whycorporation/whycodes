@@ -1,6 +1,8 @@
 use super::*;
+use std::future::Future;
 use std::io::{BufReader, Write};
 use std::net::TcpListener;
+use std::pin::Pin;
 use std::thread;
 
 fn mock_server(responses: Vec<(u16, &'static str)>) -> String {
@@ -166,10 +168,12 @@ impl LoginUi for LoopbackUi {
     }
     fn note(&mut self, _: &str) {}
     fn show_device_code(&mut self, _: &str, _: &str, _: bool) {}
-    async fn prompt_pasted_code(&mut self) -> Result<String> {
-        Err(AuthError::FlowCancelled(
-            "loopback UI cannot prompt for a pasted code".into(),
-        ))
+    fn prompt_pasted_code(&mut self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+        Box::pin(async {
+            Err(AuthError::FlowCancelled(
+                "loopback UI cannot prompt for a pasted code".into(),
+            ))
+        })
     }
 }
 
@@ -177,8 +181,9 @@ impl LoginUi for TestUi {
     fn show_sign_in(&mut self, _: &str, _: &str, _: bool) {}
     fn note(&mut self, _: &str) {}
     fn show_device_code(&mut self, _: &str, _: &str, _: bool) {}
-    async fn prompt_pasted_code(&mut self) -> Result<String> {
-        Ok(self.pasted.clone())
+    fn prompt_pasted_code(&mut self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+        let pasted = self.pasted.clone();
+        Box::pin(async move { Ok(pasted) })
     }
 }
 
@@ -971,8 +976,8 @@ impl LoginUi for MismatchLoopbackUi {
     }
     fn note(&mut self, _: &str) {}
     fn show_device_code(&mut self, _: &str, _: &str, _: bool) {}
-    async fn prompt_pasted_code(&mut self) -> Result<String> {
-        Err(AuthError::FlowCancelled("no paste".into()))
+    fn prompt_pasted_code(&mut self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+        Box::pin(async { Err(AuthError::FlowCancelled("no paste".into())) })
     }
 }
 
@@ -1503,6 +1508,83 @@ async fn device_login_defaults_missing_poll_fields_and_http_errors() {
 }
 
 #[tokio::test]
+async fn http_helpers_map_connect_and_decode_errors() {
+    let client = http_client().unwrap();
+    let err = send_request(client.get("http://127.0.0.1:1/"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AuthError::Http(_)), "{err}");
+
+    let url = mock_server(vec![(200, "not-json")]);
+    let client = http_client().unwrap();
+    let resp = send_request(client.get(&url)).await.unwrap();
+    let err = response_json(resp).await.unwrap_err();
+    assert!(matches!(err, AuthError::Http(_)), "{err}");
+}
+
+#[tokio::test]
+async fn login_http_maps_connect_errors() {
+    let err = device_login(
+        &device_spec("http://127.0.0.1:1".into()),
+        false,
+        &mut TestUi {
+            pasted: String::new(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AuthError::Http(_)), "{err}");
+
+    let mut spec = device_spec(mock_server(vec![(
+        200,
+        r#"{"device_code":"dev","interval":0,"expires_in":30}"#,
+    )]));
+    spec.token_url = "http://127.0.0.1:1".into();
+    let err = device_login(
+        &spec,
+        false,
+        &mut TestUi {
+            pasted: String::new(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AuthError::Http(_)), "{err}");
+
+    let spec = device_spec(mock_server(vec![(200, "not-json")]));
+    let err = device_login(
+        &spec,
+        false,
+        &mut TestUi {
+            pasted: String::new(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AuthError::Http(_)), "{err}");
+
+    let err = refresh_grant(
+        &local_spec("http://127.0.0.1:1".into(), TokenEncoding::Form),
+        "r",
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AuthError::Http(_)), "{err}");
+    let err = refresh_grant(
+        &local_spec("http://127.0.0.1:1".into(), TokenEncoding::Json),
+        "r",
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AuthError::Http(_)), "{err}");
+
+    let err = exchange_derived_token(&derived_cred("http://127.0.0.1:1", "Bearer"), "oauth")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AuthError::Http(_)), "{err}");
+}
+
+#[tokio::test]
 async fn force_fresh_without_refresh_token_is_not_logged_in() {
     let dir = tempfile::tempdir().unwrap();
     let store = TokenStore::new(dir.path());
@@ -1619,11 +1701,11 @@ async fn login_with_spec_reports_persist_errors() {
 #[test]
 fn browser_flow_timeout_covers_test_and_production() {
     assert_eq!(
-        browser_flow_timeout(true),
+        browser_flow_timeout_for_test(true),
         std::time::Duration::from_millis(400)
     );
     assert_eq!(
-        browser_flow_timeout(false),
+        browser_flow_timeout_for_test(false),
         std::time::Duration::from_secs(5 * 60)
     );
 }

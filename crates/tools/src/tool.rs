@@ -3,9 +3,5 @@
 pub use whycodes_core::{Tool, ToolContext};
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn tool_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-}
+#[path = "tool_tests.rs"]
+mod tests;

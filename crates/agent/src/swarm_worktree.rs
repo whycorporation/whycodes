@@ -62,6 +62,8 @@ pub fn create_worktree(
     }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    } else {
+        return Err("worktree path has no parent directory".into());
     }
 
     let base_head = git_ok(repo_root, &["rev-parse", "HEAD"])
@@ -73,7 +75,7 @@ pub fn create_worktree(
         .args(["worktree", "add", "--detach", dest_s.as_ref(), "HEAD"])
         .current_dir(repo_root)
         .output()
-        .map_err(|e| format!("git worktree add failed to spawn: {e}"))?;
+        .map_err(git_spawn_err("git worktree add failed to spawn"))?;
 
     if !status.status.success() {
         let err = String::from_utf8_lossy(&status.stderr);
@@ -96,24 +98,31 @@ pub fn changed_relative_paths(worktree: &Path) -> Result<Vec<String>, String> {
         .ok_or_else(|| "git status failed in worktree".to_string())?;
     let mut paths = Vec::new();
     for line in out.lines() {
-        if line.len() < 4 {
-            continue;
-        }
-        // XY PATH or XY ORIG -> PATH (renames)
-        let rest = line[3..].trim();
-        let path = if let Some((_, right)) = rest.split_once(" -> ") {
-            right
-        } else {
-            rest
-        };
-        // Unquoted paths; git quotes with " when special chars — strip lightly.
-        let path = path.trim_matches('"').to_string();
-        if !path.is_empty() && !paths.iter().any(|p| p == &path) {
+        if let Some(path) = porcelain_path(line)
+            && !paths.iter().any(|p| p == &path)
+        {
             paths.push(path);
         }
     }
     paths.sort();
     Ok(paths)
+}
+
+/// Parse one `git status --porcelain` line into a repo-relative path.
+fn porcelain_path(line: &str) -> Option<String> {
+    if line.len() < 4 {
+        return None;
+    }
+    // XY PATH or XY ORIG -> PATH (renames)
+    let rest = line[3..].trim();
+    let path = if let Some((_, right)) = rest.split_once(" -> ") {
+        right
+    } else {
+        rest
+    };
+    // Unquoted paths; git quotes with " when special chars — strip lightly.
+    let path = path.trim_matches('"').to_string();
+    if path.is_empty() { None } else { Some(path) }
 }
 
 /// Three-way merge worktree changes into `main_root` (usually the same as repo_root).
@@ -140,75 +149,91 @@ pub fn merge_into_main(wt: &SwarmWorktree, main_root: &Path) -> MergeReport {
     for rel in paths {
         let wt_path = wt.path.join(&rel);
         let main_path = main_root.join(&rel);
-        let work = read_optional(&wt_path);
-        let main = read_optional(&main_path);
-        let base = git_show_blob(&wt.repo_root, &wt.base_head, &rel);
+        merge_changed_path(
+            rel,
+            &wt_path,
+            &main_path,
+            &wt.repo_root,
+            &wt.base_head,
+            &mut report,
+        );
+    }
+    report
+}
 
-        match (base.as_ref(), work.as_ref(), main.as_ref()) {
-            // Deleted in worktree
-            (Some(b), None, Some(m)) if m == b => {
-                if let Err(e) = std::fs::remove_file(&main_path) {
-                    report.conflicts.push(MergeConflict {
-                        path: rel.clone(),
-                        reason: format!("failed to delete: {e}"),
-                    });
-                } else {
-                    report.deleted.push(rel);
-                }
-            }
-            (Some(_), None, Some(_)) => {
+fn merge_changed_path(
+    rel: String,
+    wt_path: &Path,
+    main_path: &Path,
+    repo_root: &Path,
+    base_head: &str,
+    report: &mut MergeReport,
+) {
+    let work = read_optional(wt_path);
+    let main = read_optional(main_path);
+    let base = git_show_blob(repo_root, base_head, &rel);
+
+    match (base.as_ref(), work.as_ref(), main.as_ref()) {
+        (None, None, _) => skip_vanished_untracked(),
+        // Deleted in worktree
+        (Some(b), None, Some(m)) if m == b => {
+            if let Err(e) = std::fs::remove_file(main_path) {
                 report.conflicts.push(MergeConflict {
-                    path: rel,
-                    reason: "deleted in worker but main checkout diverged".into(),
+                    path: rel.clone(),
+                    reason: format!("failed to delete: {e}"),
                 });
-            }
-            (None, None, _) => {
-                // nothing
-            }
-            (Some(_), None, None) => {
-                // already gone on main
+            } else {
                 report.deleted.push(rel);
             }
-            // Created or modified in worktree
-            (_, Some(w), m) => {
-                let main_matches_base = match (base.as_ref(), m) {
-                    (None, None) => true,
-                    (Some(b), Some(cur)) => b == cur,
-                    (None, Some(_)) => false, // main created something worker also created
-                    (Some(_), None) => false, // main deleted while worker edited
-                };
-                let already_same = m.map(|cur| cur == w).unwrap_or(false);
-                if already_same {
-                    report.applied.push(rel);
-                    continue;
-                }
-                if !main_matches_base {
-                    report.conflicts.push(MergeConflict {
-                        path: rel,
-                        reason: "main checkout changed the same path (three-way conflict)".into(),
-                    });
-                    continue;
-                }
-                if let Some(parent) = main_path.parent()
-                    && let Err(e) = std::fs::create_dir_all(parent)
-                {
-                    report.conflicts.push(MergeConflict {
-                        path: rel,
-                        reason: format!("mkdir failed: {e}"),
-                    });
-                    continue;
-                }
-                match std::fs::write(&main_path, w) {
-                    Ok(()) => report.applied.push(rel),
-                    Err(e) => report.conflicts.push(MergeConflict {
-                        path: rel,
-                        reason: format!("write failed: {e}"),
-                    }),
-                }
+        }
+        (Some(_), None, Some(_)) => {
+            report.conflicts.push(MergeConflict {
+                path: rel,
+                reason: "deleted in worker but main checkout diverged".into(),
+            });
+        }
+        (Some(_), None, None) => {
+            // already gone on main
+            report.deleted.push(rel);
+        }
+        // Created or modified in worktree
+        (_, Some(w), m) => {
+            let main_matches_base = match (base.as_ref(), m) {
+                (None, None) => true,
+                (Some(b), Some(cur)) => b == cur,
+                (None, Some(_)) => false, // main created something worker also created
+                (Some(_), None) => false, // main deleted while worker edited
+            };
+            let already_same = m.map(|cur| cur == w).unwrap_or(false);
+            if already_same {
+                report.applied.push(rel);
+                return;
+            }
+            if !main_matches_base {
+                report.conflicts.push(MergeConflict {
+                    path: rel,
+                    reason: "main checkout changed the same path (three-way conflict)".into(),
+                });
+                return;
+            }
+            if let Some(parent) = main_path.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                report.conflicts.push(MergeConflict {
+                    path: rel,
+                    reason: format!("mkdir failed: {e}"),
+                });
+                return;
+            }
+            match std::fs::write(main_path, w) {
+                Ok(()) => report.applied.push(rel),
+                Err(e) => report.conflicts.push(MergeConflict {
+                    path: rel,
+                    reason: format!("write failed: {e}"),
+                }),
             }
         }
     }
-    report
 }
 
 /// Remove the worktree and prune metadata. Best-effort; logs errors into the Result Err string.
@@ -218,7 +243,7 @@ pub fn remove_worktree(wt: &SwarmWorktree) -> Result<(), String> {
         .args(["worktree", "remove", "--force", dest_s.as_ref()])
         .current_dir(&wt.repo_root)
         .output()
-        .map_err(|e| format!("git worktree remove spawn: {e}"))?;
+        .map_err(git_spawn_err("git worktree remove spawn"))?;
 
     if !output.status.success() {
         // Fallback: force-delete directory and prune.
@@ -228,15 +253,22 @@ pub fn remove_worktree(wt: &SwarmWorktree) -> Result<(), String> {
             .current_dir(&wt.repo_root)
             .output();
         let err = String::from_utf8_lossy(&output.stderr);
-        if wt.path.exists() {
-            return Err(format!(
-                "worktree remove failed and path remains: {}",
-                err.trim()
-            ));
-        }
+        return after_git_remove_failed(&wt.path, &err);
     }
     Ok(())
 }
+
+fn after_git_remove_failed(path: &Path, stderr: &str) -> Result<(), String> {
+    if path.exists() {
+        return Err(format!(
+            "worktree remove failed and path remains: {}",
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
+fn skip_vanished_untracked() {}
 
 /// Directory for one swarm run: `{project}/.whycodes/swarm/{run_id}`.
 pub fn run_dir(project: &Path, run_id: &str) -> PathBuf {
@@ -283,10 +315,15 @@ fn git_show_blob(repo: &Path, rev: &str, rel: &str) -> Option<Vec<u8>> {
         .current_dir(repo)
         .output()
         .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(output.stdout)
+    successful_stdout(output)
+}
+
+fn git_spawn_err(prefix: &'static str) -> impl Fn(std::io::Error) -> String {
+    move |e| format!("{prefix}: {e}")
+}
+
+fn successful_stdout(output: std::process::Output) -> Option<Vec<u8>> {
+    output.status.success().then_some(output.stdout)
 }
 
 fn git_ok(dir: &Path, args: &[&str]) -> Option<String> {
@@ -302,106 +339,5 @@ fn git_ok(dir: &Path, args: &[&str]) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::Command;
-
-    fn init_repo() -> (tempfile::TempDir, PathBuf) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        assert!(
-            Command::new("git")
-                .args(["init"])
-                .current_dir(&root)
-                .status()
-                .unwrap()
-                .success()
-        );
-        // Identity for commit in bare CI environments.
-        let _ = Command::new("git")
-            .args(["config", "user.email", "test@whycodes.local"])
-            .current_dir(&root)
-            .status();
-        let _ = Command::new("git")
-            .args(["config", "user.name", "whycodes-test"])
-            .current_dir(&root)
-            .status();
-        std::fs::write(root.join("a.txt"), b"base-a\n").unwrap();
-        std::fs::write(root.join("b.txt"), b"base-b\n").unwrap();
-        assert!(
-            Command::new("git")
-                .args(["add", "."])
-                .current_dir(&root)
-                .status()
-                .unwrap()
-                .success()
-        );
-        assert!(
-            Command::new("git")
-                .args(["commit", "-m", "init"])
-                .current_dir(&root)
-                .status()
-                .unwrap()
-                .success()
-        );
-        (dir, root)
-    }
-
-    #[test]
-    fn worktree_create_edit_merge_cleanup() {
-        let (_keep, root) = init_repo();
-        let dest = root
-            .join(".whycodes")
-            .join("swarm")
-            .join("run1")
-            .join("worker-0");
-        let wt = create_worktree(&root, &dest, "worker-0").expect("create");
-        assert!(wt.path.join("a.txt").exists());
-
-        std::fs::write(wt.path.join("a.txt"), b"worker-a\n").unwrap();
-        std::fs::write(wt.path.join("new.txt"), b"brand\n").unwrap();
-
-        let report = merge_into_main(&wt, &root);
-        assert!(
-            report.conflicts.is_empty(),
-            "conflicts: {:?}",
-            report.conflicts
-        );
-        assert!(report.applied.iter().any(|p| p == "a.txt"));
-        assert!(report.applied.iter().any(|p| p == "new.txt"));
-        assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), b"worker-a\n");
-        assert_eq!(std::fs::read(root.join("new.txt")).unwrap(), b"brand\n");
-
-        remove_worktree(&wt).expect("remove");
-        assert!(!dest.exists());
-    }
-
-    #[test]
-    fn merge_detects_main_divergence() {
-        let (_keep, root) = init_repo();
-        let dest = root
-            .join(".whycodes")
-            .join("swarm")
-            .join("run2")
-            .join("worker-0");
-        let wt = create_worktree(&root, &dest, "worker-0").expect("create");
-
-        std::fs::write(wt.path.join("a.txt"), b"from-worker\n").unwrap();
-        // Main diverges while worker runs.
-        std::fs::write(root.join("a.txt"), b"from-main\n").unwrap();
-
-        let report = merge_into_main(&wt, &root);
-        assert_eq!(report.conflicts.len(), 1);
-        assert_eq!(report.conflicts[0].path, "a.txt");
-        // Main unchanged by merge.
-        assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), b"from-main\n");
-
-        remove_worktree(&wt).ok();
-    }
-
-    #[test]
-    fn is_git_repo_true_for_init() {
-        let (_keep, root) = init_repo();
-        assert!(is_git_repo(&root));
-    }
-}
+#[path = "swarm_worktree_tests.rs"]
+mod tests;

@@ -10,13 +10,13 @@ mod spawn;
 mod turn;
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use whycodes_core::SandboxSettings;
 use whycodes_core::network::NetworkPolicy;
 use whycodes_core::tool::ToolContext;
 use whycodes_core::types::{AgentInfo, ApprovalMode, ContentBlock, ToolCall, ToolResult};
-use whycodes_llm::provider::ProviderRegistry;
+use whycodes_llm::provider::{LlmProvider, ProviderRegistry};
 use whycodes_session::session::Session;
 use whycodes_tools::executor::ToolExecutor;
 use whycodes_tools::profile::ToolProfile;
@@ -101,6 +101,11 @@ pub struct Agent {
     session_claims: Option<whycodes_core::FileClaimRegistry>,
     /// Swarm mailbox when this agent is a worker (or parent mid-swarm).
     swarm_hub: Option<whycodes_core::SwarmHub>,
+}
+
+/// Recover from a poisoned mutex instead of aborting (`panic = "abort"` in release).
+pub(crate) fn recover_lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Stop auto-compact after this many consecutive ineffective passes (Claude Code).
@@ -218,14 +223,21 @@ pub(crate) fn first_stream_rule_hit<'a>(
 }
 
 fn append_skills_catalog(system_prompt: &str, project_path: &std::path::Path) -> String {
-    let Ok(reg) = whycodes_skill::SkillRegistry::load_project(project_path) else {
-        return system_prompt.to_string();
-    };
-    let catalog = reg.catalog_markdown();
+    // `load_project` is infallible today (unreadable skill dirs are skipped).
+    let catalog = catalog_from_load(whycodes_skill::SkillRegistry::load_project(project_path));
     if catalog.is_empty() {
         return system_prompt.to_string();
     }
     format!("{system_prompt}\n\n{catalog}")
+}
+
+fn catalog_from_load(
+    loaded: Result<whycodes_skill::SkillRegistry, whycodes_skill::SkillError>,
+) -> String {
+    match loaded {
+        Ok(reg) => reg.catalog_markdown(),
+        Err(_load) => String::new(),
+    }
 }
 
 pub(crate) fn append_request_user_suffix(
@@ -250,8 +262,16 @@ pub(crate) fn append_request_user_suffix(
 }
 
 pub(crate) fn tool_call_signature(tc: &ToolCall) -> String {
-    let args = serde_json::to_string(&tc.arguments).unwrap_or_else(|_| "{}".into());
+    let args = json_or_object(&tc.arguments);
     format!("{}|{args}", tc.name)
+}
+
+fn json_or_object(value: &serde_json::Value) -> String {
+    json_string_or(serde_json::to_string(value), "{}")
+}
+
+fn json_string_or(result: Result<String, serde_json::Error>, fallback: &str) -> String {
+    result.unwrap_or_else(|_json| fallback.to_string())
 }
 
 /// True when executing `calls` would make the last N signatures all equal.
@@ -482,22 +502,37 @@ impl Agent {
         // Resize ceiling only — keep the same registry so in-flight jobs survive
         // agent switches / re-config.
         self.background.set_max_jobs(self.max_background_jobs);
+        let sandbox_desc = whycodes_sandbox::describe_backend(&self.sandbox);
+        let network_allow = self.network.allowlist.len();
+        let network_deny = self.network.denylist.len();
+        let hooks = self.hooks.len();
+        let compaction_threshold = self.compaction_threshold;
+        let tool_profile = self.tool_profile.as_str();
+        let use_prompt_cache = self.use_prompt_cache;
+        let model_race = self.model_race.as_str();
+        let response_cache = self.response_cache;
+        let memory_enabled = self.memory.enabled;
+        let intent_guidance = self.intent_guidance;
+        let swarm_enabled = self.swarm_enabled;
+        let swarm_max_agents = self.swarm_max_agents;
+        let swarm_worktrees = self.swarm_worktrees;
+        let max_background_jobs = self.max_background_jobs;
         tracing::debug!(
-            sandbox = %whycodes_sandbox::describe_backend(&self.sandbox),
-            network_allow = self.network.allowlist.len(),
-            network_deny = self.network.denylist.len(),
-            hooks = self.hooks.len(),
-            compaction_threshold = self.compaction_threshold,
-            tool_profile = self.tool_profile.as_str(),
-            use_prompt_cache = self.use_prompt_cache,
-            model_race = %self.model_race,
-            response_cache = self.response_cache,
-            memory_enabled = self.memory.enabled,
-            intent_guidance = ?self.intent_guidance,
-            swarm_enabled = self.swarm_enabled,
-            swarm_max_agents = self.swarm_max_agents,
-            swarm_worktrees = self.swarm_worktrees,
-            max_background_jobs = self.max_background_jobs,
+            sandbox = %sandbox_desc,
+            network_allow,
+            network_deny,
+            hooks,
+            compaction_threshold,
+            tool_profile,
+            use_prompt_cache,
+            model_race,
+            response_cache,
+            memory_enabled,
+            intent_guidance = ?intent_guidance,
+            swarm_enabled,
+            swarm_max_agents,
+            swarm_worktrees,
+            max_background_jobs,
             "shell sandbox, network policy, and hooks"
         );
     }
@@ -507,7 +542,8 @@ impl Agent {
         let tx = self.event_sink.clone()?;
         Some(std::sync::Arc::new(move |update| {
             if let Err(e) = tx.send(TurnEvent::Panel(update)) {
-                tracing::debug!(error = %e, "panel event dropped (listener closed)");
+                let error = e.to_string();
+                tracing::debug!(error = %error, "panel event dropped (listener closed)");
             }
         }))
     }
@@ -517,7 +553,8 @@ impl Agent {
         let tx = self.event_sink.clone()?;
         Some(std::sync::Arc::new(move |todos| {
             if let Err(e) = tx.send(TurnEvent::Todos { todos }) {
-                tracing::debug!(error = %e, "todo event dropped (listener closed)");
+                let error = e.to_string();
+                tracing::debug!(error = %error, "todo event dropped (listener closed)");
             }
         }))
     }
@@ -594,11 +631,8 @@ impl Agent {
         if !self.info.permission.allow_network {
             sandbox.network = false;
         }
-        let working_dir = self
-            .cwd_override
-            .lock()
-            .ok()
-            .and_then(|g| g.clone())
+        let working_dir = recover_lock(&self.cwd_override)
+            .as_ref()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| session.project_path.to_string_lossy().to_string());
         ToolContext {
@@ -621,19 +655,17 @@ impl Agent {
 
     /// Snapshot of tools activated via `tool_search`.
     pub fn activated_tools_snapshot(&self) -> Vec<String> {
-        self.activated_tools
-            .lock()
-            .map(|g| {
-                let mut v: Vec<_> = g.iter().cloned().collect();
-                v.sort();
-                v
-            })
-            .unwrap_or_default()
+        let mut v: Vec<_> = recover_lock(&self.activated_tools)
+            .iter()
+            .cloned()
+            .collect();
+        v.sort();
+        v
     }
 
     /// Active tool cwd (worktree enter), if any.
     pub fn cwd_override_path(&self) -> Option<std::path::PathBuf> {
-        self.cwd_override.lock().ok().and_then(|g| g.clone())
+        recover_lock(&self.cwd_override).clone()
     }
 
     /// Register shell plugins + MCP tools on a fresh executor.
@@ -657,12 +689,8 @@ impl Agent {
         };
         if n_plug > 0 || n_mcp > 0 {
             self.tool_executor = Arc::new(full);
-            if n_plug > 0 {
-                tracing::info!(count = n_plug, "shell plugins registered");
-            }
-            if n_mcp > 0 {
-                tracing::info!(count = n_mcp, "MCP tools registered");
-            }
+            log_registered_count(n_plug, "shell plugins registered");
+            log_registered_count(n_mcp, "MCP tools registered");
         }
     }
 
@@ -670,10 +698,7 @@ impl Agent {
     pub fn with_plugins(mut self, project_dir: Option<&std::path::Path>) -> Self {
         let mut exec = ToolExecutor::new();
         let n = exec.register_config_plugins(project_dir);
-        if n > 0 {
-            self.tool_executor = Arc::new(exec);
-            tracing::info!(count = n, "shell plugins registered");
-        }
+        apply_plugin_count(&mut self, exec, n);
         self
     }
 
@@ -769,7 +794,6 @@ impl Agent {
         if key.is_empty() {
             return None;
         }
-        self.provider_registry.get(&use_provider_name)?;
 
         let assistant = session.first_assistant_snippet(400);
         Some((use_provider_name, use_model, key, user, assistant))
@@ -794,17 +818,21 @@ impl Agent {
         else {
             return;
         };
-
-        let Some(provider) = self.provider_registry.get(&use_provider_name) else {
-            return;
-        };
-
-        match crate::title::generate_title(provider, &key, &use_model, &user, assistant.as_deref())
-            .await
-        {
+        // `title_refine_target` already observed this id; treat a later miss as
+        // an empty title so the arm shares the existing empty-result path.
+        let title = title_from_optional_provider(
+            self.provider_registry.get(&use_provider_name),
+            &key,
+            &use_model,
+            &user,
+            assistant.as_deref(),
+        )
+        .await;
+        match title {
             Ok(title) => crate::title::apply_refine_result(session, &title, &use_model),
             Err(e) => {
-                tracing::debug!(error = %e, "session title refine failed");
+                let error = e.to_string();
+                tracing::debug!(error = %error, "session title refine failed");
             }
         }
     }
@@ -838,18 +866,17 @@ impl Agent {
         // handle so the task outlives this method without needing the Agent.
         let registry = Arc::clone(&self.provider_registry);
         tokio::spawn(async move {
-            let Some(provider) = registry.get(&use_provider_name) else {
-                return;
-            };
-            match crate::title::generate_title(
-                provider,
+            // `title_refine_target` already observed this id; a later miss is
+            // treated as an empty title (same path as a blank model reply).
+            let title = title_from_optional_provider(
+                registry.get(&use_provider_name),
                 &key,
                 &use_model,
                 &user,
                 assistant.as_deref(),
             )
-            .await
-            {
+            .await;
+            match title {
                 Ok(title) if !title.is_empty() => {
                     tracing::debug!(%title, model = %use_model, "session title refined (async)");
                     let _ = title_tx.send((session_id, title));
@@ -858,11 +885,42 @@ impl Agent {
                     tracing::debug!("title model returned empty; keeping heuristic/default");
                 }
                 Err(e) => {
-                    tracing::debug!(error = %e, "session title refine failed (async)");
+                    let error = e.to_string();
+                    tracing::debug!(error = %error, "session title refine failed (async)");
                 }
             }
         });
         true
+    }
+}
+
+fn apply_plugin_count(agent: &mut Agent, exec: ToolExecutor, n: usize) {
+    if n == 0 {
+        return;
+    }
+    agent.tool_executor = Arc::new(exec);
+    log_registered_count(n, "shell plugins registered");
+}
+
+fn log_registered_count(count: usize, message: &'static str) {
+    if count == 0 {
+        return;
+    }
+    tracing::info!(count, "{message}");
+}
+
+async fn title_from_optional_provider(
+    provider: Option<&dyn LlmProvider>,
+    api_key: &str,
+    model: &str,
+    user: &str,
+    assistant: Option<&str>,
+) -> whycodes_core::Result<String> {
+    match provider {
+        Some(provider) => {
+            crate::title::generate_title(provider, api_key, model, user, assistant).await
+        }
+        None => Ok(String::new()),
     }
 }
 
@@ -904,1031 +962,5 @@ pub fn memory_settings_from_config(
 }
 
 #[cfg(test)]
-mod permission_detail_tests {
-    use super::*;
-    use crate::tool_policy::*;
-    use serde_json::json;
-    use whycodes_core::types::PermissionSet;
-
-    #[test]
-    fn single_command_is_plain_string() {
-        let d = format_permission_detail(&json!({"command": "ls -la"}));
-        assert_eq!(d, "ls -la");
-    }
-
-    #[test]
-    fn object_keys_are_labeled_not_compact_json() {
-        let d = format_permission_detail(&json!({"path": "src/main.rs", "offset": 10}));
-        assert!(d.contains("path: src/main.rs"), "{d}");
-        assert!(d.contains("offset: 10"), "{d}");
-        assert!(!d.starts_with('{'), "must not be compact JSON: {d}");
-    }
-
-    #[test]
-    fn shell_risk_has_command_and_risk_sections() {
-        let d = format_shell_risk_detail("rm -rf /tmp/x", "destructive delete");
-        assert!(d.contains("Command:"), "{d}");
-        assert!(d.contains("rm -rf /tmp/x"), "{d}");
-        assert!(d.contains("Risk: destructive delete"), "{d}");
-    }
-
-    #[test]
-    fn empty_args_is_labeled() {
-        assert_eq!(format_permission_detail(&json!({})), "(no arguments)");
-    }
-
-    #[test]
-    fn scalars_fall_back_to_pretty_json() {
-        let d = format_permission_detail(&json!("plain string"));
-        assert_eq!(d, "\"plain string\"");
-        assert!(d.starts_with('\"'));
-    }
-
-    #[test]
-    fn nested_objects_are_labeled_with_indented_lines() {
-        let d = format_permission_detail(&json!({"patch": {"file": "a.rs", "edits": 2}}));
-        assert!(d.contains("patch:"), "{d}");
-        assert!(d.contains("\"file\": \"a.rs\""), "{d}");
-    }
-
-    #[test]
-    fn multiline_strings_are_indented() {
-        let d = format_permission_detail(&json!({"content": "line1\nline2\nline3"}));
-        assert!(d.contains("content:"), "{d}");
-        assert!(d.contains("  line1"), "{d}");
-        assert!(d.contains("  line2"), "{d}");
-        assert!(d.contains("  line3"), "{d}");
-    }
-
-    #[test]
-    fn null_bool_number_values_are_labeled() {
-        let d = format_permission_detail(&json!({"a": null, "b": true, "c": 42}));
-        assert!(d.contains("a: null"), "{d}");
-        assert!(d.contains("b: true"), "{d}");
-        assert!(d.contains("c: 42"), "{d}");
-    }
-
-    #[test]
-    fn truncate_permission_detail_caps_long_text() {
-        let long = "x".repeat(PERMISSION_DETAIL_MAX + 10);
-        let t = truncate_permission_detail(&long);
-        assert_eq!(t.chars().count(), PERMISSION_DETAIL_MAX + 1); // ellipsis appended
-        assert!(t.ends_with('…'));
-        assert!(t.chars().take(PERMISSION_DETAIL_MAX).all(|c| c == 'x'));
-        let short = "short".to_string();
-        assert_eq!(truncate_permission_detail(&short), "short");
-    }
-
-    #[test]
-    fn worktree_names_are_validated() {
-        assert!(is_safe_worktree_name("feat-auth"));
-        assert!(is_safe_worktree_name("branch_2"));
-        assert!(is_safe_worktree_name("A1-b_c"));
-        assert!(!is_safe_worktree_name(""));
-        assert!(!is_safe_worktree_name("   "));
-        assert!(!is_safe_worktree_name("a/b"));
-        assert!(!is_safe_worktree_name(".."));
-        assert!(!is_safe_worktree_name("with space"));
-        assert!(!is_safe_worktree_name(&"x".repeat(65)));
-    }
-
-    #[test]
-    fn file_tool_path_extracts_and_normalizes() {
-        let tc = |name: &str, args: serde_json::Value| ToolCall {
-            id: "1".into(),
-            name: name.into(),
-            arguments: args,
-        };
-        assert_eq!(
-            file_tool_path(&tc("read", json!({"path": "src/main.rs"}))),
-            Some("src/main.rs".into())
-        );
-        // backslashes normalized to forward slashes
-        assert_eq!(
-            file_tool_path(&tc("edit", json!({"path": "src\\mod.rs"}))),
-            Some("src/mod.rs".into())
-        );
-        // path trimmed
-        assert_eq!(
-            file_tool_path(&tc("write", json!({"path": "  a.rs  "}))),
-            Some("a.rs".into())
-        );
-        // apply_patch may use path
-        assert_eq!(
-            file_tool_path(&tc("apply_patch", json!({"path": "x.rs"}))),
-            Some("x.rs".into())
-        );
-        // missing / empty / non-string path
-        assert_eq!(file_tool_path(&tc("read", json!({}))), None);
-        assert_eq!(file_tool_path(&tc("read", json!({"path": ""}))), None);
-        assert_eq!(file_tool_path(&tc("read", json!({"path": 42}))), None);
-        // unknown tool name
-        assert_eq!(file_tool_path(&tc("bash", json!({"path": "x"}))), None);
-    }
-
-    #[test]
-    fn parallel_safety_respects_serial_list() {
-        assert!(is_parallel_safe_tool("read", &PermissionSet::default()));
-        assert!(is_parallel_safe_tool("grep", &PermissionSet::default()));
-        assert!(is_parallel_safe_tool("glob", &PermissionSet::default()));
-        assert!(is_parallel_safe_tool("todoread", &PermissionSet::default()));
-        for name in SERIAL_TOOLS {
-            assert!(
-                !is_parallel_safe_tool(name, &PermissionSet::default()),
-                "{name}"
-            );
-        }
-        // Real registration names (see tools/executor.rs), not snake_case typos.
-        assert!(SERIAL_TOOLS.contains(&"todowrite"));
-        assert!(!SERIAL_TOOLS.contains(&"todo_write"));
-        assert!(!is_parallel_safe_tool(
-            "todowrite",
-            &PermissionSet::default()
-        ));
-        assert!(is_parallel_safe_tool(
-            "todo_write",
-            &PermissionSet::default()
-        ));
-    }
-
-    #[test]
-    fn tool_signatures_and_doom_loop() {
-        let tc = |name: &str, args: serde_json::Value| ToolCall {
-            id: "1".into(),
-            name: name.into(),
-            arguments: args,
-        };
-        let a = tc("read", json!({"path": "x.rs"}));
-        let b = tc("read", json!({"path": "y.rs"}));
-        assert_eq!(tool_call_signature(&a), "read|{\"path\":\"x.rs\"}");
-        assert_ne!(tool_call_signature(&a), tool_call_signature(&b));
-
-        let mut recent = VecDeque::new();
-        // nothing recent → not a doom loop yet
-        assert!(!would_doom_loop(&recent, std::slice::from_ref(&a)));
-        // mixed batch is never a doom loop
-        assert!(!would_doom_loop(&recent, &[a.clone(), b.clone()]));
-        // empty calls → false
-        assert!(!would_doom_loop(&recent, &[]));
-
-        // push two identical signatures, then a third call trips the threshold
-        recent.push_back(tool_call_signature(&a));
-        recent.push_back(tool_call_signature(&a));
-        assert!(would_doom_loop(&recent, std::slice::from_ref(&a)));
-        // batch of identical calls counts as the same signature repeated
-        assert!(would_doom_loop(&recent, &[a.clone(), a.clone()]));
-        // an intervening different signature resets the run
-        let mut recent2 = VecDeque::new();
-        recent2.push_back(tool_call_signature(&a));
-        recent2.push_back(tool_call_signature(&b));
-        assert!(!would_doom_loop(&recent2, std::slice::from_ref(&a)));
-    }
-
-    #[test]
-    fn system_prompt_for_known_and_unknown_agents() {
-        for name in ["build", "plan", "ask", "explore", "general", "scout"] {
-            let p = Agent::system_prompt_for(name);
-            assert!(!p.is_empty(), "{name}");
-            assert!(!p.contains("Today's date:"), "{name}");
-        }
-        assert!(
-            Agent::system_prompt_for("build").contains("todowrite"),
-            "build prompt must instruct todo use"
-        );
-        assert!(
-            Agent::system_prompt_for("build").contains("Do **not** call `question`"),
-            "build prompt must keep auto mode from asking mid-todo"
-        );
-        assert!(
-            Agent::system_prompt_for("plan").contains("todowrite"),
-            "plan prompt must instruct todo use"
-        );
-        assert_eq!(
-            Agent::system_prompt_for("does-not-exist"),
-            DEFAULT_SYSTEM_PROMPT
-        );
-    }
-
-    #[test]
-    fn runtime_context_is_idempotent_and_append_only() {
-        let base = "You are an agent.";
-        let once = Agent::with_runtime_context(base);
-        assert!(once.contains("Today's date:"));
-        assert!(once.starts_with(base));
-        // second application does not duplicate the block
-        assert_eq!(Agent::with_runtime_context(&once), once);
-        // already-present marker is left untouched
-        let already = "Prompt with Today's date: 2026-01-01.";
-        assert_eq!(Agent::with_runtime_context(already), already);
-    }
-
-    #[test]
-    fn agents_md_is_appended_and_candidates_are_tried() {
-        let dir = tempfile::tempdir().unwrap();
-        // no AGENTS.md → prompt unchanged (plus runtime context)
-        let bare = Agent::with_agents_md("base", dir.path());
-        assert!(bare.starts_with("base"));
-        assert!(!bare.contains("Project Instructions"));
-
-        // AGENTS.md at project root is picked up
-        std::fs::write(dir.path().join("AGENTS.md"), "  \nProject rules here\n  ").unwrap();
-        let with = Agent::with_agents_md("base", dir.path());
-        assert!(with.contains("Project Instructions (AGENTS.md)"), "{with}");
-        assert!(with.contains("Project rules here"), "{with}");
-
-        // lowercase agents.md also works when AGENTS.md absent
-        let dir2 = tempfile::tempdir().unwrap();
-        std::fs::write(dir2.path().join("agents.md"), "lowercase rules").unwrap();
-        let with2 = Agent::with_agents_md("base", dir2.path());
-        assert!(with2.contains("lowercase rules"), "{with2}");
-
-        // .whycodes/AGENTS.md is the fallback candidate
-        let dir3 = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir3.path().join(".whycodes")).unwrap();
-        std::fs::write(dir3.path().join(".whycodes/AGENTS.md"), "nested rules").unwrap();
-        let with3 = Agent::with_agents_md("base", dir3.path());
-        assert!(with3.contains("nested rules"), "{with3}");
-    }
-
-    #[test]
-    fn skills_catalog_is_appended_without_bodies() {
-        let dir = tempfile::tempdir().unwrap();
-        let skills = dir.path().join(".skills");
-        std::fs::create_dir(&skills).unwrap();
-        std::fs::write(
-            skills.join("demo.skill.md"),
-            "---\nname: demo\ndescription: short desc\n---\n\nSECRET BODY MUST NOT LEAK\n",
-        )
-        .unwrap();
-        let with = Agent::with_agents_md("base", dir.path());
-        assert!(with.contains("# Skills"), "{with}");
-        assert!(with.contains("`demo`"), "{with}");
-        assert!(with.contains("short desc"), "{with}");
-        assert!(with.contains("skill://"), "{with}");
-        assert!(!with.contains("SECRET BODY MUST NOT LEAK"), "{with}");
-    }
-
-    #[test]
-    fn stream_rules_compile_and_match() {
-        use whycodes_config::StreamRuleConfig;
-        let rules = [
-            StreamRuleConfig {
-                name: String::new(),
-                pattern: "x".into(),
-                hint: "h".into(),
-            },
-            StreamRuleConfig {
-                name: "bad".into(),
-                pattern: "(".into(),
-                hint: "h".into(),
-            },
-            StreamRuleConfig {
-                name: "no-leak".into(),
-                pattern: "Box::leak".into(),
-                hint: "use Arc".into(),
-            },
-        ];
-        let compiled = compile_stream_rules(&rules);
-        assert_eq!(compiled.len(), 1);
-        let hit = first_stream_rule_hit(&compiled, "please Box::leak this");
-        assert_eq!(hit, Some(("no-leak", "use Arc")));
-        assert!(first_stream_rule_hit(&compiled, "Arc::from").is_none());
-    }
-
-    #[test]
-    fn persist_agent_artifact_sanitizes_id() {
-        let dir = tempfile::tempdir().unwrap();
-        persist_agent_artifact(dir.path(), "task-ok", "hello");
-        persist_agent_artifact(dir.path(), "../evil", "nope");
-        persist_agent_artifact(dir.path(), "", "ignored");
-        let agents = dir.path().join(".whycodes").join("agents");
-        assert_eq!(
-            std::fs::read_to_string(agents.join("task-ok.md")).unwrap(),
-            "hello"
-        );
-        assert!(!dir.path().join("evil.md").exists());
-        assert!(!dir.path().join("evil").exists());
-        // `../evil` strips to `evil` and stays inside the agents dir.
-        assert_eq!(
-            std::fs::read_to_string(agents.join("evil.md")).unwrap(),
-            "nope"
-        );
-    }
-
-    #[test]
-    fn memory_settings_map_from_config() {
-        let config = whycodes_config::Config::default();
-        let m = memory_settings_from_config(&config);
-        assert_eq!(m.enabled, config.memory.enabled);
-        assert_eq!(m.auto_inject, config.memory.auto_inject);
-        assert_eq!(m.auto_retain, config.memory.auto_retain);
-        assert_eq!(m.retain_every_n, config.memory.retain_every_n);
-        assert_eq!(
-            m.scope,
-            whycodes_memory::MemoryScope::parse(&config.memory.scope)
-        );
-        assert_eq!(m.agent_bank, None);
-    }
-
-    #[test]
-    fn set_provider_registry_replaces_lookup() {
-        let mut a = test_agent();
-        let mut registry = ProviderRegistry::new();
-        registry.register(Box::new(whycodes_llm::ScriptedProvider::text("hi")));
-        a.set_provider_registry(registry);
-        assert!(a.provider_registry.get("script").is_some());
-        assert!(a.provider_registry.get("anthropic").is_none());
-    }
-
-    #[test]
-    fn skip_prompt_cache_next_is_oneshot() {
-        let a = test_agent();
-        assert!(
-            !a.skip_prompt_cache_once
-                .load(std::sync::atomic::Ordering::Relaxed)
-        );
-        a.skip_prompt_cache_next();
-        assert!(
-            a.skip_prompt_cache_once
-                .load(std::sync::atomic::Ordering::Relaxed)
-        );
-        assert!(
-            a.skip_prompt_cache_once
-                .swap(false, std::sync::atomic::Ordering::Relaxed)
-        );
-        assert!(
-            !a.skip_prompt_cache_once
-                .load(std::sync::atomic::Ordering::Relaxed)
-        );
-    }
-
-    #[test]
-    fn settle_checkpoint_rewind_guards_and_extracts() {
-        let mut session = Session::new(std::path::PathBuf::from("/p"), "s".into());
-        let calls = [tc("rewind", serde_json::json!({"report": "findings"}))];
-        let mut results = [ToolResult {
-            tool_call_id: "t1".into(),
-            content: "ok".into(),
-            is_error: false,
-        }];
-        let (goal, report) = settle_checkpoint_rewind(&session, &calls, &mut results);
-        assert!(goal.is_none());
-        assert!(report.is_none());
-        assert!(results[0].is_error);
-        assert!(results[0].content.contains("No active checkpoint"));
-
-        session.mark_checkpoint("look");
-        results[0].is_error = false;
-        results[0].content = "ok".into();
-        let (goal, report) = settle_checkpoint_rewind(&session, &calls, &mut results);
-        assert!(goal.is_none());
-        assert_eq!(report.as_deref(), Some("findings"));
-        assert!(!results[0].is_error);
-
-        let cp_calls = [tc("checkpoint", serde_json::json!({"goal": "again"}))];
-        let mut cp_results = [ToolResult {
-            tool_call_id: "t1".into(),
-            content: "ok".into(),
-            is_error: false,
-        }];
-        let (goal, report) = settle_checkpoint_rewind(&session, &cp_calls, &mut cp_results);
-        assert!(goal.is_none() && report.is_none());
-        assert!(cp_results[0].is_error);
-        assert!(cp_results[0].content.contains("already active"));
-
-        let mut fresh = Session::new(std::path::PathBuf::from("/p"), "s".into());
-        fresh.last_rewind_report = Some("old".into());
-        let mut again = [ToolResult {
-            tool_call_id: "t1".into(),
-            content: "ok".into(),
-            is_error: false,
-        }];
-        let (_g, _r) = settle_checkpoint_rewind(&fresh, &calls, &mut again);
-        assert!(again[0].content.contains("already completed"));
-
-        let empty = Session::new(std::path::PathBuf::from("/p"), "s".into());
-        let mk = [tc("checkpoint", serde_json::json!({"goal": "scan"}))];
-        let mut mk_r = [ToolResult {
-            tool_call_id: "t1".into(),
-            content: "ok".into(),
-            is_error: false,
-        }];
-        let (goal, _) = settle_checkpoint_rewind(&empty, &mk, &mut mk_r);
-        assert_eq!(goal.as_deref(), Some("scan"));
-        assert!(!mk_r[0].is_error);
-    }
-
-    fn test_agent() -> Agent {
-        Agent::new(whycodes_core::types::AgentInfo {
-            name: "build".into(),
-            description: "t".into(),
-            mode: whycodes_core::types::AgentMode::Primary,
-            permission: PermissionSet {
-                allow_file_writes: true,
-                allow_network: true,
-                allow_shell: true,
-                ..Default::default()
-            },
-            model: None,
-            system_prompt: Some("sys".into()),
-            temperature: None,
-            top_p: None,
-        })
-    }
-
-    fn tc(name: &str, args: serde_json::Value) -> ToolCall {
-        ToolCall {
-            id: "t1".into(),
-            name: name.into(),
-            arguments: args,
-        }
-    }
-
-    #[test]
-    fn race_partner_off_auto_and_unknown() {
-        let mut a = test_agent();
-        a.model_race = "off".into();
-        assert!(a.race_partner("anthropic", "claude").is_none());
-        a.model_race = "none".into();
-        assert!(a.race_partner("anthropic", "claude").is_none());
-        a.model_race = "auto".into();
-        // Default registry has anthropic; auto may pick a sibling or none
-        // if resolve returns the same pair.
-        let _ = a.race_partner("anthropic", "claude-sonnet-4-20250514");
-        a.model_race = "openai/gpt-4o".into();
-        let partner = a.race_partner("anthropic", "claude");
-        assert!(
-            partner
-                .as_ref()
-                .is_some_and(|(p, m)| p == "openai" && m.contains("gpt")),
-            "{partner:?}"
-        );
-        a.model_race = "not-a-provider/x".into();
-        assert!(a.race_partner("anthropic", "claude").is_none());
-    }
-
-    #[test]
-    fn tool_context_uses_session_cwd_and_strips_network() {
-        let mut a = test_agent();
-        a.info.permission.allow_network = false;
-        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
-        let ctx = a.tool_context(&session);
-        assert_eq!(ctx.working_dir, "/tmp/proj");
-        assert!(!ctx.sandbox.network);
-        assert_eq!(ctx.session_id.as_deref(), Some(session.id.as_str()));
-
-        if let Ok(mut g) = a.cwd_override.lock() {
-            *g = Some(std::path::PathBuf::from("/tmp/wt"));
-        }
-        let ctx2 = a.tool_context(&session);
-        assert_eq!(ctx2.working_dir, "/tmp/wt");
-    }
-
-    #[test]
-    fn execute_bg_tool_list_read_kill_and_unknown() {
-        let a = test_agent();
-        let list = a.execute_bg_tool(&tc("bg", json!({"action": "list"})));
-        assert!(!list.is_error);
-        assert!(list.content.contains("No background jobs"), "{list:?}");
-
-        let read = a.execute_bg_tool(&tc("bg", json!({"action": "read"})));
-        assert!(read.is_error);
-        assert!(read.content.contains("requires `id`"), "{read:?}");
-
-        let kill = a.execute_bg_tool(&tc("bg", json!({"action": "kill"})));
-        assert!(kill.is_error);
-
-        let missing = a.execute_bg_tool(&tc("bg", json!({"action": "read", "id": "nope"})));
-        assert!(missing.is_error);
-
-        let unk = a.execute_bg_tool(&tc("bg", json!({"action": "explode"})));
-        assert!(unk.is_error);
-        assert!(unk.content.contains("unknown bg action"), "{unk:?}");
-    }
-
-    #[test]
-    fn execute_tool_search_list_select_and_query() {
-        let a = test_agent();
-        let listed = a.execute_tool_search(&tc("tool_search", json!({"action": "list"})));
-        assert!(!listed.is_error);
-        assert!(listed.content.contains("Deferred catalogue"), "{listed:?}");
-
-        let empty = a.execute_tool_search(&tc("tool_search", json!({})));
-        assert!(empty.is_error);
-        assert!(empty.content.contains("requires `query`"), "{empty:?}");
-
-        let sel_empty = a.execute_tool_search(&tc("tool_search", json!({"action": "select"})));
-        assert!(sel_empty.is_error);
-
-        let sel = a.execute_tool_search(&tc(
-            "tool_search",
-            json!({"action": "select", "query": "github_pr,nope"}),
-        ));
-        assert!(sel.content.contains("github_pr") || sel.content.contains("Unknown"));
-        assert!(
-            a.activated_tools_snapshot()
-                .iter()
-                .any(|n| n.contains("github") || n.contains("pr"))
-                || sel.content.contains("Unknown")
-        );
-
-        let hits = a.execute_tool_search(&tc(
-            "tool_search",
-            json!({"query": "github", "max_results": 3}),
-        ));
-        assert!(!hits.is_error);
-        assert!(
-            hits.content.contains("Matches") || hits.content.contains("No deferred"),
-            "{hits:?}"
-        );
-
-        let none = a.execute_tool_search(&tc(
-            "tool_search",
-            json!({"query": "zzzz-no-such-tool-xyz"}),
-        ));
-        assert!(!none.is_error);
-        assert!(none.content.contains("No deferred"), "{none:?}");
-    }
-
-    #[test]
-    fn execute_worktree_tool_validation_and_list() {
-        let a = test_agent();
-        let dir = tempfile::tempdir().unwrap();
-        let session =
-            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
-
-        let unk = a.execute_worktree_tool(&tc("worktree", json!({"action": "nope"})), &session);
-        assert!(unk.is_error);
-        assert!(unk.content.contains("unknown worktree"), "{unk:?}");
-
-        let bad_create = a.execute_worktree_tool(
-            &tc("worktree", json!({"action": "create", "name": "a/b"})),
-            &session,
-        );
-        assert!(bad_create.is_error);
-
-        let not_git = a.execute_worktree_tool(
-            &tc("worktree", json!({"action": "create", "name": "ok"})),
-            &session,
-        );
-        assert!(not_git.is_error);
-        assert!(not_git.content.contains("not a git"), "{not_git:?}");
-
-        let listed = a.execute_worktree_tool(&tc("worktree", json!({"action": "list"})), &session);
-        assert!(!listed.is_error);
-        assert!(listed.content.contains("Worktrees"), "{listed:?}");
-
-        let enter = a.execute_worktree_tool(
-            &tc("worktree", json!({"action": "enter", "name": "missing"})),
-            &session,
-        );
-        assert!(enter.is_error);
-
-        let exit = a.execute_worktree_tool(&tc("worktree", json!({"action": "exit"})), &session);
-        assert!(!exit.is_error);
-        assert!(exit.content.contains("No worktree cwd"), "{exit:?}");
-
-        let rm = a.execute_worktree_tool(
-            &tc("worktree", json!({"action": "remove", "name": "??"})),
-            &session,
-        );
-        assert!(rm.is_error);
-    }
-
-    #[test]
-    fn builder_chain_sets_profile_and_fast_model() {
-        let mut config = whycodes_config::Config::default();
-        config.session.model_fast = Some("haiku".into());
-        let a = test_agent()
-            .with_tool_profile(whycodes_tools::ToolProfile::Full)
-            .with_config(&config);
-        assert_eq!(a.model_fast(), Some("haiku"));
-        assert!(a.activated_tools_snapshot().is_empty());
-        assert!(a.cwd_override_path().is_none());
-        assert!(a.session_claims().is_none());
-
-        let mut live = test_agent();
-        live.apply_config(&config);
-        assert_eq!(live.model_fast(), Some("haiku"));
-    }
-
-    #[test]
-    fn title_refine_target_needs_user_and_key() {
-        let a = test_agent();
-        let empty = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
-        assert!(
-            a.title_refine_target(&empty, "anthropic", "claude", "k", None)
-                .is_none()
-        );
-
-        let mut s = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
-        s.add_user_message("please explain the retry loop in crates/llm");
-        assert!(
-            a.title_refine_target(&s, "anthropic", "claude", "", None)
-                .is_none()
-        );
-        let hit = a.title_refine_target(&s, "anthropic", "claude", "sk-test", None);
-        assert!(hit.is_some(), "{hit:?}");
-        let (p, _, key, user, _) = hit.unwrap();
-        assert_eq!(p, "anthropic");
-        assert_eq!(key, "sk-test");
-        assert!(user.contains("retry"));
-    }
-
-    #[tokio::test]
-    async fn execute_schedule_tool_requires_command_or_prompt() {
-        let a = test_agent();
-        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
-        let ctx = a.tool_context(&session);
-        let empty = a
-            .execute_schedule_tool(&tc("schedule", json!({})), &ctx, None)
-            .await;
-        assert!(empty.is_error, "{empty:?}");
-        assert!(
-            empty.content.contains("command") || empty.content.contains("prompt"),
-            "{}",
-            empty.content
-        );
-    }
-
-    #[tokio::test]
-    async fn execute_swarm_tool_disabled_and_empty_tasks() {
-        let a = test_agent();
-        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
-        let off = a
-            .execute_swarm_tool(&tc("swarm", json!({})), &session, "script", "m", "k", None)
-            .await;
-        assert!(off.is_error, "{off:?}");
-        assert!(
-            off.content.to_lowercase().contains("disabled")
-                || off.content.to_lowercase().contains("swarm"),
-            "{}",
-            off.content
-        );
-
-        let mut on = test_agent();
-        on.swarm_enabled = true;
-        let empty = on
-            .execute_swarm_tool(
-                &tc("swarm", json!({"tasks": []})),
-                &session,
-                "script",
-                "m",
-                "k",
-                None,
-            )
-            .await;
-        assert!(empty.is_error, "{empty:?}");
-    }
-
-    #[tokio::test]
-    async fn execute_task_tool_requires_goal() {
-        let a = test_agent();
-        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
-        let empty = a
-            .execute_task_tool(&tc("task", json!({})), &session, "script", "m", "k", None)
-            .await;
-        assert!(empty.is_error, "{empty:?}");
-        assert!(
-            empty.content.to_lowercase().contains("goal"),
-            "{}",
-            empty.content
-        );
-    }
-
-    #[test]
-    fn execute_background_shell_requires_command() {
-        let a = test_agent();
-        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
-        let ctx = a.tool_context(&session);
-        let empty = a.execute_background_shell(&tc("bash", json!({})), &ctx, None);
-        assert!(empty.is_error, "{empty:?}");
-        assert!(
-            empty.content.to_lowercase().contains("command"),
-            "{}",
-            empty.content
-        );
-    }
-
-    fn init_git_repo() -> (tempfile::TempDir, std::path::PathBuf) {
-        use std::process::Command;
-        let dir = tempfile::TempDir::new().unwrap();
-        let root = dir.path().to_path_buf();
-        assert!(
-            Command::new("git")
-                .args(["init"])
-                .current_dir(&root)
-                .status()
-                .unwrap()
-                .success()
-        );
-        let _ = Command::new("git")
-            .args(["config", "user.email", "test@whycodes.local"])
-            .current_dir(&root)
-            .status();
-        let _ = Command::new("git")
-            .args(["config", "user.name", "whycodes-test"])
-            .current_dir(&root)
-            .status();
-        std::fs::write(root.join("a.txt"), b"base-a\n").unwrap();
-        assert!(
-            Command::new("git")
-                .args(["add", "."])
-                .current_dir(&root)
-                .status()
-                .unwrap()
-                .success()
-        );
-        assert!(
-            Command::new("git")
-                .args(["commit", "-m", "init"])
-                .current_dir(&root)
-                .status()
-                .unwrap()
-                .success()
-        );
-        (dir, root)
-    }
-
-    fn scripted_test_agent(steps: impl IntoIterator<Item = whycodes_llm::ScriptedStep>) -> Agent {
-        let mut registry = ProviderRegistry::new();
-        registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
-            "script", steps,
-        )));
-        test_agent().with_provider_registry(registry)
-    }
-
-    #[tokio::test]
-    async fn execute_background_shell_starts_lists_reads_and_kills() {
-        let a = test_agent();
-        let dir = tempfile::tempdir().unwrap();
-        let session =
-            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
-        let ctx = a.tool_context(&session);
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let started = a.execute_background_shell(
-            &tc(
-                "bash",
-                json!({"command": "sleep 30", "description": "bg-sleep"}),
-            ),
-            &ctx,
-            Some(&tx),
-        );
-        assert!(!started.is_error, "{started:?}");
-        assert!(started.content.contains("Background job"), "{started:?}");
-
-        let listed = a.execute_bg_tool(&tc("bg", json!({"action": "list"})));
-        assert!(!listed.is_error, "{listed:?}");
-        assert!(listed.content.contains("bg-"), "{listed:?}");
-
-        let id = listed
-            .content
-            .split_whitespace()
-            .find(|w| w.starts_with("bg-"))
-            .unwrap_or("bg-1")
-            .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-')
-            .to_string();
-
-        let read = a.execute_bg_tool(&tc(
-            "bg",
-            json!({"action": "read", "id": id, "max_chars": 32}),
-        ));
-        assert!(!read.is_error, "{read:?}");
-
-        let killed = a.execute_bg_tool(&tc("bg", json!({"action": "kill", "id": id})));
-        assert!(!killed.is_error, "{killed:?}");
-        a.background.kill_all();
-    }
-
-    #[tokio::test]
-    async fn execute_background_shell_errors_when_job_cap_hit() {
-        let a = test_agent();
-        a.background.set_max_jobs(1);
-        let dir = tempfile::tempdir().unwrap();
-        let session =
-            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
-        let ctx = a.tool_context(&session);
-        let first =
-            a.execute_background_shell(&tc("bash", json!({"command": "sleep 30"})), &ctx, None);
-        assert!(!first.is_error, "{first:?}");
-        let full =
-            a.execute_background_shell(&tc("bash", json!({"command": "echo hi"})), &ctx, None);
-        assert!(full.is_error, "{full:?}");
-        assert!(
-            full.content.to_lowercase().contains("too many")
-                || full.content.to_lowercase().contains("max"),
-            "{}",
-            full.content
-        );
-        a.background.kill_all();
-    }
-
-    #[test]
-    fn execute_worktree_tool_create_enter_exit_remove_on_git_repo() {
-        let a = test_agent();
-        let (_keep, root) = init_git_repo();
-        let session = whycodes_session::session::Session::new(root.clone(), "sys".into());
-
-        let created = a.execute_worktree_tool(
-            &tc("worktree", json!({"action": "create", "name": "feat-cov"})),
-            &session,
-        );
-        assert!(!created.is_error, "{created:?}");
-        assert!(created.content.contains("Created worktree"), "{created:?}");
-
-        let dup = a.execute_worktree_tool(
-            &tc("worktree", json!({"action": "create", "name": "feat-cov"})),
-            &session,
-        );
-        assert!(dup.is_error, "{dup:?}");
-
-        let enter = a.execute_worktree_tool(
-            &tc("worktree", json!({"action": "enter", "name": "feat-cov"})),
-            &session,
-        );
-        assert!(!enter.is_error, "{enter:?}");
-        assert!(enter.content.contains("Tool cwd"), "{enter:?}");
-
-        let listed = a.execute_worktree_tool(&tc("worktree", json!({"action": "list"})), &session);
-        assert!(!listed.is_error, "{listed:?}");
-        assert!(listed.content.contains("feat-cov"), "{listed:?}");
-        assert!(listed.content.contains("Active cwd"), "{listed:?}");
-
-        let exit = a.execute_worktree_tool(&tc("worktree", json!({"action": "exit"})), &session);
-        assert!(!exit.is_error, "{exit:?}");
-        assert!(exit.content.contains("Restored tool cwd"), "{exit:?}");
-
-        let removed = a.execute_worktree_tool(
-            &tc("worktree", json!({"action": "remove", "name": "feat-cov"})),
-            &session,
-        );
-        assert!(!removed.is_error, "{removed:?}");
-        assert!(removed.content.contains("Removed worktree"), "{removed:?}");
-    }
-
-    #[tokio::test]
-    async fn execute_schedule_tool_command_and_goal() {
-        let a = test_agent();
-        let dir = tempfile::tempdir().unwrap();
-        let session =
-            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
-        let ctx = a.tool_context(&session);
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let scheduled = a
-            .execute_schedule_tool(
-                &tc(
-                    "schedule",
-                    json!({
-                        "command": "echo scheduled",
-                        "goal": "follow up",
-                        "description": "cov",
-                        "after_secs": 0
-                    }),
-                ),
-                &ctx,
-                Some(&tx),
-            )
-            .await;
-        assert!(!scheduled.is_error, "{scheduled:?}");
-        assert!(scheduled.content.contains("Scheduled"), "{scheduled:?}");
-
-        let mut saw_prompt = false;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
-        while std::time::Instant::now() < deadline {
-            match rx.try_recv() {
-                Ok(TurnEvent::EnqueuePrompt { text }) => {
-                    assert_eq!(text, "follow up");
-                    saw_prompt = true;
-                    break;
-                }
-                Ok(_) => {}
-                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
-            }
-        }
-        assert!(saw_prompt, "expected EnqueuePrompt from schedule goal");
-        a.background.kill_all();
-    }
-
-    #[tokio::test]
-    async fn execute_swarm_tool_runs_scripted_workers() {
-        let mut a = scripted_test_agent([whycodes_llm::ScriptedStep::Text("worker-ok".into())]);
-        a.swarm_enabled = true;
-        a.swarm_worktrees = false;
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("note.txt"), "n").unwrap();
-        let session =
-            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let out = a
-            .execute_swarm_tool(
-                &tc(
-                    "swarm",
-                    json!({
-                        "max_concurrent": 2,
-                        "tasks": [
-                            {
-                                "goal": "summarize note.txt",
-                                "subagent_type": "explore",
-                                "paths": ["note.txt"],
-                                "max_turns": 1
-                            },
-                            {
-                                "goal": "list files",
-                                "subagent_type": "general",
-                                "max_turns": 1
-                            }
-                        ]
-                    }),
-                ),
-                &session,
-                "script",
-                "m",
-                "k",
-                Some(&tx),
-            )
-            .await;
-        assert!(!out.is_error, "{out:?}");
-        assert!(
-            out.content.to_lowercase().contains("swarm")
-                || out.content.to_lowercase().contains("worker"),
-            "{}",
-            out.content
-        );
-    }
-
-    #[tokio::test]
-    async fn execute_swarm_tool_disabled_branch() {
-        let mut a = test_agent();
-        a.swarm_enabled = false;
-        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
-        let off = a
-            .execute_swarm_tool(
-                &tc("swarm", json!({"tasks": [{"goal": "x"}]})),
-                &session,
-                "script",
-                "m",
-                "k",
-                None,
-            )
-            .await;
-        assert!(off.is_error, "{off:?}");
-        assert!(
-            off.content.to_lowercase().contains("disabled"),
-            "{}",
-            off.content
-        );
-    }
-
-    #[tokio::test]
-    async fn execute_task_tool_explore_and_general() {
-        let a = scripted_test_agent([whycodes_llm::ScriptedStep::Text("task-ok".into())]);
-        let dir = tempfile::tempdir().unwrap();
-        let session =
-            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let explore = a
-            .execute_task_tool(
-                &tc(
-                    "task",
-                    json!({
-                        "goal": "inspect the tree",
-                        "context": "unit test",
-                        "subagent_type": "explore",
-                        "max_turns": 1
-                    }),
-                ),
-                &session,
-                "script",
-                "m",
-                "k",
-                Some(&tx),
-            )
-            .await;
-        assert!(!explore.is_error, "{explore:?}");
-        assert!(explore.content.contains("task-ok"), "{explore:?}");
-
-        let general = a
-            .execute_task_tool(
-                &tc(
-                    "task",
-                    json!({
-                        "goal": "do the work",
-                        "subagent_type": "general",
-                        "max_turns": 1
-                    }),
-                ),
-                &session,
-                "script",
-                "m",
-                "k",
-                None,
-            )
-            .await;
-        assert!(!general.is_error, "{general:?}");
-        assert!(general.content.contains("task-ok"), "{general:?}");
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;

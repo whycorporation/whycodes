@@ -216,26 +216,25 @@ impl Agent {
                             "auto-compact before LLM step"
                         );
                     }
-                    if outcome.still_over(self.compaction_threshold) {
-                        compact_failures = compact_failures.saturating_add(1);
-                        if compact_failures >= MAX_CONSECUTIVE_COMPACT_FAILURES {
-                            compact_paused = true;
-                            emit(
-                                &events,
-                                TurnEvent::Status(format!(
-                                    "Auto-compact paused after {MAX_CONSECUTIVE_COMPACT_FAILURES} \
-                                     passes (~{} tok still over threshold)",
-                                    outcome.tokens_after
-                                )),
-                            );
-                            tracing::warn!(
-                                failures = compact_failures,
-                                tokens = outcome.tokens_after,
-                                "autocompact circuit breaker tripped"
-                            );
-                        }
-                    } else {
-                        compact_failures = 0;
+                    compact_failures = next_compact_failures(
+                        compact_failures,
+                        outcome.still_over(self.compaction_threshold),
+                    );
+                    if compact_failures >= MAX_CONSECUTIVE_COMPACT_FAILURES && !compact_paused {
+                        compact_paused = true;
+                        emit(
+                            &events,
+                            TurnEvent::Status(format!(
+                                "Auto-compact paused after {MAX_CONSECUTIVE_COMPACT_FAILURES} \
+                                 passes (~{} tok still over threshold)",
+                                outcome.tokens_after
+                            )),
+                        );
+                        tracing::warn!(
+                            failures = compact_failures,
+                            tokens = outcome.tokens_after,
+                            "autocompact circuit breaker tripped"
+                        );
                     }
                 }
             }
@@ -265,9 +264,11 @@ impl Agent {
                 && let Some(suffix) = crate::intent::posture_suffix(&turn_intent, &self.info.name)
             {
                 append_request_user_suffix(&mut request, &suffix);
+                let intent = turn_intent.intent.as_str();
+                let confidence = turn_intent.confidence;
                 tracing::debug!(
-                    intent = turn_intent.intent.as_str(),
-                    confidence = turn_intent.confidence,
+                    intent,
+                    confidence,
                     agent = %self.info.name,
                     "intent posture injected into request"
                 );
@@ -665,10 +666,8 @@ impl Agent {
                     &events,
                     TurnEvent::Status("Doom loop: identical tool call repeated — refusing".into()),
                 );
-                tracing::warn!(
-                    tools = ?tool_calls.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
-                    "doom loop refused"
-                );
+                let tools: Vec<&str> = tool_calls.iter().map(|t| t.name.as_str()).collect();
+                tracing::warn!(tools = ?tools, "doom loop refused");
                 let mut refused = Vec::with_capacity(tool_calls.len());
                 for tc in &tool_calls {
                     emit(
@@ -774,18 +773,14 @@ impl Agent {
                 session.mark_checkpoint(goal);
             }
             if let Some(report) = rewind_report {
-                if session.apply_rewind(&report) {
-                    tracing::debug!("collapsed exploratory context after rewind");
-                } else {
-                    tracing::debug!("rewind requested with no active checkpoint");
-                }
+                // `settle_checkpoint_rewind` only yields a report when a checkpoint
+                // is already active, so apply always succeeds.
+                let applied = session.apply_rewind(&report);
+                tracing::debug!(applied, "collapsed exploratory context after rewind");
             }
 
             // Fold subagent tokens into this turn + parent session (plan-performance).
-            if let Ok(mut pending) = self.subagent_usage_pending.lock()
-                && !pending.is_empty()
-            {
-                let fold = std::mem::take(&mut *pending);
+            if let Some(fold) = take_pending_usage(&self.subagent_usage_pending) {
                 turn_usage.add(&fold);
                 session.add_usage(&fold);
                 tracing::debug!(
@@ -842,10 +837,24 @@ impl Agent {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn turn_module_loads() {
-        assert!(!module_path!().is_empty());
+fn take_pending_usage(
+    pending: &std::sync::Mutex<whycodes_core::types::Usage>,
+) -> Option<whycodes_core::types::Usage> {
+    let mut pending = super::recover_lock(pending);
+    if pending.is_empty() {
+        return None;
+    }
+    Some(std::mem::take(&mut *pending))
+}
+
+fn next_compact_failures(failures: u32, still_over: bool) -> u32 {
+    if still_over {
+        failures.saturating_add(1)
+    } else {
+        0
     }
 }
+
+#[cfg(test)]
+#[path = "turn_tests.rs"]
+mod tests;

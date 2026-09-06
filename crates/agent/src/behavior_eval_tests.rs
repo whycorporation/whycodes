@@ -505,8 +505,34 @@ fn semantic_policy_corpus_meets_desired_contract() {
 
 #[cfg(test)]
 mod local {
+    use super::*;
+
     #[test]
     fn behavior_eval_module_loads() {
         assert!(!module_path!().is_empty());
+    }
+
+    #[test]
+    fn evaluate_corpus_formats_failures() {
+        let bad = [BehaviorScenario {
+            name: "forced-fail",
+            group: "coverage",
+            user_message: "fix the auth bug",
+            expected_intent: UserIntent::Question,
+            agent_name: "build",
+            tool_name: "read",
+            command: None,
+            guidance: IntentGuidanceMode::Auto,
+            expected_tool_decision: ExpectedToolDecision::Refuse,
+        }];
+        let report = evaluate_corpus(&bad);
+        assert_eq!(report.metrics.total, 1);
+        assert_eq!(report.metrics.passed, 0);
+        assert!(!report.failures.is_empty());
+        assert!(
+            report.failures[0].contains("forced-fail"),
+            "{}",
+            report.failures[0]
+        );
     }
 }

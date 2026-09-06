@@ -54,147 +54,60 @@ impl Tool for PlanTool {
                 "enter" => {
                     // Create .whycodes directory if it doesn't exist
                     if let Err(e) = std::fs::create_dir_all(&whycodes_dir) {
-                        return ToolResult {
-                            tool_call_id: String::new(),
-                            content: format!("Error creating .whycodes directory: {}", e),
-                            is_error: true,
-                        };
+                        return plan_fs_error("Error creating .whycodes directory", e);
                     }
 
                     match std::fs::write(&plan_mode_file, "1") {
-                        Ok(_) => ToolResult {
-                            tool_call_id: String::new(),
-                            content: "Planning mode entered. No file modifications will be made."
-                                .to_string(),
-                            is_error: false,
-                        },
-                        Err(e) => ToolResult {
-                            tool_call_id: String::new(),
-                            content: format!("Error entering planning mode: {}", e),
-                            is_error: true,
-                        },
+                        Ok(_) => plan_ok(PLAN_ENTERED),
+                        Err(e) => plan_fs_error("Error entering planning mode", e),
                     }
                 }
                 "exit" => match std::fs::remove_file(&plan_mode_file) {
-                    Ok(_) => ToolResult {
-                        tool_call_id: String::new(),
-                        content: "Planning mode exited. File modifications are now allowed."
-                            .to_string(),
-                        is_error: false,
-                    },
-                    Err(e) => {
-                        if e.kind() == std::io::ErrorKind::NotFound {
-                            ToolResult {
-                            tool_call_id: String::new(),
-                            content:
-                                "Planning mode is not currently active (no plan_mode file found)."
-                                    .to_string(),
-                            is_error: false,
-                        }
-                        } else {
-                            ToolResult {
-                                tool_call_id: String::new(),
-                                content: format!("Error exiting planning mode: {}", e),
-                                is_error: true,
-                            }
-                        }
-                    }
+                    Ok(_) => plan_ok(PLAN_EXITED),
+                    Err(e) => plan_exit_remove_error(e),
                 },
-                _ => ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Invalid action: '{}'. Must be 'enter' or 'exit'.", action),
-                    is_error: true,
-                },
+                _ => plan_invalid_action(action),
             }
         })
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tool::ToolContext;
+const PLAN_ENTERED: &str = "Planning mode entered. No file modifications will be made.";
+const PLAN_EXITED: &str = "Planning mode exited. File modifications are now allowed.";
+const PLAN_NOT_ACTIVE: &str = "Planning mode is not currently active (no plan_mode file found).";
 
-    #[test]
-    fn plan_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-
-    #[tokio::test]
-    async fn execute_enter_exit_and_invalid_action() {
-        let dir = tempfile::tempdir().unwrap();
-        let ctx = ToolContext::new(dir.path().to_string_lossy());
-        let tool = PlanTool::new();
-
-        let entered = tool
-            .execute(serde_json::json!({"action": "enter"}), &ctx)
-            .await;
-        assert!(!entered.is_error, "{}", entered.content);
-        assert!(
-            entered.content.contains("Planning mode entered"),
-            "{}",
-            entered.content
-        );
-        let marker = whycodes_core::project_dir(dir.path()).join("plan_mode");
-        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "1");
-
-        let exited = tool
-            .execute(serde_json::json!({"action": "exit"}), &ctx)
-            .await;
-        assert!(!exited.is_error, "{}", exited.content);
-        assert!(
-            exited.content.contains("Planning mode exited"),
-            "{}",
-            exited.content
-        );
-        assert!(!marker.exists());
-
-        let again = tool
-            .execute(serde_json::json!({"action": "exit"}), &ctx)
-            .await;
-        assert!(!again.is_error, "{}", again.content);
-
-        let bad = tool
-            .execute(serde_json::json!({"action": "nope"}), &ctx)
-            .await;
-        assert!(bad.is_error, "{}", bad.content);
-        assert!(bad.content.contains("Invalid action"), "{}", bad.content);
-    }
-
-    #[tokio::test]
-    async fn default_and_fs_error_paths() {
-        let t = PlanTool;
-        assert_eq!(t.name(), "plan");
-        assert!(!t.description().is_empty());
-        let _ = t.parameters();
-
-        let dir = tempfile::tempdir().unwrap();
-        let why = whycodes_core::project_dir(dir.path());
-        std::fs::write(&why, "not-a-dir").unwrap();
-        let ctx = ToolContext::new(dir.path().to_string_lossy());
-        let enter = t
-            .execute(serde_json::json!({"action": "enter"}), &ctx)
-            .await;
-        assert!(enter.is_error, "{}", enter.content);
-        assert!(
-            enter.content.contains("Error creating .whycodes")
-                || enter.content.contains("Error entering"),
-            "{}",
-            enter.content
-        );
-
-        let dir = tempfile::tempdir().unwrap();
-        let why = whycodes_core::project_dir(dir.path());
-        std::fs::create_dir_all(&why).unwrap();
-        let marker = why.join("plan_mode");
-        std::fs::create_dir(&marker).unwrap();
-        let ctx = ToolContext::new(dir.path().to_string_lossy());
-        let exit = t.execute(serde_json::json!({"action": "exit"}), &ctx).await;
-        assert!(exit.is_error, "{}", exit.content);
-        assert!(
-            exit.content.contains("Error exiting planning mode"),
-            "{}",
-            exit.content
-        );
+fn plan_ok(content: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: content.to_string(),
+        is_error: false,
     }
 }
+
+fn plan_fs_error(prefix: &str, err: std::io::Error) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("{prefix}: {err}"),
+        is_error: true,
+    }
+}
+
+fn plan_exit_remove_error(err: std::io::Error) -> ToolResult {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        plan_ok(PLAN_NOT_ACTIVE)
+    } else {
+        plan_fs_error("Error exiting planning mode", err)
+    }
+}
+
+fn plan_invalid_action(action: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Invalid action: '{action}'. Must be 'enter' or 'exit'."),
+        is_error: true,
+    }
+}
+
+#[cfg(test)]
+#[path = "plan_tests.rs"]
+mod tests;

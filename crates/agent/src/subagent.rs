@@ -144,13 +144,16 @@ impl SubagentRunner {
     }
 
     /// Run a single subagent task synchronously (awaited).
+    ///
+    /// Inner turn errors become `success: false` rather than a `Result::Err`, so
+    /// callers always get a `SubagentResult`.
     pub async fn run(
         &self,
         task: SubagentTask,
         provider_name: &str,
         model: &str,
         api_key: &str,
-    ) -> whycodes_core::Result<SubagentResult> {
+    ) -> SubagentResult {
         let start = Instant::now();
 
         // Build the full prompt from goal + optional context
@@ -202,20 +205,20 @@ impl SubagentRunner {
         let duration = start.elapsed();
 
         match output {
-            Ok((text, usage)) => Ok(SubagentResult {
+            Ok((text, usage)) => SubagentResult {
                 goal: task.goal,
                 output: text,
                 success: true,
                 duration,
                 usage,
-            }),
-            Err(e) => Ok(SubagentResult {
+            },
+            Err(e) => SubagentResult {
                 goal: task.goal,
                 output: format!("Subagent error: {}", e),
                 success: false,
                 duration,
                 usage: whycodes_core::types::Usage::default(),
-            }),
+            },
         }
     }
 
@@ -506,118 +509,5 @@ fn inject_subagent_memory(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn inject_memory_passthrough_when_disabled() {
-        let memory = whycodes_memory::MemorySettings::disabled();
-        let out = inject_subagent_memory(
-            "base prompt",
-            std::path::Path::new("/work/proj"),
-            "worker",
-            "do the thing",
-            &memory,
-        );
-        assert_eq!(out, "base prompt");
-    }
-
-    #[test]
-    fn inject_memory_passthrough_when_env_off_switch() {
-        let prev = std::env::var_os("WHYCODES_NO_MEMORY");
-        unsafe { std::env::set_var("WHYCODES_NO_MEMORY", "1") };
-        let out = inject_subagent_memory(
-            "base prompt",
-            std::path::Path::new("/work/proj"),
-            "worker",
-            "do the thing",
-            &whycodes_memory::MemorySettings::default(),
-        );
-        match prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_NO_MEMORY", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_NO_MEMORY") },
-        }
-        assert_eq!(out, "base prompt");
-    }
-
-    #[test]
-    fn runner_builders_set_state() {
-        let runner = make_runner();
-        let idx = whycodes_index::WorkspaceIndex::start(Vec::new());
-        let hub = whycodes_core::SwarmHub::default();
-        let runner = runner
-            .with_file_index(Some(idx))
-            .with_panel(None)
-            .with_swarm_hub(Some(hub))
-            .with_memory(whycodes_memory::MemorySettings::disabled())
-            .with_file_claims(
-                whycodes_core::FileClaimRegistry::default(),
-                "worker-1",
-                "Worker One",
-            );
-        assert_eq!(runner.agent_id.as_deref(), Some("worker-1"));
-        assert_eq!(runner.agent_label.as_deref(), Some("Worker One"));
-        assert!(runner.file_claims.is_some());
-        assert!(runner.file_index.is_some());
-        assert!(!runner.memory.enabled);
-    }
-
-    #[tokio::test]
-    async fn run_returns_failed_result_for_preflight_errors() {
-        let cases = [
-            ("anthropic", 0, None, "exceeded maximum turns (0)"),
-            (
-                "missing-provider",
-                1,
-                Some("use this context".to_string()),
-                "Unknown provider: missing-provider",
-            ),
-        ];
-
-        for (provider, max_turns, context, expected) in cases {
-            let result = make_runner()
-                .run(
-                    SubagentTask {
-                        goal: "inspect the project".into(),
-                        context,
-                        tools: Some(vec!["read".into()]),
-                        max_turns,
-                    },
-                    provider,
-                    "test-model",
-                    "test-key",
-                )
-                .await
-                .expect("runner converts turn errors into a result");
-
-            assert_eq!(result.goal, "inspect the project");
-            assert!(!result.success);
-            assert!(result.output.contains(expected), "{}", result.output);
-            assert!(result.usage.is_empty());
-        }
-    }
-
-    fn make_runner() -> SubagentRunner {
-        SubagentRunner::new(
-            Arc::new(ProviderRegistry::default()),
-            Arc::new(ToolExecutor::new()),
-            make_info(),
-            std::path::PathBuf::from("/work/proj"),
-            SandboxSettings::off(),
-            NetworkPolicy::unrestricted(),
-        )
-    }
-
-    fn make_info() -> AgentInfo {
-        AgentInfo {
-            name: "worker".into(),
-            description: "test worker".into(),
-            mode: whycodes_core::types::AgentMode::Primary,
-            permission: PermissionSet::default(),
-            model: None,
-            system_prompt: None,
-            temperature: None,
-            top_p: None,
-        }
-    }
-}
+#[path = "subagent_tests.rs"]
+mod tests;

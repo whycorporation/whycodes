@@ -49,9 +49,18 @@ pub fn wait_for_callback(
     expected_state: &str,
     timeout: Duration,
 ) -> Result<CallbackResult> {
+    wait_for_callback_with(listener, expected_state, timeout, &mut || listener.accept())
+}
+
+fn wait_for_callback_with(
+    listener: &TcpListener,
+    expected_state: &str,
+    timeout: Duration,
+    accept: &mut dyn FnMut() -> std::io::Result<(std::net::TcpStream, std::net::SocketAddr)>,
+) -> Result<CallbackResult> {
     let deadline = std::time::Instant::now() + timeout;
     listener.set_ttl(1).ok(); // best-effort; not all platforms honour this on listeners
-    listener.set_nonblocking(true).map_err(AuthError::Io)?;
+    io_result(listener.set_nonblocking(true))?;
 
     loop {
         if std::time::Instant::now() > deadline {
@@ -59,19 +68,19 @@ pub fn wait_for_callback(
                 "timed out waiting for the browser redirect".to_string(),
             ));
         }
-        let Some((mut stream, _)) = accept_connection(|| listener.accept())? else {
+        let Some((mut stream, _)) = accept_connection(accept)? else {
             std::thread::sleep(Duration::from_millis(50));
             continue;
         };
 
-        let mut reader = BufReader::new(stream.try_clone().map_err(AuthError::Io)?);
+        let mut reader = BufReader::new(io_result(stream.try_clone())?);
         let mut request_line = String::new();
-        reader.read_line(&mut request_line).map_err(AuthError::Io)?;
+        read_http_line(&mut reader, &mut request_line)?;
         let mut origin = String::new();
         let mut line = String::new();
         loop {
             line.clear();
-            let n = reader.read_line(&mut line).map_err(AuthError::Io)?;
+            let n = read_http_line(&mut reader, &mut line)?;
             if n == 0 || line == "\r\n" || line == "\n" {
                 break;
             }
@@ -187,7 +196,7 @@ fn origin_from_header(line: &str) -> Option<String> {
 }
 
 fn accept_connection(
-    accept: impl FnOnce() -> std::io::Result<(std::net::TcpStream, std::net::SocketAddr)>,
+    accept: &mut dyn FnMut() -> std::io::Result<(std::net::TcpStream, std::net::SocketAddr)>,
 ) -> Result<Option<(std::net::TcpStream, std::net::SocketAddr)>> {
     match accept() {
         Ok(pair) => Ok(Some(pair)),
@@ -196,7 +205,18 @@ fn accept_connection(
     }
 }
 
-fn write_http_response(stream: &mut impl Write, response: &str) {
+fn io_result<T>(result: std::io::Result<T>) -> Result<T> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => Err(AuthError::Io(error)),
+    }
+}
+
+fn read_http_line(reader: &mut dyn BufRead, buf: &mut String) -> Result<usize> {
+    io_result(reader.read_line(buf))
+}
+
+fn write_http_response(stream: &mut dyn Write, response: &str) {
     let _write_failed = stream.write_all(response.as_bytes()).is_err();
     let _flush_failed = stream.flush().is_err();
 }
@@ -220,13 +240,20 @@ pub fn bind_loopback() -> Result<(TcpListener, u16)> {
 }
 
 fn listener_and_port(bound: std::io::Result<TcpListener>) -> Result<(TcpListener, u16)> {
-    let listener = bound.map_err(AuthError::Io)?;
-    let port = port_from_addr(listener.local_addr())?;
+    let listener = io_result(bound)?;
+    listener_with_port(listener, &mut |l| l.local_addr())
+}
+
+fn listener_with_port(
+    listener: TcpListener,
+    addr: &mut dyn FnMut(&TcpListener) -> std::io::Result<std::net::SocketAddr>,
+) -> Result<(TcpListener, u16)> {
+    let port = port_from_addr(addr(&listener))?;
     Ok((listener, port))
 }
 
 fn port_from_addr(addr: std::io::Result<std::net::SocketAddr>) -> Result<u16> {
-    Ok(addr.map_err(AuthError::Io)?.port())
+    Ok(io_result(addr)?.port())
 }
 
 /// Build an authorization URL with the common PKCE S256 parameters.

@@ -40,10 +40,10 @@ pub(crate) async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
                         }
                         title = loaded.title;
                     }
-                    println!("  {} — {} ({} messages)", s.id.cyan(), title, msg_count);
-                    println!("    Created: {}  Updated: {}", s.created_at, s.updated_at);
-                    if !s.project_path.is_empty() && s.project_path != "/" {
-                        println!("    Project: {}", s.project_path);
+                    println!("{}", session_list_line(&s.id, &title, msg_count));
+                    println!("{}", session_list_dates(&s.created_at, &s.updated_at));
+                    if let Some(project) = session_list_project(&s.project_path) {
+                        println!("{project}");
                     }
                 }
             }
@@ -221,19 +221,18 @@ pub(crate) async fn cmd_stats() -> anyhow::Result<()> {
         );
     } else {
         println!(
-            "  Tokens:    {} total ({} in + {} out)",
-            totals.usage.total(),
-            totals.usage.input_tokens,
-            totals.usage.output_tokens
+            "{}",
+            stats_token_line(
+                totals.usage.total(),
+                totals.usage.input_tokens,
+                totals.usage.output_tokens
+            )
         );
-        if let Some(read) = totals.usage.cache_read_input_tokens {
-            println!(
-                "  Cache:     {} read, {} write",
-                read,
-                totals.usage.cache_creation_input_tokens.unwrap_or(0)
-            );
-        } else if let Some(write) = totals.usage.cache_creation_input_tokens {
-            println!("  Cache:     {} write", write);
+        if let Some(line) = stats_cache_line(
+            totals.usage.cache_read_input_tokens,
+            totals.usage.cache_creation_input_tokens,
+        ) {
+            println!("{line}");
         }
     }
 
@@ -250,11 +249,7 @@ pub(crate) async fn cmd_stats() -> anyhow::Result<()> {
             println!();
             println!("  Top sessions by tokens:");
             for s in top {
-                let title = if s.title.is_empty() {
-                    s.id.chars().take(8).collect::<String>()
-                } else {
-                    s.title.clone()
-                };
+                let title = stats_top_session_title(&s.title, &s.id);
                 println!("    {:>8}  {}  {}", s.usage.total(), title, s.project_path);
             }
         }
@@ -272,15 +267,49 @@ pub(crate) async fn cmd_stats() -> anyhow::Result<()> {
     Ok(())
 }
 
+pub(crate) fn session_list_line(id: &str, title: &str, msg_count: usize) -> String {
+    format!("  {} — {title} ({msg_count} messages)", id.cyan())
+}
+
+pub(crate) fn session_list_dates(created_at: &str, updated_at: &str) -> String {
+    format!("    Created: {created_at}  Updated: {updated_at}")
+}
+
+pub(crate) fn session_list_project(project_path: &str) -> Option<String> {
+    if project_path.is_empty() || project_path == "/" {
+        None
+    } else {
+        Some(format!("    Project: {project_path}"))
+    }
+}
+
+pub(crate) fn stats_token_line(total: u64, input: u64, output: u64) -> String {
+    format!("  Tokens:    {total} total ({input} in + {output} out)")
+}
+
+pub(crate) fn stats_cache_line(read: Option<u64>, write: Option<u64>) -> Option<String> {
+    match (read, write) {
+        (Some(read), write) => Some(format!(
+            "  Cache:     {read} read, {} write",
+            write.unwrap_or(0)
+        )),
+        (None, Some(write)) => Some(format!("  Cache:     {write} write")),
+        (None, None) => None,
+    }
+}
+
+pub(crate) fn stats_top_session_title(title: &str, id: &str) -> String {
+    if title.is_empty() {
+        id.chars().take(8).collect()
+    } else {
+        title.to_string()
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Auth (OAuth subscription login)
 // ────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn missing_database_is_not_a_generic_error() {
-        let err = anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
-        assert!(crate::cmd::helpers::is_missing_database(&err));
-    }
-}
+#[path = "session_tests.rs"]
+mod tests;

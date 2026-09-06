@@ -4,7 +4,95 @@ use crate::app::{
 };
 use crate::config::TuiAppConfig;
 use crate::theme::ThemeName;
+use crate::ui::file_suggest::FileSuggestState;
 use std::str::FromStr;
+use whycodes_index::WorkspaceIndex;
+
+/// Picker over a real index: activate → fuzzy → drill down → accept.
+/// Skipped by `scripts/coverage.sh` (notify-timing flake under llvm-cov).
+/// Lives here so the skipped body does not count against `file_suggest.rs`.
+#[test]
+fn picker_flow_over_real_index() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::write(tmp.path().join("src/main.rs"), "fn main() {}").unwrap();
+    std::fs::write(tmp.path().join("src/lib.rs"), "// lib").unwrap();
+    std::fs::write(tmp.path().join("README.md"), "hi").unwrap();
+
+    let idx = WorkspaceIndex::start_with(
+        vec![tmp.path().to_path_buf()],
+        whycodes_index::IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(std::time::Duration::from_secs(10)));
+    assert!(
+        idx.entries().iter().any(|e| &*e.rel == "src/main.rs"),
+        "scan missed src/main.rs; status={:?} entries={:?}",
+        idx.status(),
+        idx.entries()
+            .iter()
+            .map(|e| e.rel.as_ref())
+            .collect::<Vec<_>>(),
+    );
+    assert!(
+        idx.query("mai", 10).iter().any(|m| m.rel == "src/main.rs"),
+        "blocking fuzzy missed src/main.rs; status={:?}",
+        idx.status(),
+    );
+
+    let mut st = FileSuggestState::default();
+    st.set_index(idx);
+
+    fn poll_until(st: &mut FileSuggestState, pred: impl Fn(&FileSuggestState) -> bool) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if pred(st) {
+                return true;
+            }
+            st.poll_matches();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        pred(st)
+    }
+
+    let mut buf = String::from("@mai");
+    let mut cur = buf.len();
+    st.refresh(&buf, cur);
+    assert!(st.active);
+    assert!(
+        poll_until(&mut st, |s| s
+            .matches
+            .iter()
+            .any(|m| m.rel == "src/main.rs")),
+        "picker never saw src/main.rs; matches={:?} status={:?}",
+        st.matches
+            .iter()
+            .map(|m| m.rel.as_str())
+            .collect::<Vec<_>>(),
+        st.scan_status(),
+    );
+
+    while !st.current().is_some_and(|m| m.rel == "src/main.rs") {
+        st.step(1);
+    }
+    let open = st.accept(&mut buf, &mut cur);
+    assert!(!open);
+    assert_eq!(buf, "@src/main.rs ");
+    assert!(!st.active);
+
+    let buf = String::from("@src/");
+    let cur = buf.len();
+    st.refresh(&buf, cur);
+    assert!(st.active);
+    assert!(poll_until(&mut st, |s| s
+        .matches
+        .iter()
+        .any(|m| m.rel == "src/main.rs")
+        && s.matches.iter().any(|m| m.rel == "src/lib.rs")));
+}
 
 fn test_config() -> TuiAppConfig {
     TuiAppConfig::default()

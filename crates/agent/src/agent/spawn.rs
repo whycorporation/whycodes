@@ -44,8 +44,7 @@ impl Agent {
         .with_question_prompter(Arc::clone(&self.question_prompter))
         .with_approval_mode(self.approval_mode);
 
-        let result = runner.run(task, provider_name, model, api_key).await?;
-
+        let result = runner.run(task, provider_name, model, api_key).await;
         Ok(result.output)
     }
 
@@ -104,8 +103,7 @@ impl Agent {
         let mut outputs = Vec::with_capacity(handles.len());
         for handle in handles {
             match handle.await {
-                Ok(Ok(result)) => outputs.push(result.output),
-                Ok(Err(e)) => outputs.push(format!("Subagent error: {}", e)),
+                Ok(result) => outputs.push(result.output),
                 Err(e) => outputs.push(format!("Join error: {}", e)),
             }
         }
@@ -115,9 +113,5 @@ impl Agent {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn spawn_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-}
+#[path = "spawn_tests.rs"]
+mod tests;

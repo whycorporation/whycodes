@@ -5,13 +5,10 @@
 /// there — they authorize the Grok Build chat proxy at
 /// `cli-chat-proxy.grok.com`. Extra proxy headers (`X-XAI-Token-Auth`, …)
 /// come from a loaded xAI auth plugin; core traffic is WhyCodes.
-use async_stream::stream;
 use serde_json::Value;
-use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use whycodes_core::types::{LlmRequest, LlmResponse};
 
-use crate::provider::{
-    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
-};
+use crate::provider::{LlmProvider, ProviderResponseFuture, ProviderStreamFuture};
 
 pub struct XaiProvider {
     name: String,
@@ -31,17 +28,31 @@ pub fn is_xai_oauth_token(key: &str) -> bool {
     !key.is_empty() && !key.starts_with("xai-")
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_SUBSCRIPTION_URL: std::cell::RefCell<Option<&'static str>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn subscription_chat_url() -> &'static str {
+    #[cfg(test)]
+    if let Some(url) = TEST_SUBSCRIPTION_URL.with(|c| *c.borrow()) {
+        return url;
+    }
+    SUBSCRIPTION_CHAT_URL
+}
+
 /// Chat-completions URL for this credential.
 pub fn inference_url(api_key: &str) -> &'static str {
     if is_xai_oauth_token(api_key) {
-        SUBSCRIPTION_CHAT_URL
+        subscription_chat_url()
     } else {
         CONSOLE_CHAT_URL
     }
 }
 
 fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
-    if is_xai_oauth_token(api_key) && url == SUBSCRIPTION_CHAT_URL {
+    if is_xai_oauth_token(api_key) && url == subscription_chat_url() {
         crate::client_identity::post_for_provider(url, "xai")
             .header("Authorization", format!("Bearer {api_key}"))
     } else {
@@ -71,35 +82,11 @@ impl XaiProvider {
     }
 
     pub fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": self.convert_messages(request),
-            "stream": true,
-        });
-
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = max_tokens.into();
-        }
-
-        if !request.tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(self.convert_tools(&request.tools));
-            body["tool_choice"] = serde_json::json!("auto");
-            body["parallel_tool_calls"] = serde_json::json!(true);
-        }
-
-        crate::openai_compat::apply_sampling(&mut body, request);
-
-        crate::thinking::ThinkingConfig::apply_openai_effort(&mut body, request.thinking.as_ref());
-
-        body
+        crate::openai_compat::chat_completions_body(request, model, self.convert_messages(request))
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {
         crate::openai_compat::convert_messages(request)
-    }
-
-    fn convert_tools(&self, tools: &[whycodes_core::types::ToolDefinition]) -> Vec<Value> {
-        crate::openai_compat::convert_tools(tools)
     }
 }
 
@@ -178,52 +165,7 @@ impl LlmProvider for XaiProvider {
                 )));
             }
 
-            let s = stream! {
-                let mut stream = resp.bytes_stream();
-                let mut buffer = String::new();
-
-                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                    match chunk {
-                        Ok(bytes) => {
-                            buffer.push_str(&String::from_utf8_lossy(&bytes));
-                            while let Some(pos) = buffer.find('\n') {
-                                let line = buffer[..pos].trim().to_string();
-                                buffer = buffer[pos + 1..].to_string();
-
-                                if line.is_empty() || !line.starts_with("data: ") {
-                                    continue;
-                                }
-
-                                let data = &line[6..];
-                                if data == "[DONE]" {
-                                    yield Ok(StreamEvent::MessageStop);
-                                    return;
-                                }
-
-                                if let Ok(event) = serde_json::from_str::<Value>(data) {
-                                    let choice = &event["choices"][0];
-                                    let delta = &choice["delta"];
-
-                                    for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
-                                        yield Ok(ev);
-                                    }
-
-                                    if let Some(ev) =
-                                        crate::openai_compat::stream_usage_from_chunk(&event)
-                                    {
-                                        yield Ok(ev);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            yield Err(crate::openai_compat::stream_chunk_error("xai", e));
-                        }
-                    }
-                }
-            };
-
-            Ok(Box::pin(s) as ProviderEventStream)
+            Ok(crate::openai_compat::chat_sse_stream(resp, "xai"))
         })
     }
 }
@@ -235,32 +177,5 @@ impl Default for XaiProvider {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn oauth_tokens_are_distinguished_from_console_keys() {
-        assert!(is_xai_oauth_token("eyJhbGciOiJ.eyJzdWIiOiJx.sig"));
-        assert!(is_xai_oauth_token("opaque-oauth-token"));
-        assert!(!is_xai_oauth_token("xai-abc123"));
-        assert!(!is_xai_oauth_token(""));
-        assert_eq!(
-            inference_url("eyJhbGciOiJ.eyJzdWIiOiJx.sig"),
-            SUBSCRIPTION_CHAT_URL
-        );
-        assert_eq!(inference_url("xai-abc123"), CONSOLE_CHAT_URL);
-    }
-
-    #[test]
-    fn from_base_blank_falls_back_to_console() {
-        let blank = XaiProvider::from_base(Some("   "));
-        assert_eq!(blank.default_base_url(), CONSOLE_CHAT_URL);
-        let local = XaiProvider::from_base(Some("http://127.0.0.1:9/v1"));
-        assert!(
-            local.default_base_url().ends_with("/chat/completions"),
-            "{}",
-            local.default_base_url()
-        );
-        assert_eq!(XaiProvider::default().name(), "xai");
-    }
-}
+#[path = "xai_tests.rs"]
+mod tests;

@@ -403,11 +403,8 @@ pub fn parse_inline(line: &str) -> Vec<Inline> {
         };
     }
 
-    while pos < len {
+    while let Some(c) = line[pos..].chars().next() {
         let remaining = &line[pos..];
-        let Some(c) = remaining.chars().next() else {
-            break;
-        };
         let c_len = c.len_utf8();
 
         // Inline code first: nothing inside a backtick pair is markup.

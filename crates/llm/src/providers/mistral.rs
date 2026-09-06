@@ -1,12 +1,9 @@
 /// Mistral AI LLM provider.
 /// OpenAI-compatible API at api.mistral.ai.
-use async_stream::stream;
 use serde_json::Value;
-use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use whycodes_core::types::{LlmRequest, LlmResponse};
 
-use crate::provider::{
-    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
-};
+use crate::provider::{LlmProvider, ProviderResponseFuture, ProviderStreamFuture};
 
 pub struct MistralProvider {
     name: String,
@@ -29,35 +26,11 @@ impl MistralProvider {
     }
 
     pub fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": self.convert_messages(request),
-            "stream": true,
-        });
-
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = max_tokens.into();
-        }
-
-        if !request.tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(self.convert_tools(&request.tools));
-            body["tool_choice"] = serde_json::json!("auto");
-            body["parallel_tool_calls"] = serde_json::json!(true);
-        }
-
-        crate::openai_compat::apply_sampling(&mut body, request);
-
-        crate::thinking::ThinkingConfig::apply_openai_effort(&mut body, request.thinking.as_ref());
-
-        body
+        crate::openai_compat::chat_completions_body(request, model, self.convert_messages(request))
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {
         crate::openai_compat::convert_messages(request)
-    }
-
-    fn convert_tools(&self, tools: &[whycodes_core::types::ToolDefinition]) -> Vec<Value> {
-        crate::openai_compat::convert_tools(tools)
     }
 }
 
@@ -140,52 +113,7 @@ impl LlmProvider for MistralProvider {
                 )));
             }
 
-            let s = stream! {
-                let mut stream = resp.bytes_stream();
-                let mut buffer = String::new();
-
-                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                    match chunk {
-                        Ok(bytes) => {
-                            buffer.push_str(&String::from_utf8_lossy(&bytes));
-                            while let Some(pos) = buffer.find('\n') {
-                                let line = buffer[..pos].trim().to_string();
-                                buffer = buffer[pos + 1..].to_string();
-
-                                if line.is_empty() || !line.starts_with("data: ") {
-                                    continue;
-                                }
-
-                                let data = &line[6..];
-                                if data == "[DONE]" {
-                                    yield Ok(StreamEvent::MessageStop);
-                                    return;
-                                }
-
-                                if let Ok(event) = serde_json::from_str::<Value>(data) {
-                                    let choice = &event["choices"][0];
-                                    let delta = &choice["delta"];
-
-                                    for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
-                                        yield Ok(ev);
-                                    }
-
-                                    if let Some(ev) =
-                                        crate::openai_compat::stream_usage_from_chunk(&event)
-                                    {
-                                        yield Ok(ev);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            yield Err(crate::openai_compat::stream_chunk_error("mistral", e));
-                        }
-                    }
-                }
-            };
-
-            Ok(Box::pin(s) as ProviderEventStream)
+            Ok(crate::openai_compat::chat_sse_stream(resp, "mistral"))
         })
     }
 }
@@ -197,51 +125,5 @@ impl Default for MistralProvider {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::provider::LlmProvider;
-    use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
-
-    fn req() -> LlmRequest {
-        LlmRequest {
-            system: "sys".into(),
-            messages: std::sync::Arc::from(vec![Message {
-                role: Role::User,
-                content: MessageContent::Text("hi".into()),
-                tool_call_id: None,
-                name: None,
-                created_at: None,
-            }]),
-            tools: std::sync::Arc::from([]),
-            max_tokens: None,
-            temperature: Some(0.5),
-            top_p: Some(0.9),
-            top_k: None,
-            stop_sequences: None,
-            thinking: Some(serde_json::json!({"enabled": true, "reasoning_effort": "low"})),
-            use_prompt_cache: false,
-        }
-    }
-
-    #[test]
-    fn from_base_blank_keeps_cloud_and_override_normalizes() {
-        let cloud = MistralProvider::from_base(Some("   "));
-        assert!(cloud.default_base_url().contains("mistral.ai"));
-        let local = MistralProvider::from_base(Some("http://127.0.0.1:9/v1"));
-        assert!(
-            local.default_base_url().ends_with("/chat/completions"),
-            "{}",
-            local.default_base_url()
-        );
-        assert_eq!(MistralProvider::default().name(), "mistral");
-    }
-
-    #[test]
-    fn build_body_without_tools_applies_sampling_and_effort() {
-        let body = MistralProvider::new().build_body(&req(), "mistral-small");
-        assert!(body.get("tools").is_none());
-        assert_eq!(body["reasoning_effort"], "low");
-        assert!(body["temperature"].is_number());
-        assert!(body["top_p"].is_number());
-    }
-}
+#[path = "mistral_tests.rs"]
+mod tests;

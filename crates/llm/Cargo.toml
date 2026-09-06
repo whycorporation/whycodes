@@ -24,5 +24,8 @@ tokio-stream = "0.1"
 rustc-hash.workspace = true
 chrono.workspace = true
 
+[dev-dependencies]
+tracing-subscriber.workspace = true
+
 [lints]
 workspace = true

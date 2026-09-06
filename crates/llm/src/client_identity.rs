@@ -29,18 +29,46 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// No client-wide request timeout — streaming chat completions must be free to
 /// run for minutes. Call sites that need a budget (catalog) set `.timeout()` on
 /// the request builder.
+fn fallback_http_client(err: impl std::fmt::Display) -> reqwest::Client {
+    tracing::debug!("shared HTTP client builder failed, using default: {err}");
+    reqwest::Client::new()
+}
+
+fn client_from_builder<E: std::fmt::Display>(built: Result<reqwest::Client, E>) -> reqwest::Client {
+    match built {
+        Ok(client) => client,
+        Err(e) => fallback_http_client(e),
+    }
+}
+
 fn shared_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .pool_max_idle_per_host(8)
-            .tcp_nodelay(true)
-            .tcp_keepalive(std::time::Duration::from_secs(30))
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
+        client_from_builder(
+            reqwest::Client::builder()
+                .user_agent(USER_AGENT)
+                .pool_max_idle_per_host(8)
+                .tcp_nodelay(true)
+                .tcp_keepalive(std::time::Duration::from_secs(30))
+                .connect_timeout(CONNECT_TIMEOUT)
+                .build(),
+        )
     })
+}
+
+#[cfg(test)]
+pub(crate) fn fallback_http_client_for_tests(err: &str) -> reqwest::Client {
+    fallback_http_client(err)
+}
+
+#[cfg(test)]
+pub(crate) fn client_from_builder_err_for_tests(err: &str) -> reqwest::Client {
+    client_from_builder(Err(err))
+}
+
+#[cfg(test)]
+pub(crate) fn client_from_builder_ok_for_tests() -> reqwest::Client {
+    client_from_builder(Ok::<_, &str>(reqwest::Client::new()))
 }
 
 /// Shared HTTP client with the whycodes `User-Agent` as the default.
@@ -98,49 +126,5 @@ pub fn post_for_provider(url: &str, provider: &str) -> RequestBuilder {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn user_agent_starts_with_whycodes() {
-        assert!(
-            USER_AGENT.starts_with("whycodes/"),
-            "USER_AGENT={USER_AGENT}"
-        );
-        assert!(!USER_AGENT.ends_with('/'));
-        assert!(USER_AGENT.len() > "whycodes/".len());
-    }
-
-    #[test]
-    fn identity_constants() {
-        assert_eq!(X_TITLE, "whycodes");
-        assert!(HTTP_REFERER.contains("why.codes"));
-    }
-
-    #[test]
-    fn http_client_builds() {
-        let _ = http_client();
-    }
-
-    #[test]
-    fn http_client_is_shared() {
-        // Process-wide client: same static reference on every call.
-        assert!(std::ptr::eq(shared_client(), shared_client()));
-        // Clones are cheap and keep the pool warm.
-        let _a = http_client();
-        let _b = http_client();
-    }
-
-    #[test]
-    fn plugin_identity_falls_back_to_whycodes() {
-        let _ = with_plugin_identity(http_client().get("https://example.invalid/"), "no-such");
-    }
-
-    #[test]
-    fn connect_timeout_is_finite() {
-        // Guard against regressions that drop connect_timeout and re-inflate
-        // "Worked for Xs" on dead VPN/Tailscale hops.
-        assert!(CONNECT_TIMEOUT.as_secs() >= 1);
-        assert!(CONNECT_TIMEOUT.as_secs() <= 10);
-    }
-}
+#[path = "client_identity_tests.rs"]
+mod tests;

@@ -1106,8 +1106,15 @@ async fn compact_session_uses_llm_summary_when_scripted() {
         text: "ack".into(),
     }]);
     session.add_user_message("fix login");
+    // Unique model so a parallel compact test cannot semantic-hit the global cache.
     let outcome = agent
-        .compact_session(&mut session, "script", "m", "k", Some("keep auth.rs"))
+        .compact_session(
+            &mut session,
+            "script",
+            "compact-llm-summary-test",
+            "k",
+            Some("keep auth.rs"),
+        )
         .await;
     assert!(outcome.dropped_messages());
     let last = session.messages.last().unwrap().content.as_text().unwrap();

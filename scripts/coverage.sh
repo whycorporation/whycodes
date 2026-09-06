@@ -151,5 +151,10 @@ set -- "$@" \
     --skip git_log_status_diff_blame_and_commit_on_repo
 run "$@"
 
+# cargo-llvm-cov JSON includes rustc macro expansions (`format!`, tracing
+# fields, `tokio::select!`) as uncovered lines. Native llvm-cov --skip-expansions
+# matches source lines. 100% crate floors are defined against that accounting.
+LLVM_COV_FLAGS="${LLVM_COV_FLAGS:---skip-expansions}"
+export LLVM_COV_FLAGS
 run cargo llvm-cov report --json --ignore-filename-regex "$CRATE_IGNORE" --summary-only >"$REPORT_JSON"
 run python3 scripts/check_coverage_floors.py "$REPORT_JSON"

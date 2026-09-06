@@ -152,21 +152,7 @@ fn mask_non_prose(text: &str) -> String {
                 }
             }
             if !is_close {
-                while i < n {
-                    if chars[i] == '<' && i + 1 < n && chars[i + 1] == '/' {
-                        while i < n {
-                            out.push(if chars[i] == '\n' { '\n' } else { ' ' });
-                            let done = chars[i] == '>';
-                            i += 1;
-                            if done {
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                    out.push(if chars[i] == '\n' { '\n' } else { ' ' });
-                    i += 1;
-                }
+                i = mask_until_close_tag(&chars, i, n, &mut out);
             }
             continue;
         }
@@ -174,6 +160,25 @@ fn mask_non_prose(text: &str) -> String {
         i += 1;
     }
     out
+}
+
+fn mask_until_close_tag(chars: &[char], mut i: usize, n: usize, out: &mut String) -> usize {
+    while i < n {
+        if chars[i] == '<' && i + 1 < n && chars[i + 1] == '/' {
+            while i < n {
+                out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+                let done = chars[i] == '>';
+                i += 1;
+                if done {
+                    break;
+                }
+            }
+            break;
+        }
+        out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+        i += 1;
+    }
+    i
 }
 
 fn fence_open(chars: &[char], i: usize) -> bool {
@@ -189,82 +194,5 @@ fn fence_close(chars: &[char], i: usize, tick: char, run: usize) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn on() -> MagicKeywordsConfig {
-        MagicKeywordsConfig::default()
-    }
-
-    #[test]
-    fn hits_standalone_lowercase_words() {
-        let hit = scan("please ultrathink about this", &on());
-        assert!(hit.ultrathink);
-        assert!(!hit.orchestrate);
-        assert!(hit.any());
-
-        let hit = scan("orchestrate the migration, then stop", &on());
-        assert!(hit.orchestrate);
-        assert!(!hit.ultrathink);
-    }
-
-    #[test]
-    fn both_keywords_in_one_prompt() {
-        let hit = scan("ultrathink then orchestrate the rollout", &on());
-        assert!(hit.ultrathink && hit.orchestrate);
-        let notice = hit.notice();
-        assert!(notice.contains("ultrathink"));
-        assert!(notice.contains("orchestrate"));
-    }
-
-    #[test]
-    fn ignores_identifiers_paths_and_calls() {
-        for sample in [
-            "Ultrathink about this",
-            "orchestrated the change",
-            "see orchestrate.ts",
-            "foo::orchestrate",
-            "call orchestrate()",
-            "path/ultrathink/file",
-            "ultrathink-mode",
-        ] {
-            let hit = scan(sample, &on());
-            assert!(!hit.any(), "should not match: {sample}");
-        }
-    }
-
-    #[test]
-    fn ignores_code_spans_and_fences() {
-        assert!(!scan("use `ultrathink` here", &on()).any());
-        assert!(!scan("```\nultrathink\n```\nok", &on()).ultrathink);
-        assert!(!scan("~~~\norchestrate\n~~~\n", &on()).orchestrate);
-        assert!(scan("```\ncode\n```\nultrathink", &on()).ultrathink);
-        assert!(!scan("<note>ultrathink</note>", &on()).ultrathink);
-    }
-
-    #[test]
-    fn punctuation_may_touch_the_word() {
-        assert!(scan("ultrathink.", &on()).ultrathink);
-        assert!(scan("\"orchestrate\"", &on()).orchestrate);
-        assert!(scan("(ultrathink)", &on()).ultrathink);
-    }
-
-    #[test]
-    fn config_switches_disable_notices() {
-        let mut cfg = on();
-        cfg.enabled = false;
-        assert!(!scan("ultrathink please", &cfg).any());
-
-        cfg = on();
-        cfg.ultrathink = false;
-        let hit = scan("ultrathink and orchestrate", &cfg);
-        assert!(!hit.ultrathink);
-        assert!(hit.orchestrate);
-    }
-
-    #[test]
-    fn empty_notice_when_nothing_matched() {
-        assert!(MagicHit::default().notice().is_empty());
-        assert!(!MagicHit::default().any());
-    }
-}
+#[path = "magic_keywords_tests.rs"]
+mod tests;
