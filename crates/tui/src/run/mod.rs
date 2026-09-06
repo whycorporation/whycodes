@@ -122,14 +122,16 @@ impl whycodes_auth::providers::LoginUi for TuiLoginUi {
 
     fn prompt_pasted_code(
         &mut self,
-    ) -> impl std::future::Future<Output = whycodes_auth::error::Result<String>> + Send {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = whycodes_auth::error::Result<String>> + Send + '_>,
+    > {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.send(AuthFlowEvent::NeedCode(tx));
-        async move {
+        Box::pin(async move {
             rx.await.map_err(|_| {
                 whycodes_auth::AuthError::FlowCancelled("sign-in dismissed".to_string())
             })
-        }
+        })
     }
 }
 

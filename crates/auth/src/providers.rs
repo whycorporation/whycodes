@@ -3,8 +3,10 @@
 //! Provider client ids, redirect ports, and identity headers come from
 //! auth plugins (`crate::spec`). Built-in WhyCodes ships an empty registry.
 
+use std::future::Future;
 use std::io::{BufRead, Write as _};
 use std::path::Path;
+use std::pin::Pin;
 use std::time::Duration;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -40,7 +42,7 @@ pub(crate) const fn browser_flow_timeout_for_test(for_test: bool) -> Duration {
 /// User-interaction hooks for the login flows. The CLI implements this
 /// with stdout/stdin ([`CliLoginUi`]); the TUI drives it from status lines
 /// and the prompt box. Token material never passes through this interface.
-pub trait LoginUi {
+pub trait LoginUi: Send {
     /// Show the authorize URL; `browser_opened` reports whether the
     /// browser launch succeeded (the flow attempts it when requested).
     fn show_sign_in(&mut self, label: &str, url: &str, browser_opened: bool);
@@ -49,7 +51,7 @@ pub trait LoginUi {
     /// Device flow: the code the user must enter at `verification_uri`.
     fn show_device_code(&mut self, user_code: &str, verification_uri: &str, browser_opened: bool);
     /// Paste-code flow only: obtain the pasted `code#state`.
-    fn prompt_pasted_code(&mut self) -> impl Future<Output = Result<String>> + Send;
+    fn prompt_pasted_code(&mut self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>>;
 }
 
 /// stdout/stdin [`LoginUi`] used by `whycodes auth login`.
@@ -77,13 +79,16 @@ impl LoginUi for CliLoginUi {
         }
     }
 
-    async fn prompt_pasted_code(&mut self) -> Result<String> {
-        println!("After signing in, the browser shows a code. Paste it here:");
-        print!("> ");
-        std::io::stdout().flush().ok();
-        join_blocking_paste(
-            tokio::task::spawn_blocking(|| read_pasted_code(&mut std::io::stdin().lock())).await,
-        )
+    fn prompt_pasted_code(&mut self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+        Box::pin(async {
+            println!("After signing in, the browser shows a code. Paste it here:");
+            print!("> ");
+            std::io::stdout().flush().ok();
+            join_blocking_paste(
+                tokio::task::spawn_blocking(|| read_pasted_code(&mut std::io::stdin().lock()))
+                    .await,
+            )
+        })
     }
 }
 
@@ -125,21 +130,21 @@ pub async fn login(provider: &str, store: &TokenStore, open_browser: bool) -> Re
 }
 
 /// [`login`] with a caller-provided UI driver (TUI dialogs, tests).
-pub async fn login_with_ui<U: LoginUi>(
+pub async fn login_with_ui(
     provider: &str,
     store: &TokenStore,
     open_browser: bool,
-    ui: &mut U,
+    ui: &mut dyn LoginUi,
 ) -> Result<ProviderAuth> {
     let spec = spec_for(provider)?;
     login_with_spec(&spec, store, open_browser, ui).await
 }
 
-async fn login_with_spec<U: LoginUi>(
+async fn login_with_spec(
     spec: &ProviderSpec,
     store: &TokenStore,
     open_browser: bool,
-    ui: &mut U,
+    ui: &mut dyn LoginUi,
 ) -> Result<ProviderAuth> {
     let token = if spec.name == "google-antigravity" {
         let oauth_token = loopback_login(spec, open_browser, ui).await?;
@@ -288,7 +293,7 @@ fn maybe_open_browser(open: bool, url: &str) -> bool {
 async fn loopback_login(
     spec: &ProviderSpec,
     open_browser: bool,
-    ui: &mut impl LoginUi,
+    ui: &mut dyn LoginUi,
 ) -> Result<OAuthToken> {
     let pkce = Pkce::new();
     let listener = match spec.loopback_port {
@@ -333,7 +338,7 @@ async fn loopback_login(
 async fn paste_code_login(
     spec: &ProviderSpec,
     open_browser: bool,
-    ui: &mut impl LoginUi,
+    ui: &mut dyn LoginUi,
 ) -> Result<OAuthToken> {
     let pkce = Pkce::new();
     // Paste flows exist because the registered redirect is a fixed provider
@@ -381,22 +386,24 @@ async fn paste_code_login(
 async fn device_login(
     spec: &ProviderSpec,
     open_browser: bool,
-    ui: &mut impl LoginUi,
+    ui: &mut dyn LoginUi,
 ) -> Result<OAuthToken> {
     let client = http_client()?;
-    let resp = client
-        .post(&spec.authorize_url)
-        .header("Accept", "application/json")
-        .form(&[
-            ("client_id", spec.client_id.as_str()),
-            ("scope", spec.scopes.as_str()),
-        ])
-        .send()
+    let resp = response_json(
+        send_request(
+            client
+                .post(&spec.authorize_url)
+                .header("Accept", "application/json")
+                .form(&[
+                    ("client_id", spec.client_id.as_str()),
+                    ("scope", spec.scopes.as_str()),
+                ]),
+        )
         .await?
         .error_for_status()
-        .map_err(AuthError::Http)?
-        .json::<Value>()
-        .await?;
+        .map_err(AuthError::Http)?,
+    )
+    .await?;
 
     let device_code = resp["device_code"]
         .as_str()
@@ -422,18 +429,20 @@ async fn device_login(
             ));
         }
         tokio::time::sleep(Duration::from_secs(interval)).await;
-        let poll = client
-            .post(&spec.token_url)
-            .header("Accept", "application/json")
-            .form(&[
-                ("client_id", spec.client_id.as_str()),
-                ("device_code", device_code.as_str()),
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ])
-            .send()
-            .await?
-            .json::<Value>()
-            .await?;
+        let poll = response_json(
+            send_request(
+                client
+                    .post(&spec.token_url)
+                    .header("Accept", "application/json")
+                    .form(&[
+                        ("client_id", spec.client_id.as_str()),
+                        ("device_code", device_code.as_str()),
+                        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                    ]),
+            )
+            .await?,
+        )
+        .await?;
         match poll["error"].as_str() {
             None => {
                 let token = poll["access_token"]
@@ -492,9 +501,9 @@ async fn exchange_derived_token(
     for (k, v) in &derived.headers {
         req = req.header(k.as_str(), v.as_str());
     }
-    let resp = req.send().await?;
+    let resp = send_request(req).await?;
     let status = resp.status();
-    let json: Value = resp.json().await?;
+    let json: Value = response_json(resp).await?;
     if !status.is_success() {
         let msg = json["message"].as_str().unwrap_or("unknown error");
         return Err(AuthError::TokenExchange(format!(
@@ -654,12 +663,9 @@ async fn send_grant(spec: &ProviderSpec, body: GrantBody) -> Result<OAuthToken> 
     let client = http_client()?;
     let req = client.post(&spec.token_url);
     let resp = match body {
-        GrantBody::Json(json) => req.json(&json).send().await?,
+        GrantBody::Json(json) => send_request(req.json(&json)).await?,
         GrantBody::Form(form) => {
-            req.header("Accept", "application/json")
-                .form(&form)
-                .send()
-                .await?
+            send_request(req.header("Accept", "application/json").form(&form)).await?
         }
     };
     parse_token_response(resp).await
@@ -684,7 +690,7 @@ async fn refresh_grant(spec: &ProviderSpec, refresh_token: &str) -> Result<OAuth
 /// leaking response bodies that could contain token material.
 async fn parse_token_response(resp: reqwest::Response) -> Result<OAuthToken> {
     let status = resp.status();
-    let json: Value = resp.json().await?;
+    let json: Value = response_json(resp).await?;
     if !status.is_success() {
         let msg = json["error_description"]
             .as_str()
@@ -747,6 +753,20 @@ fn http_client() -> Result<reqwest::Client> {
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(AuthError::Http)
+}
+
+async fn send_request(req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+    match req.send().await {
+        Ok(resp) => Ok(resp),
+        Err(err) => Err(AuthError::Http(err)),
+    }
+}
+
+async fn response_json(resp: reqwest::Response) -> Result<Value> {
+    match resp.json().await {
+        Ok(json) => Ok(json),
+        Err(err) => Err(AuthError::Http(err)),
+    }
 }
 
 pub use crate::spec::{spec_for, suggested_models, supports_oauth, validate};
