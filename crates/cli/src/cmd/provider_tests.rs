@@ -35,4 +35,20 @@ fn provider_printer_helpers() {
     assert!(provider_default_missing_line("acme").contains("provider add"));
     assert!(model_default_set_line("openai", "gpt").contains("openai"));
     assert!(agent_not_found_line("plan").contains("plan"));
+    let none = provider_none_lines("anthropic, openai");
+    assert!(none.iter().any(|l| l.contains("No providers")));
+    assert!(none.iter().any(|l| l.contains("anthropic, openai")));
+    assert!(provider_list_header().contains("Configured"));
+    let models = model_none_lines(Some("/tmp/c.toml"));
+    assert!(models.iter().any(|l| l.contains("/tmp/c.toml")));
+    assert!(
+        model_none_lines(None)
+            .iter()
+            .any(|l| l.contains("No models"))
+    );
+    assert!(model_list_header().contains("Configured"));
+    let plugins = plugins_empty_lines();
+    assert!(plugins.iter().any(|l| l.contains("No shell plugins")));
+    assert!(plugins_header(2).contains("2"));
+    assert!(no_agents_configured_line().contains("no agents"));
 }

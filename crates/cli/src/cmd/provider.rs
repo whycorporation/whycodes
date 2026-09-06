@@ -93,23 +93,77 @@ pub(crate) fn agent_not_found_line(name: &str) -> String {
     format!("{} Agent '{}' not found.", "✗".red(), name)
 }
 
+pub(crate) fn provider_none_lines(built_in: &str) -> Vec<String> {
+    vec![
+        format!("{} No providers configured.", "ℹ".cyan()),
+        String::new(),
+        "Add a provider:".into(),
+        "  whycodes provider add <name> --api-key <key> --base-url <url>".into(),
+        String::new(),
+        format!("Built-in providers supported: {built_in}"),
+    ]
+}
+
+pub(crate) fn provider_list_header() -> String {
+    format!("{} Configured providers:", "🔌".bold())
+}
+
+pub(crate) fn model_none_lines(config_path: Option<&str>) -> Vec<String> {
+    let mut lines = vec![
+        format!("{} No models configured.", "ℹ".cyan()),
+        String::new(),
+        "Configure models in your config file:".into(),
+    ];
+    if let Some(path) = config_path {
+        lines.push(format!("  {path}"));
+    }
+    lines
+}
+
+pub(crate) fn model_list_header() -> String {
+    format!("{} Configured models:", "🔌".bold())
+}
+
+pub(crate) fn plugins_empty_lines() -> Vec<String> {
+    vec![
+        format!("{} No shell plugins configured.", "🔌".bold()),
+        "TOML: ~/.config/whycodes/plugins.toml or".into(),
+        "      .whycodes/plugins.toml".into(),
+        String::new(),
+        "  [[plugins]]".into(),
+        "  name = \"hello\"".into(),
+        "  command = \"echo hello from plugin\"".into(),
+        "  description = \"Demo plugin\"".into(),
+        String::new(),
+        "Or a directory plugin:".into(),
+        "  .whycodes/plugins/hello/plugin.json".into(),
+        "  {\"name\":\"hello\",\"command\":\"./run.sh\",\"description\":\"Demo\"}".into(),
+        String::new(),
+        "Tools appear as plugin_<name> (tool_profile=full or tool_search).".into(),
+    ]
+}
+
+pub(crate) fn plugins_header(n: usize) -> String {
+    format!("{} Shell plugins ({n}):", "🔌".bold())
+}
+
+pub(crate) fn no_agents_configured_line() -> &'static str {
+    "  (no agents configured)"
+}
+
 pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
     let mut config = Config::load()?;
 
     match cmd {
         ProviderCmd::List => {
             if config.providers.is_empty() {
-                println!("{} No providers configured.", "ℹ".cyan());
-                println!();
-                println!("Add a provider:");
-                println!("  whycodes provider add <name> --api-key <key> --base-url <url>");
-                println!();
-                println!(
-                    "Built-in providers supported: {}",
-                    whycodes_llm::ProviderRegistry::default().names().join(", ")
-                );
+                for line in provider_none_lines(
+                    &whycodes_llm::ProviderRegistry::default().names().join(", "),
+                ) {
+                    println!("{line}");
+                }
             } else {
-                println!("{} Configured providers:", "🔑".bold());
+                println!("{}", provider_list_header());
                 for (name, provider) in &config.providers {
                     let key_status = if provider.api_key.is_some() {
                         "✓".green()
@@ -197,14 +251,12 @@ pub(crate) async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
     match cmd {
         ModelCmd::List => {
             if config.models.is_empty() {
-                println!("{} No models configured.", "ℹ".cyan());
-                println!();
-                println!("Configure models in your config file:");
-                if let Ok(path) = Config::default_path() {
-                    println!("  {}", path.display());
+                let path = Config::default_path().ok().map(|p| p.display().to_string());
+                for line in model_none_lines(path.as_deref()) {
+                    println!("{line}");
                 }
             } else {
-                println!("{} Configured models:", "🤖".bold());
+                println!("{}", model_list_header());
                 for (key, model) in &config.models {
                     println!(
                         "  {} → {}/{}",
@@ -245,23 +297,12 @@ pub(crate) async fn cmd_plugins(cli: &Cli, cmd: Option<&PluginsCmd>) -> anyhow::
     let project = resolve_dir(cli);
     let listed = whycodes_tools::list_shell_plugins(Some(&project));
     if listed.is_empty() {
-        println!("{} No shell plugins configured.", "🔌".bold());
-        println!("TOML: ~/.config/whycodes/plugins.toml or");
-        println!("      .whycodes/plugins.toml");
-        println!();
-        println!("  [[plugins]]");
-        println!("  name = \"hello\"");
-        println!("  command = \"echo hello from plugin\"");
-        println!("  description = \"Demo plugin\"");
-        println!();
-        println!("Or a directory plugin:");
-        println!("  .whycodes/plugins/hello/plugin.json");
-        println!("  {{\"name\":\"hello\",\"command\":\"./run.sh\",\"description\":\"Demo\"}}");
-        println!();
-        println!("Tools appear as plugin_<name> (tool_profile=full or tool_search).");
+        for line in plugins_empty_lines() {
+            println!("{line}");
+        }
         return Ok(());
     }
-    println!("{} Shell plugins ({}):", "🔌".bold(), listed.len());
+    println!("{}", plugins_header(listed.len()));
     for p in &listed {
         println!(
             "  {} → {} — {} ({})",
@@ -316,7 +357,7 @@ pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
                 );
             }
             if config.agents.is_empty() {
-                println!("  (no agents configured)");
+                println!("{}", no_agents_configured_line());
             }
         }
     }

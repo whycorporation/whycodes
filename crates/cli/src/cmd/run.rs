@@ -340,6 +340,26 @@ pub(crate) fn compacting_line() -> String {
     format!("{} Compacting conversation…", "…".dimmed())
 }
 
+pub(crate) fn bang_usage_line() -> &'static str {
+    "Usage: ! <shell command>"
+}
+
+pub(crate) fn bang_echo_line(cmd: &str) -> String {
+    format!("{} {}", "$".dimmed(), cmd.dimmed())
+}
+
+pub(crate) fn custom_command_line(name: &str) -> String {
+    format!("{} /{} → prompt", "⚡".bold(), name.cyan())
+}
+
+pub(crate) fn git_unavailable_line(err: &str) -> String {
+    format!("{} git unavailable: {}", "✗".red(), err)
+}
+
+pub(crate) fn git_status_failed_line(stderr: &str) -> String {
+    format!("{} git status: {stderr}", "✗".red())
+}
+
 pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     let msg = e.to_string();
     if msg.contains("No such device")
@@ -646,10 +666,10 @@ pub(crate) async fn cmd_run(
         if let Some(cmd) = input.strip_prefix('!') {
             let cmd = cmd.trim();
             if cmd.is_empty() {
-                println!("Usage: ! <shell command>");
+                println!("{}", bang_usage_line());
                 continue;
             }
-            println!("{} {}", "$".dimmed(), cmd.dimmed());
+            println!("{}", bang_echo_line(cmd));
             let output = run_shell_capture(cmd, &project_dir);
             println!("{}", output);
             session.add_user_message(&format!(
@@ -669,7 +689,7 @@ pub(crate) async fn cmd_run(
                 if !ensure_api_key(&mut api_key, &provider, &config).await {
                     continue;
                 }
-                println!("{} /{} → prompt", "⚡".bold(), name.cyan());
+                println!("{}", custom_command_line(name));
                 history.push_before_turn(&session.messages, &project_dir);
                 refresh_session_memory(
                     &mut session,
@@ -867,11 +887,10 @@ pub(crate) async fn cmd_run(
                             }
                         }
                         Ok(o) => eprintln!(
-                            "{} git status: {}",
-                            "✗".red(),
-                            String::from_utf8_lossy(&o.stderr).trim()
+                            "{}",
+                            git_status_failed_line(String::from_utf8_lossy(&o.stderr).trim())
                         ),
-                        Err(e) => eprintln!("{} git unavailable: {}", "✗".red(), e),
+                        Err(e) => eprintln!("{}", git_unavailable_line(&e.to_string())),
                     }
                     continue;
                 }

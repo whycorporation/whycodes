@@ -54,4 +54,12 @@ fn mcp_printer_helpers() {
     assert!(mcp_saved_stdio_line("fs", "npx", "-y pkg").contains("stdio"));
     assert!(mcp_removed_line("fs").contains("removed"));
     assert!(mcp_not_found_line("fs").contains("not found"));
+    let empty = mcp_empty_lines();
+    assert!(empty.iter().any(|l| l.contains("No MCP servers")));
+    assert!(
+        empty
+            .iter()
+            .any(|l| l.contains("streamable") || l.contains("--url"))
+    );
+    assert!(mcp_configured_header().contains("Configured"));
 }

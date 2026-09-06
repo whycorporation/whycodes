@@ -211,4 +211,9 @@ fn slash_printer_helpers_cover_repl_status_lines() {
     assert!(skip_prompt_cache_line().contains("prompt cache"));
     assert!(nothing_to_compact_line().contains("Nothing to compact"));
     assert!(compacting_line().contains("Compacting"));
+    assert_eq!(bang_usage_line(), "Usage: ! <shell command>");
+    assert!(bang_echo_line("ls").contains("ls"));
+    assert!(custom_command_line("review").contains("review"));
+    assert!(git_unavailable_line("enoent").contains("enoent"));
+    assert!(git_status_failed_line("fatal").contains("fatal"));
 }

@@ -79,6 +79,21 @@ pub(crate) fn mcp_not_found_line(name: &str) -> String {
     format!("{} MCP server '{}' not found.", "✗".red(), name.cyan())
 }
 
+pub(crate) fn mcp_empty_lines() -> Vec<String> {
+    vec![
+        format!("{} No MCP servers configured.", "🔌".bold()),
+        String::new(),
+        "Add one:".into(),
+        "  whycodes mcp add <name> <command> [--args \"arg1 arg2\"]".into(),
+        "  whycodes mcp add <name> --url https://mcp.example.com/mcp".into(),
+        "  whycodes mcp add <name> --url https://host/sse --type sse".into(),
+    ]
+}
+
+pub(crate) fn mcp_configured_header() -> String {
+    format!("{} Configured MCP servers:", "🔌".bold())
+}
+
 pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
     let mut config = Config::load()?;
 
@@ -114,14 +129,11 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
         }
         McpCmd::List => {
             if config.mcp_servers.is_empty() {
-                println!("{} No MCP servers configured.", "🔌".bold());
-                println!();
-                println!("Add one:");
-                println!("  whycodes mcp add <name> <command> [--args \"arg1 arg2\"]");
-                println!("  whycodes mcp add <name> --url https://mcp.example.com/mcp");
-                println!("  whycodes mcp add <name> --url https://host/sse --type sse");
+                for line in mcp_empty_lines() {
+                    println!("{line}");
+                }
             } else {
-                println!("{} Configured MCP servers:", "🔌".bold());
+                println!("{}", mcp_configured_header());
                 for (name, server) in &config.mcp_servers {
                     if let Some(url) = &server.url {
                         let kind = server
