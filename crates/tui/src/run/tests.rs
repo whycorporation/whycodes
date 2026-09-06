@@ -1381,6 +1381,36 @@ fn event_forces_redraw_treats_paste_as_dirty() {
 }
 
 #[test]
+fn parse_loop_slash_covers_stop_queue_and_usage() {
+    assert!(matches!(parse_loop_slash("stop"), LoopSlash::Stop));
+    assert!(matches!(parse_loop_slash("clear"), LoopSlash::Stop));
+    match parse_loop_slash("2 do the thing") {
+        LoopSlash::Queue { n, prompt } => {
+            assert_eq!(n, 2);
+            assert_eq!(prompt, "do the thing");
+        }
+        _ => panic!("expected queue, got usage/stop"),
+    }
+    match parse_loop_slash("keep going") {
+        LoopSlash::Queue { n, prompt } => {
+            assert_eq!(n, 3);
+            assert_eq!(prompt, "keep going");
+        }
+        _ => panic!("expected default N=3"),
+    }
+    match parse_loop_slash("99 only") {
+        LoopSlash::Queue { n, prompt } => {
+            assert_eq!(n, 20);
+            assert_eq!(prompt, "only");
+        }
+        _ => panic!("expected clamp to 20"),
+    }
+    assert!(matches!(parse_loop_slash(""), LoopSlash::Usage));
+    assert!(matches!(parse_loop_slash("4"), LoopSlash::Usage));
+    assert_eq!(LOOP_USAGE, "Usage: /loop N prompt…  |  /loop stop");
+}
+
+#[test]
 fn expand_at_files_multiple_and_directory() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.txt"), "AAA").unwrap();

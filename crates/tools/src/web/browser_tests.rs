@@ -225,6 +225,14 @@ async fn snapshot_without_session_errors() {
 }
 
 #[test]
+fn clamp_wait_ms_caps_at_fifteen_seconds() {
+    assert_eq!(clamp_wait_ms(0), 0);
+    assert_eq!(clamp_wait_ms(1_000), 1_000);
+    assert_eq!(clamp_wait_ms(15_000), 15_000);
+    assert_eq!(clamp_wait_ms(99_000), 15_000);
+}
+
+#[test]
 fn find_browser_and_http_get_without_slash() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let prev = std::env::var_os("WHYCODES_BROWSER");

@@ -333,8 +333,12 @@ fn type_text(selector: &str, text: &str) -> ToolResult {
     }
 }
 
+fn clamp_wait_ms(ms: u64) -> u64 {
+    ms.min(15_000)
+}
+
 fn wait_ms(ms: u64) -> ToolResult {
-    let ms = ms.min(15_000);
+    let ms = clamp_wait_ms(ms);
     std::thread::sleep(Duration::from_millis(ms));
     ok(format!("waited {ms}ms"))
 }

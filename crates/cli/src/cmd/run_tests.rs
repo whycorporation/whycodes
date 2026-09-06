@@ -166,3 +166,40 @@ fn slash_info_cost_doctor_and_resume_helpers() {
     assert_eq!(masked_api_key_prefix("abcdefghij"), "abcdefgh");
     assert_eq!(masked_api_key_prefix("ab"), "ab");
 }
+
+#[test]
+fn slash_printer_helpers_cover_repl_status_lines() {
+    assert!(unknown_slash_line("/nope").contains("/nope"));
+    assert!(new_session_line("hello").contains("hello"));
+    assert!(rename_usage_line("t", "manual").contains("usage"));
+    assert!(renamed_line("n").contains("n"));
+    assert!(undid_turn_line(3).contains("3"));
+    assert!(redid_turn_line(4).contains("4"));
+    let compact = compact_ok_line(10, 2, 100, 20);
+    assert!(compact.contains("10"));
+    assert!(compact.contains("2"));
+    let ctx = context_report_lines(2, 40, 8000, "on", "core");
+    assert!(ctx.iter().any(|l| l.contains("messages: 2")));
+    assert!(ctx.iter().any(|l| l.contains("llm=on")));
+    let doctor = doctor_report_lines("p", "m", "/proj", "set", "bwrap", true, "core");
+    assert!(doctor.iter().any(|l| l.contains("provider: p")));
+    assert!(doctor.iter().any(|l| l.contains("network=true")));
+    assert!(resumed_line("title", "abcdefghij", 7).contains("title"));
+    assert!(switched_model_line("acme", "m").contains("acme"));
+    assert!(model_set_line("solo").contains("solo"));
+    assert!(effort_unknown_line("nope").contains("nope"));
+    assert!(effort_no_levels_line().contains("no reasoning-effort"));
+    assert!(switched_agent_line("plan").contains("plan"));
+    assert!(api_key_loaded_line("xai", "abcdefgh").contains("xai"));
+    let missing = connect_missing_key_lines("xai", true);
+    assert!(missing.iter().any(|l| l.contains("auth login xai")));
+    let missing = connect_missing_key_lines("acme", false);
+    assert!(missing.iter().all(|l| !l.contains("auth login")));
+    assert!(login_connected_label(true).contains("connected"));
+    assert!(login_connected_label(false).contains("not connected"));
+    assert!(oauth_unavailable_line("acme", "anthropic").contains("acme"));
+    assert!(themes_set_hint("nord").contains("nord"));
+    assert!(tools_list_header(3).contains("3"));
+    assert!(remembered_line("abcdefghij", "note").contains("note"));
+    assert!(repl_memory_status(true, 2, "/tmp/m.md").contains("entries=2"));
+}

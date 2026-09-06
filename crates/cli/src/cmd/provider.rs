@@ -6,6 +6,44 @@ use colored::*;
 use whycodes_config::Config;
 use whycodes_core::types::{ModelConfig, ProviderConfig};
 
+pub(crate) fn provider_key_status(has_key: bool) -> &'static str {
+    if has_key { "set" } else { "not set" }
+}
+
+pub(crate) fn provider_base_url<'a>(
+    base_url: Option<&'a str>,
+    api_base: Option<&'a str>,
+) -> &'a str {
+    base_url.or(api_base).unwrap_or("(default)")
+}
+
+pub(crate) fn provider_add_summary(has_key: bool) -> &'static str {
+    if has_key {
+        "added with API key"
+    } else {
+        "added (no API key — set via env var or --api-key)"
+    }
+}
+
+pub(crate) fn parse_provider_headers(raw: &str) -> std::collections::HashMap<String, String> {
+    let mut headers_map = std::collections::HashMap::new();
+    for pair in raw.split(',') {
+        let parts: Vec<&str> = pair.splitn(2, '=').collect();
+        if parts.len() == 2 {
+            headers_map.insert(parts[0].trim().to_string(), parts[1].trim().to_string());
+        }
+    }
+    headers_map
+}
+
+pub(crate) fn agent_default_marker(name: &str, default_agent: &str) -> String {
+    if name == default_agent {
+        " (default)".dimmed().to_string()
+    } else {
+        String::new()
+    }
+}
+
 pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
     let mut config = Config::load()?;
 
@@ -29,20 +67,15 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                     } else {
                         "✗".red()
                     };
-                    let url = provider
-                        .base_url
-                        .as_deref()
-                        .or(provider.api_base.as_deref())
-                        .unwrap_or("(default)");
+                    let url = provider_base_url(
+                        provider.base_url.as_deref(),
+                        provider.api_base.as_deref(),
+                    );
                     println!(
                         "  {} {}  API key: {}  Base URL: {}",
                         name.cyan(),
                         key_status,
-                        if provider.api_key.is_some() {
-                            "set"
-                        } else {
-                            "not set"
-                        },
+                        provider_key_status(provider.api_key.is_some()),
                         url
                     );
                 }
@@ -54,16 +87,10 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
             base_url,
             headers,
         } => {
-            let mut headers_map = std::collections::HashMap::new();
-            if let Some(h) = headers {
-                for pair in h.split(',') {
-                    let parts: Vec<&str> = pair.splitn(2, '=').collect();
-                    if parts.len() == 2 {
-                        headers_map
-                            .insert(parts[0].trim().to_string(), parts[1].trim().to_string());
-                    }
-                }
-            }
+            let headers_map = headers
+                .as_deref()
+                .map(parse_provider_headers)
+                .unwrap_or_default();
 
             let provider = ProviderConfig {
                 name: name.clone(),
@@ -94,11 +121,7 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                 "{} Provider '{}' {}",
                 "✓".green(),
                 name.cyan(),
-                if api_key.is_some() {
-                    "added with API key"
-                } else {
-                    "added (no API key — set via env var or --api-key)"
-                }
+                provider_add_summary(api_key.is_some())
             );
         }
         ProviderCmd::Remove { name } => {
@@ -251,11 +274,7 @@ pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
         None => {
             println!("{} Available agents:", "🤖".bold());
             for agent in &config.agents {
-                let default_marker = if agent.name == config.default_agent {
-                    " (default)".dimmed()
-                } else {
-                    "".into()
-                };
+                let default_marker = agent_default_marker(&agent.name, &config.default_agent);
                 println!(
                     "  {}{} — {}",
                     agent.name.cyan(),
