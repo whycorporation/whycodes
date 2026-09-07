@@ -881,6 +881,9 @@ fn lsp_overlay_deserializes_and_merges() {
         file_types = [".xyz"]
         root_markers = [".xyz-project"]
         language_id = "xyz"
+        init_options = { cargo = { buildScripts = true } }
+        settings = { checkOnSave = false }
+        is_linter = true
     "#;
     let parsed: LspConfig = toml::from_str(toml).unwrap();
     assert_eq!(parsed.idle_timeout_ms, Some(60_000));
@@ -896,7 +899,38 @@ fn lsp_overlay_deserializes_and_merges() {
     assert!(merged.lsp.servers.contains_key("my-lsp"));
     let (idle, servers) = merged.lsp.to_runtime_settings();
     assert_eq!(idle, Some(60_000));
-    assert!(servers.iter().any(|(n, _)| n == "my-lsp"));
+    let mine = servers.iter().find(|(n, _)| n == "my-lsp").unwrap();
+    assert_eq!(
+        mine.1.init_options.as_ref().unwrap()["cargo"]["buildScripts"],
+        true
+    );
+    assert_eq!(mine.1.settings.as_ref().unwrap()["checkOnSave"], false);
+    assert_eq!(mine.1.is_linter, Some(true));
+}
+
+#[test]
+fn lsp_overlay_accepts_camel_case_aliases() {
+    let toml = r#"
+        idleTimeoutMs = 12000
+
+        [servers.gopls]
+        fileTypes = [".go"]
+        languageId = "go"
+        rootMarkers = ["go.mod"]
+        initOptions = { analyses = { unusedparams = true } }
+        isLinter = false
+    "#;
+    let parsed: LspConfig = toml::from_str(toml).unwrap();
+    assert_eq!(parsed.idle_timeout_ms, Some(12_000));
+    let go = &parsed.servers["gopls"];
+    assert_eq!(go.file_types, vec![".go"]);
+    assert_eq!(go.language_id.as_deref(), Some("go"));
+    assert_eq!(go.is_linter, Some(false));
+    let (_, servers) = parsed.to_runtime_settings();
+    assert_eq!(
+        servers[0].1.init_options.as_ref().unwrap()["analyses"]["unusedparams"],
+        true
+    );
 }
 
 #[test]

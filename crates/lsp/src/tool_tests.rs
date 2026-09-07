@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::LspServerSpec;
 use whycodes_core::tool::ToolContext;
 
 #[test]
@@ -220,4 +221,110 @@ async fn type_definition_implementation_and_symbols() {
         .await;
     assert!(!symbols.is_error, "{}", symbols.content);
     assert!(symbols.content.contains("main"));
+}
+
+#[tokio::test]
+async fn workspace_symbols_without_file_uses_a_cached_client() {
+    let tool = LspTool::new();
+    let ctx = ToolContext::new("/tmp");
+    let path = "/tmp/x.whycodes_lsp_fake";
+    let primed = tool
+        .execute(json!({ "action": "diagnostics", "file_path": path }), &ctx)
+        .await;
+    assert!(!primed.is_error, "{}", primed.content);
+    let symbols = tool
+        .execute(json!({ "action": "symbols", "query": "main" }), &ctx)
+        .await;
+    assert!(!symbols.is_error, "{}", symbols.content);
+    assert!(symbols.content.contains("main"));
+}
+
+#[tokio::test]
+async fn workspace_symbols_without_client_reports_missing_rust_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = LspTool::new();
+    let ctx = ToolContext::new(dir.path().to_str().unwrap());
+    let result = tool
+        .execute(json!({ "action": "symbols", "query": "main" }), &ctx)
+        .await;
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("Language server")
+            || result.content.contains("needs a project marker")
+            || result.content.contains("was not found on PATH"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn overlay_can_disable_a_builtin_and_set_idle_timeout() {
+    let mut overlay = LspSettings {
+        idle_timeout_ms: Some(1),
+        ..LspSettings::default()
+    };
+    overlay.servers.insert(
+        "whycodes-lsp-fake".into(),
+        LspServerSpec {
+            disabled: Some(true),
+            ..LspServerSpec::default()
+        },
+    );
+    let tool = LspTool::with_overlay(&overlay);
+    let ctx = ToolContext::new("/tmp");
+    let result = tool
+        .execute(
+            json!({ "action": "diagnostics", "file_path": "/tmp/x.whycodes_lsp_fake" }),
+            &ctx,
+        )
+        .await;
+    assert!(result.is_error);
+    assert!(
+        result
+            .content
+            .contains("No language server configured for '.whycodes_lsp_fake'")
+    );
+}
+
+#[tokio::test]
+async fn idle_timeout_evicts_cached_clients() {
+    let overlay = LspSettings {
+        idle_timeout_ms: Some(1),
+        ..LspSettings::default()
+    };
+    let tool = LspTool::with_overlay(&overlay);
+    let client = crate::client::start_test_client("ok", false).await.unwrap();
+    tool.insert_client("whycodes_lsp_fake", Arc::new(client))
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let ctx = ToolContext::new("/tmp");
+    let result = tool
+        .execute(
+            json!({ "action": "hover", "file_path": "/tmp/x.whycodes_lsp_fake", "line": 1 }),
+            &ctx,
+        )
+        .await;
+    assert!(!result.is_error, "{}", result.content);
+}
+
+#[tokio::test]
+async fn missing_root_marker_message_names_the_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = LspTool::new();
+    let ctx = ToolContext::new(dir.path().to_str().unwrap());
+    let path = dir.path().join("x.rs");
+    let result = tool
+        .execute(
+            json!({ "action": "diagnostics", "file_path": path.to_str().unwrap() }),
+            &ctx,
+        )
+        .await;
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("rust-analyzer")
+            && (result.content.contains("needs a project marker")
+                || result.content.contains("was not found on PATH")),
+        "{}",
+        result.content
+    );
 }

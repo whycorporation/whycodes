@@ -498,6 +498,21 @@ fn command_available_finds_sh_and_rejects_missing() {
 }
 
 #[tokio::test]
+async fn start_configured_sends_init_options_and_settings() {
+    let args = fake_args("ok");
+    let py = test_python();
+    let settings = serde_json::json!({"checkOnSave": false});
+    let init = serde_json::json!({"cargo": {"buildScripts": true}});
+    let client =
+        LspClient::start_configured(py, &args, "/tmp", "rust", Some(&init), Some(&settings))
+            .await
+            .unwrap();
+    assert_eq!(client.settings(), Some(&settings));
+    client.mark_used();
+    assert!(client.idle_for() < std::time::Duration::from_secs(2));
+}
+
+#[tokio::test]
 async fn consume_stdout_breaks_when_separator_read_fails() {
     struct HeaderThenErr {
         n: u8,

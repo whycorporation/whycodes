@@ -103,3 +103,70 @@ fn overlay_serde_aliases_match_toml_keys() {
     assert_eq!(spec.init_options, Some(serde_json::json!({"foo": 1})));
     assert!(spec.is_linter());
 }
+
+#[test]
+fn overlay_keeps_base_args_when_overlay_args_are_empty() {
+    let mut overlay = LspSettings::default();
+    overlay.servers.insert(
+        "typescript-language-server".into(),
+        LspServerSpec {
+            disabled: Some(false),
+            ..LspServerSpec::default()
+        },
+    );
+    let merged = LspSettings::resolved(&overlay);
+    let ts = merged.servers.get("typescript-language-server").unwrap();
+    assert_eq!(ts.args, vec!["--stdio"]);
+    assert_eq!(ts.command.as_deref(), Some("typescript-language-server"));
+}
+
+#[test]
+fn linters_sort_after_language_servers() {
+    let mut overlay = LspSettings::default();
+    overlay.servers.insert(
+        "pyright".into(),
+        LspServerSpec {
+            is_linter: Some(true),
+            ..LspServerSpec::default()
+        },
+    );
+    let merged = LspSettings::resolved(&overlay);
+    assert_eq!(merged.spec_for_ext("py").unwrap().0, "pylsp");
+}
+
+#[test]
+fn resolve_skips_when_root_markers_are_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = LspSettings::builtins();
+    // rust-analyzer requires Cargo.toml in cwd, even if the binary exists.
+    assert!(settings.resolve("rs", dir.path()).is_none());
+}
+
+#[test]
+fn resolve_accepts_empty_markers_when_binary_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = LspSettings {
+        idle_timeout_ms: None,
+        servers: HashMap::from([(
+            "local".into(),
+            LspServerSpec {
+                command: Some("sh".into()),
+                file_types: vec![".zzz".into()],
+                ..LspServerSpec::default()
+            },
+        )]),
+    };
+    let resolved = settings
+        .resolve("zzz", dir.path())
+        .or_else(|| {
+            let mut cmd = settings.clone();
+            cmd.servers.get_mut("local").unwrap().command = Some("cmd".into());
+            cmd.resolve("zzz", dir.path())
+        })
+        .or_else(|| {
+            let mut py = settings;
+            py.servers.get_mut("local").unwrap().command = Some("python3".into());
+            py.resolve("zzz", dir.path())
+        });
+    assert!(resolved.is_some(), "expected sh, cmd, or python3 on PATH");
+}

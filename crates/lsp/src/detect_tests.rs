@@ -41,6 +41,11 @@ fn path_from_file_uri_roundtrips_unix_shape() {
     let drive = path_from_file_uri("file:///C:/foo/bar.rs").unwrap();
     let s = drive.to_string_lossy();
     assert!(s.contains("foo"));
+    let unc = path_from_file_uri("file:////server/share/x.rs").unwrap();
+    assert!(unc.to_string_lossy().contains("server"));
+    let relative = path_from_file_uri("file://relative/x.rs").unwrap();
+    assert!(relative.to_string_lossy().contains("relative"));
+    assert!(path_from_file_uri("http://example/x.rs").is_none());
 }
 
 #[test]
@@ -67,6 +72,7 @@ fn wildcard_markers_match_names_in_cwd() {
     assert!(wildcard_match("foo.cabal", "*.cabal"));
     assert!(!wildcard_match("cabal", "*.cabal"));
     assert!(wildcard_match("exact", "exact"));
+    assert!(!wildcard_match("ab", "*a*"));
 }
 
 #[test]

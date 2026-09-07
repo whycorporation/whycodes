@@ -121,6 +121,17 @@ fn register_and_register_as() {
 }
 
 #[test]
+fn configure_lsp_replaces_the_builtin_lsp_tool() {
+    let mut ex = ToolExecutor::new();
+    let overlay = whycodes_lsp::LspSettings {
+        idle_timeout_ms: Some(1_000),
+        servers: Default::default(),
+    };
+    ex.configure_lsp(&overlay);
+    assert!(ex.get("lsp").is_some());
+}
+
+#[test]
 fn get_unknown_returns_none() {
     let ex = ToolExecutor::new();
     assert!(ex.get("definitely_not_a_tool").is_none());
