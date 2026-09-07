@@ -11,6 +11,7 @@ description = "Cross-session semantic / auto memory for whycodes"
 default = []
 # MiniLM ONNX runtime (tract + tokenizers). Off by default for lean Boot/RSS.
 onnx = ["dep:tract-onnx", "dep:tokenizers"]
+bundled-sqlite = ["whycodes-storage/bundled"]
 
 [dependencies]
 whycodes-core = { path = "../core" }

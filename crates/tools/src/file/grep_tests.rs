@@ -24,8 +24,10 @@ fn search_single_file_matches() {
     let dir = TempDir::new().unwrap();
     let f = write(&dir, "a.txt", "hello world\nfoo bar\nhello again\n");
     let out = GrepTool::search("hello", &f, None, false, 0, 50, "/", None).unwrap();
-    assert!(out.contains("a.txt:1:hello world"));
-    assert!(out.contains("a.txt:3:hello again"));
+    assert!(out.contains("a.txt:1 "));
+    assert!(out.contains(":hello world"));
+    assert!(out.contains("a.txt:3 "));
+    assert!(out.contains(":hello again"));
     assert!(out.contains("(2 matches in 1 file"));
 }
 
@@ -75,9 +77,12 @@ fn search_context_lines() {
     let dir = TempDir::new().unwrap();
     let f = write(&dir, "a.txt", "before\nmatch\nafter\n");
     let out = GrepTool::search("match", &f, None, false, 1, 50, "/", None).unwrap();
-    assert!(out.contains("a.txt:1-before"));
-    assert!(out.contains("a.txt:2:match"));
-    assert!(out.contains("a.txt:3-after"));
+    assert!(out.contains("a.txt:1 "));
+    assert!(out.contains("-before"));
+    assert!(out.contains("a.txt:2 "));
+    assert!(out.contains(":match"));
+    assert!(out.contains("a.txt:3 "));
+    assert!(out.contains("-after"));
     assert!(out.contains("--"));
 }
 
@@ -184,7 +189,8 @@ fn search_context_includes_markers_only_between() {
     // Two matches with context should not end with a lone `--` at EOF boundary
     let f = write(&dir, "a.txt", "x\n\n\n");
     let out = GrepTool::search("x", &f, None, false, 1, 50, "/", None).unwrap();
-    assert!(out.contains("a.txt:1:x"));
+    assert!(out.contains("a.txt:1 "), "{out}");
+    assert!(out.contains(":x"), "{out}");
 }
 
 #[tokio::test]

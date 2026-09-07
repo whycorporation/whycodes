@@ -144,6 +144,27 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-07 — Chat scroll paint panics (`index outside of buffer`)
+
+**Symptom:** Wheel / trackpad scroll in a session paints the recovered
+overlay (`rendering error recovered`) instead of moving the transcript.
+Issue #72.
+
+**Root cause:** `Buffer::set_stringn` panics on coordinates outside the
+buffer. Chat layout can under-count a closed bubble (`layout_cache`
+stale vs real `line_cache` / re-render). The next scroll frame then
+paints extra rows and `y` walks off the chat rect into the prompt or
+past `area.bottom()`.
+
+**Fix:** Prefer `line_cache.len()` over a conflicting `layout_cache`.
+Cap each message slice to its laid-out slot. Clip `paint_chat_row` /
+`paint_concat_slices` to `buf.area()`. Refresh a mismatched height on
+paint so the next frame is consistent.
+
+**Prevention:** Never call `set_stringn` without a buffer-bounds check.
+Do not trust `layout_cache` when `line_cache` is present. Regression:
+`stale_layout_cache_scroll_paint_does_not_panic`.
+
 ### 2026-09-07 — Serve takeover test spawned a just-written `.sh` (ETXTBSY / noexec)
 
 **Symptom:** CI `Test (linux)` failed

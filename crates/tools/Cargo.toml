@@ -9,6 +9,7 @@ repository.workspace = true
 [features]
 default = []
 onnx = ["whycodes-memory/onnx"]
+bundled-sqlite = ["whycodes-memory/bundled-sqlite"]
 
 [dependencies]
 whycodes-core = { path = "../core" }
