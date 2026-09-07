@@ -212,6 +212,11 @@ impl ToolExecutor {
         names
     }
 
+    /// Replace the built-in `lsp` tool with a configured overlay.
+    pub fn configure_lsp(&mut self, overlay: &whycodes_lsp::LspSettings) {
+        self.register(Box::new(lsp::LspTool::with_overlay(overlay)));
+    }
+
     /// Load shell plugins from `plugins.toml` then `plugin.json` trees.
     ///
     /// Order (later same `name` wins): global toml → project toml →

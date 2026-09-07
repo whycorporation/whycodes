@@ -137,9 +137,14 @@ pub struct InitializeParams {
 
 impl InitializeParams {
     pub fn minimal(workspace_root: &str) -> Self {
-        let params = serde_json::json!({
+        Self::with_options(workspace_root, None)
+    }
+
+    pub fn with_options(workspace_root: &str, init_options: Option<&serde_json::Value>) -> Self {
+        let uri = crate::detect::file_uri(workspace_root);
+        let mut params = serde_json::json!({
             "processId": std::process::id(),
-            "rootUri": format!("file://{}", workspace_root),
+            "rootUri": uri,
             "rootPath": workspace_root,
             "capabilities": {
                 "textDocument": {
@@ -152,14 +157,18 @@ impl InitializeParams {
                     }
                 },
                 "workspace": {
-                    "diagnostics": { "refreshSupport": true }
+                    "diagnostics": { "refreshSupport": true },
+                    "configuration": true
                 }
             },
             "workspaceFolders": [{
-                "uri": format!("file://{}", workspace_root),
+                "uri": uri,
                 "name": "workspace"
             }]
         });
+        if let Some(opts) = init_options {
+            params["initializationOptions"] = opts.clone();
+        }
         Self { inner: params }
     }
 }

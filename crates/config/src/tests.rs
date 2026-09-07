@@ -868,6 +868,38 @@ fn merge_with_mcp_permission_commands() {
 }
 
 #[test]
+fn lsp_overlay_deserializes_and_merges() {
+    let toml = r#"
+        idle_timeout_ms = 60000
+
+        [servers.rust-analyzer]
+        disabled = true
+        args = ["--log-file", "/tmp/ra.log"]
+
+        [servers.my-lsp]
+        command = "my-lsp"
+        file_types = [".xyz"]
+        root_markers = [".xyz-project"]
+        language_id = "xyz"
+    "#;
+    let parsed: LspConfig = toml::from_str(toml).unwrap();
+    assert_eq!(parsed.idle_timeout_ms, Some(60_000));
+    assert_eq!(parsed.servers["rust-analyzer"].disabled, Some(true));
+    assert_eq!(parsed.servers["my-lsp"].command.as_deref(), Some("my-lsp"));
+
+    let overlay = Config {
+        lsp: parsed,
+        ..Config::default()
+    };
+    let merged = Config::default().merge_with(&overlay);
+    assert_eq!(merged.lsp.idle_timeout_ms, Some(60_000));
+    assert!(merged.lsp.servers.contains_key("my-lsp"));
+    let (idle, servers) = merged.lsp.to_runtime_settings();
+    assert_eq!(idle, Some(60_000));
+    assert!(servers.iter().any(|(n, _)| n == "my-lsp"));
+}
+
+#[test]
 fn merge_with_tools_flags() {
     // The merge only applies flags that differ from the derived `Default`
     // (all tools off) — i.e. it can *enable* a tool and replace the

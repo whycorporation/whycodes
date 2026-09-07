@@ -37,6 +37,7 @@ pub use mcp::{McpCaller, McpToolBridge};
 pub use plugin::{ListedPlugin, PluginShellTool, list_shell_plugins};
 pub use profile::ToolProfile;
 pub use tool::Tool;
+pub use whycodes_lsp::{LspServerSpec, LspSettings};
 
 #[cfg(test)]
 pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

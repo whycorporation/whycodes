@@ -28,6 +28,8 @@ pub struct LspClient {
     /// notifications.
     diagnostics: Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>,
     language_id: String,
+    settings: Option<serde_json::Value>,
+    last_used: Arc<Mutex<std::time::Instant>>,
 }
 
 impl LspClient {
@@ -38,11 +40,34 @@ impl LspClient {
         workspace_root: &str,
         language_id: &str,
     ) -> Result<Self> {
-        Self::boot(
+        Self::start_with(
             command,
             args,
             workspace_root,
             language_id,
+            None,
+            None,
+            Self::spawn_background(cfg!(not(test))),
+        )
+        .await
+    }
+
+    /// Start with optional `initializationOptions` and `workspace/didChangeConfiguration`.
+    pub async fn start_configured(
+        command: &str,
+        args: &[String],
+        workspace_root: &str,
+        language_id: &str,
+        init_options: Option<&serde_json::Value>,
+        settings: Option<&serde_json::Value>,
+    ) -> Result<Self> {
+        Self::start_with(
+            command,
+            args,
+            workspace_root,
+            language_id,
+            init_options,
+            settings,
             Self::spawn_background(cfg!(not(test))),
         )
         .await
@@ -52,11 +77,34 @@ impl LspClient {
         for_production
     }
 
+    async fn start_with(
+        command: &str,
+        args: &[String],
+        workspace_root: &str,
+        language_id: &str,
+        init_options: Option<&serde_json::Value>,
+        settings: Option<&serde_json::Value>,
+        spawn_background: bool,
+    ) -> Result<Self> {
+        Self::boot(
+            command,
+            args,
+            workspace_root,
+            language_id,
+            init_options,
+            settings,
+            spawn_background,
+        )
+        .await
+    }
+
     async fn boot(
         command: &str,
         args: &[String],
         workspace_root: &str,
         language_id: &str,
+        init_options: Option<&serde_json::Value>,
+        settings: Option<&serde_json::Value>,
         spawn_background: bool,
     ) -> Result<Self> {
         let mut cmd = Command::new(command);
@@ -84,10 +132,12 @@ impl LspClient {
             next_id: Arc::new(Mutex::new(1)),
             diagnostics: Arc::new(Mutex::new(HashMap::new())),
             language_id: language_id.to_string(),
+            settings: settings.cloned(),
+            last_used: Arc::new(Mutex::new(std::time::Instant::now())),
         };
 
         // Send initialize
-        let init_params = InitializeParams::minimal(workspace_root);
+        let init_params = InitializeParams::with_options(workspace_root, init_options);
         let _init_resp = client
             .request("initialize", init_params.inner)
             .await
@@ -102,6 +152,16 @@ impl LspClient {
             .notify("initialized", json!({}))
             .await
             .map_err(|e| LspError::msg(format!("initialized notification failed: {e}")))?;
+
+        if let Some(settings) = settings {
+            client
+                .notify(
+                    "workspace/didChangeConfiguration",
+                    json!({ "settings": settings }),
+                )
+                .await
+                .map_err(|e| LspError::msg(format!("didChangeConfiguration failed: {e}")))?;
+        }
 
         info!("LSP server {command} initialized for {}", workspace_root);
 
@@ -126,7 +186,16 @@ impl LspClient {
         workspace_root: &str,
         language_id: &str,
     ) -> Result<Self> {
-        Self::boot(command, args, workspace_root, language_id, false).await
+        Self::boot(
+            command,
+            args,
+            workspace_root,
+            language_id,
+            None,
+            None,
+            false,
+        )
+        .await
     }
 
     #[cfg(test)]
@@ -136,7 +205,24 @@ impl LspClient {
         workspace_root: &str,
         language_id: &str,
     ) -> Result<Self> {
-        Self::boot(command, args, workspace_root, language_id, true).await
+        Self::boot(command, args, workspace_root, language_id, None, None, true).await
+    }
+
+    pub fn mark_used(&self) {
+        if let Ok(mut t) = self.last_used.try_lock() {
+            *t = std::time::Instant::now();
+        }
+    }
+
+    pub fn idle_for(&self) -> std::time::Duration {
+        self.last_used
+            .try_lock()
+            .map(|t| t.elapsed())
+            .unwrap_or(std::time::Duration::ZERO)
+    }
+
+    pub fn settings(&self) -> Option<&serde_json::Value> {
+        self.settings.as_ref()
     }
 
     #[cfg(test)]
@@ -147,12 +233,18 @@ impl LspClient {
     }
 
     /// Open a text document in the language server.
+    ///
+    /// When `text` is `None`, the file is read from disk. Missing files open as empty.
     pub async fn open_document(&self, uri: &str, text: Option<&str>) -> Result<()> {
+        let body = match text {
+            Some(t) => t.to_string(),
+            None => read_uri_text(uri).unwrap_or_default(),
+        };
         let doc = TextDocumentItem {
             uri: uri.to_string(),
             language_id: self.language_id.clone(),
             version: 1,
-            text: text.unwrap_or("").to_string(),
+            text: body,
         };
         self.notify("textDocument/didOpen", json!({ "textDocument": doc }))
             .await
@@ -232,6 +324,54 @@ impl LspClient {
         parse_locations(resp.result)
     }
 
+    /// Go to type definition.
+    pub async fn type_definition(&self, uri: &str, position: Position) -> Result<Vec<Location>> {
+        let params = TextDocumentPositionParams {
+            text_document: crate::types::TextDocumentIdentifier {
+                uri: uri.to_string(),
+            },
+            position,
+        };
+        let resp = self
+            .request(
+                "textDocument/typeDefinition",
+                serde_json::to_value(&params)?,
+            )
+            .await?;
+        parse_locations(resp.result)
+    }
+
+    /// Go to implementation.
+    pub async fn implementation(&self, uri: &str, position: Position) -> Result<Vec<Location>> {
+        let params = TextDocumentPositionParams {
+            text_document: crate::types::TextDocumentIdentifier {
+                uri: uri.to_string(),
+            },
+            position,
+        };
+        let resp = self
+            .request(
+                "textDocument/implementation",
+                serde_json::to_value(&params)?,
+            )
+            .await?;
+        parse_locations(resp.result)
+    }
+
+    /// Document symbols.
+    pub async fn document_symbols(&self, uri: &str) -> Result<serde_json::Value> {
+        let params = json!({ "textDocument": { "uri": uri } });
+        let resp = self.request("textDocument/documentSymbol", params).await?;
+        Ok(resp.result.unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Workspace symbol search.
+    pub async fn workspace_symbols(&self, query: &str) -> Result<serde_json::Value> {
+        let params = json!({ "query": query });
+        let resp = self.request("workspace/symbol", params).await?;
+        Ok(resp.result.unwrap_or(serde_json::Value::Null))
+    }
+
     // ── Low-level JSON-RPC helpers ───────────────────────────────────────────
 
     async fn send_message(&self, msg: &serde_json::Value) -> Result<()> {
@@ -298,9 +438,10 @@ impl LspClient {
 
 /// Check if a LSP executable exists in PATH.
 pub fn command_available(cmd: &str) -> bool {
-    command_available_with("which", cmd)
+    crate::detect::which_command(cmd).is_some()
 }
 
+#[cfg(test)]
 fn command_available_with(which: &str, cmd: &str) -> bool {
     std::process::Command::new(which)
         .arg(cmd)
@@ -309,35 +450,20 @@ fn command_available_with(which: &str, cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn read_uri_text(uri: &str) -> Option<String> {
+    let path = crate::detect::path_from_file_uri(uri)?;
+    std::fs::read_to_string(path).ok()
+}
+
 fn take_child_pipe<T>(pipe: Option<T>, name: &str) -> Result<T> {
     pipe.ok_or_else(|| LspError::msg(format!("no {name} on LSP child")))
 }
 
-/// Resolve a language server command from a file extension.
-pub fn language_server_for_extension(ext: &str) -> Option<(&'static str, Vec<&'static str>)> {
-    match ext {
-        "rs" => Some(("rust-analyzer", vec![])),
-        "py" => Some(("pylsp", vec![])),
-        "ts" | "tsx" | "js" | "jsx" => Some(("typescript-language-server", vec!["--stdio"])),
-        "go" => Some(("gopls", vec![])),
-        "c" | "cpp" | "h" | "hpp" | "cc" => Some(("clangd", vec![])),
-        "java" => Some(("jdtls", vec![])),
-        "cs" => Some(("omnisharp", vec!["--languageserver"])),
-        "lua" => Some(("lua-language-server", vec![])),
-        "zig" => Some(("zls", vec![])),
-        "swift" => Some(("sourcekit-lsp", vec![])),
-        #[cfg(test)]
-        "whycodes_lsp_fake" => Some(("python3", vec!["-c", FAKE_LSP_PY, "ok"])),
-        #[cfg(test)]
-        "whycodes_lsp_empty" => Some(("python3", vec!["-c", FAKE_LSP_PY, "empty"])),
-        #[cfg(test)]
-        "whycodes_lsp_failopen" => Some(("python3", vec!["-c", FAKE_LSP_PY, "init_then_eof"])),
-        #[cfg(test)]
-        "whycodes_lsp_err" => Some(("python3", vec!["-c", FAKE_LSP_PY, "fail_after_open"])),
-        #[cfg(test)]
-        "whycodes_lsp_missing" => Some(("whycodes-lsp-missing-bin", vec![])),
-        _ => None,
-    }
+/// Resolve a language server command from a file extension (built-in defaults).
+pub fn language_server_for_extension(ext: &str) -> Option<(String, Vec<String>)> {
+    let settings = crate::config::LspSettings::builtins();
+    let (_, spec) = settings.spec_for_ext(ext)?;
+    Some((spec.command.clone()?, spec.args.clone()))
 }
 
 /// Language ID for a file extension.
@@ -369,7 +495,7 @@ pub fn language_id_for_extension(ext: &str) -> &'static str {
 }
 
 #[cfg(test)]
-const FAKE_LSP_PY: &str = r#"
+pub(crate) const FAKE_LSP_PY: &str = r#"
 import json, os, sys
 
 def read_msg():
@@ -528,6 +654,21 @@ while True:
             write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
         else:
             write_msg({"jsonrpc": "2.0", "id": mid, "result": [loc]})
+    elif method == "textDocument/typeDefinition" or method == "textDocument/implementation":
+        if mode == "empty":
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
+        else:
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": loc})
+    elif method == "textDocument/documentSymbol":
+        if mode == "empty":
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
+        else:
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": [{"name": "main", "kind": 12, "range": range0, "selectionRange": range0}]})
+    elif method == "workspace/symbol":
+        if mode == "empty":
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
+        else:
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": [{"name": "main", "kind": 12, "location": loc}]})
     elif method == "textDocument/diagnostic":
         if mode == "empty":
             write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
@@ -542,12 +683,23 @@ while True:
 "#;
 
 #[cfg(test)]
+pub(crate) fn test_python() -> &'static str {
+    for cmd in ["python3", "python", "py"] {
+        if crate::detect::which_command(cmd).is_some() {
+            return cmd;
+        }
+    }
+    "python3"
+}
+
+#[cfg(test)]
 pub(crate) async fn start_test_client(mode: &str, spawn_background: bool) -> Result<LspClient> {
     let args = vec!["-c".into(), FAKE_LSP_PY.into(), mode.into()];
+    let py = test_python();
     if spawn_background {
-        LspClient::start_with_reader("python3", &args, "/tmp", "rust").await
+        LspClient::start_with_reader(py, &args, "/tmp", "rust").await
     } else {
-        LspClient::start_without_reader("python3", &args, "/tmp", "rust").await
+        LspClient::start_without_reader(py, &args, "/tmp", "rust").await
     }
 }
 

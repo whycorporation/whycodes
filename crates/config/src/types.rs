@@ -80,6 +80,10 @@ pub struct Config {
     #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
 
+    /// Language-server overlay. Empty `servers` keeps built-in auto-detect.
+    #[serde(default)]
+    pub lsp: LspConfig,
+
     /// Global tool permissions (OpenCode-style allow/ask/deny).
     /// Merged into each agent; agent-level `permission.rules` wins on conflict.
     #[serde(default)]
@@ -373,6 +377,98 @@ pub enum McpTransportKind {
     Auto,
 }
 
+/// Language-server overlay stored in `config.toml` under `[lsp]`.
+///
+/// Empty `servers` keeps built-in auto-detect. Named entries overlay matching
+/// built-ins (or register a new server). Nested objects replace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LspConfig {
+    #[serde(
+        default,
+        alias = "idleTimeoutMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idle_timeout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub servers: HashMap<String, LspServerConfig>,
+}
+
+/// One language-server overlay entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LspServerConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, alias = "fileTypes", skip_serializing_if = "Vec::is_empty")]
+    pub file_types: Vec<String>,
+    #[serde(default, alias = "languageId", skip_serializing_if = "Option::is_none")]
+    pub language_id: Option<String>,
+    #[serde(default, alias = "rootMarkers", skip_serializing_if = "Vec::is_empty")]
+    pub root_markers: Vec<String>,
+    #[serde(
+        default,
+        alias = "initOptions",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub init_options: Option<toml::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<toml::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
+    #[serde(default, alias = "isLinter", skip_serializing_if = "Option::is_none")]
+    pub is_linter: Option<bool>,
+}
+
+impl LspConfig {
+    /// Convert this TOML overlay into JSON-valued runtime settings.
+    ///
+    /// The `lsp` crate owns detection and built-in servers; this is the user
+    /// overlay only (empty `servers` still auto-detects).
+    pub fn to_runtime_settings(&self) -> (Option<u64>, Vec<(String, RuntimeLspServer)>) {
+        let servers = self
+            .servers
+            .iter()
+            .map(|(name, spec)| (name.clone(), spec.to_runtime()))
+            .collect();
+        (self.idle_timeout_ms, servers)
+    }
+}
+
+/// JSON-valued overlay sent to `whycodes-lsp` (avoids a config → lsp edge).
+#[derive(Debug, Clone)]
+pub struct RuntimeLspServer {
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub file_types: Vec<String>,
+    pub language_id: Option<String>,
+    pub root_markers: Vec<String>,
+    pub init_options: Option<serde_json::Value>,
+    pub settings: Option<serde_json::Value>,
+    pub disabled: Option<bool>,
+    pub is_linter: Option<bool>,
+}
+
+impl LspServerConfig {
+    fn to_runtime(&self) -> RuntimeLspServer {
+        RuntimeLspServer {
+            command: self.command.clone(),
+            args: self.args.clone(),
+            file_types: self.file_types.clone(),
+            language_id: self.language_id.clone(),
+            root_markers: self.root_markers.clone(),
+            init_options: self.init_options.as_ref().and_then(toml_to_json),
+            settings: self.settings.as_ref().and_then(toml_to_json),
+            disabled: self.disabled,
+            is_linter: self.is_linter,
+        }
+    }
+}
+
+fn toml_to_json(value: &toml::Value) -> Option<serde_json::Value> {
+    serde_json::to_value(value).ok()
+}
+
 /// MCP server definition stored in config.
 ///
 /// Stdio: `command` + `args`. Remote: `url` (+ optional `type` / `headers`).
@@ -656,6 +752,7 @@ impl Default for Config {
             general: GeneralConfig::default(),
             schema_version: CONFIG_SCHEMA_VERSION,
             mcp_servers: HashMap::new(),
+            lsp: LspConfig::default(),
             permission: HashMap::new(),
             commands: HashMap::new(),
             security: SecurityConfig::default(),

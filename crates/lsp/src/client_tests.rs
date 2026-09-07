@@ -5,17 +5,23 @@ use tokio::io::{AsyncBufRead, AsyncRead};
 fn known_extensions_resolve_to_a_language_server() {
     assert_eq!(
         language_server_for_extension("rs"),
-        Some(("rust-analyzer", vec![]))
+        Some(("rust-analyzer".into(), vec![]))
     );
-    assert_eq!(language_server_for_extension("py"), Some(("pylsp", vec![])));
+    assert_eq!(
+        language_server_for_extension("py"),
+        Some(("pyright-langserver".into(), vec!["--stdio".into()]))
+    );
     assert_eq!(
         language_server_for_extension("ts"),
-        Some(("typescript-language-server", vec!["--stdio"]))
+        Some(("typescript-language-server".into(), vec!["--stdio".into()]))
     );
-    assert_eq!(language_server_for_extension("go"), Some(("gopls", vec![])));
+    assert_eq!(
+        language_server_for_extension("go"),
+        Some(("gopls".into(), vec![]))
+    );
     assert_eq!(
         language_server_for_extension("cs"),
-        Some(("omnisharp", vec!["--languageserver"]))
+        Some(("omnisharp".into(), vec!["--languageserver".into()]))
     );
 }
 
@@ -51,21 +57,27 @@ fn strips_content_length_prefix() {
 fn more_extensions_have_servers_and_ids() {
     assert_eq!(
         language_server_for_extension("js"),
-        Some(("typescript-language-server", vec!["--stdio"]))
+        Some(("typescript-language-server".into(), vec!["--stdio".into()]))
     );
-    assert_eq!(language_server_for_extension("c"), Some(("clangd", vec![])));
+    assert_eq!(
+        language_server_for_extension("c"),
+        Some(("clangd".into(), vec![]))
+    );
     assert_eq!(
         language_server_for_extension("java"),
-        Some(("jdtls", vec![]))
+        Some(("jdtls".into(), vec![]))
     );
     assert_eq!(
         language_server_for_extension("lua"),
-        Some(("lua-language-server", vec![]))
+        Some(("lua-language-server".into(), vec![]))
     );
-    assert_eq!(language_server_for_extension("zig"), Some(("zls", vec![])));
+    assert_eq!(
+        language_server_for_extension("zig"),
+        Some(("zls".into(), vec![]))
+    );
     assert_eq!(
         language_server_for_extension("swift"),
-        Some(("sourcekit-lsp", vec![]))
+        Some(("sourcekit-lsp".into(), vec![]))
     );
     assert_eq!(language_id_for_extension("go"), "go");
     assert_eq!(language_id_for_extension("yaml"), "yaml");
@@ -149,6 +161,16 @@ async fn initialize_hover_definition_and_references() {
         .unwrap();
     let hover = client.hover("file:///tmp/a.rs", pos()).await.unwrap();
     assert_eq!(hover.unwrap().contents_string(), "hello");
+    let types = client
+        .type_definition("file:///tmp/a.rs", pos())
+        .await
+        .unwrap();
+    assert_eq!(types[0].uri, "file:///tmp/a.rs");
+    let impls = client
+        .implementation("file:///tmp/a.rs", pos())
+        .await
+        .unwrap();
+    assert_eq!(impls.len(), 1);
     let defs = client.definition("file:///tmp/a.rs", pos()).await.unwrap();
     assert_eq!(defs[0].uri, "file:///tmp/a.rs");
     let refs = client.references("file:///tmp/a.rs", pos()).await.unwrap();
@@ -232,7 +254,7 @@ async fn request_skips_non_framed_lines() {
 
 #[tokio::test]
 async fn request_rejects_bad_content_length() {
-    let err = match LspClient::start("python3", &fake_args("bad_len"), "/tmp", "rust").await {
+    let err = match LspClient::start(test_python(), &fake_args("bad_len"), "/tmp", "rust").await {
         Err(e) => e,
         Ok(_) => panic!("expected bad Content-Length"),
     };
@@ -262,7 +284,8 @@ async fn request_errors_when_stdout_closes() {
 
 #[tokio::test]
 async fn initialized_notification_fails_when_server_exits() {
-    let err = match LspClient::start("python3", &fake_args("close_stdin"), "/tmp", "rust").await {
+    let err = match LspClient::start(test_python(), &fake_args("close_stdin"), "/tmp", "rust").await
+    {
         Err(e) => e,
         Ok(_) => panic!("expected initialized notification failure"),
     };
@@ -295,7 +318,7 @@ async fn malformed_response_body_is_an_error() {
 #[tokio::test]
 async fn initialize_times_out_when_server_hangs() {
     let args = fake_args("hang_init");
-    let fut = LspClient::start("python3", &args, "/tmp", "rust");
+    let fut = LspClient::start(test_python(), &args, "/tmp", "rust");
     let timed = tokio::time::timeout(std::time::Duration::from_millis(200), fut).await;
     assert!(timed.is_err());
 }
@@ -422,27 +445,30 @@ fn remaining_language_ids_and_servers() {
     assert_eq!(language_id_for_extension("cpp"), "cpp");
     assert_eq!(
         language_server_for_extension("tsx"),
-        Some(("typescript-language-server", vec!["--stdio"]))
+        Some(("typescript-language-server".into(), vec!["--stdio".into()]))
     );
     assert_eq!(
         language_server_for_extension("jsx"),
-        Some(("typescript-language-server", vec!["--stdio"]))
+        Some(("typescript-language-server".into(), vec!["--stdio".into()]))
     );
     assert_eq!(
         language_server_for_extension("cpp"),
-        Some(("clangd", vec![]))
+        Some(("clangd".into(), vec![]))
     );
-    assert_eq!(language_server_for_extension("h"), Some(("clangd", vec![])));
+    assert_eq!(
+        language_server_for_extension("h"),
+        Some(("clangd".into(), vec![]))
+    );
     assert_eq!(
         language_server_for_extension("hpp"),
-        Some(("clangd", vec![]))
+        Some(("clangd".into(), vec![]))
     );
     assert_eq!(
         language_server_for_extension("cc"),
-        Some(("clangd", vec![]))
+        Some(("clangd".into(), vec![]))
     );
     let (cmd, args) = language_server_for_extension("whycodes_lsp_fake").unwrap();
-    assert_eq!(cmd, "python3");
+    assert_eq!(cmd, test_python());
     assert_eq!(args[0], "-c");
     assert!(language_server_for_extension("whycodes_lsp_missing").is_some());
     assert!(language_server_for_extension("whycodes_lsp_empty").is_some());
@@ -452,7 +478,12 @@ fn remaining_language_ids_and_servers() {
 
 #[test]
 fn command_available_finds_sh_and_rejects_missing() {
-    assert!(command_available("sh"));
+    assert!(
+        command_available("sh")
+            || command_available("cmd")
+            || command_available("python")
+            || command_available("python3")
+    );
     assert!(!command_available("whycodes-lsp-bin-that-does-not-exist"));
     assert!(!command_available_with("whycodes-which-missing", "sh"));
     assert!(

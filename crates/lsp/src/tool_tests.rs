@@ -9,12 +9,7 @@ fn describes_itself() {
     let p = tool.parameters();
     assert_eq!(p["properties"]["action"]["enum"][0], "diagnostics");
     assert_eq!(p["properties"]["action"]["enum"][3], "references");
-    assert!(
-        p["required"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("file_path"))
-    );
+    assert!(p["required"].as_array().unwrap().contains(&json!("action")));
 }
 
 #[tokio::test]
@@ -84,7 +79,10 @@ async fn unknown_action_is_an_error() {
 async fn start_failure_is_reported() {
     let result = run("diagnostics", "/tmp/x.whycodes_lsp_missing").await;
     assert!(result.is_error);
-    assert!(result.content.contains("Failed to start"));
+    assert!(
+        result.content.contains("Failed to start")
+            || result.content.contains("was not found on PATH")
+    );
 }
 
 #[tokio::test]
@@ -195,4 +193,31 @@ async fn opening_a_dead_client_is_an_error() {
         .await;
     assert!(result.is_error);
     assert!(result.content.contains("Error opening document"));
+}
+
+#[tokio::test]
+async fn type_definition_implementation_and_symbols() {
+    let tool = LspTool::new();
+    let ctx = ToolContext::new("/tmp");
+    let path = "/tmp/x.whycodes_lsp_fake";
+    let ty = tool
+        .execute(
+            json!({ "action": "type_definition", "file_path": path, "line": 1, "character": 1 }),
+            &ctx,
+        )
+        .await;
+    assert!(!ty.is_error, "{}", ty.content);
+    assert!(ty.content.contains("file:///tmp/a.rs"));
+    let impls = tool
+        .execute(
+            json!({ "action": "implementation", "file_path": path, "line": 1, "character": 1 }),
+            &ctx,
+        )
+        .await;
+    assert!(!impls.is_error, "{}", impls.content);
+    let symbols = tool
+        .execute(json!({ "action": "symbols", "file_path": path }), &ctx)
+        .await;
+    assert!(!symbols.is_error, "{}", symbols.content);
+    assert!(symbols.content.contains("main"));
 }
