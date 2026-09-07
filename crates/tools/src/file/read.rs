@@ -35,6 +35,8 @@ impl Tool for ReadTool {
 
     fn description(&self) -> &str {
         "Read a text file (line-numbered). Prefer project-relative paths. \
+         Each line is `N tag|text` — pass `from`/`to`/`insert_after` on `edit` \
+         instead of reciting `old_string`. \
          Use offset/limit for large files instead of reading everything. \
          `skill://<name>` loads a skill body; `agent://<id>` re-reads a finished \
          task/swarm artifact (empty id lists them). \
@@ -189,11 +191,14 @@ impl ReadTool {
                     },
                     super::paths::human_size(size)
                 ));
+                let refs: Vec<&str> = window.lines.iter().map(String::as_str).collect();
+                let tags = super::line_tag::tags_for_window(&refs);
                 for (i, line) in window.lines.iter().enumerate() {
                     let n = window.start_line + i;
                     // Cap absurdly long lines to protect context
                     let line = truncate_line(line, 4000);
-                    out.push_str(&format!("{:6}|{}\n", n, line));
+                    out.push_str(&super::line_tag::format_read_line(n, &tags[i], &line));
+                    out.push('\n');
                 }
                 if window.truncated {
                     out.push_str(&format!(

@@ -123,8 +123,10 @@ async fn execute_reads_window_with_header() {
         .await;
     assert!(!result.is_error);
     assert!(result.content.contains("# lines 2–3 of 3"));
-    assert!(result.content.contains("2|two"));
-    assert!(result.content.contains("3|three"));
+    assert!(result.content.contains("2 "));
+    assert!(result.content.contains("|two"));
+    assert!(result.content.contains("3 "));
+    assert!(result.content.contains("|three"));
 }
 
 #[tokio::test]
@@ -133,7 +135,7 @@ async fn execute_missing_file_suggests() {
     write(&dir, "readme.md", "x");
     let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
     let result = ReadTool::new()
-        .execute(serde_json::json!({"path": "Readme.md"}), &ctx)
+        .execute(serde_json::json!({"path": "readme.txt"}), &ctx)
         .await;
     assert!(result.is_error);
     assert!(result.content.contains("File not found"));

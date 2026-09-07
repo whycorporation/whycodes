@@ -35,7 +35,8 @@ impl Tool for GrepTool {
     fn description(&self) -> &str {
         "Search file contents with regex (ripgrep engine, in-process — no `rg` binary). \
          Respects .gitignore; skips binaries and heavy dirs (target, node_modules, .git, …). \
-         Prefer over shell grep for project code search."
+         Prefer over shell grep for project code search. Hits are \
+         `path:line tag:text` so `edit` can name the line by tag."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -344,7 +345,7 @@ impl GrepTool {
     }
 }
 
-/// Collects ripgrep sink events into the existing `path:line:text` format.
+/// Collects ripgrep sink events into `path:line tag:text` (context uses `-`).
 struct CollectSink<'a> {
     display: &'a str,
     matches: &'a mut Vec<String>,
@@ -364,11 +365,13 @@ impl Sink for CollectSink<'_> {
         }
         let lineno = mat.line_number().unwrap_or(0);
         let line = utf8_line(mat.bytes());
-        self.matches.push(format!(
-            "{}:{}:{}",
+        let tag = super::line_tag::tag_of(&line, super::line_tag::MIN_LEN);
+        self.matches.push(super::line_tag::format_grep_line(
             self.display,
             lineno,
-            clip_line(&line, 500)
+            &tag,
+            &clip_line(&line, 500),
+            ':',
         ));
         Ok(self.matches.len() < self.max_results)
     }
@@ -383,11 +386,13 @@ impl Sink for CollectSink<'_> {
         }
         let lineno = ctx.line_number().unwrap_or(0);
         let line = utf8_line(ctx.bytes());
-        self.matches.push(format!(
-            "{}:{}-{}",
+        let tag = super::line_tag::tag_of(&line, super::line_tag::MIN_LEN);
+        self.matches.push(super::line_tag::format_grep_line(
             self.display,
             lineno,
-            clip_line(&line, 500)
+            &tag,
+            &clip_line(&line, 500),
+            '-',
         ));
         Ok(true)
     }
