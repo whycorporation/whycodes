@@ -37,7 +37,16 @@ python scripts/check_swallowed_error_budget.py
 python scripts/check_dependency_boundaries.py
 python scripts/check_sdk_protocol.py   # Rust ↔ TypeScript protocol v1 tags
 python scripts/check_tracked_secrets.py
+cargo deny check licenses sources      # license / crates.io-only sources
+cargo audit --deny warnings            # advisories (see .cargo/audit.toml)
 ```
+
+Formatter knobs live in `rustfmt.toml` (edition 2024, 100 columns, stable
+keys only). rust-analyzer matches that via `rust-analyzer.toml`.
+Workspace Clippy policy is `[workspace.lints.clippy]` in the root `Cargo.toml`
+(`correctness` / `suspicious` deny). CI still passes `-D warnings` on the
+default group. License/source policy is `deny.toml`; advisory ignores stay in
+`.cargo/audit.toml`.
 
 Dev builds use system SQLite (`pkg-config sqlite3`). CI and release enable
 `whycodes-storage/bundled` / `whycodes-cli/bundled-sqlite` so the self-hosted

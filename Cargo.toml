@@ -85,6 +85,13 @@ codegen-units = 256
 # Keep debuginfo line-tables for backtraces without full DWARF cost.
 debug = 1
 
+# Workspace deps (`tokio`, `serde`, `reqwest`, `rusqlite`, …) compile once
+# optimized. First-party crates stay opt-level 0 / debug 1. Does not change
+# the shipped `release` binary.
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
 # Release: smallest ship binary + hot-path inlining (format, risk, TUI).
 # full LTO (was thin) + panic=abort cuts page-in for Boot/TTFF (`--version`).
 # Link is slower; use `cargo build -p whycodes-cli` for day-to-day, not full release.
@@ -94,6 +101,27 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
+# Line tables, no strip — `cargo build --profile profiling -p whycodes-cli`.
+# Not wired into CI.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = false
+
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
+
+# Inherited by every crate (`[lints] workspace = true`). CI still runs
+# `clippy -- -D warnings` on the default group; this table is the local
+# rust-analyzer / bare `cargo clippy` policy.
+[workspace.lints.clippy]
+# Groups must sit below individual lints (`priority = -1`) or Clippy
+# rejects the table (`lint_groups_priority`).
+#
+# `undocumented_unsafe_blocks` is a restriction lint. Setting it to warn
+# here would fail CI (`-D warnings`): Rust 2024 made `env::set_var` unsafe,
+# so tests have dozens of undocumented blocks. Keep it off the table until
+# those sites get SAFETY comments.
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
 

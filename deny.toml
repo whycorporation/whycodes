@@ -1,0 +1,51 @@
+# License + source policy. Advisories stay on `cargo audit` + `.cargo/audit.toml`.
+# CI: `cargo deny check licenses sources`
+
+[graph]
+all-features = false
+no-default-features = false
+exclude-dev = false
+
+[output]
+feature-depth = 1
+
+[advisories]
+# Not used. `cargo audit --deny warnings` is the advisory gate.
+yanked = "warn"
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "CDLA-Permissive-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+    "OpenSSL",
+    "BSL-1.0",
+    "0BSD",
+    "Unlicense",
+]
+confidence-threshold = 0.8
+unused-allowed-license = "allow"
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
