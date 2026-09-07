@@ -113,6 +113,190 @@ async fn execute_replaces_text_and_reports_missing() {
         .await;
     assert!(miss.is_error, "{}", miss.content);
     assert!(miss.content.contains("Could not find"), "{}", miss.content);
+    assert!(miss.content.contains("Nearby lines:"), "{}", miss.content);
+}
+
+#[tokio::test]
+async fn execute_replaces_by_from_to_tags() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("a.rs");
+    std::fs::write(&path, "fn run() {\n    let x = 1;\n}\n").unwrap();
+    let from = crate::file::line_tag::tag_of("    let x = 1;", 2);
+    let tool = EditTool::new();
+    let ok = tool
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "from": from,
+                "new_string": "    let x = 2;\n"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(!ok.is_error, "{}", ok.content);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "fn run() {\n    let x = 2;\n}\n"
+    );
+}
+
+#[tokio::test]
+async fn execute_insert_after_tag() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("a.rs");
+    std::fs::write(&path, "fn run() {\n    let x = 1;\n}\n").unwrap();
+    let after = crate::file::line_tag::tag_of("    let x = 1;", 2);
+    let ok = EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "insert_after": after,
+                "new_string": "    let y = 3;"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(!ok.is_error, "{}", ok.content);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "fn run() {\n    let x = 1;\n    let y = 3;\n}\n"
+    );
+}
+
+#[tokio::test]
+async fn execute_insert_after_last_line_without_newline() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("a.rs");
+    std::fs::write(&path, "fn run() {}").unwrap();
+    let after = crate::file::line_tag::tag_of("fn run() {}", 2);
+    let ok = EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "insert_after": after,
+                "new_string": "fn go() {}"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(!ok.is_error, "{}", ok.content);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "fn run() {}\nfn go() {}\n"
+    );
+}
+
+#[tokio::test]
+async fn execute_replaces_from_to_range() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("a.rs");
+    std::fs::write(&path, "fn run() {\n    let x = 1;\n    let y = 2;\n}\n").unwrap();
+    let from = crate::file::line_tag::tag_of("    let x = 1;", 2);
+    let to = crate::file::line_tag::tag_of("    let y = 2;", 2);
+    let ok = EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "from": from,
+                "to": to,
+                "new_string": "    let z = 3;\n"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(!ok.is_error, "{}", ok.content);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "fn run() {\n    let z = 3;\n}\n"
+    );
+}
+
+#[tokio::test]
+async fn execute_tagged_error_paths() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("a.rs");
+    std::fs::write(&path, "fn run() {\n    let x = 1;\n    let x = 1;\n}\n").unwrap();
+    let tag = crate::file::line_tag::tag_of("    let x = 1;", 2);
+    let both = EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "from": tag,
+                "insert_after": tag,
+                "new_string": "nope"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(both.is_error, "{}", both.content);
+    assert!(both.content.contains("not both"), "{}", both.content);
+
+    let amb = EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "from": tag,
+                "new_string": "    let y = 2;\n"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(amb.is_error, "{}", amb.content);
+    assert!(amb.content.contains("matches"), "{}", amb.content);
+
+    let close = crate::file::line_tag::tag_of("}", 2);
+    let order = EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "from": close,
+                "to": crate::file::line_tag::tag_of("fn run() {", 2),
+                "new_string": "x"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(order.is_error, "{}", order.content);
+    assert!(
+        order.content.contains("must not precede"),
+        "{}",
+        order.content
+    );
+
+    std::fs::write(&path, "").unwrap();
+    let empty = EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "from": "aa",
+                "new_string": "x"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(empty.is_error, "{}", empty.content);
+    assert!(empty.content.contains("empty"), "{}", empty.content);
+}
+
+#[tokio::test]
+async fn execute_stale_tag_does_not_write() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("a.rs");
+    std::fs::write(&path, "fn run() {}\n").unwrap();
+    let before = std::fs::read_to_string(&path).unwrap();
+    let miss = EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "from": "zz",
+                "new_string": "nope"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(miss.is_error, "{}", miss.content);
+    assert!(miss.content.contains("was not found"), "{}", miss.content);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
 }
 
 #[tokio::test]
