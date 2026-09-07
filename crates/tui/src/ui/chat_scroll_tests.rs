@@ -922,6 +922,35 @@ fn selected_scrollback_paint_reuses_line_cache() {
 }
 
 #[test]
+fn stale_layout_cache_scroll_paint_does_not_panic() {
+    // Issue #72: a layout_cache that under-counts a closed bubble made the
+    // next scroll frame re-render extra rows and `set_stringn` panic once
+    // `y` walked off the buffer. Recovered as the "rendering error" overlay.
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 16);
+    paint_session(&mut app, 40, 10);
+    assert!(
+        app.messages
+            .iter()
+            .all(|m| m.layout_cache.is_some() && m.line_cache.is_some()),
+        "first paint must fill caches"
+    );
+
+    // Under-count every closed bubble so starts[] no longer match line counts.
+    for msg in &mut app.messages {
+        if let Some((w, c, h)) = msg.layout_cache {
+            msg.layout_cache = Some((w, c, h.saturating_sub(3).max(1)));
+        }
+        msg.line_cache = None;
+    }
+
+    app.scroll_rows(chat_wheel_step(&app));
+    paint_session(&mut app, 40, 10);
+    app.scroll_rows(-chat_wheel_step(&app));
+    paint_session(&mut app, 40, 10);
+}
+
+#[test]
 fn wheel_step_scales_with_viewport() {
     let mut app = TuiApp::new(cfg());
     app.chat_viewport_rows = 6;
