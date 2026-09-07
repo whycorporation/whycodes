@@ -1,0 +1,10 @@
+# Stable rustfmt only. Nightly knobs (`imports_granularity`, `group_imports`)
+# are intentionally omitted — CI and `rust-toolchain.toml` stay on stable.
+edition = "2024"
+style_edition = "2024"
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+reorder_imports = true
+use_field_init_shorthand = true
+use_try_shorthand = true
