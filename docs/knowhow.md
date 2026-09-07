@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-07 — Code Assist default-project test raced on `GOOGLE_CLOUD_PROJECT`
+
+**Symptom:** CI `Test (linux)` and `Coverage (line floor)` failed
+`providers::codeassist::tests::load_current_tier_uses_default_project`
+with `left: Some("whycodes")` / `right: Some("env-proj")`.
+
+**Root cause:** A sibling test sets `GOOGLE_CLOUD_PROJECT=env-proj` under a
+mutex, then restores it. The default-project test read that env *without*
+the lock, so a concurrent `env-proj` made the assertion expect the env
+value while `project_id()` had already cached the `whycodes` default.
+
+**Fix:** Hold `google_cloud_project_lock`, restore via Drop, and pin the
+test to an unset env so the cached project is always `"whycodes"`.
+
+**Prevention:** Any test that reads or writes `GOOGLE_CLOUD_PROJECT` must
+take the same mutex. Do not sample process env after an async call that
+depends on it.
+
 ### 2026-09-05 — Deploy landing: pnpm/action-setup hits broken runner npm
 
 **Symptom:** `Deploy landing` / Cloudflare Workers fails at `Install pnpm`

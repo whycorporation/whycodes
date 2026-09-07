@@ -613,6 +613,12 @@ async fn load_code_assist_resolves_project_then_generates() {
 
 #[tokio::test]
 async fn load_current_tier_uses_default_project() {
+    // Sibling tests mutate GOOGLE_CLOUD_PROJECT; pin the default-project path.
+    let _lock = google_cloud_project_lock();
+    let _restore = GoogleCloudProjectRestore::capture();
+    unsafe {
+        std::env::remove_var("GOOGLE_CLOUD_PROJECT");
+    }
     let provider = unique_provider("tier");
     let load = serde_json::json!({"currentTier": {"id": "paid"}}).to_string();
     let profile = loopback_profile(
@@ -640,11 +646,7 @@ async fn load_current_tier_uses_default_project() {
         &resp.content[1],
         ContentBlock::ToolUse { name, .. } if name == "read"
     ));
-    let expected = std::env::var("GOOGLE_CLOUD_PROJECT")
-        .ok()
-        .filter(|p| !p.is_empty())
-        .unwrap_or_else(|| "whycodes".to_string());
-    assert_eq!(cached_project(provider).as_deref(), Some(expected.as_str()));
+    assert_eq!(cached_project(provider).as_deref(), Some("whycodes"));
 }
 
 #[tokio::test]
@@ -1118,10 +1120,31 @@ fn google_cloud_project_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+struct GoogleCloudProjectRestore {
+    prev: Option<std::ffi::OsString>,
+}
+
+impl GoogleCloudProjectRestore {
+    fn capture() -> Self {
+        Self {
+            prev: std::env::var_os("GOOGLE_CLOUD_PROJECT"),
+        }
+    }
+}
+
+impl Drop for GoogleCloudProjectRestore {
+    fn drop(&mut self) {
+        match self.prev.take() {
+            Some(v) => unsafe { std::env::set_var("GOOGLE_CLOUD_PROJECT", v) },
+            None => unsafe { std::env::remove_var("GOOGLE_CLOUD_PROJECT") },
+        }
+    }
+}
+
 #[tokio::test]
 async fn onboard_without_name_errors_when_no_project() {
     let _guard = google_cloud_project_lock();
-    let prev = std::env::var("GOOGLE_CLOUD_PROJECT").ok();
+    let _restore = GoogleCloudProjectRestore::capture();
     unsafe {
         std::env::remove_var("GOOGLE_CLOUD_PROJECT");
     }
@@ -1142,10 +1165,6 @@ async fn onboard_without_name_errors_when_no_project() {
     let err = complete_with(&profile, &assist_request(), "ya29.x", "m")
         .await
         .unwrap_err();
-    match prev {
-        Some(v) => unsafe { std::env::set_var("GOOGLE_CLOUD_PROJECT", v) },
-        None => unsafe { std::env::remove_var("GOOGLE_CLOUD_PROJECT") },
-    }
     assert!(
         err.to_string().contains("GOOGLE_CLOUD_PROJECT") || err.to_string().contains("project"),
         "{err}"
@@ -1155,8 +1174,8 @@ async fn onboard_without_name_errors_when_no_project() {
 #[tokio::test]
 async fn onboard_includes_env_project_for_antigravity() {
     let _guard = google_cloud_project_lock();
+    let _restore = GoogleCloudProjectRestore::capture();
     let provider = unique_provider("onboard-env");
-    let prev = std::env::var("GOOGLE_CLOUD_PROJECT").ok();
     unsafe {
         std::env::set_var("GOOGLE_CLOUD_PROJECT", "env-proj");
     }
@@ -1192,10 +1211,6 @@ async fn onboard_includes_env_project_for_antigravity() {
         )),
         "{resp:?}"
     );
-    match prev {
-        Some(v) => unsafe { std::env::set_var("GOOGLE_CLOUD_PROJECT", v) },
-        None => unsafe { std::env::remove_var("GOOGLE_CLOUD_PROJECT") },
-    }
 }
 
 #[tokio::test]
