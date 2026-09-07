@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-07 — Serve takeover test spawned a just-written `.sh` (ETXTBSY / noexec)
+
+**Symptom:** CI `Test (linux)` failed
+`tests::takeover_holder_sigkill_after_ignored_term` at
+`Command::new(&script).spawn().unwrap()` (`crates/cli/src/tests.rs`).
+
+**Root cause:** The test wrote `trap-term.sh` into a tempfile and exec'd it
+immediately. Linux returns `ETXTBSY` when the writer still holds the inode;
+`/tmp` can also be `noexec` on the self-hosted runner.
+
+**Fix:** Spawn `sh -c "trap '' TERM; exec sleep 30"` so the kernel execs
+`/bin/sh`, not the tempfile. Unix-only (`cfg(unix)`); SIGTERM ignore is
+POSIX.
+
+**Prevention:** Tests that need a live PID should spawn a system binary
+(`sleep`, `sh -c`), not a file they just wrote. Same class as SDK
+`ETXTBSY` retries.
+
 ### 2026-09-07 — Code Assist default-project test raced on `GOOGLE_CLOUD_PROJECT`
 
 **Symptom:** CI `Test (linux)` and `Coverage (line floor)` failed

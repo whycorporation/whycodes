@@ -4718,17 +4718,15 @@ async fn cmd_run_resume_then_undo_without_history() {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn takeover_holder_sigkill_after_ignored_term() {
-    let dir = tempfile::tempdir().unwrap();
-    let script = dir.path().join("trap-term.sh");
-    std::fs::write(&script, "#!/bin/sh\ntrap '' TERM\nexec sleep 30\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    let mut child = std::process::Command::new(&script).spawn().unwrap();
+    // `sh -c` avoids exec'ing a tempfile we just wrote (ETXTBSY / noexec /tmp).
+    // `trap '' TERM` is SIG_IGN, which survives `exec sleep`.
+    let mut child = std::process::Command::new("sh")
+        .args(["-c", "trap '' TERM; exec sleep 30"])
+        .spawn()
+        .expect("spawn SIGTERM-ignoring sleep");
     let pid = child.id();
     let live = crate::cmd::lockfile::ServeLock {
         pid,
