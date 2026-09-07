@@ -508,8 +508,6 @@ pub(super) fn doctor_report(
     agent: &whycodes_agent::Agent,
     project_dir: &std::path::Path,
 ) -> String {
-    use std::path::Path;
-
     let mut lines = vec!["Doctor".to_string()];
 
     // ── Provider / model ──────────────────────────────────────────────
@@ -568,7 +566,7 @@ pub(super) fn doctor_report(
     ));
     #[cfg(target_os = "linux")]
     {
-        let bwrap = Path::new("/usr/bin/bwrap").is_file() || which_bwrap();
+        let bwrap = std::path::Path::new("/usr/bin/bwrap").is_file() || which_bwrap();
         lines.push(format!(
             "  bwrap:        {}",
             if bwrap {

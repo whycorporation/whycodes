@@ -16,6 +16,7 @@ use crate::types::{
 
 const PROTOCOL_VERSION: &str = "2025-03-26";
 
+#[allow(clippy::large_enum_variant)]
 enum Transport {
     Stdio {
         /// Never read directly: held so `kill_on_drop(true)` on the spawned

@@ -163,6 +163,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn git_toplevel_empty_stdout_and_nonzero_exit() {
         use std::os::unix::fs::PermissionsExt;

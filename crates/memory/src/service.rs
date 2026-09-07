@@ -1420,10 +1420,10 @@ mod tests {
             .unwrap();
         svc.remember("victim unique consolidate chmod", None)
             .unwrap();
-        let md = svc.memory_md_path();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            let md = svc.memory_md_path();
             let mut perm = std::fs::metadata(&md).unwrap().permissions();
             perm.set_mode(0o444);
             std::fs::set_permissions(&md, perm).unwrap();

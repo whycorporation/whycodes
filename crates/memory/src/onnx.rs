@@ -332,6 +332,7 @@ mod tests {
         verify_or_repair(&p, &side, None).unwrap();
     }
 
+    #[cfg(unix)]
     fn with_path_bins<R>(names_and_scripts: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
         use std::os::unix::fs::PermissionsExt;
         let _guard = crate::recover_lock(&crate::TEST_PATH_LOCK);
@@ -360,7 +361,10 @@ mod tests {
             model_dir(dir.path()),
             dir.path().join("models").join("minilm")
         );
-        let _ = with_path_bins(&[("true", "#!/bin/sh\nexit 0\n")], || 1 + 1);
+        #[cfg(unix)]
+        {
+            let _ = with_path_bins(&[("true", "#!/bin/sh\nexit 0\n")], || 1 + 1);
+        }
     }
 
     #[cfg(not(feature = "onnx"))]
@@ -400,6 +404,7 @@ mod tests {
         verify_or_repair(&p, &side, None).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn ensure_file_accepts_matching_pin_and_sha256_missing() {
         let dir = tempdir().unwrap();
@@ -432,76 +437,81 @@ mod tests {
         std::fs::write(&existing, b"abc").unwrap();
         ensure_file(&existing, "http://127.0.0.1/unused", None).unwrap();
 
-        let curl = concat!(
-            "#!/bin/sh\n",
-            "out=\"\"\n",
-            "while [ $# -gt 0 ]; do\n",
-            "  if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; continue; fi\n",
-            "  shift\n",
-            "done\n",
-            "printf abc > \"$out\"\n",
-        );
-        with_path_bins(&[("curl", curl), ("wget", "#!/bin/sh\nexit 1\n")], || {
-            let dest = dir.path().join("from-curl.bin");
-            ensure_file(&dest, "http://127.0.0.1/model", None).unwrap();
-            assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
+        #[cfg(unix)]
+        {
+            let curl = concat!(
+                "#!/bin/sh\n",
+                "out=\"\"\n",
+                "while [ $# -gt 0 ]; do\n",
+                "  if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; continue; fi\n",
+                "  shift\n",
+                "done\n",
+                "printf abc > \"$out\"\n",
+            );
+            with_path_bins(&[("curl", curl), ("wget", "#!/bin/sh\nexit 1\n")], || {
+                let dest = dir.path().join("from-curl.bin");
+                ensure_file(&dest, "http://127.0.0.1/model", None).unwrap();
+                assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
 
-            let mismatch = dir.path().join("mismatch.bin");
-            let err = ensure_file(&mismatch, "http://127.0.0.1/model", Some("ffff")).unwrap_err();
-            assert!(err.to_string().contains("checksum mismatch"));
-            assert!(!mismatch.exists());
-        });
+                let mismatch = dir.path().join("mismatch.bin");
+                let err =
+                    ensure_file(&mismatch, "http://127.0.0.1/model", Some("ffff")).unwrap_err();
+                assert!(err.to_string().contains("checksum mismatch"));
+                assert!(!mismatch.exists());
+            });
 
-        let wget = concat!(
-            "#!/bin/sh\n",
-            "out=\"\"\n",
-            "while [ $# -gt 0 ]; do\n",
-            "  if [ \"$1\" = \"-O\" ]; then out=\"$2\"; shift 2; continue; fi\n",
-            "  shift\n",
-            "done\n",
-            "printf wget > \"$out\"\n",
-        );
-        with_path_bins(&[("curl", "#!/bin/sh\nexit 1\n"), ("wget", wget)], || {
-            let dest = dir.path().join("from-wget.bin");
-            download("http://127.0.0.1/model", &dest).unwrap();
-            assert_eq!(std::fs::read(&dest).unwrap(), b"wget");
-        });
-
-        with_path_bins(
-            &[
-                ("curl", "#!/bin/sh\nexit 1\n"),
-                ("wget", "#!/bin/sh\nexit 1\n"),
-            ],
-            || {
-                let dest = dir.path().join("fail.bin");
-                let err = download("http://127.0.0.1/model", &dest).unwrap_err();
-                assert!(err.to_string().contains("failed to download"));
-            },
-        );
-        with_path_bins(
-            &[
-                ("curl", "#!/bin/sh\nexit 0\n"),
-                (
-                    "wget",
-                    concat!(
-                        "#!/bin/sh\n",
-                        "out=\"\"\n",
-                        "while [ $# -gt 0 ]; do\n",
-                        "  if [ \"$1\" = \"-O\" ]; then out=\"$2\"; shift 2; continue; fi\n",
-                        "  shift\n",
-                        "done\n",
-                        "printf later > \"$out\"\n",
-                    ),
-                ),
-            ],
-            || {
-                let dest = dir.path().join("curl-empty-wget.bin");
+            let wget = concat!(
+                "#!/bin/sh\n",
+                "out=\"\"\n",
+                "while [ $# -gt 0 ]; do\n",
+                "  if [ \"$1\" = \"-O\" ]; then out=\"$2\"; shift 2; continue; fi\n",
+                "  shift\n",
+                "done\n",
+                "printf wget > \"$out\"\n",
+            );
+            with_path_bins(&[("curl", "#!/bin/sh\nexit 1\n"), ("wget", wget)], || {
+                let dest = dir.path().join("from-wget.bin");
                 download("http://127.0.0.1/model", &dest).unwrap();
-                assert_eq!(std::fs::read(&dest).unwrap(), b"later");
-            },
-        );
+                assert_eq!(std::fs::read(&dest).unwrap(), b"wget");
+            });
+
+            with_path_bins(
+                &[
+                    ("curl", "#!/bin/sh\nexit 1\n"),
+                    ("wget", "#!/bin/sh\nexit 1\n"),
+                ],
+                || {
+                    let dest = dir.path().join("fail.bin");
+                    let err = download("http://127.0.0.1/model", &dest).unwrap_err();
+                    assert!(err.to_string().contains("failed to download"));
+                },
+            );
+            with_path_bins(
+                &[
+                    ("curl", "#!/bin/sh\nexit 0\n"),
+                    (
+                        "wget",
+                        concat!(
+                            "#!/bin/sh\n",
+                            "out=\"\"\n",
+                            "while [ $# -gt 0 ]; do\n",
+                            "  if [ \"$1\" = \"-O\" ]; then out=\"$2\"; shift 2; continue; fi\n",
+                            "  shift\n",
+                            "done\n",
+                            "printf later > \"$out\"\n",
+                        ),
+                    ),
+                ],
+                || {
+                    let dest = dir.path().join("curl-empty-wget.bin");
+                    download("http://127.0.0.1/model", &dest).unwrap();
+                    assert_eq!(std::fs::read(&dest).unwrap(), b"later");
+                },
+            );
+        }
     }
 
+    #[cfg(unix)]
     #[test]
     fn ensure_model_with_scripted_curl() {
         let dir = tempdir().unwrap();

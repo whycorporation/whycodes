@@ -419,6 +419,7 @@ fn create_worktree_add_fails_when_git_dir_is_readonly_after_head() {
         .join("swarm")
         .join("run-add-ro")
         .join("worker-0");
+    #[cfg(unix)]
     let git_dir = root.join(".git");
     #[cfg(unix)]
     {
@@ -478,6 +479,7 @@ fn remove_worktree_path_remains_when_replaced_with_readonly_file() {
         .join("run-rm-remain")
         .join("worker-0");
     let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+    #[cfg(unix)]
     let parent = wt.path.parent().unwrap().to_path_buf();
     let _ = std::process::Command::new("git")
         .args(["worktree", "remove", "--force"])

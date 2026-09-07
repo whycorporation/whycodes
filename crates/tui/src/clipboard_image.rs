@@ -15,7 +15,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use crate::images::{MAX_IMAGE_BYTES, resolve_image_path};
+use crate::images::MAX_IMAGE_BYTES;
+#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
+use crate::images::resolve_image_path;
 
 const TIMEOUT: Duration = Duration::from_millis(1500);
 
@@ -186,11 +188,11 @@ pub fn read_for_prompt() -> Result<PromptClipboard, String> {
 fn read_os_image() -> Result<PromptClipboard, String> {
     #[cfg(target_os = "macos")]
     {
-        return read_macos_image();
+        read_macos_image()
     }
     #[cfg(target_os = "windows")]
     {
-        return read_windows_image();
+        read_windows_image()
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -396,6 +398,7 @@ fn cleanup_temp(path: &Path) {
     }
 }
 
+#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
 fn first_image_mime<'a, I>(types: I) -> Option<&'static str>
 where
     I: IntoIterator<Item = &'a str>,
@@ -426,6 +429,7 @@ where
 
 /// `text/uri-list`: comments (`#`) skipped; `file://` and raw paths kept when
 /// they resolve to an existing image.
+#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
 pub(crate) fn parse_uri_list(data: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for line in data.lines() {

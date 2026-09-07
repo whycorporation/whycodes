@@ -98,6 +98,8 @@ pub(crate) enum PidProbe {
     Alive,
     Dead,
     /// `EPERM` / access denied — treat as alive, do not clobber.
+    /// Unix `kill(pid, 0)` only; Windows `OpenProcess` never yields this.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Denied,
 }
 

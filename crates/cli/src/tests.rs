@@ -133,16 +133,20 @@ struct IsolatedGh {
 impl IsolatedGh {
     fn new(exit: i32) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
-        let gh = dir.path().join("gh");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            let gh = dir.path().join("gh");
             std::fs::write(
                 &gh,
                 format!("#!/bin/sh\necho fake-gh \"$@\"\nexit {exit}\n"),
             )
             .unwrap();
             std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = exit;
         }
         let prev_path = std::env::var_os("PATH");
         let mut path = dir.path().display().to_string();
@@ -1809,9 +1813,9 @@ mod upgrade_helpers {
         std::fs::write(&real, b"x").unwrap();
         let bindir = dir.path().join("bin");
         std::fs::create_dir_all(&bindir).unwrap();
-        let link = bindir.join("whycodes");
         #[cfg(unix)]
         {
+            let link = bindir.join("whycodes");
             std::os::unix::fs::symlink(&real, &link).unwrap();
             assert!(
                 package_manager_upgrade_hint(&link).is_some(),
@@ -4351,9 +4355,9 @@ fn looks_like_homebrew_relative_symlink() {
     std::fs::write(&real, b"x").unwrap();
     let bindir = dir.path().join("bin");
     std::fs::create_dir_all(&bindir).unwrap();
-    let link = bindir.join("whycodes");
     #[cfg(unix)]
     {
+        let link = bindir.join("whycodes");
         std::os::unix::fs::symlink(
             std::path::Path::new("../Cellar/whycodes/1/bin/whycodes"),
             &link,

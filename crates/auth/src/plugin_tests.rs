@@ -268,17 +268,28 @@ fn load_dir_covers_skip_and_reject_paths() {
     std::fs::create_dir_all(&unreadable).unwrap();
     let bad = unreadable.join("plugin.json");
     std::fs::write(&bad, valid_device_json("never-loaded", "Nope")).unwrap();
-    let mut perms = std::fs::metadata(&bad).unwrap().permissions();
-    use std::os::unix::fs::PermissionsExt;
-    perms.set_mode(0o000);
-    std::fs::set_permissions(&bad, perms).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&bad).unwrap().permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&bad, perms).unwrap();
+    }
 
     let n = load_from_dirs(&[tmp.path().to_path_buf()]);
-    let _ = std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o600));
-    assert_eq!(n, 1);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o600));
+        assert_eq!(n, 1);
+        assert!(!supports_oauth("never-loaded"));
+    }
+    #[cfg(not(unix))]
+    {
+        assert!(n >= 1);
+    }
     assert!(supports_oauth("fixture-from-manifest"));
     assert!(!supports_oauth("broken-https"));
-    assert!(!supports_oauth("never-loaded"));
 }
 
 #[test]
