@@ -45,12 +45,12 @@ FULL_COVER_CRATES = [
     "whycodes-mcp",
     "whycodes-sdk",
     "whycodes-server",
+    "whycodes-format",
+    "whycodes-import",
 ]
 
 # Floors as (crate, min_percent)
-FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
-    ("whycodes-format", 95.0),
-]
+FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES]
 
 
 def load_report(path: Path) -> dict:
