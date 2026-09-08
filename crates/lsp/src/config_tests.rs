@@ -29,6 +29,8 @@ fn overlay_replaces_nested_objects_and_can_disable() {
         "rust-analyzer".into(),
         LspServerSpec {
             args: vec!["--log-file".into(), "/tmp/ra.log".into()],
+            file_types: vec![".rs".into(), ".ron".into()],
+            root_markers: vec!["Cargo.toml".into(), "rust-toolchain.toml".into()],
             settings: Some(serde_json::json!({"checkOnSave": false})),
             disabled: Some(true),
             ..LspServerSpec::default()
@@ -48,6 +50,8 @@ fn overlay_replaces_nested_objects_and_can_disable() {
     let ra = merged.servers.get("rust-analyzer").unwrap();
     assert_eq!(ra.command.as_deref(), Some("rust-analyzer"));
     assert_eq!(ra.args, vec!["--log-file", "/tmp/ra.log"]);
+    assert_eq!(ra.file_types, vec![".rs", ".ron"]);
+    assert_eq!(ra.root_markers, vec!["Cargo.toml", "rust-toolchain.toml"]);
     assert_eq!(ra.settings, Some(serde_json::json!({"checkOnSave": false})));
     assert!(ra.is_disabled());
     assert!(merged.spec_for_ext("rs").is_none());
@@ -118,6 +122,8 @@ fn overlay_keeps_base_args_when_overlay_args_are_empty() {
     let ts = merged.servers.get("typescript-language-server").unwrap();
     assert_eq!(ts.args, vec!["--stdio"]);
     assert_eq!(ts.command.as_deref(), Some("typescript-language-server"));
+    assert!(ts.language_id.is_none());
+    assert!(!ts.is_linter());
 }
 
 #[test]

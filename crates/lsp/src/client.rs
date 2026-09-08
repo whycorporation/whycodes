@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::error::{LspError, Result};
 use serde_json::json;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -107,19 +107,51 @@ impl LspClient {
         settings: Option<&serde_json::Value>,
         spawn_background: bool,
     ) -> Result<Self> {
+        Self::boot_inner(
+            command,
+            args,
+            workspace_root,
+            language_id,
+            init_options,
+            settings,
+            spawn_background,
+            true,
+            true,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn boot_inner(
+        command: &str,
+        args: &[String],
+        workspace_root: &str,
+        language_id: &str,
+        init_options: Option<&serde_json::Value>,
+        settings: Option<&serde_json::Value>,
+        spawn_background: bool,
+        pipe_stdin: bool,
+        pipe_stdout: bool,
+    ) -> Result<Self> {
         let mut cmd = Command::new(command);
-        cmd.args(args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+        cmd.args(args).stderr(std::process::Stdio::piped());
+        if pipe_stdin {
+            cmd.stdin(std::process::Stdio::piped());
+        } else {
+            cmd.stdin(std::process::Stdio::null());
+        }
+        if pipe_stdout {
+            cmd.stdout(std::process::Stdio::piped());
+        } else {
+            cmd.stdout(std::process::Stdio::null());
+        }
         #[cfg(test)]
         cmd.kill_on_drop(true);
         let mut child = cmd
             .spawn()
             .map_err(|e| LspError::msg(format!("Failed to spawn LSP server {command}: {e}")))?;
 
-        let stdin = take_child_pipe(child.stdin.take(), "stdin")?;
-        let stdout = take_child_pipe(child.stdout.take(), "stdout")?;
+        let (stdin, stdout) = take_stdio_pair(child.stdin.take(), child.stdout.take())?;
 
         let writer = Arc::new(Mutex::new(stdin));
         let reader = Arc::new(Mutex::new(BufReader::new(stdout)));
@@ -153,6 +185,10 @@ impl LspClient {
             .await
             .map_err(|e| LspError::msg(format!("initialized notification failed: {e}")))?;
 
+        #[cfg(test)]
+        if args.iter().any(|a| a == "die_after_initialized") {
+            client.kill_for_test().await;
+        }
         if let Some(settings) = settings {
             client
                 .notify(
@@ -208,17 +244,28 @@ impl LspClient {
         Self::boot(command, args, workspace_root, language_id, None, None, true).await
     }
 
+    #[cfg(test)]
+    pub(crate) async fn start_without_stdio(command: &str, args: &[String]) -> Result<Self> {
+        Self::boot_inner(
+            command, args, "/tmp", "rust", None, None, false, false, false,
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn start_without_stdout(command: &str, args: &[String]) -> Result<Self> {
+        Self::boot_inner(
+            command, args, "/tmp", "rust", None, None, false, true, false,
+        )
+        .await
+    }
+
     pub fn mark_used(&self) {
-        if let Ok(mut t) = self.last_used.try_lock() {
-            *t = std::time::Instant::now();
-        }
+        mark_instant(&self.last_used);
     }
 
     pub fn idle_for(&self) -> std::time::Duration {
-        self.last_used
-            .try_lock()
-            .map(|t| t.elapsed())
-            .unwrap_or(std::time::Duration::ZERO)
+        idle_since(&self.last_used)
     }
 
     pub fn settings(&self) -> Option<&serde_json::Value> {
@@ -293,9 +340,7 @@ impl LspClient {
             },
             position,
         };
-        let resp = self
-            .request("textDocument/hover", serde_json::to_value(&params)?)
-            .await?;
+        let resp = self.request("textDocument/hover", json!(params)).await?;
         parse_hover_result(resp.result)
     }
 
@@ -308,7 +353,7 @@ impl LspClient {
             position,
         };
         let resp = self
-            .request("textDocument/definition", serde_json::to_value(&params)?)
+            .request("textDocument/definition", json!(params))
             .await?;
         parse_locations(resp.result)
     }
@@ -333,10 +378,7 @@ impl LspClient {
             position,
         };
         let resp = self
-            .request(
-                "textDocument/typeDefinition",
-                serde_json::to_value(&params)?,
-            )
+            .request("textDocument/typeDefinition", json!(params))
             .await?;
         parse_locations(resp.result)
     }
@@ -350,10 +392,7 @@ impl LspClient {
             position,
         };
         let resp = self
-            .request(
-                "textDocument/implementation",
-                serde_json::to_value(&params)?,
-            )
+            .request("textDocument/implementation", json!(params))
             .await?;
         parse_locations(resp.result)
     }
@@ -381,7 +420,7 @@ impl LspClient {
 
     async fn notify(&self, method: &str, params: serde_json::Value) -> Result<()> {
         let notif = JsonRpcNotification::new(method, params);
-        self.send_message(&serde_json::to_value(&notif)?).await
+        self.send_message(&json!(notif)).await
     }
 
     async fn request(&self, method: &str, params: serde_json::Value) -> Result<JsonRpcResponse> {
@@ -392,46 +431,46 @@ impl LspClient {
             id
         };
         let req = JsonRpcRequest::new(id, method, params);
-        self.send_message(&serde_json::to_value(&req)?).await?;
+        self.send_message(&json!(req)).await?;
 
-        // Read back response matching the id.
-        // We read from stdout using Content-Length framing.
         let mut reader = self.stdout.lock().await;
-        let mut header = String::new();
-        loop {
-            header.clear();
-            let n = reader.read_line(&mut header).await?;
-            if n == 0 {
-                return Err(LspError::msg(format!(
-                    "LSP server closed stdout while waiting for response to {method}"
-                )));
+        read_rpc_response(&mut *reader, id, method).await
+    }
+}
+
+async fn read_rpc_response(
+    reader: &mut (dyn tokio::io::AsyncBufRead + Send + Unpin),
+    id: i64,
+    method: &str,
+) -> Result<JsonRpcResponse> {
+    let mut header = String::new();
+    loop {
+        header.clear();
+        let n = reader.read_line(&mut header).await?;
+        if n == 0 {
+            return Err(LspError::msg(format!(
+                "LSP server closed stdout while waiting for response to {method}"
+            )));
+        }
+        let trimmed = header.trim_end_matches('\n').trim_end_matches('\r');
+        if let Some(len_str) = line_strip_prefix("Content-Length: ", trimmed) {
+            let len: usize = len_str
+                .trim()
+                .parse()
+                .map_err(|_| LspError::msg(format!("bad Content-Length: {len_str}")))?;
+            let mut sep = String::new();
+            reader.read_line(&mut sep).await?;
+            let mut body = vec![0u8; len];
+            reader.read_exact(&mut body).await?;
+            let body_str = String::from_utf8_lossy(&body).to_string();
+            let resp: JsonRpcResponse = serde_json::from_str(&body_str)?;
+            if resp.id == Some(id) {
+                return Ok(resp);
             }
-            let trimmed = header.trim_end_matches('\n').trim_end_matches('\r');
-            if let Some(len_str) = line_strip_prefix("Content-Length: ", trimmed) {
-                let len: usize = len_str
-                    .trim()
-                    .parse()
-                    .map_err(|_| LspError::msg(format!("bad Content-Length: {len_str}")))?;
-                // Read the blank separator line after Content-Length
-                let mut sep = String::new();
-                reader.read_line(&mut sep).await?;
-                // Read body
-                let mut body = vec![0u8; len];
-                reader.read_exact(&mut body).await?;
-                let body_str = String::from_utf8_lossy(&body).to_string();
-                let resp: JsonRpcResponse = serde_json::from_str(&body_str)?;
-                if resp.id == Some(id) {
-                    return Ok(resp);
-                }
-                // Not our response — could be a server notification or response
-                // to another request.  For simplicity we ignore unmatched ids,
-                // but a production client would queue them.
-                debug!(
-                    "Ignoring LSP response with id {:?}, waiting for {id}",
-                    resp.id
-                );
-            }
-            // Otherwise it's a non-Content-Length line, keep reading.
+            debug!(
+                "Ignoring LSP response with id {:?}, waiting for {id}",
+                resp.id
+            );
         }
     }
 }
@@ -459,11 +498,35 @@ fn take_child_pipe<T>(pipe: Option<T>, name: &str) -> Result<T> {
     pipe.ok_or_else(|| LspError::msg(format!("no {name} on LSP child")))
 }
 
+fn take_stdio_pair<I, O>(stdin: Option<I>, stdout: Option<O>) -> Result<(I, O)> {
+    Ok((
+        take_child_pipe(stdin, "stdin")?,
+        take_child_pipe(stdout, "stdout")?,
+    ))
+}
+
+fn mark_instant(slot: &Mutex<std::time::Instant>) {
+    if let Ok(mut t) = slot.try_lock() {
+        *t = std::time::Instant::now();
+    }
+}
+
+fn idle_since(slot: &Mutex<std::time::Instant>) -> std::time::Duration {
+    slot.try_lock()
+        .map(|t| t.elapsed())
+        .unwrap_or(std::time::Duration::ZERO)
+}
+
 /// Resolve a language server command from a file extension (built-in defaults).
 pub fn language_server_for_extension(ext: &str) -> Option<(String, Vec<String>)> {
     let settings = crate::config::LspSettings::builtins();
     let (_, spec) = settings.spec_for_ext(ext)?;
     Some((spec.command.clone()?, spec.args.clone()))
+}
+
+#[cfg(test)]
+pub(crate) fn language_server_command(spec: &crate::config::LspServerSpec) -> Option<String> {
+    spec.command.clone()
 }
 
 /// Language ID for a file extension.
@@ -619,9 +682,19 @@ while True:
     if method == "initialized" or method == "textDocument/didOpen":
         if method == "initialized" and mode == "init_then_eof":
             break
+        if method == "initialized" and mode == "die_after_initialized":
+            os._exit(0)
         if method == "textDocument/didOpen" and mode == "fail_after_open":
             break
         continue
+    if mode == "trunc_req_sep":
+        sys.stdout.buffer.write(b"Content-Length: 2\r\n")
+        sys.stdout.buffer.flush()
+        break
+    if mode == "trunc_req_body":
+        sys.stdout.buffer.write(b"Content-Length: 40\r\n\r\n{}")
+        sys.stdout.buffer.flush()
+        break
     if mid is None:
         continue
     if mode == "hang":
@@ -662,11 +735,15 @@ while True:
     elif method == "textDocument/documentSymbol":
         if mode == "empty":
             write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
+        elif mode == "no_result":
+            write_msg({"jsonrpc": "2.0", "id": mid})
         else:
             write_msg({"jsonrpc": "2.0", "id": mid, "result": [{"name": "main", "kind": 12, "range": range0, "selectionRange": range0}]})
     elif method == "workspace/symbol":
         if mode == "empty":
             write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
+        elif mode == "no_result":
+            write_msg({"jsonrpc": "2.0", "id": mid})
         else:
             write_msg({"jsonrpc": "2.0", "id": mid, "result": [{"name": "main", "kind": 12, "location": loc}]})
     elif method == "textDocument/diagnostic":
@@ -684,8 +761,16 @@ while True:
 
 #[cfg(test)]
 pub(crate) fn test_python() -> &'static str {
-    for cmd in ["python3", "python", "py"] {
-        if crate::detect::which_command(cmd).is_some() {
+    test_python_from(&["python3", "python", "py"], crate::detect::which_command)
+}
+
+#[cfg(test)]
+pub(crate) fn test_python_from(
+    cmds: &[&'static str],
+    available: fn(&str) -> Option<std::path::PathBuf>,
+) -> &'static str {
+    for cmd in cmds {
+        if available(cmd).is_some() {
             return cmd;
         }
     }
@@ -708,9 +793,17 @@ async fn consume_stdout<R>(
     diagnostics: Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>,
     cmd_name: String,
 ) where
-    R: tokio::io::AsyncBufRead + Unpin,
+    R: tokio::io::AsyncBufRead + Send + Unpin,
 {
     let mut lock = stdout.lock().await;
+    consume_stdout_inner(&mut *lock, diagnostics, cmd_name).await;
+}
+
+async fn consume_stdout_inner(
+    lock: &mut (dyn tokio::io::AsyncBufRead + Send + Unpin),
+    diagnostics: Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>,
+    cmd_name: String,
+) {
     let mut buf = String::new();
     loop {
         buf.clear();
@@ -780,11 +873,11 @@ pub(crate) fn encode_lsp_frame(body: &str) -> Vec<u8> {
     format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
 }
 
-pub(crate) async fn write_framed<W: AsyncWriteExt + Unpin>(
-    writer: &mut W,
+pub(crate) async fn write_framed(
+    writer: &mut (dyn AsyncWrite + Send + Unpin),
     msg: &serde_json::Value,
 ) -> Result<()> {
-    let body = serde_json::to_string(msg)?;
+    let body = msg.to_string();
     writer.write_all(&encode_lsp_frame(&body)).await?;
     writer.flush().await?;
     Ok(())
@@ -799,14 +892,16 @@ pub(crate) fn parse_hover_result(result: Option<serde_json::Value>) -> Result<Op
 
 pub(crate) fn parse_locations(result: Option<serde_json::Value>) -> Result<Vec<Location>> {
     match result {
-        Some(result) if !result.is_null() => {
-            if result.is_array() {
-                Ok(serde_json::from_value(result)?)
-            } else {
-                Ok(vec![serde_json::from_value(result)?])
-            }
-        }
+        Some(result) if !result.is_null() => parse_location_value(result),
         _ => Ok(vec![]),
+    }
+}
+
+fn parse_location_value(result: serde_json::Value) -> Result<Vec<Location>> {
+    if result.is_array() {
+        Ok(serde_json::from_value(result)?)
+    } else {
+        Ok(vec![serde_json::from_value(result)?])
     }
 }
 

@@ -204,6 +204,8 @@ const BUILTIN_ORDER: &[&str] = &[
     "whycodes-lsp-err",
     #[cfg(test)]
     "whycodes-lsp-missing",
+    #[cfg(test)]
+    "whycodes-lsp-nocmd",
 ];
 
 fn spec(
@@ -428,6 +430,15 @@ fn test_fake_specs() -> Vec<(&'static str, LspServerSpec)> {
                 Some("rust"),
                 &[],
             ),
+        ),
+        (
+            "whycodes-lsp-nocmd",
+            LspServerSpec {
+                command: None,
+                file_types: vec![".whycodes_lsp_nocmd".into()],
+                language_id: Some("rust".into()),
+                ..LspServerSpec::default()
+            },
         ),
     ]
 }

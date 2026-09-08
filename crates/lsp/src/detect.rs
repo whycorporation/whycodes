@@ -33,7 +33,8 @@ pub(crate) fn file_uri_from_lossy(raw: &str) -> String {
 /// Reverse of [`file_uri`] for `didOpen` fallbacks.
 pub fn path_from_file_uri(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
         let trimmed = rest.trim_start_matches('/');
         if trimmed.len() >= 2 {
             let b = trimmed.as_bytes();
@@ -41,14 +42,18 @@ pub fn path_from_file_uri(uri: &str) -> Option<PathBuf> {
                 return Some(PathBuf::from(trimmed.replace('/', "\\")));
             }
         }
-        if rest.starts_with("//") || rest.starts_with('/') && rest[1..].starts_with('/') {
+        if rest.starts_with("//") {
             return Some(PathBuf::from(rest.replace('/', "\\")));
         }
         Some(PathBuf::from(rest.replace('/', "\\")))
-    } else if rest.starts_with('/') {
-        Some(PathBuf::from(rest))
-    } else {
-        Some(PathBuf::from(format!("/{rest}")))
+    }
+    #[cfg(not(windows))]
+    {
+        if rest.starts_with('/') {
+            Some(PathBuf::from(rest))
+        } else {
+            Some(PathBuf::from(format!("/{rest}")))
+        }
     }
 }
 
@@ -138,7 +143,11 @@ fn lookup_in_dir(dir: &Path, command: &str) -> Option<PathBuf> {
 
 /// `command` on `PATH` (does not shell out to `which`).
 pub fn which_command(command: &str) -> Option<PathBuf> {
-    let path_os = std::env::var_os("PATH")?;
+    which_command_in(std::env::var_os("PATH"), command)
+}
+
+fn which_command_in(path_os: Option<std::ffi::OsString>, command: &str) -> Option<PathBuf> {
+    let path_os = path_os?;
     for dir in std::env::split_paths(&path_os) {
         if let Some(found) = lookup_in_dir(&dir, command) {
             return Some(found);
@@ -167,17 +176,21 @@ fn is_executable(path: &Path) -> bool {
 fn pathext() -> Vec<String> {
     #[cfg(windows)]
     {
-        std::env::var("PATHEXT")
-            .unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".into())
-            .split(';')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect()
+        parse_pathext(std::env::var("PATHEXT").ok())
     }
     #[cfg(not(windows))]
     {
         Vec::new()
     }
+}
+
+fn parse_pathext(value: Option<String>) -> Vec<String> {
+    value
+        .unwrap_or_else(|| ".EXE;.CMD;.BAT;.COM".into())
+        .split(';')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
 }
 
 #[cfg(test)]

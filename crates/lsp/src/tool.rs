@@ -126,6 +126,11 @@ fn primary_ext(spec: &crate::config::LspServerSpec) -> &str {
         .unwrap_or("")
 }
 
+#[cfg(test)]
+pub(crate) fn primary_ext_for_test(spec: &crate::config::LspServerSpec) -> &str {
+    primary_ext(spec)
+}
+
 fn missing_server_message(settings: &LspSettings, ext: &str, cwd: &Path) -> String {
     match settings.spec_for_ext(ext) {
         None => format!("No language server configured for '.{ext}' files"),

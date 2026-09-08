@@ -41,6 +41,7 @@ FULL_COVER_CRATES = [
     "whycodes-llm",
     "whycodes-auth",
     "whycodes-agent",
+    "whycodes-lsp",
 ]
 
 # Floors as (crate, min_percent)

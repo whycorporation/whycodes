@@ -171,6 +171,8 @@ fn incoming_message_detects_notifications_and_responses() {
     assert!(matches!(weird, IncomingMessage::Response(_)));
 
     assert!(IncomingMessage::from_line("not json").is_err());
+    assert!(IncomingMessage::from_line(r#"{"method":"x"}"#).is_err());
+    assert!(IncomingMessage::from_line(r#"{"id":1}"#).is_err());
 }
 
 #[test]

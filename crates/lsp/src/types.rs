@@ -276,9 +276,9 @@ impl IncomingMessage {
     pub fn from_line(line: &str) -> serde_json::Result<Self> {
         let val: serde_json::Value = serde_json::from_str(line)?;
         if val.get("method").is_some() && val.get("id").is_none() {
-            Ok(IncomingMessage::Notification(serde_json::from_str(line)?))
+            Ok(IncomingMessage::Notification(serde_json::from_value(val)?))
         } else {
-            Ok(IncomingMessage::Response(serde_json::from_str(line)?))
+            Ok(IncomingMessage::Response(serde_json::from_value(val)?))
         }
     }
 }

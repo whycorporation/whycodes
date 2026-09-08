@@ -20,6 +20,11 @@ async fn requires_file_path() {
     let result = tool.execute(json!({ "action": "diagnostics" }), &ctx).await;
     assert!(result.is_error);
     assert!(result.content.contains("file_path"));
+    let missing_action = tool
+        .execute(json!({ "file_path": "/tmp/x.whycodes_lsp_fake" }), &ctx)
+        .await;
+    assert!(missing_action.is_error);
+    assert!(missing_action.content.contains("Unknown action"));
 }
 
 #[tokio::test]
@@ -254,6 +259,40 @@ async fn workspace_symbols_without_file_uses_a_cached_client() {
 }
 
 #[tokio::test]
+async fn workspace_symbols_without_file_starts_rust_when_available() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Cargo.toml"), "[package]\n").unwrap();
+    let python = crate::client::test_python();
+    let py = crate::client::FAKE_LSP_PY;
+    let settings = LspSettings {
+        idle_timeout_ms: None,
+        servers: std::collections::HashMap::from([(
+            "rs-fake".into(),
+            LspServerSpec {
+                command: Some(python.into()),
+                args: vec!["-c".into(), py.into(), "ok".into()],
+                file_types: vec![".rs".into()],
+                language_id: Some("rust".into()),
+                ..LspServerSpec::default()
+            },
+        )]),
+    };
+    let tool = LspTool::with_settings(settings);
+    let ctx = ToolContext::new(dir.path().to_str().unwrap());
+    let result = tool
+        .execute(json!({ "action": "symbols", "query": "main" }), &ctx)
+        .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.contains("main"));
+}
+
+#[test]
+fn primary_ext_falls_back_to_empty() {
+    let spec = LspServerSpec::default();
+    assert_eq!(crate::tool::primary_ext_for_test(&spec), "");
+}
+
+#[tokio::test]
 async fn workspace_symbols_without_client_reports_missing_rust_server() {
     let dir = tempfile::tempdir().unwrap();
     let tool = LspTool::new();
@@ -456,4 +495,39 @@ async fn missing_binary_message_when_markers_match() {
         "{}",
         result.content
     );
+}
+
+#[tokio::test]
+async fn workspace_symbols_null_result_is_described() {
+    let tool = LspTool::new();
+    let client = crate::client::start_test_client("no_result", false)
+        .await
+        .unwrap();
+    tool.insert_client("whycodes_lsp_fake", Arc::new(client))
+        .await;
+    let ctx = ToolContext::new("/tmp");
+    let result = tool
+        .execute(json!({ "action": "symbols", "query": "main" }), &ctx)
+        .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(result.content, "No symbols found.");
+}
+
+#[tokio::test]
+async fn zero_line_and_character_saturate_to_origin() {
+    let tool = LspTool::new();
+    let ctx = ToolContext::new("/tmp");
+    let result = tool
+        .execute(
+            json!({
+                "action": "hover",
+                "file_path": "/tmp/x.whycodes_lsp_fake",
+                "line": 0,
+                "character": 0
+            }),
+            &ctx,
+        )
+        .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(result.content, "hello");
 }

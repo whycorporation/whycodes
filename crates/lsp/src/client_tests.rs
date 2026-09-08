@@ -126,6 +126,30 @@ fn encode_frame_and_parse_results() {
     }])))
     .unwrap();
     assert_eq!(many.len(), 1);
+    assert!(
+        parse_locations(Some(serde_json::json!({"uri": 1})))
+            .unwrap_err()
+            .to_string()
+            .contains("invalid type")
+            || parse_locations(Some(serde_json::json!({"uri": 1}))).is_err()
+    );
+    assert!(
+        !parse_hover_result(Some(serde_json::json!([])))
+            .unwrap_err()
+            .to_string()
+            .is_empty()
+    );
+    assert!(language_server_command(&crate::config::LspServerSpec::default()).is_none());
+    assert!(language_server_for_extension("toml").is_none());
+    let now = std::time::Instant::now();
+    let slot = Mutex::new(now);
+    mark_instant(&slot);
+    assert!(idle_since(&slot) < std::time::Duration::from_secs(2));
+    let held = Mutex::new(std::time::Instant::now());
+    let _guard = held.try_lock().unwrap();
+    mark_instant(&held);
+    assert_eq!(idle_since(&held), std::time::Duration::ZERO);
+    assert!(parse_locations(Some(serde_json::json!([{"uri": 1}]))).is_err());
 }
 
 fn fake_args(mode: &str) -> Vec<String> {
@@ -426,6 +450,64 @@ async fn write_framed_roundtrip() {
     assert!(s.contains("\"ok\":true"));
 }
 
+#[tokio::test]
+async fn write_framed_fails_when_writer_errors() {
+    struct FailWriter;
+    impl tokio::io::AsyncWrite for FailWriter {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Ready(Err(std::io::Error::other("nope")))
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+    let err = write_framed(&mut FailWriter, &json!({})).await.unwrap_err();
+    assert!(err.to_string().contains("nope"));
+}
+
+#[tokio::test]
+async fn write_framed_fails_when_flush_errors() {
+    struct FlushFailWriter;
+    impl tokio::io::AsyncWrite for FlushFailWriter {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Ready(Ok(buf.len()))
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(std::io::Error::other("flush nope")))
+        }
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+    let err = write_framed(&mut FlushFailWriter, &json!({"ok": true}))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("flush nope"));
+}
+
 #[test]
 fn parse_helpers_surface_json_errors() {
     assert!(parse_hover_result(Some(json!(1))).is_err());
@@ -478,6 +560,35 @@ fn remaining_language_ids_and_servers() {
     assert!(language_server_for_extension("whycodes_lsp_empty").is_some());
     assert!(language_server_for_extension("whycodes_lsp_err").is_some());
     assert!(language_server_for_extension("whycodes_lsp_failopen").is_some());
+    assert!(language_server_for_extension("whycodes_lsp_nocmd").is_none());
+    assert_eq!(
+        language_server_for_extension("sh"),
+        Some(("bash-language-server".into(), vec!["start".into()]))
+    );
+    assert_eq!(
+        language_server_for_extension("yaml"),
+        Some(("yaml-language-server".into(), vec!["--stdio".into()]))
+    );
+    assert_eq!(
+        language_server_for_extension("yml"),
+        Some(("yaml-language-server".into(), vec!["--stdio".into()]))
+    );
+    assert_eq!(
+        language_server_for_extension("bash"),
+        Some(("bash-language-server".into(), vec!["start".into()]))
+    );
+    assert_eq!(
+        language_server_for_extension("pyi"),
+        Some(("pyright-langserver".into(), vec!["--stdio".into()]))
+    );
+    assert_eq!(
+        language_server_for_extension("cxx"),
+        Some(("clangd".into(), vec![]))
+    );
+    assert_eq!(
+        language_server_for_extension("hxx"),
+        Some(("clangd".into(), vec![]))
+    );
 }
 
 #[test]
@@ -497,8 +608,54 @@ fn command_available_finds_sh_and_rejects_missing() {
             .contains("no stdin")
     );
     assert_eq!(take_child_pipe(Some(7), "stdout").unwrap(), 7);
+    assert_eq!(take_stdio_pair(Some(1), Some(2)).unwrap(), (1, 2));
+    assert!(
+        take_stdio_pair::<i32, i32>(None, Some(2))
+            .unwrap_err()
+            .to_string()
+            .contains("no stdin")
+    );
+    assert!(
+        take_stdio_pair::<i32, i32>(Some(1), None)
+            .unwrap_err()
+            .to_string()
+            .contains("no stdout")
+    );
     assert!(LspClient::spawn_background(true));
     assert!(!LspClient::spawn_background(false));
+    assert_eq!(
+        test_python_from(&["whycodes-no-python"], |_| None),
+        "python3"
+    );
+    assert!(
+        command_available_with("where", "cmd")
+            || command_available_with("which", "sh")
+            || command_available_with("which", "python3")
+    );
+}
+
+#[tokio::test]
+async fn start_public_api_initializes_without_settings() {
+    let client = LspClient::start(test_python(), &fake_args("ok"), "/tmp", "rust")
+        .await
+        .unwrap();
+    assert!(client.settings().is_none());
+    let hover = client.hover("file:///tmp/a.rs", pos()).await.unwrap();
+    assert_eq!(hover.unwrap().contents_string(), "hello");
+}
+
+#[tokio::test]
+async fn request_errors_when_separator_is_truncated() {
+    let client = start_fake("trunc_req_sep").await;
+    let err = client.hover("file:///tmp/a.rs", pos()).await.unwrap_err();
+    assert!(!err.to_string().is_empty());
+}
+
+#[tokio::test]
+async fn request_errors_when_body_is_truncated() {
+    let client = start_fake("trunc_req_body").await;
+    let err = client.hover("file:///tmp/a.rs", pos()).await.unwrap_err();
+    assert!(!err.to_string().is_empty());
 }
 
 #[tokio::test]
@@ -514,6 +671,76 @@ async fn start_configured_sends_init_options_and_settings() {
     assert_eq!(client.settings(), Some(&settings));
     client.mark_used();
     assert!(client.idle_for() < std::time::Duration::from_secs(2));
+}
+
+#[tokio::test]
+async fn did_change_configuration_fails_when_server_exits() {
+    let args = vec![
+        "-c".into(),
+        FAKE_LSP_PY.into(),
+        "die_after_initialized".into(),
+    ];
+    let py = test_python();
+    let settings = serde_json::json!({"checkOnSave": false});
+    let err =
+        match LspClient::start_configured(py, &args, "/tmp", "rust", None, Some(&settings)).await {
+            Err(e) => e,
+            Ok(_) => panic!("expected didChangeConfiguration failure"),
+        };
+    assert!(
+        err.to_string().contains("didChangeConfiguration")
+            || err.to_string().contains("initialized"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn open_document_reads_missing_uri_as_empty() {
+    let client = start_fake("ok").await;
+    client.open_document("not-a-file-uri", None).await.unwrap();
+    client
+        .open_document("file:///whycodes-lsp-missing-file.rs", None)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn open_document_reads_existing_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.rs");
+    std::fs::write(&path, "fn main() {}").unwrap();
+    let client = start_fake("ok").await;
+    client
+        .open_document(&crate::detect::file_uri(&path), None)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn document_and_workspace_symbols_cover_null_and_values() {
+    let client = start_fake("ok").await;
+    let doc = client.document_symbols("file:///tmp/a.rs").await.unwrap();
+    assert!(doc.to_string().contains("main"));
+    let ws = client.workspace_symbols("main").await.unwrap();
+    assert!(ws.to_string().contains("main"));
+    let empty = start_fake("empty").await;
+    assert!(
+        empty
+            .document_symbols("file:///tmp/a.rs")
+            .await
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let none = start_fake("no_result").await;
+    assert!(
+        none.document_symbols("file:///tmp/a.rs")
+            .await
+            .unwrap()
+            .is_null()
+    );
+    assert!(none.workspace_symbols("main").await.unwrap().is_null());
 }
 
 #[tokio::test]
@@ -560,4 +787,93 @@ async fn consume_stdout_breaks_when_separator_read_fails() {
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
     let _ = AsyncRead::poll_read(std::pin::Pin::new(&mut reader), &mut cx, &mut read_buf);
     let _ = AsyncRead::poll_read(std::pin::Pin::new(&mut reader), &mut cx, &mut read_buf);
+}
+
+#[tokio::test]
+async fn start_without_stdio_fails_on_missing_pipes() {
+    let err = match LspClient::start_without_stdio(test_python(), &fake_args("ok")).await {
+        Err(e) => e,
+        Ok(_) => panic!("expected missing stdio pipes"),
+    };
+    assert!(
+        err.to_string().contains("no stdin") || err.to_string().contains("no stdout"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn start_without_stdout_fails_on_missing_pipe() {
+    let err = match LspClient::start_without_stdout(test_python(), &fake_args("ok")).await {
+        Err(e) => e,
+        Ok(_) => panic!("expected missing stdout pipe"),
+    };
+    assert!(err.to_string().contains("no stdout"), "{err}");
+}
+
+#[tokio::test]
+async fn read_rpc_response_fails_when_header_read_errors() {
+    struct ErrReader;
+    impl tokio::io::AsyncRead for ErrReader {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::ready!(AsyncBufRead::poll_fill_buf(self, cx))?;
+            buf.advance(0);
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+    impl tokio::io::AsyncBufRead for ErrReader {
+        fn poll_fill_buf(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<&[u8]>> {
+            std::task::Poll::Ready(Err(std::io::Error::other("header boom")))
+        }
+        fn consume(self: std::pin::Pin<&mut Self>, _amt: usize) {}
+    }
+    let err = read_rpc_response(&mut ErrReader, 1, "hover")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("header boom"));
+}
+
+#[tokio::test]
+async fn read_rpc_response_fails_when_separator_read_errors() {
+    struct HeaderThenErr {
+        n: u8,
+    }
+    impl tokio::io::AsyncRead for HeaderThenErr {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            let available = std::task::ready!(AsyncBufRead::poll_fill_buf(self, cx))?;
+            let n = available.len().min(buf.remaining());
+            buf.put_slice(&available[..n]);
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+    impl tokio::io::AsyncBufRead for HeaderThenErr {
+        fn poll_fill_buf(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<&[u8]>> {
+            let this = self.get_mut();
+            if this.n == 0 {
+                this.n = 1;
+                std::task::Poll::Ready(Ok(b"Content-Length: 2\n".as_slice()))
+            } else {
+                let _ = cx;
+                std::task::Poll::Ready(Err(std::io::Error::other("sep boom")))
+            }
+        }
+        fn consume(self: std::pin::Pin<&mut Self>, _amt: usize) {}
+    }
+    let err = read_rpc_response(&mut HeaderThenErr { n: 0 }, 1, "hover")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("sep boom"));
 }

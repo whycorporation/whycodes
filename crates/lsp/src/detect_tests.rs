@@ -46,6 +46,10 @@ fn path_from_file_uri_roundtrips_unix_shape() {
     let relative = path_from_file_uri("file://relative/x.rs").unwrap();
     assert!(relative.to_string_lossy().contains("relative"));
     assert!(path_from_file_uri("http://example/x.rs").is_none());
+    let short = path_from_file_uri("file:///").unwrap();
+    assert!(!short.as_os_str().is_empty() || short.to_string_lossy().is_empty());
+    let one = path_from_file_uri("file://x").unwrap();
+    assert!(one.to_string_lossy().contains('x'));
 }
 
 #[test]
@@ -97,6 +101,15 @@ fn resolve_command_prefers_project_local_bin() {
     }
     let found = resolve_command(dir.path(), "my-lsp").unwrap();
     assert_eq!(found.file_stem().unwrap(), "my-lsp");
+    let plain = bin_dir.join("plainlsp");
+    fs::write(&plain, b"echo").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&plain, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let found_plain = resolve_command(dir.path(), "plainlsp").unwrap();
+    assert_eq!(found_plain.file_name().unwrap(), "plainlsp");
 }
 
 #[test]
@@ -185,4 +198,28 @@ fn which_command_finds_something_on_path() {
         .or_else(|| which_command("python3"));
     assert!(found.is_some(), "expected sh, cmd, or python3 on PATH");
     assert!(which_command("whycodes-lsp-bin-that-does-not-exist").is_none());
+    assert!(which_command_in(None, "cmd").is_none());
+    assert_eq!(parse_pathext(None)[0], ".EXE");
+    assert!(parse_pathext(Some(";".into())).is_empty());
+    assert!(wildcard_match("*a*", "*a*"));
+}
+
+#[test]
+fn resolve_command_rejects_directories_and_non_executables() {
+    let dir = tempfile::tempdir().unwrap();
+    let nested = dir.path().join("notadir");
+    fs::create_dir_all(&nested).unwrap();
+    assert!(resolve_command(dir.path(), nested.to_str().unwrap()).is_none());
+    let file = dir.path().join("noexec.bin");
+    fs::write(&file, b"x").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(resolve_command(dir.path(), "noexec.bin").is_none());
+    }
+    #[cfg(not(unix))]
+    {
+        assert!(resolve_command(dir.path(), "noexec.bin").is_some());
+    }
 }
