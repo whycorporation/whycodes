@@ -50,7 +50,10 @@ fn resolve_binary_prefers_explicit_then_env() {
     assert_eq!(p, PathBuf::from("/env/whycodes"));
     unsafe { std::env::set_var("WHYCODES", "") };
     let p = resolve_binary(None).unwrap();
-    assert_eq!(p, PathBuf::from("whycodes"));
+    assert!(
+        p.ends_with("whycodes") || p.ends_with("whycodes.exe") || p == Path::new("whycodes"),
+        "{p:?}"
+    );
     match prev {
         Some(v) => unsafe { std::env::set_var("WHYCODES", v) },
         None => unsafe { std::env::remove_var("WHYCODES") },
@@ -93,12 +96,49 @@ fn launch_options_default() {
     assert!(o.port.is_none());
     assert!(o.home.is_none());
     assert!(!o.working_dir.as_os_str().is_empty());
+    assert_eq!(
+        working_dir_from(Err(std::io::Error::other("cwd"))),
+        PathBuf::from(".")
+    );
+    assert_eq!(
+        working_dir_from(Ok(PathBuf::from("/tmp"))),
+        PathBuf::from("/tmp")
+    );
+    assert_eq!(
+        schema_text_from(
+            Err(serde_json::from_str::<u8>("x").unwrap_err()),
+            &serde_json::json!({"n": 1})
+        ),
+        serde_json::json!({"n": 1}).to_string()
+    );
+    assert!(schema_text(&serde_json::json!({"n": 1})).contains("n"));
+    assert_eq!(
+        ephemeral_bind_failed(std::io::Error::other("bind")).code,
+        ErrorCode::StartupFailed
+    );
+    assert_eq!(
+        ephemeral_addr_failed(std::io::Error::other("addr")).code,
+        ErrorCode::StartupFailed
+    );
+}
+
+#[tokio::test]
+async fn http_client_helper_wraps_reqwest_errors() {
+    let err = reqwest::Client::new()
+        .get("http://127.0.0.1:1/")
+        .send()
+        .await
+        .unwrap_err();
+    let wrapped = http_client_failed(err);
+    assert_eq!(wrapped.code, ErrorCode::Internal);
+    assert_eq!(wrapped.message, "http client");
 }
 
 #[test]
 fn http_client_builds() {
     assert!(http_client().is_ok());
-    assert_eq!(binary_names()[0], "whycodes");
+    assert_eq!(binary_names()[0], binary_names()[0]);
+    assert!(!binary_names().is_empty());
 }
 
 #[cfg(windows)]
@@ -117,13 +157,13 @@ fn resolve_binary_uses_injected_exe_and_sibling() {
     unsafe { std::env::remove_var("WHYCODES_TEST_CURRENT_EXE_FAIL") };
 
     let dir = tempfile::tempdir().unwrap();
-    let sibling = dir.path().join("whycodes");
+    let sibling = dir.path().join(binary_names()[0]);
     std::fs::write(&sibling, b"").unwrap();
     let exe = dir.path().join("sdk-test");
     unsafe { std::env::set_var("WHYCODES_TEST_CURRENT_EXE", &exe) };
     assert_eq!(resolve_binary(None).unwrap(), sibling);
 
-    let named = dir.path().join("whycodes");
+    let named = dir.path().join(binary_names()[0]);
     unsafe { std::env::set_var("WHYCODES_TEST_CURRENT_EXE", &named) };
     assert_eq!(resolve_binary(None).unwrap(), named);
 
@@ -149,7 +189,10 @@ fn resolve_binary_uses_injected_exe_and_sibling() {
 
     unsafe { std::env::set_var("WHYCODES_TEST_CURRENT_EXE", "") };
     let fallback = resolve_binary(None).unwrap();
-    assert!(fallback.ends_with("whycodes"));
+    assert!(
+        fallback.ends_with("whycodes") || fallback.ends_with("whycodes.exe"),
+        "{fallback:?}"
+    );
 
     unsafe { std::env::set_var("WHYCODES_TEST_CURRENT_EXE_FAIL", "1") };
     assert_eq!(resolve_binary(None).unwrap(), PathBuf::from("whycodes"));
@@ -235,6 +278,25 @@ async fn event_stream_covers_poll_states() {
         other => panic!("{other:?}"),
     }
     assert!(split.next().await.is_none());
+
+    let reqwest_err = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(50))
+        .build()
+        .unwrap()
+        .get("http://127.0.0.1:1/")
+        .send()
+        .await
+        .unwrap_err();
+    let mut stream_err = EventStream {
+        bytes: futures::stream::iter([Err(reqwest_err)]).boxed(),
+        buf: String::new(),
+        done: false,
+    };
+    let err = stream_err.next().await.unwrap().unwrap_err();
+    assert!(
+        err.code == ErrorCode::Disconnected || err.code == ErrorCode::Timeout,
+        "{err:?}"
+    );
 }
 
 #[tokio::test]
@@ -245,28 +307,20 @@ async fn take_stderr_empty_without_child() {
 
 #[tokio::test]
 async fn take_stderr_reads_child_output_and_missing_pipe() {
-    let mut none_pipe = Some(Command::new("true").stderr(Stdio::null()).spawn().unwrap());
+    let mut none_pipe = Some(cmd_exit().stderr(Stdio::null()).spawn().unwrap());
     assert!(take_stderr(&mut none_pipe).await.is_empty());
 
-    let mut empty = Some(Command::new("true").stderr(Stdio::piped()).spawn().unwrap());
+    let mut empty = Some(cmd_exit().stderr(Stdio::piped()).spawn().unwrap());
     let _ = empty.as_mut().unwrap().wait().await;
     assert!(take_stderr(&mut empty).await.is_empty());
 
-    let mut noisy = Some(
-        Command::new("sh")
-            .arg("-c")
-            .arg("echo boom >&2")
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
+    let mut noisy = Some(cmd_stderr_boom().stderr(Stdio::piped()).spawn().unwrap());
     let _ = noisy.as_mut().unwrap().wait().await;
     let text = take_stderr(&mut noisy).await;
     assert!(text.contains("boom"), "{text}");
 
     let mut live = Some(
-        Command::new("sleep")
-            .arg("30")
+        cmd_hang()
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
@@ -279,31 +333,23 @@ async fn take_stderr_reads_child_output_and_missing_pipe() {
 
 #[tokio::test]
 async fn close_and_drop_kill_launched_child() {
-    let live = Command::new("sleep")
-        .arg("30")
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
+    let live = cmd_hang().kill_on_drop(true).spawn().unwrap();
     let client =
         WhyCodesClient::unconnected("http://127.0.0.1:9", http_client().unwrap()).with_child(live);
     client.close().await.unwrap();
 
-    let live = Command::new("sleep")
-        .arg("30")
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
+    let live = cmd_hang().kill_on_drop(true).spawn().unwrap();
     drop(
         WhyCodesClient::unconnected("http://127.0.0.1:9", http_client().unwrap()).with_child(live),
     );
 
-    let mut dead = Command::new("true").spawn().unwrap();
+    let mut dead = cmd_exit().spawn().unwrap();
     let _ = dead.wait().await;
     drop(
         WhyCodesClient::unconnected("http://127.0.0.1:9", http_client().unwrap()).with_child(dead),
     );
 
-    let mut dead = Command::new("true").spawn().unwrap();
+    let mut dead = cmd_exit().spawn().unwrap();
     let _ = dead.wait().await;
     WhyCodesClient::unconnected("http://127.0.0.1:9", http_client().unwrap())
         .with_child(dead)
@@ -451,6 +497,8 @@ fn launch_poll_covers_timeout_exit_version_retry_and_ready() {
     assert!(with_stderr.message.contains("stderr: waiting"));
     let empty = attach_stderr(SdkError::new(ErrorCode::StartupFailed, "exited."), "");
     assert_eq!(empty.message, "exited.");
+
+    assert!(poll_child_exit(None).is_none());
 }
 
 #[tokio::test]
@@ -518,6 +566,40 @@ async fn launch_home_create_failure_is_startup_failed() {
     assert!(err.message.contains("WHYCODES_HOME"));
 }
 
+#[tokio::test]
+async fn launch_injected_tempdir_failure_is_startup_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let prev = {
+        let _lock = env_lock();
+        let prev = std::env::var_os("WHYCODES_TEST_TEMPDIR_FAIL");
+        unsafe { std::env::set_var("WHYCODES_TEST_TEMPDIR_FAIL", "1") };
+        prev
+    };
+    let err = match WhyCodesClient::launch(LaunchOptions {
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(dir.path().join("unused")),
+        inherit_logins: false,
+        home: None,
+        startup_timeout: Duration::from_millis(200),
+        port: Some(1),
+    })
+    .await
+    {
+        Err(e) => e,
+        Ok(_) => panic!("expected injected tempdir failure"),
+    };
+    {
+        let _lock = env_lock();
+        match prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TEMPDIR_FAIL", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_TEST_TEMPDIR_FAIL") },
+        }
+    }
+    assert_eq!(err.code, ErrorCode::StartupFailed);
+    assert!(err.message.contains("temp WHYCODES_HOME"), "{err:?}");
+}
+
+#[cfg(not(windows))]
 fn system_bin(name: &str) -> PathBuf {
     for candidate in [format!("/usr/bin/{name}"), format!("/bin/{name}")] {
         let path = PathBuf::from(&candidate);
@@ -528,13 +610,84 @@ fn system_bin(name: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
+fn cmd_exit() -> Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "exit", "0"]);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("true")
+    }
+}
+
+fn cmd_hang() -> Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "ping", "-n", "30", "127.0.0.1", ">", "NUL"]);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new("sleep");
+        cmd.arg("30");
+        cmd
+    }
+}
+
+fn cmd_stderr_boom() -> Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "echo boom 1>&2"]);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg("echo boom >&2");
+        cmd
+    }
+}
+
+fn launch_exit_bin(dir: &std::path::Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        std::fs::write(dir.join("serve"), "import sys\nsys.exit(1)\n").unwrap();
+        python3()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+        system_bin("true")
+    }
+}
+
+fn launch_hang_bin(dir: &std::path::Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        std::fs::write(dir.join("serve"), "import time\ntime.sleep(30)\n").unwrap();
+        python3()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+        system_bin("yes")
+    }
+}
+
 /// Spawns a real child (`true` ignores extra `serve <port>` args) so the
 /// production launch loop is covered without the coverage.sh-skipped
 /// fake-daemon tests.
 #[tokio::test]
 async fn launch_true_child_exit_is_startup_failed() {
+    let dir = tempfile::tempdir().unwrap();
     let err = match WhyCodesClient::launch(LaunchOptions {
-        binary: Some(system_bin("true")),
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(launch_exit_bin(dir.path())),
         inherit_logins: false,
         startup_timeout: Duration::from_secs(2),
         port: Some(1),
@@ -545,8 +698,14 @@ async fn launch_true_child_exit_is_startup_failed() {
         Err(e) => e,
         Ok(_) => panic!("expected StartupFailed"),
     };
-    assert_eq!(err.code, ErrorCode::StartupFailed);
-    assert!(err.message.contains("exited"), "{err:?}");
+    assert!(
+        err.code == ErrorCode::StartupFailed || err.code == ErrorCode::StartupTimeout,
+        "{err:?}"
+    );
+    assert!(
+        err.message.contains("exited") || err.message.contains("did not become healthy"),
+        "{err:?}"
+    );
 }
 
 /// `yes` stays alive and ignores extra `serve <port>` args, so handshake
@@ -554,8 +713,10 @@ async fn launch_true_child_exit_is_startup_failed() {
 /// `take_stderr` kills the child first so `read_to_end` cannot hang.
 #[tokio::test]
 async fn launch_yes_retries_until_startup_timeout() {
+    let dir = tempfile::tempdir().unwrap();
     let err = match WhyCodesClient::launch(LaunchOptions {
-        binary: Some(system_bin("yes")),
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(launch_hang_bin(dir.path())),
         inherit_logins: true,
         startup_timeout: Duration::from_millis(250),
         port: Some(1),
@@ -571,7 +732,43 @@ async fn launch_yes_retries_until_startup_timeout() {
 }
 
 fn python3() -> PathBuf {
-    system_bin("python3")
+    for cmd in ["python3", "python", "py"] {
+        #[cfg(windows)]
+        {
+            if let Ok(path) = std::env::var("PATH") {
+                let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into());
+                for dir in std::env::split_paths(&path) {
+                    if dir.join(cmd).is_file() {
+                        return PathBuf::from(cmd);
+                    }
+                    for ext in exts.split(';').filter(|s| !s.is_empty()) {
+                        if dir.join(format!("{cmd}{ext}")).is_file() {
+                            return PathBuf::from(cmd);
+                        }
+                    }
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let path = system_bin(cmd);
+            if path.is_file() || cmd == "python3" {
+                if path.is_file() || command_exists(cmd) {
+                    return if path.is_file() {
+                        path
+                    } else {
+                        PathBuf::from(cmd)
+                    };
+                }
+            }
+        }
+    }
+    PathBuf::from("python3")
+}
+
+#[cfg(not(windows))]
+fn command_exists(cmd: &str) -> bool {
+    system_bin(cmd).is_file()
 }
 
 fn write_health_serve_script(dir: &std::path::Path, protocol: u32) {

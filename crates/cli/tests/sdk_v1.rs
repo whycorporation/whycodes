@@ -50,10 +50,8 @@ async fn v1_session_models_and_errors_without_llm() {
     let hs = client.health().await.expect("health");
     assert_eq!(hs.protocol, 1);
 
-    let session = client
-        .create_session(Some(home.path().display().to_string()))
-        .await
-        .expect("create");
+    let project = home.path().display().to_string();
+    let session = client.create_session(Some(&project)).await.expect("create");
     assert!(!session.id.is_empty());
 
     let listed = client.list_sessions().await.expect("list");
@@ -129,10 +127,8 @@ async fn launch_isolated_home_does_not_need_user_keys() {
 
     let hs = client.health().await.expect("health");
     assert_eq!(hs.protocol, 1);
-    let session = client
-        .create_session(Some(work.path().display().to_string()))
-        .await
-        .expect("create");
+    let project = work.path().display().to_string();
+    let session = client.create_session(Some(&project)).await.expect("create");
     assert!(
         home.path().join("whycodes.db").exists(),
         "isolated WHYCODES_HOME should hold the session db"
