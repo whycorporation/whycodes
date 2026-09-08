@@ -61,7 +61,7 @@ that work lands.
 | Gate | Floor | What it covers |
 |---|---|---|
 | Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
-| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp` | **100%** lines | Production files only (`tests.rs` ignored) |
+| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server` | **100%** lines | Production files only (`tests.rs` ignored) |
 | `format` | **95%** lines | Production files only (`tests.rs` ignored) |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
@@ -71,7 +71,7 @@ comfortably above it, raise `--fail-under-lines` in
 ## Last measurement
 
 Linux x86_64, 2026-09-06 (`cargo llvm-cov --workspace`, flags above — `whycodes-agent` 100% floor, #61).
-Workspace line coverage last measured 2026-09-06 at **92.56%**; crate floors now include `llm`, `auth`, and `agent` at 100% (production files, `tests.rs` ignored, llvm-cov `--skip-expansions`).
+Workspace line coverage last measured 2026-09-06 at **92.56%**. Crate floors now include `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, and `server` at 100% (production files, `tests.rs` ignored, llvm-cov `--skip-expansions`).
 
 `core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
 (#48). Production modules also have local `#[cfg(test)]` next to the code (`error`,
