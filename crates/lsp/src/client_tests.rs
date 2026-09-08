@@ -179,6 +179,10 @@ async fn initialize_hover_definition_and_references() {
     assert_eq!(diags[0].message, "boom");
     let cached = client.get_diagnostics("file:///tmp/a.rs").await.unwrap();
     assert_eq!(cached.len(), 1);
+    client
+        .open_document("file:///tmp/a.rs", Some("fn main() {}"))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

@@ -125,6 +125,57 @@ fn resolve_command_accepts_absolute_and_relative() {
     }
     assert!(resolve_command(dir.path(), "rel.bin").is_some());
     assert!(resolve_command(dir.path(), "whycodes-lsp-bin-that-does-not-exist").is_none());
+    let nested = dir.path().join("bin");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("nested.bin"), b"x").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(nested.join("nested.bin"), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert!(resolve_command(dir.path(), "bin/nested.bin").is_some());
+    let missing_abs = abs.with_extension("missing");
+    assert!(resolve_command(dir.path(), missing_abs.to_str().unwrap()).is_none());
+}
+
+#[test]
+fn root_markers_skip_unreadable_cwd_for_globs() {
+    assert!(!root_markers_match(
+        Path::new("/whycodes-lsp-no-such-dir"),
+        &["*.csproj".into()]
+    ));
+}
+
+#[test]
+fn file_uri_helper_uses_path() {
+    let uri = file_uri(Path::new("/tmp/a.rs"));
+    assert!(uri.starts_with("file:"));
+    assert!(uri.contains("tmp") || uri.contains("a.rs"));
+}
+
+#[test]
+fn local_bin_dirs_include_venv() {
+    let dir = tempfile::tempdir().unwrap();
+    let scripts = if cfg!(windows) {
+        dir.path().join(".venv").join("Scripts")
+    } else {
+        dir.path().join(".venv").join("bin")
+    };
+    fs::create_dir_all(&scripts).unwrap();
+    let exe_name = if cfg!(windows) {
+        "venv-lsp.CMD"
+    } else {
+        "venv-lsp"
+    };
+    let exe = scripts.join(exe_name);
+    fs::write(&exe, b"echo").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let found = resolve_command(dir.path(), "venv-lsp").unwrap();
+    assert_eq!(found.file_stem().unwrap(), "venv-lsp");
 }
 
 #[test]

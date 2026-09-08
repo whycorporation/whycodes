@@ -88,6 +88,15 @@ impl LspTool {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn missing_server_message_for_test(
+    settings: &LspSettings,
+    ext: &str,
+    cwd: &Path,
+) -> String {
+    missing_server_message(settings, ext, cwd)
+}
+
 async fn start_resolved(
     resolved: &ResolvedServer,
     workspace_root: &str,

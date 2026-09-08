@@ -152,12 +152,26 @@ async fn empty_lsp_results_are_described() {
     assert_eq!(defn.content, "No definition found.");
     let refs = run("references", path).await;
     assert_eq!(refs.content, "No references found.");
+    let ty = run("type_definition", path).await;
+    assert_eq!(ty.content, "No type definition found.");
+    let impls = run("implementation", path).await;
+    assert_eq!(impls.content, "No implementation found.");
+    let symbols = run("symbols", path).await;
+    assert_eq!(symbols.content, "No symbols found.");
 }
 
 #[tokio::test]
 async fn action_errors_are_reported() {
     let path = "/tmp/x.whycodes_lsp_err";
-    for action in ["diagnostics", "hover", "definition", "references"] {
+    for action in [
+        "diagnostics",
+        "hover",
+        "definition",
+        "references",
+        "type_definition",
+        "implementation",
+        "symbols",
+    ] {
         let result = run(action, path).await;
         assert!(result.is_error, "{action}: {}", result.content);
         assert!(result.content.contains("Error"), "{action}");
@@ -324,6 +338,121 @@ async fn missing_root_marker_message_names_the_server() {
         result.content.contains("rust-analyzer")
             && (result.content.contains("needs a project marker")
                 || result.content.contains("was not found on PATH")),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn cached_client_is_reused_without_respawn() {
+    let tool = LspTool::new();
+    let ctx = ToolContext::new("/tmp");
+    let path = "/tmp/x.whycodes_lsp_fake";
+    let first = tool
+        .execute(
+            json!({ "action": "hover", "file_path": path, "line": 1 }),
+            &ctx,
+        )
+        .await;
+    assert!(!first.is_error, "{}", first.content);
+    let second = tool
+        .execute(
+            json!({ "action": "hover", "file_path": path, "line": 1 }),
+            &ctx,
+        )
+        .await;
+    assert_eq!(second.content, "hello");
+}
+
+#[tokio::test]
+async fn workspace_symbols_error_from_dead_cached_client() {
+    let tool = LspTool::new();
+    let client = crate::client::start_test_client("ok", false).await.unwrap();
+    client.kill_for_test().await;
+    tool.insert_client("whycodes_lsp_fake", Arc::new(client))
+        .await;
+    let ctx = ToolContext::new("/tmp");
+    let result = tool
+        .execute(json!({ "action": "symbols", "query": "main" }), &ctx)
+        .await;
+    assert!(result.is_error, "{}", result.content);
+    assert!(result.content.contains("Error getting symbols"));
+}
+
+#[tokio::test]
+async fn start_resolved_falls_back_to_extension_language_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let python = crate::client::test_python();
+    let py = crate::client::FAKE_LSP_PY;
+    let settings = LspSettings {
+        idle_timeout_ms: None,
+        servers: std::collections::HashMap::from([(
+            "noid".into(),
+            LspServerSpec {
+                command: Some(python.into()),
+                args: vec!["-c".into(), py.into(), "ok".into()],
+                file_types: vec![".whycodes_lsp_noid".into()],
+                language_id: None,
+                ..LspServerSpec::default()
+            },
+        )]),
+    };
+    let tool = LspTool::with_settings(settings);
+    let ctx = ToolContext::new(dir.path().to_str().unwrap());
+    let path = dir.path().join("x.whycodes_lsp_noid");
+    let result = tool
+        .execute(
+            json!({ "action": "hover", "file_path": path.to_str().unwrap(), "line": 1 }),
+            &ctx,
+        )
+        .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(result.content, "hello");
+}
+
+#[tokio::test]
+async fn zero_idle_timeout_does_not_evict() {
+    let overlay = LspSettings {
+        idle_timeout_ms: Some(0),
+        ..LspSettings::default()
+    };
+    let tool = LspTool::with_overlay(&overlay);
+    let ctx = ToolContext::new("/tmp");
+    let path = "/tmp/x.whycodes_lsp_fake";
+    let first = tool
+        .execute(
+            json!({ "action": "hover", "file_path": path, "line": 1 }),
+            &ctx,
+        )
+        .await;
+    assert!(!first.is_error, "{}", first.content);
+    let second = tool
+        .execute(
+            json!({ "action": "hover", "file_path": path, "line": 1 }),
+            &ctx,
+        )
+        .await;
+    assert_eq!(second.content, "hello");
+}
+
+#[tokio::test]
+async fn missing_binary_message_when_markers_match() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Cargo.toml"), "[package]\n").unwrap();
+    let tool = LspTool::new();
+    let ctx = ToolContext::new(dir.path().to_str().unwrap());
+    let path = dir.path().join("x.rs");
+    let result = tool
+        .execute(
+            json!({ "action": "diagnostics", "file_path": path.to_str().unwrap() }),
+            &ctx,
+        )
+        .await;
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("rust-analyzer")
+            || result.content.contains("Failed to start")
+            || result.content.contains("was not found on PATH"),
         "{}",
         result.content
     );

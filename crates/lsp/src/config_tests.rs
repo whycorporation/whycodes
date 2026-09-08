@@ -170,3 +170,54 @@ fn resolve_accepts_empty_markers_when_binary_exists() {
         });
     assert!(resolved.is_some(), "expected sh, cmd, or python3 on PATH");
 }
+
+#[test]
+fn remaining_builtin_extensions() {
+    let s = LspSettings::builtins();
+    assert_eq!(s.spec_for_ext("sh").unwrap().0, "bashls");
+    assert_eq!(s.spec_for_ext("yaml").unwrap().0, "yaml-language-server");
+    assert_eq!(s.spec_for_ext("yml").unwrap().0, "yaml-language-server");
+    assert_eq!(s.spec_for_ext("bash").unwrap().0, "bashls");
+    assert_eq!(s.spec_for_ext("pyi").unwrap().0, "pyright");
+    assert_eq!(
+        s.spec_for_ext("tsx").unwrap().0,
+        "typescript-language-server"
+    );
+}
+
+#[test]
+fn resolve_skips_specs_without_a_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = LspSettings {
+        idle_timeout_ms: None,
+        servers: HashMap::from([(
+            "nocmd".into(),
+            LspServerSpec {
+                command: None,
+                file_types: vec![".zzz".into()],
+                ..LspServerSpec::default()
+            },
+        )]),
+    };
+    assert!(settings.resolve("zzz", dir.path()).is_none());
+    assert_eq!(settings.spec_for_ext("zzz").unwrap().0, "nocmd");
+}
+
+#[test]
+fn missing_server_message_uses_name_when_command_is_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = LspSettings {
+        idle_timeout_ms: None,
+        servers: HashMap::from([(
+            "ghost".into(),
+            LspServerSpec {
+                command: None,
+                file_types: vec![".zzz".into()],
+                ..LspServerSpec::default()
+            },
+        )]),
+    };
+    let msg = crate::tool::missing_server_message_for_test(&settings, "zzz", dir.path());
+    assert!(msg.contains("'ghost'"), "{msg}");
+    assert!(msg.contains("was not found on PATH"), "{msg}");
+}
