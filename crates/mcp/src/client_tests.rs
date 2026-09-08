@@ -1,5 +1,5 @@
 use super::*;
-use tokio::io::BufReader as AsyncBufReader;
+use std::io::Cursor;
 use tokio::process::Command;
 
 #[test]
@@ -7,57 +7,78 @@ fn client_module_loads() {
     assert!(!module_path!().is_empty());
 }
 
-async fn stdout_of(script: &str) -> AsyncBufReader<tokio::process::ChildStdout> {
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(script)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let stdout = child.stdout.take().unwrap();
-    tokio::spawn(async move {
-        let _ = child.wait().await;
-    });
-    AsyncBufReader::new(stdout)
+fn stdout_of(line: &str) -> Cursor<Vec<u8>> {
+    Cursor::new(line.as_bytes().to_vec())
 }
 
 #[tokio::test]
 async fn read_stdio_response_ok_error_empty_and_mismatch() {
-    let mut ok =
-        stdout_of(r#"printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}'"#).await;
+    let mut ok = stdout_of("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n");
     let value = read_stdio_response(&mut ok, 1).await.unwrap();
     assert_eq!(value["ok"], true);
 
-    let mut mismatch =
-        stdout_of(r#"printf '%s\n' '{"jsonrpc":"2.0","id":9,"result":{"ok":true}}'"#).await;
+    let mut mismatch = stdout_of("{\"jsonrpc\":\"2.0\",\"id\":9,\"result\":{\"ok\":true}}\n");
     let value = read_stdio_response(&mut mismatch, 1).await.unwrap();
     assert_eq!(value["ok"], true);
 
     let mut err = stdout_of(
-        r#"printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"nope"}}'"#,
-    )
-    .await;
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"nope\"}}\n",
+    );
     let e = read_stdio_response(&mut err, 1).await.unwrap_err();
     assert!(e.to_string().contains("nope"), "{e}");
 
-    let mut empty = stdout_of("printf ''").await;
+    let mut empty = stdout_of("");
     let e = read_stdio_response(&mut empty, 1).await.unwrap_err();
     assert!(e.to_string().to_lowercase().contains("empty"), "{e}");
 
-    let mut bad = stdout_of(r#"printf '%s\n' 'not-json'"#).await;
+    let mut bad = stdout_of("not-json\n");
     let e = read_stdio_response(&mut bad, 1).await.unwrap_err();
     assert!(e.to_string().contains("parse"), "{e}");
 
-    let mut no_result = stdout_of(r#"printf '%s\n' '{"jsonrpc":"2.0","id":1}'"#).await;
+    let mut no_result = stdout_of("{\"jsonrpc\":\"2.0\",\"id\":1}\n");
     let e = read_stdio_response(&mut no_result, 1).await.unwrap_err();
     assert!(e.to_string().contains("no result"), "{e}");
 
     assert_eq!(python_bin(true), "/usr/bin/python3");
     assert_eq!(python_bin(false), "python3");
+
+    assert!(
+        tools_list_failed(McpError::msg("boom"))
+            .to_string()
+            .contains("tools/list failed")
+    );
+    assert!(
+        tools_call_failed(McpError::msg("boom"))
+            .to_string()
+            .contains("tools/call failed")
+    );
+    assert!(
+        resources_list_failed(McpError::msg("boom"))
+            .to_string()
+            .contains("resources/list failed")
+    );
+    assert!(
+        prompts_list_failed(McpError::msg("boom"))
+            .to_string()
+            .contains("prompts/list failed")
+    );
+    assert!(
+        stdio_read_failed(std::io::Error::other("eof"))
+            .to_string()
+            .contains("failed to read response")
+    );
 }
 
 fn python() -> &'static str {
+    python_from(&["python3", "python", "py"])
+}
+
+fn python_from(cmds: &[&'static str]) -> &'static str {
+    for cmd in cmds {
+        if command_on_path(cmd) {
+            return cmd;
+        }
+    }
     python_bin(std::path::Path::new("/usr/bin/python3").exists())
 }
 
@@ -66,6 +87,46 @@ fn python_bin(usr_bin_exists: bool) -> &'static str {
         "/usr/bin/python3"
     } else {
         "python3"
+    }
+}
+
+fn command_on_path(cmd: &str) -> bool {
+    let Ok(path) = std::env::var("PATH") else {
+        return false;
+    };
+    let exts: Vec<String> = std::env::var("PATHEXT")
+        .ok()
+        .map(|v| {
+            v.split(';')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    for dir in std::env::split_paths(&path) {
+        let direct = dir.join(cmd);
+        if direct.is_file() {
+            return true;
+        }
+        for ext in &exts {
+            if dir.join(format!("{cmd}{ext}")).is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn noop_command() -> Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "exit", "0"]);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("true")
     }
 }
 
@@ -157,14 +218,14 @@ async fn connect_stdio_lists_calls_and_ping() {
 
 #[tokio::test]
 async fn connect_stdio_spawn_and_handshake_errors() {
-    let err = McpClient::connect_stdio("/no/such/mcp-server-xyz", &[] as &[&str])
+    let err = McpClient::connect_stdio("/no/such/mcp-server-xyz", &[])
         .await
         .err()
         .expect("spawn should fail")
         .to_string();
     assert!(err.contains("failed to spawn MCP server"), "{err}");
 
-    let mut child = Command::new("true")
+    let mut child = noop_command()
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .spawn()
@@ -173,7 +234,7 @@ async fn connect_stdio_spawn_and_handshake_errors() {
     assert!(err.contains("child has no stdin"), "{err}");
     let _ = child.wait().await;
 
-    let mut child = Command::new("true")
+    let mut child = noop_command()
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()
@@ -466,14 +527,15 @@ async fn connect_http_sse_and_auto_cover_client_paths() {
             .with_state(state),
     )
     .await;
-    let mut client = McpClient::connect_sse(format!("http://{addr}/sse"), &HashMap::new())
+    let sse_url = format!("http://{addr}/sse");
+    let mut client = McpClient::connect_sse(&sse_url, &HashMap::new())
         .await
         .unwrap();
     assert_eq!(client.transport_name(), "sse");
     let tools = client.list_tools().await.unwrap();
     assert_eq!(tools[0].name, "echo");
 
-    let client = McpClient::connect_auto(format!("http://{addr}/sse"), &HashMap::new())
+    let client = McpClient::connect_auto(&sse_url, &HashMap::new())
         .await
         .unwrap();
     assert_eq!(client.transport_name(), "sse");
@@ -483,7 +545,8 @@ async fn connect_http_sse_and_auto_cover_client_paths() {
         post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "broken") }),
     ))
     .await;
-    let err = McpClient::connect_auto(format!("http://{addr}/mcp"), &HashMap::new())
+    let mcp_url = format!("http://{addr}/mcp");
+    let err = McpClient::connect_auto(&mcp_url, &HashMap::new())
         .await
         .err()
         .expect("500 must not fallback")
@@ -493,7 +556,8 @@ async fn connect_http_sse_and_auto_cover_client_paths() {
     let addr =
         spawn_app(Router::new().route("/mcp", post(|| async { (StatusCode::NOT_FOUND, "gone") })))
             .await;
-    let err = McpClient::connect_auto(format!("http://{addr}/mcp"), &HashMap::new())
+    let mcp_url = format!("http://{addr}/mcp");
+    let err = McpClient::connect_auto(&mcp_url, &HashMap::new())
         .await
         .err()
         .expect("404 fallback should fail SSE too")
@@ -508,7 +572,8 @@ async fn connect_http_sse_and_auto_cover_client_paths() {
         post(|| async { (StatusCode::BAD_REQUEST, "Method Not Allowed") }),
     ))
     .await;
-    let err = McpClient::connect_auto(format!("http://{addr}/mcp"), &HashMap::new())
+    let mcp_url = format!("http://{addr}/mcp");
+    let err = McpClient::connect_auto(&mcp_url, &HashMap::new())
         .await
         .err()
         .expect("400 should try SSE fallback")
@@ -533,7 +598,8 @@ async fn connect_http_sse_and_auto_cover_client_paths() {
             .unwrap()
     }
     let addr = spawn_app(Router::new().route("/mcp", post(init_then_fail_notify))).await;
-    let err = McpClient::connect_http(format!("http://{addr}/mcp"), &HashMap::new())
+    let mcp_url = format!("http://{addr}/mcp");
+    let err = McpClient::connect_http(&mcp_url, &HashMap::new())
         .await
         .err()
         .expect("initialized notification should fail")

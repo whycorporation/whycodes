@@ -14,8 +14,8 @@ pub enum McpError {
 }
 
 impl McpError {
-    pub fn msg(s: impl Into<String>) -> Self {
-        Self::Message(s.into())
+    pub fn msg(s: &str) -> Self {
+        Self::Message(s.to_string())
     }
 }
 
