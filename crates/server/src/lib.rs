@@ -72,13 +72,12 @@ impl AppState {
     }
 
     /// Path to the shared whycodes SQLite file (same as CLI/TUI).
-    pub fn db_path() -> Option<PathBuf> {
-        Config::data_dir().ok().map(|d| d.join("whycodes.db"))
+    pub fn db_path() -> PathBuf {
+        whycodes_core::paths::data_dir().join("whycodes.db")
     }
 
     pub fn open_db() -> Option<whycodes_storage::db::Database> {
-        let path = Self::db_path()?;
-        whycodes_storage::db::Database::open(&path.to_string_lossy()).ok()
+        whycodes_storage::db::Database::open(&Self::db_path().to_string_lossy()).ok()
     }
 
     pub fn register_cancel(&self, session_id: &str, flag: CancelFlag) {

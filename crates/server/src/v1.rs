@@ -23,7 +23,8 @@ use whycodes_protocol::sdk::{
 use crate::AppState;
 use crate::perm::{RUN, RunScope};
 use crate::routes::{
-    default_provider_model, load_or_get_session, resolve_api_key, system_prompt_for,
+    default_provider_model, load_or_get_session, resolve_api_key, save_session, system_prompt_for,
+    warn_persist,
 };
 
 pub async fn health(State(state): State<AppState>) -> Json<Handshake> {
@@ -41,36 +42,55 @@ pub async fn list_sessions(State(state): State<AppState>) -> Json<SessionList> {
     let mut sessions = Vec::new();
     let ids = state.list_session_ids();
     for id in &ids {
-        if let Some(handle) = state.get_session(id) {
-            let s = handle.lock().await;
-            sessions.push(SessionInfo {
-                id: s.id.clone(),
-                title: s.title.clone(),
-                project: s.project_path.display().to_string(),
-                messages: Some(s.messages.len()),
-                updated_at: Some(s.updated_at.to_rfc3339()),
-                source: Some("memory".into()),
-            });
-        }
+        push_live_v1_session(&mut sessions, state.get_session(id)).await;
     }
-    if let Some(db) = AppState::open_db()
-        && let Ok(rows) = db.list_sessions()
-    {
-        for row in rows {
-            if ids.iter().any(|i| i == &row.id) {
-                continue;
-            }
-            sessions.push(SessionInfo {
-                id: row.id,
-                title: row.title,
-                project: row.project_path,
-                messages: None,
-                updated_at: Some(row.updated_at),
-                source: Some("db".into()),
-            });
-        }
-    }
+    push_db_v1_sessions(
+        &mut sessions,
+        &ids,
+        AppState::open_db().and_then(|db| db.list_sessions().ok()),
+    );
     Json(SessionList { sessions })
+}
+
+async fn push_live_v1_session(
+    sessions: &mut Vec<SessionInfo>,
+    handle: Option<crate::SessionHandle>,
+) {
+    let Some(handle) = handle else {
+        return;
+    };
+    let s = handle.lock().await;
+    sessions.push(SessionInfo {
+        id: s.id.clone(),
+        title: s.title.clone(),
+        project: s.project_path.display().to_string(),
+        messages: Some(s.messages.len()),
+        updated_at: Some(s.updated_at.to_rfc3339()),
+        source: Some("memory".into()),
+    });
+}
+
+fn push_db_v1_sessions(
+    sessions: &mut Vec<SessionInfo>,
+    ids: &[String],
+    rows: Option<Vec<whycodes_storage::models::SessionRow>>,
+) {
+    let Some(rows) = rows else {
+        return;
+    };
+    for row in rows {
+        if ids.iter().any(|i| i == &row.id) {
+            continue;
+        }
+        sessions.push(SessionInfo {
+            id: row.id,
+            title: row.title,
+            project: row.project_path,
+            messages: None,
+            updated_at: Some(row.updated_at),
+            source: Some("db".into()),
+        });
+    }
 }
 
 pub async fn create_session(
@@ -84,11 +104,8 @@ pub async fn create_session(
     let prompt = system_prompt_for(&state.agent, &project);
     let session = whycodes_session::session::Session::new(project, prompt);
     let persist = req.persist.unwrap_or(true);
-    if persist
-        && let Some(db) = AppState::open_db()
-        && let Err(e) = session.save_to_db(&db)
-    {
-        tracing::warn!(error = %e, "v1: failed to persist new session");
+    if persist {
+        warn_persist("v1: failed to persist new session", save_session(&session));
     }
     let info = SessionInfo {
         id: session.id.clone(),
@@ -221,11 +238,10 @@ pub async fn run(
                     .await
             })
             .await;
-        if let Some(db) = AppState::open_db()
-            && let Err(e) = handle.lock().await.save_to_db(&db)
-        {
-            tracing::warn!(error = %e, "v1: failed to save session after run");
-        }
+        warn_persist(
+            "v1: failed to save session after run",
+            save_session(&*handle.lock().await),
+        );
         state_done.take_cancel(&sid);
         state_done.perm.finish_run(&sid);
         result
@@ -378,11 +394,7 @@ pub async fn rename(
         .ok_or(StatusCode::NOT_FOUND)?;
     let mut s = handle.lock().await;
     s.title = req.title;
-    if let Some(db) = AppState::open_db()
-        && let Err(e) = s.save_to_db(&db)
-    {
-        tracing::warn!(error = %e, "v1: rename persist failed");
-    }
+    warn_persist("v1: rename persist failed", save_session(&s));
     Ok(Json(SessionInfo {
         id: s.id.clone(),
         title: s.title.clone(),
@@ -403,11 +415,7 @@ pub async fn rewind(
         .ok_or(StatusCode::NOT_FOUND)?;
     let mut s = handle.lock().await;
     s.revert_to(req.index);
-    if let Some(db) = AppState::open_db()
-        && let Err(e) = s.save_to_db(&db)
-    {
-        tracing::warn!(error = %e, "v1: rewind persist failed");
-    }
+    warn_persist("v1: rewind persist failed", save_session(&s));
     Ok(Json(history_from_session(&s, None)))
 }
 
@@ -424,11 +432,7 @@ pub async fn compact(
     // full-replace (not a budget drop), so the field is unused.
     let _ = req.max_tokens;
     s.compact_full_replace_local();
-    if let Some(db) = AppState::open_db()
-        && let Err(e) = s.save_to_db(&db)
-    {
-        tracing::warn!(error = %e, "v1: compact persist failed");
-    }
+    warn_persist("v1: compact persist failed", save_session(&s));
     Ok(Json(history_from_session(&s, None)))
 }
 

@@ -666,3 +666,38 @@ async fn session_or_default_model_prefers_route_override() {
     let (p2, m2) = session_or_default_model(&state2, "s1");
     assert_eq!((p2.as_str(), m2.as_str()), ("openai", "gpt-4o"));
 }
+
+#[tokio::test]
+async fn list_session_helpers_skip_missing_and_failed_db_rows() {
+    let mut live = Vec::new();
+    push_live_v1_session(&mut live, None).await;
+    assert!(live.is_empty());
+
+    let mut db_sessions = Vec::new();
+    push_db_v1_sessions(&mut db_sessions, &[], None);
+    assert!(db_sessions.is_empty());
+
+    let overlap = whycodes_storage::models::SessionRow {
+        id: "live".into(),
+        title: "t".into(),
+        created_at: "c".into(),
+        updated_at: "u".into(),
+        project_path: "/p".into(),
+        usage: Default::default(),
+    };
+    let extra = whycodes_storage::models::SessionRow {
+        id: "db-only".into(),
+        title: "t2".into(),
+        created_at: "c".into(),
+        updated_at: "u".into(),
+        project_path: "/p".into(),
+        usage: Default::default(),
+    };
+    push_db_v1_sessions(
+        &mut db_sessions,
+        &["live".into()],
+        Some(vec![overlap, extra]),
+    );
+    assert_eq!(db_sessions.len(), 1);
+    assert_eq!(db_sessions[0].id, "db-only");
+}

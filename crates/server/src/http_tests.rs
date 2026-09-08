@@ -49,14 +49,19 @@ impl IsolatedHome {
     pub(crate) fn set_prev(&mut self, prev: Option<std::ffi::OsString>) {
         self.prev = prev;
     }
-}
 
-impl Drop for IsolatedHome {
-    fn drop(&mut self) {
+    /// Restore `WHYCODES_HOME` while still holding `ENV_LOCK`.
+    pub(crate) fn restore_env(&self) {
         match &self.prev {
             Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
             None => unsafe { std::env::remove_var("WHYCODES_HOME") },
         }
+    }
+}
+
+impl Drop for IsolatedHome {
+    fn drop(&mut self) {
+        self.restore_env();
     }
 }
 
@@ -251,6 +256,9 @@ async fn api_session_crud_without_persist() {
 
 #[tokio::test]
 async fn api_chat_rejects_empty_and_missing_session() {
+    let _home = IsolatedHome::new();
+    let prev_key = std::env::var_os("ANTHROPIC_API_KEY");
+    unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
     let app = create_router(test_state());
     let (st, created) = json_post(
         app.clone(),
@@ -293,6 +301,10 @@ async fn api_chat_rejects_empty_and_missing_session() {
         text.contains("error") || text.contains("No API key"),
         "{text}"
     );
+    match prev_key {
+        Some(v) => unsafe { std::env::set_var("ANTHROPIC_API_KEY", v) },
+        None => unsafe { std::env::remove_var("ANTHROPIC_API_KEY") },
+    }
 }
 
 #[tokio::test]
@@ -462,6 +474,9 @@ async fn v1_health_session_lifecycle_and_model_override() {
 
 #[tokio::test]
 async fn v1_run_rejects_empty_and_streams_auth_error() {
+    let _home = IsolatedHome::new();
+    let prev_key = std::env::var_os("ANTHROPIC_API_KEY");
+    unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
     let app = create_router(test_state());
     let (st, created) = json_post(
         app.clone(),
@@ -503,6 +518,10 @@ async fn v1_run_rejects_empty_and_streams_auth_error() {
         text.contains("Auth") || text.contains("No API key") || text.contains("error"),
         "{text}"
     );
+    match prev_key {
+        Some(v) => unsafe { std::env::set_var("ANTHROPIC_API_KEY", v) },
+        None => unsafe { std::env::remove_var("ANTHROPIC_API_KEY") },
+    }
 }
 
 #[tokio::test]
@@ -791,7 +810,7 @@ fn poisoned_maps_are_treated_as_empty() {
 #[test]
 fn db_path_follows_isolated_home() {
     let home = IsolatedHome::new();
-    let path = AppState::db_path().expect("db path");
+    let path = AppState::db_path();
     assert_eq!(path, home.path().join("whycodes.db"));
     let db = AppState::open_db().expect("open isolated db");
     drop(db);
@@ -802,13 +821,14 @@ fn isolated_home_restores_previous_env() {
     let sentinel = std::ffi::OsString::from("/tmp/whycodes-prev-home");
     let mut home = IsolatedHome::new();
     home.set_prev(Some(sentinel.clone()));
-    drop(home);
+    home.restore_env();
     assert_eq!(
         std::env::var_os("WHYCODES_HOME").as_deref(),
         Some(sentinel.as_os_str())
     );
-    // Do not leak the sentinel into later tests.
+    // Drop must not leak the sentinel once the lock is released.
     unsafe { std::env::remove_var("WHYCODES_HOME") };
+    home.set_prev(None);
 }
 
 #[test]
