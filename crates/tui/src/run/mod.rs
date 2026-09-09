@@ -98,6 +98,33 @@ fn send_auth_event(tx: &mpsc::UnboundedSender<AuthFlowEvent>, event: AuthFlowEve
     }
 }
 
+/// Unit tests: `WHYCODES_TEST_LLM` replaces the registry with a repeating
+/// [`whycodes_llm::ScriptedProvider`] so a headless turn never hits the network.
+fn inject_test_llm(_agent: &mut Agent, _provider: &str) {
+    #[cfg(test)]
+    {
+        let Ok(text) = std::env::var("WHYCODES_TEST_LLM") else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        let step = if text == "FAIL" {
+            whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())
+        } else if text == "HANG" {
+            whycodes_llm::ScriptedStep::Hang(std::time::Duration::from_secs(30))
+        } else {
+            whycodes_llm::ScriptedStep::Text(text)
+        };
+        let mut registry = whycodes_llm::ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+            _provider.to_string(),
+            [step],
+        )));
+        _agent.set_provider_registry(registry);
+    }
+}
+
 impl whycodes_auth::providers::LoginUi for TuiLoginUi {
     fn show_sign_in(&mut self, label: &str, url: &str, browser_opened: bool) {
         let browser = if browser_opened {
@@ -435,7 +462,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
 
     config.general.project_path = Some(opts.project_dir.clone());
     let session_claims = whycodes_core::FileClaimRegistry::new();
-    let agent = Agent::new(agent_info)
+    let mut agent = Agent::new(agent_info)
         .with_config(&config)
         .with_file_index(file_index.clone())
         .with_session_claims(session_claims.clone())
@@ -443,6 +470,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
             Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
         )
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
+    inject_test_llm(&mut agent, &opts.provider);
 
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
@@ -547,22 +575,18 @@ impl LoopIo {
 
     fn read_batch(&mut self) -> io::Result<Vec<Event>> {
         if let Some(q) = &mut self.scripted {
-            if q.is_empty() {
-                return Err(io::Error::new(
+            // One event per poll so a scripted Enter can start a turn before
+            // later keys (Esc, :q) are applied.
+            match q.pop_front() {
+                Some(ev) => Ok(vec![ev]),
+                None => Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     "scripted TUI events exhausted",
-                ));
+                )),
             }
-            let mut batch = Vec::with_capacity(8);
-            while batch.len() < 256 {
-                match q.pop_front() {
-                    Some(ev) => batch.push(ev),
-                    None => break,
-                }
-            }
-            return Ok(batch);
+        } else {
+            read_event_batch()
         }
-        read_event_batch()
     }
 }
 
@@ -1252,8 +1276,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
                     // After first paint: MCP connect + code RAG auto-index.
                     // Both can block; doing them here keeps startup feel snappy.
-                    rt.agent.load_mcp(&config).await;
-                    maybe_session_auto_index(&project_dir, &config, &mut app);
+                    // Headless tests skip live MCP/index I/O (stdio servers hang
+                    // the current-thread runtime).
+                    if !headless {
+                        rt.agent.load_mcp(&config).await;
+                        maybe_session_auto_index(&project_dir, &config, &mut app);
+                    }
                     refresh_sidebar(&mut app, &config, &file_index);
                     load_app_todos(&mut app);
                     settle_first_frame_hydrate(&mut app, &hydrate_before, animate);
@@ -1720,8 +1748,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     return Err(e.into());
                 }
             };
-            if headless && !has_ev {
-                app.running = false;
+            // Scripted tests drain the event queue, then wait for an in-flight
+            // turn (or compact) to finish instead of aborting it on shutdown.
+            // `#[tokio::test]` is current-thread: yield so spawned turns run.
+            if headless {
+                if !has_ev && !rt.agent_busy && rt.turn_join.is_none() {
+                    app.running = false;
+                } else if rt.agent_busy || rt.turn_join.is_some() {
+                    tokio::task::yield_now().await;
+                }
             }
             if has_ev {
                 // Drain the whole pending queue before the next paint. A
