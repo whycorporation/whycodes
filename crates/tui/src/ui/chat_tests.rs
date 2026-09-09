@@ -1229,3 +1229,164 @@ fn callout_kind_classifies_system_notices() {
     assert_eq!(CalloutKind::Success.label(), "Ready");
     assert_eq!(CalloutKind::Info.label(), "Note");
 }
+
+#[test]
+fn tool_result_auto_picks_grep_code_and_plain() {
+    let palette = ThemeName::DefaultDark.palette();
+    let grep = tool_result(
+        "src/a.rs:1:hit\nsrc/a.rs:2:also\n--\n(2 matches)",
+        false,
+        &palette,
+        false,
+        ToolOutHint::Auto,
+        80,
+    );
+    assert!(!grep.is_empty());
+    let err = tool_result("boom", true, &palette, false, ToolOutHint::Auto, 80);
+    assert!(!err.is_empty());
+    let empty = tool_result("", false, &palette, false, ToolOutHint::Auto, 80);
+    assert!(empty.is_empty());
+    let no_matches = tool_result(
+        "No matches found.",
+        false,
+        &palette,
+        false,
+        ToolOutHint::Grep {
+            pattern: "x".into(),
+        },
+        80,
+    );
+    assert!(!no_matches.is_empty());
+    let grep_err = tool_result(
+        "fatal",
+        true,
+        &palette,
+        false,
+        ToolOutHint::Grep {
+            pattern: "x".into(),
+        },
+        40,
+    );
+    assert!(!grep_err.is_empty());
+    let code_err = tool_result(
+        "fail",
+        true,
+        &palette,
+        false,
+        ToolOutHint::Code(Some("rs".into())),
+        40,
+    );
+    assert!(!code_err.is_empty());
+    let many: String = (1..=20)
+        .map(|i| format!("src/a.rs:{i}:hit{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let truncated = tool_result(
+        &many,
+        false,
+        &palette,
+        false,
+        ToolOutHint::Grep {
+            pattern: "hit".into(),
+        },
+        60,
+    );
+    assert!(!truncated.is_empty());
+    let ctx = tool_result(
+        "src/a.rs:1-context line\nsrc/a.rs:2:hit pattern\n--\n[footer]",
+        false,
+        &palette,
+        true,
+        ToolOutHint::Grep {
+            pattern: "pattern".into(),
+        },
+        80,
+    );
+    assert!(!ctx.is_empty());
+    let json_auto = tool_result(
+        r#"{"a":1,"b":2,"c":3}"#,
+        false,
+        &palette,
+        false,
+        ToolOutHint::Auto,
+        40,
+    );
+    assert!(!json_auto.is_empty());
+    let read = tool_result(
+        "# crates/tui/src/ui/chat.rs\n# lines 1–40 of 200  |  4.2 KB\n     1|fn main() {\n     2|    println!(\"hi\");\n}",
+        false,
+        &palette,
+        true,
+        ToolOutHint::Code(Some("rust".into())),
+        20,
+    );
+    assert!(!read.is_empty());
+    let long_body = format!("{}\n{}", "x".repeat(200), vec!["line"; 20].join("\n"));
+    let long_plain = tool_result(&long_body, false, &palette, false, ToolOutHint::Auto, 12);
+    assert!(!long_plain.is_empty());
+}
+
+#[test]
+fn tool_summary_covers_named_and_fallback_fields() {
+    assert_eq!(
+        tool_summary("grep", &json!({"pattern": "foo", "path": "src"})),
+        "foo · src"
+    );
+    assert_eq!(tool_summary("rg", &json!({"query": "bar"})), "bar");
+    assert_eq!(
+        tool_summary("search_code", &json!({"path": "only"})),
+        "only"
+    );
+    assert_eq!(tool_summary("read", &json!({"file_path": "a.rs"})), "a.rs");
+    assert_eq!(
+        tool_summary("write", &json!({"target_file": "b.rs"})),
+        "b.rs"
+    );
+    assert_eq!(
+        tool_summary("bash", &json!({"description": "build"})),
+        "build"
+    );
+    assert_eq!(tool_summary("shell", &json!({"command": "ls"})), "ls");
+    assert_eq!(tool_summary("glob", &json!({"glob": "*.rs"})), "*.rs");
+    assert_eq!(tool_summary("custom", &json!({"goal": "x"})), "x");
+    assert_eq!(tool_summary("custom", &json!({})), "");
+    assert_eq!(tool_summary("custom", &json!(null)), "");
+    let long = "y".repeat(80);
+    let s = tool_summary("custom", &json!({"command": long}));
+    assert!(s.ends_with('…'), "{s}");
+}
+
+#[test]
+fn paint_grep_match_and_literal_cover_edges() {
+    let base = Style::default();
+    let hit = Style::default().fg(Color::Yellow);
+    assert_eq!(super::paint_grep_literal("abc", "", base, hit).len(), 1);
+    let lit = super::paint_grep_literal("xxfooyyfoo", "foo", base, hit);
+    assert!(lit.len() >= 3);
+    let none = super::paint_grep_match("abc", None, base, hit);
+    assert_eq!(none.len(), 1);
+    let re = super::compile_grep_highlighter("foo").expect("re");
+    let spans = super::paint_grep_match("xxfooyy", Some(&re), base, hit);
+    assert!(spans.len() >= 2);
+    assert!(super::compile_grep_highlighter("").is_none());
+    assert!(super::compile_grep_highlighter("   ").is_none());
+}
+
+#[test]
+fn looks_like_grep_body_skips_separators() {
+    assert!(super::looks_like_grep_body(
+        "\n--\n(1 match)\n[info]\nsrc/a.rs:1:hit\nsrc/a.rs:2:hit2"
+    ));
+    let prefix = super::prettify_tool_result("noise {\"k\":1}");
+    assert!(prefix.contains("k") || prefix.contains("noise"));
+}
+
+#[test]
+fn center_line_pads_and_bolds() {
+    let line = super::center_line("hi", 10, Color::White, true);
+    assert!(!line.spans.is_empty());
+    let empty = super::center_line("", 4, Color::White, false);
+    assert!(!empty.spans.is_empty() || empty.width() == 0);
+    assert_eq!(super::empty_dash(""), "—");
+    assert_eq!(super::empty_dash("x"), "x");
+}

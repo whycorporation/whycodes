@@ -608,3 +608,33 @@ fn copy_selected_message_covers_blocks_and_empty() {
     empty.add_message(ChatRole::Assistant, "   ");
     assert!(!empty.copy_selected_message());
 }
+
+#[test]
+fn format_elapsed_ms_covers_hour_bucket() {
+    assert_eq!(crate::app::format_elapsed_ms(3_600_000), "1h0m");
+    assert_eq!(crate::app::format_elapsed_ms(3_720_000), "1h2m");
+    assert_eq!(crate::app::format_thinking_elapsed(3_600_000), "1h0m");
+}
+
+#[test]
+fn mouse_selection_normalized_orders_corners() {
+    let sel = crate::app::MouseSelection {
+        anchor_x: 8,
+        anchor_y: 4,
+        focus_x: 2,
+        focus_y: 1,
+        dragging: true,
+    };
+    assert_eq!(sel.normalized(), (2, 1, 8, 4));
+}
+
+#[test]
+fn todos_page_rows_and_expand_input() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    assert!(app.todos_page_rows() >= 1);
+    app.input_buffer = "hello".into();
+    assert_eq!(app.expand_input(), "hello");
+    app.focus = crate::app::FocusPane::Todos;
+    app.scroll_todos(4);
+    app.scroll_todos(-40);
+}

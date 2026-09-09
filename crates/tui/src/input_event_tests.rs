@@ -2194,3 +2194,52 @@ fn copy_selection_from_scrollback_y_key() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn handle_event_slash_and_file_suggest_arrows() {
+    let mut a = app();
+    a.input_buffer = "/he".into();
+    a.input_cursor = a.input_buffer.len();
+    a.slash_suggest.refresh(&a.input_buffer);
+    if a.slash_suggest.active {
+        assert!(handle_event(&mut a, key(KeyCode::Down)));
+        assert!(handle_event(&mut a, key(KeyCode::Up)));
+        assert!(handle_event(&mut a, key(KeyCode::Tab)));
+    }
+    a.input_buffer = "@src".into();
+    a.input_cursor = a.input_buffer.len();
+    a.file_suggest.refresh(&a.input_buffer, a.input_cursor);
+    if a.file_suggest.active {
+        assert!(handle_event(&mut a, key(KeyCode::Down)));
+        assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    }
+}
+
+#[test]
+fn handle_event_focus_toggle_and_page_keys() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "one");
+    a.add_message(ChatRole::Assistant, "two");
+    assert!(handle_event(&mut a, key(KeyCode::Tab)));
+    assert!(handle_event(&mut a, key(KeyCode::PageUp)));
+    assert!(handle_event(&mut a, key(KeyCode::PageDown)));
+    a.focus = FocusPane::Todos;
+    assert!(handle_event(&mut a, key(KeyCode::PageUp)));
+    assert!(handle_event(&mut a, key(KeyCode::PageDown)));
+}
+
+#[test]
+fn handle_paste_ignored_outside_normal_mode() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    handle_event(&mut a, Event::Paste("secret".into()));
+    assert!(a.input_buffer.is_empty());
+    a.mode = AppMode::Normal;
+    a.focus = FocusPane::Scrollback;
+    handle_event(&mut a, Event::Paste("hello".into()));
+    assert!(
+        a.input_buffer.contains("hello")
+            || !a.pending_pastes.is_empty()
+            || a.focus == FocusPane::Prompt
+    );
+}

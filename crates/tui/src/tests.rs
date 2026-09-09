@@ -2457,3 +2457,61 @@ fn tool_and_thinking_toggles_update_selected_message() {
     app.toggle_selected_thinking();
     assert!(app.messages[1].results_expanded);
 }
+
+#[test]
+fn chat_messages_from_session_covers_system_tool_image_redacted() {
+    use crate::app::{ChatRole, chat_messages_from_session};
+    use whycodes_core::types::{ContentBlock, ImageSource, Message, MessageContent, Role};
+    use whycodes_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.messages.push(Message {
+        role: Role::System,
+        content: MessageContent::Text("note".into()),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    });
+    session.messages.push(Message {
+        role: Role::Tool,
+        content: MessageContent::Blocks(vec![
+            ContentBlock::Text {
+                text: "orphan".into(),
+            },
+            ContentBlock::ToolResult {
+                tool_use_id: "missing".into(),
+                content: "folded?".into(),
+                is_error: None,
+            },
+        ]),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    });
+    session.add_assistant_message(vec![
+        ContentBlock::Image {
+            source: ImageSource::Url {
+                url: "https://ex.com/a.png".into(),
+            },
+        },
+        ContentBlock::Image {
+            source: ImageSource::Base64 {
+                media_type: "image/png".into(),
+                data: "xxxx".into(),
+            },
+        },
+        ContentBlock::RedactedThinking {
+            data: "hidden".into(),
+        },
+        ContentBlock::Text {
+            text: "done".into(),
+        },
+    ]);
+    let msgs = chat_messages_from_session(&session);
+    assert!(msgs.iter().any(|m| m.role == ChatRole::System));
+    assert!(msgs.iter().any(|m| m.role == ChatRole::Tool));
+    assert!(
+        msgs.iter()
+            .any(|m| m.role == ChatRole::Assistant && m.content.contains("done"))
+    );
+}
