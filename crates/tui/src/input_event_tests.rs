@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::{
-    AgentState, ChatBlock, ChatRole, ConfirmAction, DialogKind, FocusPane, SidebarTab, TuiApp,
+    AgentState, AppMode, ChatBlock, ChatRole, ConfirmAction, DialogKind, FocusPane, SidebarTab,
+    TuiApp,
 };
 use crate::config::TuiAppConfig;
 use crate::keymap::KeymapContext;
@@ -2055,4 +2056,141 @@ fn slash_nav_focus_todos_and_help_q() {
     a.sidebar.visible = false;
     handle_event(&mut a, ctrl('.'));
     assert!(a.sidebar.visible);
+}
+
+fn submit_command(app: &mut TuiApp, cmd: &str) {
+    app.mode = AppMode::Command;
+    app.key_context = KeymapContext::Command;
+    app.command.buffer = cmd.into();
+    handle_event(app, key(KeyCode::Enter));
+}
+
+#[test]
+fn colon_commands_quit_help_theme_clear_sidebar_and_unknown() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "keep");
+    submit_command(&mut a, ":clear");
+    assert!(a.messages.is_empty());
+    assert_eq!(a.status_message, "Session cleared");
+    assert_eq!(a.mode, AppMode::Normal);
+
+    submit_command(&mut a, ":h");
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    submit_command(&mut a, ":help");
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    submit_command(&mut a, ":theme");
+    assert_eq!(a.mode, AppMode::Dialog);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Theme)));
+
+    let mut a = app();
+    a.sidebar.visible = true;
+    submit_command(&mut a, ":sidebar");
+    assert!(!a.sidebar.visible);
+    submit_command(&mut a, ":sidebar");
+    assert!(a.sidebar.visible);
+
+    let mut a = app();
+    submit_command(&mut a, ":nope");
+    assert!(a.status_message.contains("Unknown command"));
+
+    let mut a = app();
+    submit_command(&mut a, ":q");
+    assert!(!a.running);
+
+    let mut a = app();
+    submit_command(&mut a, ":quit");
+    assert!(!a.running);
+
+    let mut a = app();
+    submit_command(&mut a, ":provider");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Provider)));
+    assert!(!a.provider_dialog.providers.is_empty());
+
+    let mut a = app();
+    submit_command(&mut a, ":prov");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Provider)));
+
+    let mut a = app();
+    a.model_selection.models = vec![("openai".into(), "gpt-4o".into())];
+    submit_command(&mut a, ":model");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+}
+
+#[test]
+fn open_effort_and_mode_dialogs_from_footer_hits() {
+    let mut a = app();
+    a.provider_name = "openai".into();
+    a.model_name = "gpt-5".into();
+    a.reasoning_effort = Some("high".into());
+    a.effort_hit.set_rect(Some(Rect::new(2, 4, 8, 1)));
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 3, 4));
+    assert!(
+        matches!(a.dialogs.active(), Some(DialogKind::Effort)),
+        "{:?}",
+        a.dialogs.active()
+    );
+    assert!(a.effort_picker_selected < 4);
+
+    let mut a = app();
+    a.provider_name = "anthropic".into();
+    a.model_name = "claude-sonnet".into();
+    a.effort_hit.set_rect(Some(Rect::new(2, 4, 8, 1)));
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 3, 4));
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("no reasoning-effort")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(a.dialogs.active().is_none());
+
+    let mut a = app();
+    a.approval_mode = whycodes_core::types::ApprovalMode::Manual;
+    a.approval_hit.set_rect(Some(Rect::new(10, 6, 8, 1)));
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 11, 6),
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::ApprovalMode)));
+    assert_eq!(
+        a.approval_picker_selected,
+        whycodes_core::types::ApprovalMode::ALL
+            .iter()
+            .position(|m| *m == whycodes_core::types::ApprovalMode::Manual)
+            .unwrap()
+    );
+
+    open_effort_dialog(&mut a);
+    open_mode_dialog(&mut a);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::ApprovalMode)));
+}
+
+#[test]
+fn copy_selection_from_scrollback_y_key() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "copy me");
+    a.focus_scrollback();
+    handle_event(&mut a, key(KeyCode::Char('y')));
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| { t.message.contains("Copied") || t.message.contains("clipboard") }),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
 }

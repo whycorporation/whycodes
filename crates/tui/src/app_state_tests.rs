@@ -443,9 +443,168 @@ fn bg_job_status_flags_and_git_branch_fast_path() {
     );
 
     let missing = git_output_timeout(
-        std::process::Command::new("whycodes-no-such-git-bin"),
+        &mut std::process::Command::new("whycodes-no-such-git-bin"),
         std::time::Duration::from_millis(50),
     );
     assert!(missing.is_none());
     let _ = resolve_git_branch(dir.path());
+}
+
+#[test]
+fn catalog_models_merges_config_and_dedups() {
+    let mut cfg = whycodes_config::Config::default();
+    cfg.providers.insert(
+        "acme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "acme".into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec!["m1".into(), "m2".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let models = catalog_models(&cfg);
+    assert!(models.contains(&("acme".into(), "m1".into())), "{models:?}");
+    assert!(models.contains(&("acme".into(), "m2".into())), "{models:?}");
+    let mut sorted = models.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(models, sorted, "catalog is sorted and unique");
+}
+
+#[test]
+fn prompt_paste_image_and_scroll_helpers() {
+    let mut state = app();
+    assert!(!state.prompt_has_content());
+    assert!(state.pop_pending_image().is_none());
+    assert!(!state.copy_selected_message());
+
+    state.input_buffer = "   ".into();
+    assert!(!state.prompt_has_content());
+    state.input_buffer = "hello".into();
+    assert!(state.prompt_has_content());
+
+    let dir = tempfile::tempdir().unwrap();
+    let img = dir.path().join("shot.png");
+    std::fs::write(&img, b"\x89PNG\r\n\x1a\nfake").unwrap();
+    state.input_buffer.clear();
+    state.attach_image(&img).unwrap();
+    assert!(state.prompt_has_content());
+    assert_eq!(state.pending_images.len(), 1);
+    state.attach_image(&img).unwrap();
+    assert_eq!(state.pending_images.len(), 1, "same path is not duplicated");
+    assert!(state.pop_pending_image().is_some());
+    assert!(state.pending_images.is_empty());
+
+    for i in 0..crate::images::MAX_ATTACHMENTS {
+        let p = dir.path().join(format!("n{i}.png"));
+        std::fs::write(&p, b"\x89PNG\r\n").unwrap();
+        state.attach_image(&p).unwrap();
+    }
+    let extra = dir.path().join("overflow.png");
+    std::fs::write(&extra, b"\x89PNG\r\n").unwrap();
+    let err = state.attach_image(&extra).unwrap_err();
+    assert!(err.contains("max"), "{err}");
+
+    let mut paste_app = app();
+    let pasted = "one\ntwo\nthree";
+    paste_app.insert_paste_text(pasted);
+    let token = crate::paste::placeholder_at(&paste_app.input_buffer, 0).expect("collapsed paste");
+    let id = token.id;
+    paste_app.remove_paste_span(token.start, token.end, id);
+    assert!(paste_app.input_buffer.is_empty());
+    assert!(paste_app.pending_pastes.is_empty());
+    assert_eq!(paste_app.input_cursor, 0);
+    paste_app.remove_paste_span(4, 1, 99);
+    paste_app.remove_paste_span(0, 8, 1);
+
+    paste_app.add_message(ChatRole::User, "hello");
+    paste_app.add_message(ChatRole::Assistant, "world");
+    paste_app.chat_viewport_rows = 20;
+    paste_app.chat_content_width = 80;
+    paste_app.chat_scroll_total = 0;
+    let (total, height, max_off) = paste_app.chat_scroll_metrics();
+    assert_eq!(height, 20);
+    assert!(total > 0);
+    assert_eq!(max_off, total.saturating_sub(20));
+    paste_app.chat_scroll_total = 40;
+    let (total2, _, max2) = paste_app.chat_scroll_metrics();
+    assert_eq!(total2, 40);
+    assert_eq!(max2, 20);
+    paste_app.scroll_offset = 99;
+    paste_app.clamp_chat_scroll();
+    assert_eq!(paste_app.scroll_offset, 20);
+    paste_app.scroll_offset = 0;
+    paste_app.clamp_chat_scroll();
+    assert!(paste_app.auto_scroll);
+}
+
+#[test]
+fn copy_selected_message_covers_blocks_and_empty() {
+    let mut state = app();
+    assert!(!state.copy_selected_message());
+
+    state.add_message(ChatRole::Assistant, "answer");
+    let last = state.messages.last_mut().unwrap();
+    last.blocks.push(ChatBlock::Thinking({
+        let mut t = ThinkingBlock::new("secret plan");
+        t.finish();
+        t.collapsed = true;
+        t
+    }));
+    last.blocks.push(ChatBlock::Thinking({
+        let mut t = ThinkingBlock::new("open thought");
+        t.finish();
+        t.collapsed = false;
+        t
+    }));
+    last.blocks.push(ChatBlock::ToolUse {
+        id: "t1".into(),
+        name: "read".into(),
+        input: serde_json::json!({"path": "a.rs"}),
+    });
+    last.blocks.push(ChatBlock::ToolResult {
+        id: "t1".into(),
+        content: "fn main() {}".into(),
+        is_error: false,
+    });
+    last.blocks.push(ChatBlock::Subagent {
+        id: "s1".into(),
+        kind: "explore".into(),
+        description: "look around".into(),
+        status: "completed".into(),
+        activity: String::new(),
+        elapsed_ms: 100,
+    });
+    last.blocks.push(ChatBlock::Text("ignored".into()));
+    last.tool_calls.push(ChatToolCall {
+        id: "t1".into(),
+        name: "read".into(),
+        arguments: serde_json::json!({"path": "a.rs"}),
+        collapsed: true,
+        result: Some("fn main() {}".into()),
+        is_error: false,
+    });
+    let _ = state.copy_selected_message();
+    assert!(
+        state
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| { t.message.contains("Copied") || t.message.contains("clipboard") }),
+        "{:?}",
+        state
+            .toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    let mut empty = TuiApp::from_config(TuiAppConfig::default());
+    empty.add_message(ChatRole::Assistant, "   ");
+    assert!(!empty.copy_selected_message());
 }

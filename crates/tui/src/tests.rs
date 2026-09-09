@@ -401,7 +401,7 @@ fn thinking_block_delta_snapshot_retry_and_caps() {
         .map(|i| format!("L{i}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let mut live_tb = ThinkingBlock::new(live);
+    let live_tb = ThinkingBlock::new(live);
     assert!(live_tb.is_truncated_live());
     assert_eq!(live_tb.body_lines().len(), THINKING_LIVE_TAIL_LINES);
 
