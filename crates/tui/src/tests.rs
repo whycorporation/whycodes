@@ -379,6 +379,49 @@ fn test_thinking_lifecycle_finish_and_elapsed() {
 }
 
 #[test]
+fn thinking_block_delta_snapshot_retry_and_caps() {
+    use crate::app::{
+        THINKING_EXPANDED_MAX_LINES, THINKING_LIVE_TAIL_LINES, THINKING_MAX_CHARS, ThinkingBlock,
+    };
+    let mut tb = ThinkingBlock::new("");
+    tb.push_delta("");
+    assert!(tb.text.is_empty());
+    tb.push_delta("hello");
+    tb.push_delta("hello!");
+    assert_eq!(tb.text, "hello!");
+    tb.push_delta("!");
+    assert_eq!(tb.text, "hello!");
+    tb.push_delta(" more");
+    assert_eq!(tb.text, "hello! more");
+    assert!(tb.header_label().starts_with("Thinking"));
+    assert!(tb.show_body());
+    assert!(!tb.is_truncated_live());
+
+    let live: String = (0..=THINKING_LIVE_TAIL_LINES)
+        .map(|i| format!("L{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut live_tb = ThinkingBlock::new(live);
+    assert!(live_tb.is_truncated_live());
+    assert_eq!(live_tb.body_lines().len(), THINKING_LIVE_TAIL_LINES);
+
+    let expanded: String = (0..=THINKING_EXPANDED_MAX_LINES)
+        .map(|i| format!("E{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut exp = ThinkingBlock::finished(expanded);
+    exp.collapsed = false;
+    assert!(exp.is_truncated_expanded());
+    assert_eq!(exp.body_lines().len(), THINKING_EXPANDED_MAX_LINES);
+    assert!(exp.header_label().starts_with("Thought for "));
+
+    let mut cap = ThinkingBlock::new("x".repeat(THINKING_MAX_CHARS));
+    cap.push_delta("overflow");
+    assert!(cap.text.len() <= THINKING_MAX_CHARS + "…".len());
+    assert!(cap.text.ends_with('…') || cap.text.len() >= THINKING_MAX_CHARS);
+}
+
+#[test]
 fn test_turn_timing_stamps_assistant_duration() {
     use crate::app::format_elapsed_ms;
     use std::thread;

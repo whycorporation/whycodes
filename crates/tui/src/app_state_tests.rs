@@ -385,3 +385,67 @@ fn sidebar_hover_clears_and_todos_toggle() {
     app.toggle_todos_panel();
     assert!(!app.todos_collapsed);
 }
+
+#[test]
+fn bg_job_status_flags_and_git_branch_fast_path() {
+    for (status, running, terminal) in [
+        ("running", true, false),
+        ("done", false, true),
+        ("failed", false, true),
+        ("killed", false, true),
+        ("completed", false, true),
+        ("cancelled", false, true),
+        ("queued", false, false),
+    ] {
+        let job = BgJobUi {
+            id: "j".into(),
+            summary: "s".into(),
+            status: status.into(),
+            started_at: Instant::now(),
+            elapsed_ms: 0,
+        };
+        assert_eq!(job.is_running(), running, "{status}");
+        assert_eq!(job.is_terminal(), terminal, "{status}");
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    assert!(resolve_git_branch_fast(dir.path()).is_none());
+
+    let git = dir.path().join(".git");
+    std::fs::create_dir_all(&git).unwrap();
+    std::fs::write(git.join("HEAD"), "").unwrap();
+    assert!(resolve_git_branch_fast(dir.path()).is_none());
+    std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    assert_eq!(resolve_git_branch_fast(dir.path()).as_deref(), Some("main"));
+    std::fs::write(git.join("HEAD"), "ref: refs/heads/feature/x\n").unwrap();
+    assert_eq!(
+        resolve_git_branch_fast(dir.path()).as_deref(),
+        Some("feature/x")
+    );
+    std::fs::write(git.join("HEAD"), "ref: refs/tags/v1\n").unwrap();
+    assert_eq!(resolve_git_branch_fast(dir.path()).as_deref(), Some("v1"));
+    std::fs::write(git.join("HEAD"), "abcdef1234567890\n").unwrap();
+    assert_eq!(
+        resolve_git_branch_fast(dir.path()).as_deref(),
+        Some("abcdef1")
+    );
+
+    let wt = tempfile::tempdir().unwrap();
+    std::fs::write(
+        wt.path().join(".git"),
+        format!("gitdir: {}\n", git.display()),
+    )
+    .unwrap();
+    std::fs::write(git.join("HEAD"), "ref: refs/heads/worktree\n").unwrap();
+    assert_eq!(
+        resolve_git_branch_fast(wt.path()).as_deref(),
+        Some("worktree")
+    );
+
+    let missing = git_output_timeout(
+        std::process::Command::new("whycodes-no-such-git-bin"),
+        std::time::Duration::from_millis(50),
+    );
+    assert!(missing.is_none());
+    let _ = resolve_git_branch(dir.path());
+}
