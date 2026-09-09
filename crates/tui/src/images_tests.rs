@@ -95,6 +95,12 @@ fn tokenize_respects_quotes() {
     let t = tokenize(r#"/tmp/a.png "/tmp/my photo.png" rest"#);
     assert_eq!(t.len(), 3);
     assert_eq!(t[1], "\"/tmp/my photo.png\"");
+    let t = tokenize(r#"'/tmp/my photo.png' rest"#);
+    assert_eq!(t.len(), 2);
+    assert_eq!(t[0], "'/tmp/my photo.png'");
+    assert!(tokenize("").is_empty());
+    let c = classify_paste("   \n  ");
+    assert!(c.images.is_empty());
 }
 
 #[test]

@@ -37,6 +37,11 @@ fn quantize_drops_rgb_in_256_and_16() {
         quantize_color(rgb, ColorMode::Ansi16),
         Color::Indexed(i) if i <= 15
     ));
+    assert_eq!(quantize_color(Color::Red, ColorMode::Ansi16), Color::Red);
+    assert_eq!(
+        quantize_color(Color::Indexed(3), ColorMode::Ansi16),
+        Color::Indexed(3)
+    );
     assert_eq!(
         quantize_color(Color::Reset, ColorMode::Ansi256),
         Color::Reset
@@ -142,6 +147,14 @@ fn apple_terminal_is_256_even_with_colorterm() {
     assert_eq!(
         color_mode_from_env(None, None, None, Some("screen-256colour"), false),
         ColorMode::Ansi256
+    );
+    assert_eq!(
+        color_mode_from_env(None, Some("yes"), None, Some("vt100-color"), false),
+        ColorMode::Ansi16
+    );
+    assert_eq!(
+        color_mode_from_env(None, None, None, Some("ansi"), false),
+        ColorMode::Ansi16
     );
 }
 

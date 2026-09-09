@@ -11,4 +11,12 @@ fn from_buffer_roundtrips_symbols() {
     assert_eq!(g.get(1, 1), "字");
     assert_eq!(g.get(1, 0), " ");
     assert_eq!(g.get(2, 0), "");
+    assert!(!g.is_empty());
+    let mut g = g;
+    g.clear();
+    assert!(g.is_empty());
+    assert_eq!(g.width(), 0);
+    assert_eq!(g.height(), 0);
+    let empty = CellGrid::from_rows(Vec::new());
+    assert!(empty.is_empty());
 }

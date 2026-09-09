@@ -100,3 +100,18 @@ fn agent_color_specs_come_from_core_config() {
         ratatui::style::Color::Rgb(0x11, 0x22, 0x33)
     );
 }
+
+#[test]
+fn key_bindings_and_broken_theme_files_are_loaded() {
+    let mut cfg = tui_config(Some("custom"));
+    cfg.key_bindings = Some([("ctrl-k".into(), "kill".into())].into_iter().collect());
+    let root = temp_themes();
+    std::fs::write(root.join(THEMES_DIR).join("broken.json"), "{not json").unwrap();
+    let c = TuiAppConfig::from_core_config_with_themes(&cfg, Some(root.join("config.toml")));
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(
+        c.key_bindings.get("ctrl-k").map(String::as_str),
+        Some("kill")
+    );
+    assert!(c.theme_override.is_some());
+}

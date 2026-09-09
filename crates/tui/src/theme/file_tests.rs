@@ -113,10 +113,9 @@ fn a_missing_required_role_is_reported_by_name() {
 
 #[test]
 fn malformed_json_reports_a_parse_error_rather_than_panicking() {
-    assert!(matches!(
-        ThemeFile::parse("{not json"),
-        Err(ThemeFileError::Parse(_))
-    ));
+    let err = ThemeFile::parse("{not json").unwrap_err();
+    assert!(matches!(err, ThemeFileError::Parse(_)));
+    assert!(err.to_string().contains("could not parse theme"));
 }
 
 #[test]
@@ -159,6 +158,12 @@ fn loading_a_directory_yields_a_dark_and_a_light_theme_per_file() {
     std::fs::write(dir.join("sample.json"), SAMPLE).unwrap();
     std::fs::write(dir.join("broken.json"), "{not json").unwrap();
     std::fs::write(dir.join("ignored.txt"), SAMPLE).unwrap();
+    std::fs::write(
+        dir.join("partial.json"),
+        r##"{"defs":{},"theme":{"background":"#000"}}"##,
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("unreadable.json")).unwrap();
 
     let (loaded, errors) = load_dir(&dir);
     let _ = std::fs::remove_dir_all(&dir);
@@ -167,8 +172,8 @@ fn loading_a_directory_yields_a_dark_and_a_light_theme_per_file() {
     assert_eq!(names, vec!["sample", "sample-light"]);
     // The broken file is reported, not silently dropped, and does not stop
     // the good one loading.
-    assert_eq!(errors.len(), 1);
-    assert!(errors[0].0.ends_with("broken.json"));
+    assert!(errors.iter().any(|(p, _)| p.ends_with("broken.json")));
+    assert!(errors.iter().any(|(p, _)| p.ends_with("partial.json")));
 }
 
 /// A unique-enough suffix without pulling in a uuid dependency.

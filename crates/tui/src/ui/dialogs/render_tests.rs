@@ -143,6 +143,20 @@ fn dialog_frame_too_small_area_returns_no_close_hit() {
     let (_buf, _text) = paint(8, 4, |f| {
         let chrome = dialog_frame(f, "T", &["Esc"], &palette, None);
         assert!(chrome.close_hit.is_none());
+        let _ = chrome;
+    });
+    let (_buf, _text) = paint(1, 1, |f| {
+        let info = render_select(
+            f,
+            "Pick",
+            &[SelectItem::new("a")],
+            0,
+            "empty",
+            &palette,
+            None,
+        );
+        assert!(info.close_hit.is_none());
+        assert!(info.modal.is_some());
     });
 }
 

@@ -71,4 +71,9 @@ fn color_to_rgb_covers_named_and_indexed() {
     assert_eq!(cube, (255, 0, 0));
     let gray = color_to_rgb(Color::Indexed(232));
     assert_eq!(gray, (8, 8, 8));
+    assert_eq!(color_to_rgb(Color::Indexed(16)), (0, 0, 0));
+    assert_eq!(color_to_rgb(Color::Indexed(255)), (238, 238, 238));
+    for i in 1..=14u8 {
+        let _ = color_to_rgb(Color::Indexed(i));
+    }
 }

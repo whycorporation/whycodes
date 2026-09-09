@@ -84,6 +84,8 @@ fn mouse_move_is_not_user_interaction() {
     ))));
     assert!(event_is_user_interaction(&Event::Paste("x".into())));
     assert!(event_is_user_interaction(&Event::Resize(80, 24)));
+    assert!(!event_is_user_interaction(&Event::FocusGained));
+    assert!(!event_is_user_interaction(&Event::FocusLost));
 }
 
 #[test]

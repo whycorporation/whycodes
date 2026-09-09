@@ -79,3 +79,17 @@ fn growing_open_fence_matches_full_render() {
     let full = render_with_width(&acc, &palette, width);
     assert_eq!(line_text(got), line_text(&full), "mismatch after close");
 }
+
+#[test]
+fn open_fence_gutter_width_change_rebuilds_committed_rows() {
+    let mut inc = IncrementalMarkdown::default();
+    let palette = palette();
+    let width = Some(60usize);
+    let mut acc = String::from("Intro.\n\n```rust\n1\n");
+    let _ = inc.render(&acc, &palette, width);
+    assert!(inc.fence_src > 0);
+    acc.push_str("10\n100\n");
+    let got = inc.render(&acc, &palette, width);
+    let full = render_with_width(&acc, &palette, width);
+    assert_eq!(line_text(got), line_text(&full));
+}

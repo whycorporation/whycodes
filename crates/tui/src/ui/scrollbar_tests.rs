@@ -164,9 +164,26 @@ fn scrollbar_metrics_and_content_helpers() {
     assert_ne!(colors.track, colors.thumb);
     let mut low = palette.clone();
     low.scrollbar = palette.bg;
+    let dim_thumb = ScrollbarColors::from_palette(&low);
+    assert_eq!(dim_thumb.thumb, palette.dim);
     low.dim = palette.bg;
     let fallback = ScrollbarColors::from_palette(&low);
     assert_ne!(fallback.track, fallback.thumb);
+    let mut buf_full = Buffer::empty(Rect::new(0, 0, 1, 20));
+    paint_scrollbar(
+        &mut buf_full,
+        Rect::new(0, 0, 1, 20),
+        21,
+        20,
+        0,
+        colors.track,
+        colors.thumb,
+    );
+    assert_eq!(
+        buf_full.cell((0, 0)).map(|c| c.bg),
+        Some(colors.thumb),
+        "thumb fills the track when it is as tall as the viewport"
+    );
     let mut buf = Buffer::empty(area);
     let shrunk = content_with_scrollbar(&mut buf, area, 20, 4, 0, colors);
     assert!(shrunk.width < area.width);

@@ -1,4 +1,5 @@
 use super::*;
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 #[test]
@@ -27,6 +28,23 @@ fn render_places_context_on_right() {
         let r = areas.get("context").expect("context hit");
         assert_eq!(r.width, 11);
         assert_eq!(r.x + r.width, 20);
+    })
+    .unwrap();
+}
+
+#[test]
+fn empty_bar_is_a_no_op() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let bar = StatusBar::new(Style::default());
+    assert_eq!(bar.total_width(), 0);
+    let backend = TestBackend::new(10, 1);
+    let mut term = Terminal::new(backend).unwrap();
+    term.draw(|f| {
+        let areas = StatusBar::new(Style::default()).render(f, f.area());
+        assert!(areas.is_empty());
+        let areas = StatusBar::new(Style::default()).render(f, Rect::new(0, 0, 0, 1));
+        assert!(areas.is_empty());
     })
     .unwrap();
 }
