@@ -29,11 +29,7 @@ pub(super) fn maybe_offer_import(app: &mut TuiApp) {
         app.import_prompted = true;
         return;
     }
-    let Ok(data_dir) = Config::data_dir() else {
-        app.import_prompted = true;
-        return;
-    };
-    let consent = ConsentStore::new(&data_dir);
+    let consent = ConsentStore::new(whycodes_core::paths::data_dir());
     match consent.first_run_asked() {
         Ok(true) => {
             app.import_prompted = true;
@@ -203,8 +199,7 @@ fn rescan_approved(
 }
 
 pub(super) fn prepare_import_preview(filter: Option<&Product>) -> anyhow::Result<PreviewOutcome> {
-    let data_dir = Config::data_dir()?;
-    let consent = ConsentStore::new(&data_dir);
+    let consent = ConsentStore::new(whycodes_core::paths::data_dir());
     let home =
         whycodes_import::discover::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     let mut found = scan_with_home(&home, &consent);
@@ -286,8 +281,7 @@ pub(super) fn apply_import_now(
     project_dir: &Path,
     selected: Option<&[bool]>,
 ) -> anyhow::Result<ApplyOutcome> {
-    let data_dir = Config::data_dir()?;
-    let consent = ConsentStore::new(&data_dir);
+    let consent = ConsentStore::new(whycodes_core::paths::data_dir());
     if let Err(e) = consent.mark_first_run_asked() {
         tracing::warn!(error = %e, "import first-run mark failed");
     }
@@ -329,10 +323,8 @@ pub(crate) fn mark_import_declined() {
     if cfg!(test) && std::env::var_os("WHYCODES_HOME").is_none() {
         return;
     }
-    if let Ok(data_dir) = Config::data_dir() {
-        let consent = ConsentStore::new(data_dir);
-        if let Err(e) = consent.mark_first_run_asked() {
-            tracing::warn!(error = %e, "import decline mark failed");
-        }
+    let consent = ConsentStore::new(whycodes_core::paths::data_dir());
+    if let Err(e) = consent.mark_first_run_asked() {
+        tracing::warn!(error = %e, "import decline mark failed");
     }
 }

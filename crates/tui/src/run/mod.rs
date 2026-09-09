@@ -1,11 +1,12 @@
 //! TUI event loop — streaming agent + permission dialogs.
 
+use std::collections::VecDeque;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::color::{QuantizingBackend, detect_color_mode, set_active_color_mode};
+use crate::color::{ColorMode, QuantizingBackend, detect_color_mode, set_active_color_mode};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -18,7 +19,7 @@ use crossterm::terminal::{
     size as term_size, supports_keyboard_enhancement,
 };
 use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 use whycodes_agent::agent::Agent;
@@ -491,6 +492,9 @@ pub fn tui_available() -> bool {
 enum TuiWriter {
     Console(std::fs::File),
     Stdout(io::Stdout),
+    /// In-memory sink so `LoopTerm::live` can be unit-tested without a TTY.
+    #[cfg(test)]
+    Buf(Vec<u8>),
 }
 
 impl Write for TuiWriter {
@@ -498,6 +502,8 @@ impl Write for TuiWriter {
         match self {
             Self::Console(f) => f.write(buf),
             Self::Stdout(s) => s.write(buf),
+            #[cfg(test)]
+            Self::Buf(b) => b.write(buf),
         }
     }
 
@@ -505,8 +511,147 @@ impl Write for TuiWriter {
         match self {
             Self::Console(f) => f.flush(),
             Self::Stdout(s) => s.flush(),
+            #[cfg(test)]
+            Self::Buf(b) => b.flush(),
         }
     }
+}
+
+/// When set, `run` uses a TestBackend and these events instead of a real TTY.
+/// Production never installs this; tests in this module do.
+static HEADLESS_EVENTS: std::sync::Mutex<Option<VecDeque<Event>>> = std::sync::Mutex::new(None);
+
+struct LoopIo {
+    scripted: Option<VecDeque<Event>>,
+}
+
+impl LoopIo {
+    fn take_from_thread() -> Self {
+        let scripted = HEADLESS_EVENTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        Self { scripted }
+    }
+
+    fn is_headless(&self) -> bool {
+        self.scripted.is_some()
+    }
+
+    fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
+        if let Some(q) = &self.scripted {
+            return Ok(!q.is_empty());
+        }
+        event::poll(timeout)
+    }
+
+    fn read_batch(&mut self) -> io::Result<Vec<Event>> {
+        if let Some(q) = &mut self.scripted {
+            if q.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "scripted TUI events exhausted",
+                ));
+            }
+            let mut batch = Vec::with_capacity(8);
+            while batch.len() < 256 {
+                match q.pop_front() {
+                    Some(ev) => batch.push(ev),
+                    None => break,
+                }
+            }
+            return Ok(batch);
+        }
+        read_event_batch()
+    }
+}
+
+enum LoopTerm {
+    Live(Terminal<QuantizingBackend<CrosstermBackend<TuiWriter>>>),
+    Headless(Terminal<QuantizingBackend<TestBackend>>),
+}
+
+impl LoopTerm {
+    fn live(out: TuiWriter, color_mode: ColorMode) -> anyhow::Result<Self> {
+        let backend = QuantizingBackend::new(CrosstermBackend::new(out), color_mode);
+        Ok(Self::Live(Terminal::new(backend).inspect_err(|e| {
+            let _ = disable_raw_mode();
+            whycodes_core::logging::emit(
+                "whycodes_tui",
+                "error",
+                "tui.terminal_new_failed",
+                Some(serde_json::json!({ "error": e.to_string() })),
+            );
+        })?))
+    }
+
+    fn headless(color_mode: ColorMode) -> anyhow::Result<Self> {
+        let backend = QuantizingBackend::new(TestBackend::new(80, 24), color_mode);
+        Ok(Self::Headless(Terminal::new(backend)?))
+    }
+
+    fn resize(&mut self, area: Rect) {
+        match self {
+            Self::Live(t) => {
+                if let Err(e) = t.resize(area) {
+                    tracing::debug!(error = %e, "live terminal resize failed");
+                }
+            }
+            Self::Headless(t) => {
+                if let Err(e) = t.resize(area) {
+                    tracing::debug!(error = %e, "headless terminal resize failed");
+                }
+            }
+        }
+    }
+
+    fn clear(&mut self) -> anyhow::Result<()> {
+        match self {
+            Self::Live(t) => t.clear().map_err(Into::into),
+            Self::Headless(t) => t.clear().map_err(Into::into),
+        }
+    }
+
+    fn draw_app(
+        &mut self,
+        app: &mut TuiApp,
+    ) -> anyhow::Result<(ratatui::layout::Rect, Option<crate::cell_grid::CellGrid>)> {
+        match self {
+            Self::Live(t) => draw_into(t, app),
+            Self::Headless(t) => draw_into(t, app),
+        }
+    }
+
+    fn restore(self, keyboard_enhanced: bool) {
+        match self {
+            Self::Live(mut terminal) => {
+                restore_live_backend(terminal.backend_mut(), keyboard_enhanced);
+                let _ = terminal.show_cursor();
+            }
+            Self::Headless(mut terminal) => {
+                let _ = terminal.show_cursor();
+            }
+        }
+    }
+}
+
+fn draw_into<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut TuiApp,
+) -> anyhow::Result<(ratatui::layout::Rect, Option<crate::cell_grid::CellGrid>)>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    let completed = terminal
+        .draw(|f| render::render(f, app))
+        .map_err(anyhow::Error::from)?;
+    let area = completed.area;
+    let cells = if app.mouse_sel.is_some() {
+        Some(crate::cell_grid::CellGrid::from_buffer(completed.buffer))
+    } else {
+        None
+    };
+    Ok((area, cells))
 }
 
 /// Writer for alt-screen / draw / mouse: controlling console first, else stdout if TTY.
@@ -609,14 +754,22 @@ fn restore_terminal_on(out: &mut impl Write) {
 /// Returns whether flags were pushed (so shutdown can pop them). A 0×0 PTY
 /// or `WHYCODES_BENCH` run never answers the CSI query; skip it rather than
 /// stalling the first paint for crossterm's ~2 s timeout.
-fn enable_keyboard_enhancement(out: &mut impl Write) -> bool {
+fn enable_keyboard_enhancement(out: &mut impl Write, size: Option<(u16, u16)>) -> bool {
     if !should_query_keyboard_enhancement(
         std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty()),
-        term_size().ok(),
+        size,
     ) {
         return false;
     }
-    if !matches!(supports_keyboard_enhancement(), Ok(true)) {
+    push_keyboard_flags(out, keyboard_enhancement_supported())
+}
+
+fn keyboard_enhancement_supported() -> bool {
+    matches!(supports_keyboard_enhancement(), Ok(true))
+}
+
+fn push_keyboard_flags(out: &mut impl Write, supported: bool) -> bool {
+    if !supported {
         return false;
     }
     execute!(
@@ -624,6 +777,58 @@ fn enable_keyboard_enhancement(out: &mut impl Write) -> bool {
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
     )
     .is_ok()
+}
+
+fn enter_raw_and_alt(
+    out: &mut impl Write,
+    enable_raw: impl FnOnce() -> io::Result<()>,
+) -> anyhow::Result<()> {
+    enable_raw().map_err(|e| {
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "error",
+            "tui.raw_mode_failed",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
+        anyhow::anyhow!(
+            "failed to enter raw mode ({e}). \
+             Run inside a real terminal, or use `whycodes --plain`."
+        )
+    })?;
+    execute!(
+        out,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )
+    .map_err(|e| {
+        let _ = disable_raw_mode();
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "error",
+            "tui.alt_screen_failed",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
+        anyhow::anyhow!("failed to enter alternate screen ({e})")
+    })?;
+    if let Err(e) = execute!(out, SetCursorStyle::BlinkingBar) {
+        tracing::debug!(error = %e, "set blinking bar cursor style failed");
+    }
+    Ok(())
+}
+
+fn restore_live_backend(out: &mut impl Write, keyboard_enhanced: bool) {
+    let _ = disable_raw_mode();
+    if keyboard_enhanced {
+        let _ = execute!(out, PopKeyboardEnhancementFlags);
+    }
+    let _ = execute!(
+        out,
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        LeaveAlternateScreen,
+        SetCursorStyle::DefaultUserShape
+    );
 }
 
 /// Whether it is worth waiting on the keyboard-enhancement CSI query.
@@ -668,12 +873,15 @@ pub enum TurnOutcome {
 
 /// Run the full-screen TUI until the user quits.
 pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
+    let mut loop_io = LoopIo::take_from_thread();
+    let headless = loop_io.is_headless();
+
     // Unit tests drive CLI `cmd_run` / `cmd_connect` through this entry
     // without opening a terminal. `WHYCODES_TEST_TUI=upgrade` asks the CLI
     // to install after restore; anything else is a clean quit.
-    // CLI unit tests set this so `cmd_run` / `cmd_connect` can call `run`
-    // without opening a terminal. Never set in production.
-    if let Ok(kind) = std::env::var("WHYCODES_TEST_TUI") {
+    // Headless scripted runs (this crate's tests) skip the stub so the loop
+    // still executes against TestBackend.
+    if !headless && let Ok(kind) = std::env::var("WHYCODES_TEST_TUI") {
         let _opts = opts;
         return Ok(if kind == "upgrade" {
             TuiExit::Upgrade
@@ -708,13 +916,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
     // On panic, leave alt-screen / raw mode so the shell is usable and the
     // crash report (written by whycodes_core::logging) is readable.
-    whycodes_core::logging::set_panic_cleanup(|| {
-        if let Ok(mut out) = open_tui_writer() {
-            restore_terminal_on(&mut out);
-        } else {
-            let _ = disable_raw_mode();
-        }
-    });
+    if !headless {
+        whycodes_core::logging::set_panic_cleanup(|| {
+            if let Ok(mut out) = open_tui_writer() {
+                restore_terminal_on(&mut out);
+            } else {
+                let _ = disable_raw_mode();
+            }
+        });
+    }
 
     whycodes_core::logging::emit(
         "whycodes_tui",
@@ -725,96 +935,45 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             "model": model,
             "stdout_tty": io::stdout().is_terminal(),
             "stdin_tty": io::stdin().is_terminal(),
+            "headless": headless,
         })),
     );
 
-    let mut tui_out = open_tui_writer().map_err(|e| {
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "error",
-            "tui.open_writer_failed",
-            Some(serde_json::json!({ "error": e.to_string() })),
-        );
-        anyhow::anyhow!(
-            "failed to open terminal for TUI ({e}). \
-             Run inside a real terminal, or use `whycodes --plain`."
-        )
-    })?;
-
-    enable_raw_mode().map_err(|e| {
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "error",
-            "tui.raw_mode_failed",
-            Some(serde_json::json!({ "error": e.to_string() })),
-        );
-        anyhow::anyhow!(
-            "failed to enter raw mode ({e}). \
-             Run inside a real terminal, or use `whycodes --plain`."
-        )
-    })?;
-    // Mouse capture: we own drag-select so clipboard text can be trimmed of
-    // background pad spaces. Shift+drag is still native select in many hosts.
-    // Bracketed paste: terminals deliver drag-dropped file paths as Event::Paste
-    // (and multi-line pastes as one string instead of key spam).
-    execute!(
-        tui_out,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        EnableBracketedPaste
-    )
-    .map_err(|e| {
-        let _ = disable_raw_mode();
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "error",
-            "tui.alt_screen_failed",
-            Some(serde_json::json!({ "error": e.to_string() })),
-        );
-        anyhow::anyhow!("failed to enter alternate screen ({e})")
-    })?;
-    // Insert-style blinking bar in the prompt. The emulator blinks it, so
-    // idle stays 0 draws/s (a software caret would force animation cadence).
-    // Unsupported hosts keep their default shape; restore on the way out.
-    if let Err(e) = execute!(tui_out, SetCursorStyle::BlinkingBar) {
-        tracing::debug!(error = %e, "set blinking bar cursor style failed");
-    }
-    // Lets terminals that support it (Kitty, WezTerm, Alacritty…) report
-    // Shift+Enter distinctly, so multi-line input gets a portable binding.
-    //
-    // `supports_keyboard_enhancement` writes a CSI query and waits ~2 s for a
-    // reply. Dumb / 0×0 PTYs (the first-frame harness) never answer, so a
-    // query there is a 2 s tax on time-to-first-frame. Skip it.
-    let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out);
     let color_mode = detect_color_mode();
     set_active_color_mode(color_mode);
     app.config.color_mode = color_mode;
     app.config.extra.quantize_for(color_mode);
-    let backend = QuantizingBackend::new(CrosstermBackend::new(tui_out), color_mode);
-    let mut terminal = Terminal::new(backend).inspect_err(|e| {
-        let _ = disable_raw_mode();
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "error",
-            "tui.terminal_new_failed",
-            Some(serde_json::json!({ "error": e.to_string() })),
-        );
-    })?;
 
-    // Some hosts (piped stdout, odd PTYs) report 0×0 via TIOCGWINSZ. Drawing a
-    // zero-area buffer is useless and has been linked to instant “flash and
-    // quit” behaviour — force a sane fallback size.
-    let (tw, th) = term_size().unwrap_or((0, 0));
-    if tw == 0 || th == 0 {
-        let fallback = Rect::new(0, 0, 80, 24);
-        let _ = terminal.resize(fallback);
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "warn",
-            "tui.size_fallback",
-            Some(serde_json::json!({ "reported_w": tw, "reported_h": th, "using": "80x24" })),
-        );
-    }
+    let (mut terminal, keyboard_enhanced, tw, th) = if headless {
+        (LoopTerm::headless(color_mode)?, false, 80u16, 24u16)
+    } else {
+        let mut tui_out = open_tui_writer().map_err(|e| {
+            whycodes_core::logging::emit(
+                "whycodes_tui",
+                "error",
+                "tui.open_writer_failed",
+                Some(serde_json::json!({ "error": e.to_string() })),
+            );
+            anyhow::anyhow!(
+                "failed to open terminal for TUI ({e}). \
+                 Run inside a real terminal, or use `whycodes --plain`."
+            )
+        })?;
+        enter_raw_and_alt(&mut tui_out, enable_raw_mode)?;
+        let (tw, th) = term_size().unwrap_or((0, 0));
+        let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out, Some((tw, th)));
+        let mut terminal = LoopTerm::live(tui_out, color_mode)?;
+        if tw == 0 || th == 0 {
+            terminal.resize(Rect::new(0, 0, 80, 24));
+            whycodes_core::logging::emit(
+                "whycodes_tui",
+                "warn",
+                "tui.size_fallback",
+                Some(serde_json::json!({ "reported_w": tw, "reported_h": th, "using": "80x24" })),
+            );
+        }
+        (terminal, keyboard_enhanced, tw, th)
+    };
 
     whycodes_core::logging::emit(
         "whycodes_tui",
@@ -950,8 +1109,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     }
                     app.pending_full_clears = app.pending_full_clears.saturating_sub(1);
                 }
-                let completed = match terminal.draw(|f| render::render(f, &mut app)) {
-                    Ok(c) => c,
+                let (draw_area, snapshot) = match terminal.draw_app(&mut app) {
+                    Ok(v) => v,
                     Err(e) => {
                         whycodes_core::logging::emit(
                             "whycodes_tui",
@@ -959,7 +1118,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                             "tui.draw_failed",
                             Some(serde_json::json!({ "error": e.to_string() })),
                         );
-                        return Err(e.into());
+                        return Err(e);
                     }
                 };
                 // Record *before* MCP / auto-index: those can block for
@@ -974,15 +1133,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         "info",
                         "tui.first_frame",
                         Some(serde_json::json!({
-                            "w": completed.area.width,
-                            "h": completed.area.height,
+                            "w": draw_area.width,
+                            "h": draw_area.height,
                         })),
                     );
                 }
                 // Cell snapshot is only for mouse text selection → clipboard.
                 // Skip the ~4k String allocs/frame when nothing is selected.
-                if app.mouse_sel.is_some() {
-                    app.screen_cells = crate::cell_grid::CellGrid::from_buffer(completed.buffer);
+                if let Some(cells) = snapshot {
+                    app.screen_cells = cells;
                 } else if !app.screen_cells.is_empty() {
                     app.screen_cells.clear();
                 }
@@ -1549,7 +1708,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 idle_trim_armed = false;
             }
 
-            let has_ev = match event::poll(poll_for) {
+            let has_ev = match loop_io.poll(poll_for) {
                 Ok(v) => v,
                 Err(e) => {
                     whycodes_core::logging::emit(
@@ -1561,13 +1720,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     return Err(e.into());
                 }
             };
+            if headless && !has_ev {
+                app.running = false;
+            }
             if has_ev {
                 // Drain the whole pending queue before the next paint. A
                 // trackpad flick is dozens of wheel events; handling one per
                 // draw made the chat look frozen (each frame re-laid the
                 // transcript). Moves alone do not force a redraw — hover
                 // chrome still calls mark_dirty when the hit set changes.
-                let batch = match read_event_batch() {
+                let batch = match loop_io.read_batch() {
                     Ok(b) => b,
                     Err(e) => {
                         whycodes_core::logging::emit(
@@ -1601,7 +1763,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     // can emit Resize while we are in a long poll; apply it
                     // immediately so the next paint uses the new viewport
                     // instead of a stale buffer (garbled rows / clipped popup).
-                    let _ = terminal.resize(Rect::new(0, 0, *w, *h));
+                    terminal.resize(Rect::new(0, 0, *w, *h));
                 }
                 if batch.iter().any(event_forces_redraw) {
                     app.mark_dirty();
@@ -1949,20 +2111,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     }
 
     // Cleanup must not fail the process after a successful rt.session — best-effort.
-    let _ = disable_raw_mode();
-    if keyboard_enhanced {
-        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
-    }
-    let _ = execute!(
-        terminal.backend_mut(),
-        DisableBracketedPaste,
-        DisableMouseCapture,
-        LeaveAlternateScreen,
-        SetCursorStyle::DefaultUserShape
-    );
-    let _ = terminal.show_cursor();
+    terminal.restore(keyboard_enhanced);
     // Normal exit — panic hook no longer needs to touch the terminal.
-    whycodes_core::logging::clear_panic_cleanup();
+    if !headless {
+        whycodes_core::logging::clear_panic_cleanup();
+    }
 
     // After the terminal is restored, so a failed write cannot corrupt the
     // screen the user is left looking at.

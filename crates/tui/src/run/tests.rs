@@ -1199,7 +1199,7 @@ fn enable_keyboard_enhancement_skips_when_bench_set() {
     let prev = std::env::var_os("WHYCODES_BENCH");
     unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
     let mut out = Vec::new();
-    assert!(!enable_keyboard_enhancement(&mut out));
+    assert!(!enable_keyboard_enhancement(&mut out, Some((80, 24))));
     match prev {
         Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
         None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
@@ -2751,6 +2751,10 @@ async fn handle_slash_more_aliases_and_connect_with_key() {
     );
 
     h.run("/login anthropic").await;
+    h.provider = "anthropic".into();
+    h.app.provider_name = "anthropic".into();
+    h.api_key.clear();
+    h.run("/connect").await;
 
     let prev_ci = std::env::var_os("CI");
     let prev_skip = std::env::var_os("WHYCODES_SKIP_IMPORT");
@@ -4189,7 +4193,9 @@ fn first_frame_hydrate_settle_keeps_clears_when_animating() {
 
 #[tokio::test]
 async fn run_returns_quit_when_test_tui_env_set() {
+    let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_TEST_TUI");
     unsafe { std::env::set_var("WHYCODES_TEST_TUI", "quit") };
     let opts = TuiRunOptions {
         project_dir: dir.path().to_path_buf(),
@@ -4205,13 +4211,18 @@ async fn run_returns_quit_when_test_tui_env_set() {
         update_rx: None,
     };
     let exit = super::run(opts).await.unwrap();
-    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
     assert_eq!(exit, TuiExit::Quit);
 }
 
 #[tokio::test]
 async fn run_returns_upgrade_when_test_tui_env_upgrade() {
+    let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_TEST_TUI");
     unsafe { std::env::set_var("WHYCODES_TEST_TUI", "upgrade") };
     let opts = TuiRunOptions {
         project_dir: dir.path().to_path_buf(),
@@ -4227,7 +4238,10 @@ async fn run_returns_upgrade_when_test_tui_env_upgrade() {
         update_rx: None,
     };
     let exit = super::run(opts).await.unwrap();
-    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
     assert_eq!(exit, TuiExit::Upgrade);
 }
 
@@ -4451,6 +4465,7 @@ struct IsolatedImportHome {
     _lock: HomeLock,
     dir: tempfile::TempDir,
     prev_home: Option<std::ffi::OsString>,
+    prev_profile: Option<std::ffi::OsString>,
     prev_skip: Option<std::ffi::OsString>,
     prev_ci: Option<std::ffi::OsString>,
 }
@@ -4459,10 +4474,12 @@ impl IsolatedImportHome {
     fn new() -> Self {
         let (lock, dir) = isolate_home_fresh();
         let prev_home = std::env::var_os("HOME");
+        let prev_profile = std::env::var_os("USERPROFILE");
         let prev_skip = std::env::var_os("WHYCODES_SKIP_IMPORT");
         let prev_ci = std::env::var_os("CI");
         unsafe {
             std::env::set_var("HOME", dir.path());
+            std::env::set_var("USERPROFILE", dir.path());
             std::env::remove_var("WHYCODES_SKIP_IMPORT");
             std::env::remove_var("CI");
         }
@@ -4470,6 +4487,7 @@ impl IsolatedImportHome {
             _lock: lock,
             dir,
             prev_home,
+            prev_profile,
             prev_skip,
             prev_ci,
         }
@@ -4486,6 +4504,10 @@ impl Drop for IsolatedImportHome {
             match &self.prev_home {
                 Some(v) => std::env::set_var("HOME", v),
                 None => std::env::remove_var("HOME"),
+            }
+            match &self.prev_profile {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
             }
             match &self.prev_skip {
                 Some(v) => std::env::set_var("WHYCODES_SKIP_IMPORT", v),
@@ -4962,9 +4984,319 @@ fn enable_keyboard_enhancement_skips_bench() {
     let prev = std::env::var_os("WHYCODES_BENCH");
     unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
     let mut out = Vec::new();
-    assert!(!enable_keyboard_enhancement(&mut out));
+    assert!(!enable_keyboard_enhancement(&mut out, Some((80, 24))));
     match prev {
         Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
         None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
     }
+}
+
+#[test]
+fn push_keyboard_flags_respects_support() {
+    let mut out = Vec::new();
+    assert!(!push_keyboard_flags(&mut out, false));
+    let mut out = Vec::new();
+    let _ = push_keyboard_flags(&mut out, true);
+}
+
+#[test]
+fn enter_raw_and_alt_maps_raw_mode_error() {
+    let mut out = Vec::new();
+    let err = enter_raw_and_alt(&mut out, || Err(std::io::Error::other("no tty"))).unwrap_err();
+    assert!(err.to_string().contains("raw mode"), "{err}");
+}
+
+#[test]
+fn apply_resume_loaded_error_toasts() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut session = Session::new(PathBuf::from("/work"), "sys".into());
+    apply_resume_loaded(
+        &mut app,
+        &mut session,
+        "sys",
+        "id",
+        false,
+        Err("db locked".into()),
+    );
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Resume failed: db locked"))
+    );
+}
+
+#[test]
+fn maybe_offer_import_already_asked_empty_and_no_home() {
+    {
+        let home = IsolatedImportHome::new();
+        std::fs::write(
+            home.path().join(".claude.json"),
+            r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+        )
+        .unwrap();
+        let consent = whycodes_import::ConsentStore::new(whycodes_core::paths::data_dir());
+        consent.mark_first_run_asked().unwrap();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        maybe_offer_import(&mut app);
+        assert!(app.import_prompted);
+        assert!(!app.dialogs.is_open());
+    }
+    {
+        let _home = IsolatedImportHome::new();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        maybe_offer_import(&mut app);
+        assert!(app.import_prompted);
+        assert!(!app.dialogs.is_open());
+    }
+    {
+        let _home = IsolatedImportHome::new();
+        let prev_profile = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("USERPROFILE");
+        }
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        maybe_offer_import(&mut app);
+        assert!(app.import_prompted);
+        if let Some(v) = prev_profile {
+            unsafe { std::env::set_var("USERPROFILE", v) };
+        }
+    }
+}
+
+#[test]
+fn maybe_offer_import_corrupt_consent_and_preview_fallback() {
+    let home = IsolatedImportHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        whycodes_core::paths::data_dir().join("import-consent.json"),
+        "{",
+    )
+    .unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_offer_import(&mut app);
+    assert!(app.import_prompted);
+}
+
+#[test]
+fn handle_import_slash_empty_plan_after_apply() {
+    let home = IsolatedImportHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    let mut config = Config::default();
+    apply_import_now(&mut config, home.path(), None).unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    handle_import_slash(&mut app, "claude");
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Alert { .. }) | Some(DialogKind::Import)
+    ));
+}
+
+#[test]
+fn mark_import_declined_writes_when_home_set() {
+    let home = IsolatedImportHome::new();
+    mark_import_declined();
+    let consent = whycodes_import::ConsentStore::new(whycodes_core::paths::data_dir());
+    assert!(consent.first_run_asked().unwrap());
+    let _ = home;
+}
+
+#[test]
+fn format_bg_jobs_lists_running() {
+    let jobs = [whycodes_agent::JobSnapshot {
+        id: "bg-1".into(),
+        label: "sleep".into(),
+        status: whycodes_agent::JobStatus::Running,
+        elapsed: std::time::Duration::from_secs(3),
+        output_len: 0,
+        exit_code: None,
+    }];
+    let text = format_bg_jobs(1, &jobs);
+    assert!(text.contains("bg-1"), "{text}");
+    assert!(text.contains("sleep"), "{text}");
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    memory_err_toast(&mut app, "boom");
+    export_failed_toast(&mut app, "io");
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Memory") || t.message.contains("io"))
+    );
+}
+
+#[tokio::test]
+async fn run_headless_draws_then_quits() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            Event::Resize(0, 24),
+            Event::Resize(90, 30),
+            Event::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: 1,
+                row: 1,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }),
+            Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('x'))),
+        ]));
+    let opts = boot_opts(dir.path(), "sk-test");
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_empty_queue_quits_after_first_frame() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::new());
+    let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+fn press(code: KeyCode) -> Event {
+    Event::Key(crossterm::event::KeyEvent::from(code))
+}
+
+#[tokio::test]
+async fn run_headless_slash_help_then_quit_command() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            press(KeyCode::Char('/')),
+            press(KeyCode::Char('h')),
+            press(KeyCode::Char('e')),
+            press(KeyCode::Char('l')),
+            press(KeyCode::Char('p')),
+            press(KeyCode::Enter),
+            press(KeyCode::Esc),
+            press(KeyCode::Char(':')),
+            press(KeyCode::Char('q')),
+            press(KeyCode::Enter),
+        ]));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_bench_stops_after_first_frame() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_bench = std::env::var_os("WHYCODES_BENCH");
+    let prev_dur = std::env::var_os("WHYCODES_BENCH_DURATION_MS");
+    let out = dir.path().join("bench.json");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_BENCH", &out);
+        std::env::set_var("WHYCODES_BENCH_DURATION_MS", "0");
+    }
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(
+        std::collections::VecDeque::from([press(KeyCode::Char('a'))]),
+    );
+    let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_bench {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
+    }
+    match prev_dur {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH_DURATION_MS", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_BENCH_DURATION_MS") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[test]
+fn enter_raw_and_alt_ok_and_restore_backend() {
+    let mut out = Vec::new();
+    enter_raw_and_alt(&mut out, || Ok(())).unwrap();
+    assert!(!out.is_empty());
+    restore_live_backend(&mut out, true);
+    restore_live_backend(&mut out, false);
+}
+
+#[test]
+fn loop_term_headless_and_live_buf_draw() {
+    let color = crate::color::ColorMode::Ansi256;
+    let mut term = LoopTerm::headless(color).unwrap();
+    term.resize(Rect::new(0, 0, 40, 12));
+    let _ = term.clear();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.pending_full_clears = 1;
+    let (area, snapshot) = term.draw_app(&mut app).unwrap();
+    assert!(area.width > 0);
+    assert!(snapshot.is_none());
+    term.restore(false);
+
+    let mut live = LoopTerm::live(TuiWriter::Buf(Vec::new()), color).unwrap();
+    live.resize(Rect::new(0, 0, 80, 24));
+    let _ = live.clear();
+    let _ = live.draw_app(&mut app).unwrap();
+    live.restore(true);
+}
+
+#[tokio::test]
+async fn run_headless_ctrl_keys_and_paste() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    let ctrl = |c: char| {
+        Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::Char(c),
+            crossterm::event::KeyModifiers::CONTROL,
+        ))
+    };
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            Event::Paste("hello paste".into()),
+            ctrl('t'),
+            ctrl('n'),
+            ctrl('s'),
+            press(KeyCode::Esc),
+            press(KeyCode::Tab),
+            press(KeyCode::Char(':')),
+            press(KeyCode::Char('q')),
+            press(KeyCode::Enter),
+        ]));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
 }

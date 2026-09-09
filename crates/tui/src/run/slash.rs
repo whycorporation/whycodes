@@ -618,7 +618,7 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
     }
 }
 
-fn format_bg_jobs(running: usize, jobs: &[whycodes_agent::JobSnapshot]) -> String {
+pub(super) fn format_bg_jobs(running: usize, jobs: &[whycodes_agent::JobSnapshot]) -> String {
     let mut lines = vec![format!("Background jobs ({running} running)")];
     for j in jobs {
         lines.push(format!(
@@ -633,12 +633,12 @@ fn format_bg_jobs(running: usize, jobs: &[whycodes_agent::JobSnapshot]) -> Strin
     lines.join("\n")
 }
 
-fn memory_err_toast(app: &mut TuiApp, e: impl std::fmt::Display) {
+pub(super) fn memory_err_toast(app: &mut TuiApp, e: impl std::fmt::Display) {
     app.toasts
         .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
 }
 
-fn export_failed_toast(app: &mut TuiApp, e: impl std::fmt::Display) {
+pub(super) fn export_failed_toast(app: &mut TuiApp, e: impl std::fmt::Display) {
     app.toasts.push(
         crate::toast::ToastKind::Error,
         format!("Export failed: {e}"),
