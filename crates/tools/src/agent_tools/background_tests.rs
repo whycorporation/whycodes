@@ -4,6 +4,7 @@ use crate::tool::ToolContext;
 #[test]
 fn background_module_loads() {
     assert!(!module_path!().is_empty());
+    let _ = BgTool::default();
 }
 
 #[tokio::test]

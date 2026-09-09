@@ -71,44 +71,74 @@ impl Tool for TruncationDirTool {
                 };
             }
 
-            let entries = match list_dir_entries(&path, &[]) {
-                Ok(e) => e,
-                Err(e) => {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: e,
-                        is_error: true,
-                    };
-                }
-            };
-
-            let total = entries.len();
-            let shown_entries = entries.into_iter().take(max_entries);
-
-            let mut result = format!("Contents of {} ({} entries):\n", shown, total);
-            for e in shown_entries {
-                if e.is_dir {
-                    result.push_str(&format!("  {}/\n", e.name));
-                } else {
-                    let sz = e.size.map(human_size).unwrap_or_else(|| "?".into());
-                    result.push_str(&format!("  {}  ({})\n", e.name, sz));
-                }
-            }
-
-            if total > max_entries {
-                result.push_str(&format!(
-                    "\n[... {} entries truncated from {} total]",
-                    total - max_entries,
-                    total
-                ));
-            }
-
-            ToolResult {
-                tool_call_id: String::new(),
-                content: result,
-                is_error: false,
-            }
+            truncation_from(
+                take_dir_entries(list_dir_or_err(&path)),
+                &shown,
+                max_entries,
+            )
         })
+    }
+}
+
+fn list_dir_or_err(path: &std::path::Path) -> Result<Vec<super::paths::DirEntryInfo>, ToolResult> {
+    list_dir_entries(path, &[]).map_err(list_error)
+}
+
+fn take_dir_entries(
+    result: Result<Vec<super::paths::DirEntryInfo>, ToolResult>,
+) -> Result<Vec<super::paths::DirEntryInfo>, ToolResult> {
+    result
+}
+
+fn truncation_from(
+    result: Result<Vec<super::paths::DirEntryInfo>, ToolResult>,
+    shown: &str,
+    max_entries: usize,
+) -> ToolResult {
+    match result {
+        Ok(entries) => truncation_ok(shown, entries, max_entries),
+        Err(e) => e,
+    }
+}
+
+fn truncation_ok(
+    shown: &str,
+    entries: Vec<super::paths::DirEntryInfo>,
+    max_entries: usize,
+) -> ToolResult {
+    let total = entries.len();
+    let shown_entries = entries.into_iter().take(max_entries);
+
+    let mut result = format!("Contents of {} ({} entries):\n", shown, total);
+    for e in shown_entries {
+        if e.is_dir {
+            result.push_str(&format!("  {}/\n", e.name));
+        } else {
+            let sz = e.size.map(human_size).unwrap_or_else(|| "?".into());
+            result.push_str(&format!("  {}  ({})\n", e.name, sz));
+        }
+    }
+
+    if total > max_entries {
+        result.push_str(&format!(
+            "\n[... {} entries truncated from {} total]",
+            total - max_entries,
+            total
+        ));
+    }
+
+    ToolResult {
+        tool_call_id: String::new(),
+        content: result,
+        is_error: false,
+    }
+}
+
+fn list_error(e: String) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: e,
+        is_error: true,
     }
 }
 

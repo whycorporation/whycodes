@@ -189,26 +189,14 @@ impl GlobTool {
                 )
             };
             if let Ok(paths) = glob::glob(&joined) {
-                for entry in paths.flatten() {
-                    // Skip anything under pruned directory names
-                    if entry.components().any(|c| {
-                        let s = c.as_os_str().to_string_lossy();
-                        super::paths::is_skip_dir(&s)
-                    }) {
-                        continue;
-                    }
-                    total += 1;
-                    if results.len() < max_results {
-                        let rel = entry
-                            .strip_prefix(&root)
-                            .map(|p| p.to_string_lossy().replace('\\', "/"))
-                            .unwrap_or_else(|_| entry.display().to_string());
-                        results.push(rel);
-                    } else {
-                        hit_cap = true;
-                        break;
-                    }
-                }
+                collect_fallback_glob(
+                    paths,
+                    &root,
+                    max_results,
+                    &mut results,
+                    &mut total,
+                    &mut hit_cap,
+                );
             }
         }
 
@@ -245,6 +233,35 @@ impl GlobTool {
             tool_call_id: String::new(),
             content: output,
             is_error: false,
+        }
+    }
+}
+
+fn collect_fallback_glob(
+    paths: impl IntoIterator<Item = Result<std::path::PathBuf, glob::GlobError>>,
+    root: &Path,
+    max_results: usize,
+    results: &mut Vec<String>,
+    total: &mut usize,
+    hit_cap: &mut bool,
+) {
+    for entry in paths.into_iter().flatten() {
+        if entry.components().any(|c| {
+            let s = c.as_os_str().to_string_lossy();
+            super::paths::is_skip_dir(&s)
+        }) {
+            continue;
+        }
+        *total += 1;
+        if results.len() < max_results {
+            let rel = entry
+                .strip_prefix(root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| entry.display().to_string());
+            results.push(rel);
+        } else {
+            *hit_cap = true;
+            break;
         }
     }
 }

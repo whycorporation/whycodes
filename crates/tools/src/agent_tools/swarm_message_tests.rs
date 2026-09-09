@@ -22,7 +22,7 @@ async fn send_reaches_inbox() {
 
 #[tokio::test]
 async fn missing_hub_and_args() {
-    let t = SwarmMsgTool;
+    let t = SwarmMsgTool::default();
     assert_eq!(t.name(), "swarm_msg");
     assert!(!t.description().is_empty());
     assert_eq!(t.parameters()["required"], json!(["to", "text"]));

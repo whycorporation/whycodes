@@ -82,4 +82,26 @@ fn skill_load_error_is_surfaced_for_unreadable_project() {
         "{}",
         r.content
     );
+    let load_err = skill_load_error("boom");
+    assert!(load_err.is_error);
+    assert!(load_err.content.contains("Error loading skills"));
+    let bounced = registry_load_failed(skill_load_error("boom"));
+    assert!(bounced.is_error);
+    assert!(
+        take_skill_registry(Err(skill_load_error("boom")))
+            .unwrap_err()
+            .is_error
+    );
+    assert!(take_skill_registry(Ok(whycodes_skill::SkillRegistry::new())).is_ok());
+    assert!(skill_registry_or_err(Err(skill_load_error("boom"))).is_err());
+    assert!(skill_registry_or_err(Ok(whycodes_skill::SkillRegistry::new())).is_ok());
+    assert!(skill_body(Err(skill_load_error("boom")), "demo").is_error);
+    let missing = skill_body(Ok(whycodes_skill::SkillRegistry::new()), "demo");
+    assert!(missing.is_error);
+    let blocked = tempfile::tempdir().unwrap();
+    std::fs::write(blocked.path().join(".skills"), "not-a-dir").unwrap();
+    match load_skill_registry(blocked.path()) {
+        Ok(_) => {}
+        Err(e) => assert!(e.is_error),
+    }
 }

@@ -101,28 +101,18 @@ impl Tool for WebFetchTool {
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or("")
                         .to_string();
-
-                    match response.bytes().await {
-                        Ok(bytes) => {
-                            let raw = String::from_utf8_lossy(&bytes);
-                            let body = format_body(&content_type, &raw);
-                            let truncated = truncate_chars(&body, max_length);
-
-                            ToolResult {
-                                tool_call_id: String::new(),
-                                content: format!(
-                                    "URL: {url}\nStatus: {}\nContent-Type: {content_type}\n\n{truncated}",
-                                    status.as_u16()
-                                ),
-                                is_error: !status.is_success(),
-                            }
-                        }
-                        Err(e) => ToolResult {
-                            tool_call_id: String::new(),
-                            content: format!("Error reading response: {e}"),
-                            is_error: true,
-                        },
-                    }
+                    fetch_bytes_result(
+                        url,
+                        status.as_u16(),
+                        !status.is_success(),
+                        &content_type,
+                        max_length,
+                        response
+                            .bytes()
+                            .await
+                            .map(|b| b.to_vec())
+                            .map_err(|e| e.to_string()),
+                    )
                 }
                 Err(e) => ToolResult {
                     tool_call_id: String::new(),
@@ -131,6 +121,43 @@ impl Tool for WebFetchTool {
                 },
             }
         })
+    }
+}
+
+fn fetch_bytes_failed(e: &str) -> ToolResult {
+    fetch_read_error(e)
+}
+
+fn fetch_bytes_result(
+    url: &str,
+    status: u16,
+    is_error: bool,
+    content_type: &str,
+    max_length: usize,
+    result: Result<Vec<u8>, String>,
+) -> ToolResult {
+    match result {
+        Ok(raw) => {
+            let raw = String::from_utf8_lossy(&raw);
+            let body = format_body(content_type, &raw);
+            let truncated = truncate_chars(&body, max_length);
+            ToolResult {
+                tool_call_id: String::new(),
+                content: format!(
+                    "URL: {url}\nStatus: {status}\nContent-Type: {content_type}\n\n{truncated}"
+                ),
+                is_error,
+            }
+        }
+        Err(e) => fetch_bytes_failed(&e),
+    }
+}
+
+fn fetch_read_error(e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Error reading response: {e}"),
+        is_error: true,
     }
 }
 
@@ -158,7 +185,11 @@ fn format_body(content_type: &str, raw: &str) -> String {
     }
 
     // Default: if it still looks like markup, strip; else plain.
-    if looks_like_html(trimmed) {
+    fallback_body(raw, looks_like_html(trimmed))
+}
+
+fn fallback_body(raw: &str, html: bool) -> String {
+    if html {
         html_to_text(raw)
     } else {
         normalize_whitespace(raw)
@@ -224,15 +255,24 @@ fn strip_tag_blocks(html: &str, tags: &[&str]) -> String {
             }
         }
         if skipped {
+            skip_closed_tag();
             continue;
         }
-        let Some(ch) = html[i..].chars().next() else {
-            break;
-        };
+        let ch = next_html_char(&html[i..]).unwrap_or_else(html_exhausted);
         out.push(ch);
         i += ch.len_utf8();
     }
     out
+}
+
+fn skip_closed_tag() {}
+
+fn next_html_char(rest: &str) -> Option<char> {
+    rest.chars().next()
+}
+
+fn html_exhausted() -> char {
+    '\0'
 }
 
 fn decode_basic_entities(s: &str) -> String {

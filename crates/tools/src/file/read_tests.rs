@@ -132,12 +132,21 @@ async fn execute_missing_file_suggests() {
     let dir = TempDir::new().unwrap();
     write(&dir, "readme.md", "x");
     let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    // A distinct name so case-insensitive filesystems (NTFS) still miss.
     let result = ReadTool::new()
-        .execute(serde_json::json!({"path": "Readme.md"}), &ctx)
+        .execute(serde_json::json!({"path": "readm"}), &ctx)
         .await;
-    assert!(result.is_error);
-    assert!(result.content.contains("File not found"));
-    assert!(result.content.contains("Did you mean"));
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("File not found"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Did you mean"),
+        "{}",
+        result.content
+    );
 }
 
 #[tokio::test]
@@ -187,8 +196,30 @@ async fn execute_missing_path_param() {
 
 #[tokio::test]
 async fn remaining_read_branches() {
-    let t = ReadTool;
+    let t = ReadTool::default();
     assert_eq!(t.name(), "read");
+    let img_err = image_read_error("a.png", "denied");
+    assert!(img_err.is_error);
+    let failed = image_bytes_result("a.png", "image/png", 1, Err("denied".into()));
+    assert!(failed.is_error);
+    let ok_img = image_bytes_result("a.png", "image/png", 1, Ok(b"PNG".to_vec()));
+    assert!(!ok_img.is_error);
+    assert!(img_err.content.contains("Failed to read image"));
+    let win_err = window_read_error("a.txt", "denied");
+    assert!(win_err.is_error);
+    assert!(win_err.content.contains("Error reading"));
+    assert!(take_read_window(Err("denied".into())).is_err());
+    let win_from = window_from(Err("denied".into()), "a.txt", 0, 10, None);
+    assert!(win_from.is_error);
+    assert!(win_from.content.contains("Error reading"));
+    note_large_default_window(MAX_FULL_READ_BYTES + 1, 1, DEFAULT_LIMIT);
+    note_large_default_window(1, 1, DEFAULT_LIMIT);
+    assert!(!refuse_binary(Path::new("/nonexistent-xyz"), "gone"));
+    assert!(!sniff_opened(Err(std::io::Error::other("gone"))));
+    assert!(!sniff_read(Err(std::io::Error::other("eof")), &[]));
+    assert!(sniff_read(Ok(1), &[0]));
+    let refused = binary_refused("bin.dat", 4);
+    assert!(refused.is_error);
     assert!(!t.description().is_empty());
     let _ = t.parameters();
     let dir = TempDir::new().unwrap();

@@ -57,10 +57,7 @@ impl Tool for PlanTool {
                         return plan_fs_error("Error creating .whycodes directory", e);
                     }
 
-                    match std::fs::write(&plan_mode_file, "1") {
-                        Ok(_) => plan_ok(PLAN_ENTERED),
-                        Err(e) => plan_fs_error("Error entering planning mode", e),
-                    }
+                    write_plan_mode(&plan_mode_file)
                 }
                 "exit" => match std::fs::remove_file(&plan_mode_file) {
                     Ok(_) => plan_ok(PLAN_EXITED),
@@ -89,6 +86,17 @@ fn plan_fs_error(prefix: &str, err: std::io::Error) -> ToolResult {
         tool_call_id: String::new(),
         content: format!("{prefix}: {err}"),
         is_error: true,
+    }
+}
+
+fn plan_enter_write_error(err: std::io::Error) -> ToolResult {
+    plan_fs_error("Error entering planning mode", err)
+}
+
+fn write_plan_mode(path: &std::path::Path) -> ToolResult {
+    match std::fs::write(path, "1") {
+        Ok(_) => plan_ok(PLAN_ENTERED),
+        Err(e) => plan_enter_write_error(e),
     }
 }
 

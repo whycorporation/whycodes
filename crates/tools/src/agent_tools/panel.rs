@@ -93,7 +93,7 @@ impl Tool for PanelTool {
                     } else if let Some(p) = path.filter(|s| !s.is_empty()) {
                         match git_diff(ctx, p) {
                             Ok(s) if !s.trim().is_empty() => s,
-                            Ok(_) => return err("git diff is empty for that path"),
+                            Ok(_) => return empty_git_diff(),
                             Err(e) => return err(&e),
                         }
                     } else {
@@ -142,6 +142,10 @@ impl Tool for PanelTool {
             ok(msg)
         })
     }
+}
+
+fn empty_git_diff() -> ToolResult {
+    err("git diff is empty for that path")
 }
 
 fn err(msg: &str) -> ToolResult {

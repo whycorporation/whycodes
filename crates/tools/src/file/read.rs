@@ -113,11 +113,11 @@ impl ReadTool {
                 msg.push_str(&suggestions.join(", "));
                 msg.push('?');
             }
-            return err(msg);
+            return err(&msg);
         }
 
         if full_path.is_dir() {
-            return err(format!(
+            return err(&format!(
                 "'{}' is a directory. Use the `list` tool instead of `read`.",
                 shown
             ));
@@ -129,7 +129,7 @@ impl ReadTool {
             let size = file_len(&full_path).unwrap_or(0);
             const MAX_IMAGE: u64 = 2 * 1024 * 1024;
             if size == 0 || size > MAX_IMAGE {
-                return err(format!(
+                return err(&format!(
                     "'{}' is an image ({media}, {}) — max {} for vision read. \
                      Attach with @path in the TUI for larger files.",
                     shown,
@@ -137,88 +137,30 @@ impl ReadTool {
                     super::paths::human_size(MAX_IMAGE)
                 ));
             }
-            match fs::read(&full_path) {
-                Ok(bytes) => {
-                    use base64::Engine as _;
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    return ok(format!(
-                        "Image file `{shown}` ({media}, {}).\n\
-                         WHYCODES_IMAGE_B64:{media}\n{b64}",
-                        super::paths::human_size(size)
-                    ));
-                }
-                Err(e) => return err(format!("Failed to read image `{shown}`: {e}")),
-            }
+            return image_bytes_result(
+                &shown,
+                media,
+                size,
+                fs::read(&full_path).map_err(|e| e.to_string()),
+            );
         }
 
         // Binary sniff without loading the whole file.
-        if let Ok(mut f) = fs::File::open(&full_path) {
-            let mut head = [0u8; BINARY_SNIFF_LEN];
-            if let Ok(n) = f.read(&mut head)
-                && is_binary_bytes(&head[..n])
-            {
-                let size = file_len(&full_path).unwrap_or(0);
-                return err(format!(
-                    "'{}' looks like a binary file ({}). Refusing to dump raw bytes into context.",
-                    shown,
-                    super::paths::human_size(size)
-                ));
-            }
+        if refuse_binary(&full_path, &shown) {
+            return binary_refused(&shown, file_len(&full_path).unwrap_or(0));
         }
 
         let size = file_len(&full_path).unwrap_or(0);
-        if size > MAX_FULL_READ_BYTES && offset == 1 && limit >= DEFAULT_LIMIT {
-            // Still allow windowed reads of huge files — stream below.
-            // Warn when the default window is used so the model knows to page.
-        }
+        note_large_default_window(size, offset, limit);
 
-        match read_window(&full_path, offset, limit) {
-            Ok(window) => {
-                let mut out = String::with_capacity(
-                    window.lines.iter().map(|l| l.len() + 12).sum::<usize>() + 128,
-                );
-                out.push_str(&format!(
-                    "# {}\n# lines {}–{} of {}  |  {}\n",
-                    shown,
-                    window.start_line,
-                    window.end_line,
-                    if window.total_known {
-                        window.total_lines.to_string()
-                    } else {
-                        format!("≥{}", window.total_lines)
-                    },
-                    super::paths::human_size(size)
-                ));
-                for (i, line) in window.lines.iter().enumerate() {
-                    let n = window.start_line + i;
-                    // Cap absurdly long lines to protect context
-                    let line = truncate_line(line, 4000);
-                    out.push_str(&format!("{:6}|{}\n", n, line));
-                }
-                if window.truncated {
-                    out.push_str(&format!(
-                        "\n[truncated — showing {} lines starting at {}. \
-                         Re-call with offset={} limit={} for more.]",
-                        window.lines.len(),
-                        window.start_line,
-                        window.end_line + 1,
-                        limit
-                    ));
-                }
-                if let Some(stale) = ctx.check_file_read(&full_path) {
-                    out.push_str(&format!(
-                        "\n[stale] `{}` was written by swarm agent `{}` since your last read.",
-                        shown, stale.writer_label
-                    ));
-                }
-                ToolResult {
-                    tool_call_id: String::new(),
-                    content: out,
-                    is_error: false,
-                }
-            }
-            Err(e) => err(format!("Error reading '{}': {}", shown, e)),
-        }
+        window_from(
+            take_read_window(read_window(&full_path, offset, limit).map_err(|e| e.to_string())),
+            &shown,
+            size,
+            limit,
+            ctx.check_file_read(&full_path)
+                .map(|s| s.writer_label.clone()),
+        )
     }
 }
 
@@ -321,18 +263,140 @@ fn truncate_line(line: &str, max_chars: usize) -> String {
     format!("{t}…[line truncated]")
 }
 
-fn ok(msg: impl Into<String>) -> ToolResult {
+fn image_bytes_result(
+    shown: &str,
+    media: &str,
+    size: u64,
+    result: Result<Vec<u8>, String>,
+) -> ToolResult {
+    match result {
+        Ok(bytes) => {
+            use base64::Engine as _;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            ok(&format!(
+                "Image file `{shown}` ({media}, {}).\n\
+                 WHYCODES_IMAGE_B64:{media}\n{b64}",
+                super::paths::human_size(size)
+            ))
+        }
+        Err(e) => image_read_error(shown, &e),
+    }
+}
+
+fn take_read_window(result: Result<ReadWindow, String>) -> Result<ReadWindow, String> {
+    result
+}
+
+fn window_from(
+    result: Result<ReadWindow, String>,
+    shown: &str,
+    size: u64,
+    limit: usize,
+    stale_writer: Option<String>,
+) -> ToolResult {
+    match result {
+        Err(e) => window_read_error(shown, &e),
+        Ok(window) => {
+            let mut out = String::with_capacity(
+                window.lines.iter().map(|l| l.len() + 12).sum::<usize>() + 128,
+            );
+            out.push_str(&format!(
+                "# {}\n# lines {}–{} of {}  |  {}\n",
+                shown,
+                window.start_line,
+                window.end_line,
+                if window.total_known {
+                    window.total_lines.to_string()
+                } else {
+                    format!("≥{}", window.total_lines)
+                },
+                super::paths::human_size(size)
+            ));
+            for (i, line) in window.lines.iter().enumerate() {
+                let n = window.start_line + i;
+                // Cap absurdly long lines to protect context
+                let line = truncate_line(line, 4000);
+                out.push_str(&format!("{:6}|{}\n", n, line));
+            }
+            if window.truncated {
+                out.push_str(&format!(
+                    "\n[truncated — showing {} lines starting at {}. \
+                     Re-call with offset={} limit={} for more.]",
+                    window.lines.len(),
+                    window.start_line,
+                    window.end_line + 1,
+                    limit
+                ));
+            }
+            if let Some(writer_label) = stale_writer {
+                out.push_str(&format!(
+                    "\n[stale] `{shown}` was written by swarm agent `{writer_label}` since your last read.",
+                ));
+            }
+            ToolResult {
+                tool_call_id: String::new(),
+                content: out,
+                is_error: false,
+            }
+        }
+    }
+}
+
+fn image_read_error(shown: &str, e: &str) -> ToolResult {
+    err(&format!("Failed to read image `{shown}`: {e}"))
+}
+
+fn window_read_error(shown: &str, e: &str) -> ToolResult {
+    err(&format!("Error reading '{shown}': {e}"))
+}
+
+fn note_large_default_window(size: u64, offset: usize, limit: usize) {
+    if size > MAX_FULL_READ_BYTES && offset == 1 && limit >= DEFAULT_LIMIT {
+        // Still allow windowed reads of huge files — stream below.
+        // Warn when the default window is used so the model knows to page.
+    }
+}
+
+fn refuse_binary(path: &Path, shown: &str) -> bool {
+    let _ = shown;
+    sniff_opened(fs::File::open(path))
+}
+
+fn sniff_opened(file: std::io::Result<fs::File>) -> bool {
+    let Ok(mut f) = file else {
+        return false;
+    };
+    let mut head = [0u8; BINARY_SNIFF_LEN];
+    sniff_read(f.read(&mut head), &head)
+}
+
+fn sniff_read(result: std::io::Result<usize>, head: &[u8]) -> bool {
+    match result {
+        Ok(n) => is_binary_bytes(&head[..n.min(head.len())]),
+        Err(_e) => false,
+    }
+}
+
+fn binary_refused(shown: &str, size: u64) -> ToolResult {
+    err(&format!(
+        "'{}' looks like a binary file ({}). Refusing to dump raw bytes into context.",
+        shown,
+        super::paths::human_size(size)
+    ))
+}
+
+fn ok(msg: &str) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
-        content: msg.into(),
+        content: msg.to_string(),
         is_error: false,
     }
 }
 
-fn err(msg: impl Into<String>) -> ToolResult {
+fn err(msg: &str) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
-        content: msg.into(),
+        content: msg.to_string(),
         is_error: true,
     }
 }

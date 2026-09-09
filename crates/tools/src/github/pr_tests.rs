@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn metadata_describes_supported_actions_and_required_repository() {
-    let tool = GitHubPrTool::new();
+    let tool = GitHubPrTool::default();
     let parameters = tool.parameters();
 
     assert_eq!(tool.name(), "github_pr");
@@ -11,6 +11,9 @@ fn metadata_describes_supported_actions_and_required_repository() {
         json!(["create", "list", "view", "merge"])
     );
     assert_eq!(parameters["required"], json!(["action", "owner", "repo"]));
+    assert_eq!(format_github_body("not-json"), "not-json");
+    let pretty = format_github_body(r#"{"ok":true}"#);
+    assert!(pretty.contains("ok"), "{pretty}");
 }
 
 #[tokio::test]

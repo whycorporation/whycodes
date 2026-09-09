@@ -16,7 +16,7 @@ fn write(dir: &std::path::Path, rel: &str, body: &str) {
 
 #[tokio::test]
 async fn metadata_describes_repomap() {
-    let t = RepoMapTool::new();
+    let t = RepoMapTool::default();
     assert_eq!(t.name(), "repomap");
     assert!(t.description().to_ascii_lowercase().contains("signature"));
     let params = t.parameters();
@@ -32,6 +32,52 @@ async fn missing_root_is_an_error() {
         .await;
     assert!(out.is_error);
     assert!(out.content.contains("Path not found"), "{}", out.content);
+    let file = dir.path().join("solo.rs");
+    std::fs::write(&file, "fn solo() {}\n").unwrap();
+    let mapped = RepoMapTool::new()
+        .execute(json!({ "path": file.to_string_lossy() }), &ctx(dir.path()))
+        .await;
+    assert!(!mapped.is_error, "{}", mapped.content);
+    assert!(
+        mapped.content.contains("fn solo") || mapped.content.contains("solo.rs"),
+        "{}",
+        mapped.content
+    );
+    assert!(skip_repomap_file(Path::new("/nonexistent-xyz")));
+    assert!(read_repomap_text(Path::new("/nonexistent-xyz")).is_none());
+    assert!(file_block_from(Path::new("/nonexistent-xyz"), "x.rs".into()).is_none());
+    assert!(!collect_from_index(None, Path::new("."), &mut |_, _| true));
+    assert!(visit_repomap_entry(
+        Path::new("."),
+        ".",
+        true,
+        &mut |_, _| false
+    ));
+    assert!(!visit_repomap_entry(
+        Path::new("."),
+        ".",
+        false,
+        &mut |_, _| false
+    ));
+    walk_repomap_files(Path::new("/nonexistent-xyz"), &mut |_, _| true);
+    assert!(!skip_repomap_bytes(Path::new("/nonexistent-xyz")));
+    let idx = whycodes_index::WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        whycodes_index::IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    let _ = idx.wait_ready(std::time::Duration::from_secs(10));
+    collect_from_index(Some(&idx), dir.path(), &mut |_, _| true);
+    let bin = dir.path().join("skip.bin");
+    std::fs::write(&bin, [0u8, 1, 2]).unwrap();
+    assert!(skip_repomap_bytes(&bin));
+    assert!(read_repomap_text(&bin).is_none());
+    let empty = dir.path().join("empty.rs");
+    std::fs::write(&empty, "// none\n").unwrap();
+    assert!(file_block_from(&empty, "empty.rs".into()).is_none());
 }
 
 #[tokio::test]
@@ -107,6 +153,27 @@ fn rust_and_js_extractors() {
 fn rank_prefers_src_over_tests() {
     assert!(rank_key("src/lib.rs") < rank_key("tests/foo.rs"));
     assert!(rank_key("Cargo.toml") < rank_key("src/lib.rs"));
+    assert_eq!(rank_key("pkg/src/foo.rs").0, 1);
+    assert_eq!(rank_key("foo_test.rs").0, 3);
+    assert_eq!(rank_key("pkg/foo_test.rs").0, 3);
+    assert_eq!(rank_key("README.md").0, 2);
+    assert_eq!(render_repomap("# h", ""), "# h\n(no signatures in scope)");
+    assert!(is_signature_line("func Foo() {", "swift"));
+    assert!(is_signature_line("public void Foo() {", "java"));
+    assert!(is_signature_line("export class Foo {", "cs"));
+    assert!(is_signature_line("enum Foo(int x) {", "c"));
+    assert!(is_signature_line("typedef struct Foo(int x) {", "h"));
+    assert!(is_signature_line("namespace Foo(int x) {", "cpp"));
+    let many = (0..MAX_SIGS_PER_FILE + 3)
+        .map(|i| format!("fn f{i}() {{}}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(extract_signatures(&many, "rs").len(), MAX_SIGS_PER_FILE);
+    assert!(
+        extract_signatures("/* comment\n * still\nfn foo() {}\n", "rs")
+            .iter()
+            .any(|s| s.contains("fn foo"))
+    );
 }
 
 #[test]
@@ -137,6 +204,7 @@ fn signature_line_covers_remaining_languages() {
     assert!(!is_signature_line("#### Deep", "md"));
     assert!(!is_signature_line("#NoSpace", "md"));
     assert!(!is_signature_line("anything", "xyz"));
+    assert!(is_signature_line("export Foo", "swift"));
 
     assert!(!is_source_path(Path::new("README")));
     assert!(is_source_path(Path::new("src/lib.rs")));

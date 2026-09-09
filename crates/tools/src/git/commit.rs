@@ -91,115 +91,109 @@ impl GitCommitTool {
             }
             add_cmd.current_dir(&working_dir);
 
-            let add_output = match add_cmd.output() {
-                Ok(o) => o,
-                Err(e) => {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: format!("Failed to run git add: {}", e),
-                        is_error: true,
-                    };
-                }
-            };
-
-            if !add_output.status.success() {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: String::from_utf8_lossy(&add_output.stderr).to_string(),
-                    is_error: true,
-                };
+            if let Err(e) = git_output(add_cmd.output(), "Failed to run git add") {
+                return e;
             }
 
             let mut commit_cmd = Command::new("git");
             commit_cmd.arg("commit").arg("-m").arg(&message);
             commit_cmd.current_dir(&working_dir);
 
-            let commit_output = match commit_cmd.output() {
-                Ok(o) => o,
-                Err(e) => {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: format!("Failed to run git commit: {}", e),
-                        is_error: true,
-                    };
-                }
-            };
-
-            if !commit_output.status.success() {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: String::from_utf8_lossy(&commit_output.stderr).to_string(),
-                    is_error: true,
-                };
-            }
-
-            let result = String::from_utf8_lossy(&commit_output.stdout).to_string();
-            let result = if result.is_empty() {
-                "Commit succeeded (nothing to commit, possibly already committed).".to_string()
-            } else {
-                result
-            };
-
-            if push {
-                let push_result = git_push(&working_dir);
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("{}\n{}", result, push_result),
-                    is_error: false,
-                };
-            }
-
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: result,
-                is_error: false,
-            };
+            return commit_from_output(
+                take_git_output(git_output(commit_cmd.output(), "Failed to run git commit")),
+                "Commit succeeded (nothing to commit, possibly already committed).",
+                push,
+                &working_dir,
+            );
         }
 
         let mut cmd = Command::new("git");
         cmd.arg("commit").arg("-a").arg("-m").arg(&message);
         cmd.current_dir(&working_dir);
 
-        let output = match cmd.output() {
-            Ok(o) => o,
-            Err(e) => {
-                return ToolResult {
+        commit_from_output(
+            take_git_output(git_output(cmd.output(), "Failed to run git commit")),
+            "Commit succeeded (nothing to commit, working tree clean).",
+            push,
+            &working_dir,
+        )
+    }
+}
+
+fn take_git_output(
+    result: Result<std::process::Output, ToolResult>,
+) -> Result<std::process::Output, ToolResult> {
+    match result {
+        Ok(o) => Ok(o),
+        Err(e) => Err(git_output_failed(e)),
+    }
+}
+
+fn commit_from_output(
+    result: Result<std::process::Output, ToolResult>,
+    empty: &str,
+    push: bool,
+    working_dir: &str,
+) -> ToolResult {
+    match result {
+        Ok(output) => {
+            let result = commit_stdout(&output.stdout, empty);
+            if push {
+                let push_result = git_push(working_dir);
+                ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Failed to run git commit: {}", e),
-                    is_error: true,
-                };
+                    content: format!("{}\n{}", result, push_result),
+                    is_error: false,
+                }
+            } else {
+                ToolResult {
+                    tool_call_id: String::new(),
+                    content: result,
+                    is_error: false,
+                }
             }
-        };
-
-        if !output.status.success() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: String::from_utf8_lossy(&output.stderr).to_string(),
-                is_error: true,
-            };
         }
+        Err(e) => e,
+    }
+}
 
-        let result = String::from_utf8_lossy(&output.stdout).to_string();
-        let result = if result.is_empty() {
-            "Commit succeeded (nothing to commit, working tree clean).".to_string()
-        } else {
-            result
-        };
+fn git_output_failed(e: ToolResult) -> ToolResult {
+    e
+}
 
-        if push {
-            let push_result = git_push(&working_dir);
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: format!("{}\n{}", result, push_result),
-                is_error: false,
-            };
-        }
+fn git_output(
+    result: std::io::Result<std::process::Output>,
+    prefix: &str,
+) -> Result<std::process::Output, ToolResult> {
+    match result {
+        Ok(o) if o.status.success() => Ok(o),
+        Ok(o) => Err(git_stderr_error(&o.stderr)),
+        Err(e) => Err(git_cmd_error(prefix, &e.to_string())),
+    }
+}
 
-        ToolResult {
-            tool_call_id: String::new(),
-            content: result,
-            is_error: false,
-        }
+fn git_cmd_error(prefix: &str, e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("{prefix}: {e}"),
+        is_error: true,
+    }
+}
+
+fn git_stderr_error(stderr: &[u8]) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: String::from_utf8_lossy(stderr).to_string(),
+        is_error: true,
+    }
+}
+
+fn commit_stdout(stdout: &[u8], empty: &str) -> String {
+    let result = String::from_utf8_lossy(stdout).to_string();
+    if result.is_empty() {
+        empty.to_string()
+    } else {
+        result
     }
 }
 
@@ -211,12 +205,7 @@ fn git_push(working_dir: &str) -> String {
     match cmd.output() {
         Ok(o) => {
             if o.status.success() {
-                let stdout = String::from_utf8_lossy(&o.stdout).to_string();
-                if stdout.is_empty() {
-                    "Push succeeded.".to_string()
-                } else {
-                    stdout
-                }
+                commit_stdout(&o.stdout, "Push succeeded.")
             } else {
                 format!("Push failed: {}", String::from_utf8_lossy(&o.stderr))
             }

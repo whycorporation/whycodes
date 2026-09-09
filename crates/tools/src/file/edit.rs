@@ -118,27 +118,18 @@ impl EditTool {
                     let count = spans.len();
                     let modified = apply_spans(&original, &spans, &new_string);
                     let start = first_line_number(&original, &matched);
-                    match crate::file::atomic::write_atomic(
-                        std::path::Path::new(&full_path),
-                        &modified,
-                    ) {
-                        Ok(()) => ToolResult {
-                            tool_call_id: String::new(),
-                            content: format_edit_preview_at(
-                                &shown,
-                                &matched,
-                                &new_string,
-                                count,
-                                start,
-                            ),
-                            is_error: false,
-                        },
-                        Err(e) => ToolResult {
-                            tool_call_id: String::new(),
-                            content: format!("Error writing file: {e}"),
-                            is_error: true,
-                        },
-                    }
+                    write_edit_result(
+                        crate::file::atomic::write_atomic(
+                            std::path::Path::new(&full_path),
+                            &modified,
+                        )
+                        .map_err(|e| e.to_string()),
+                        &shown,
+                        &matched,
+                        &new_string,
+                        count,
+                        start,
+                    )
                 }
             },
             Err(e) => ToolResult {
@@ -147,6 +138,32 @@ impl EditTool {
                 is_error: true,
             },
         }
+    }
+}
+
+fn write_edit_result(
+    result: Result<(), String>,
+    shown: &str,
+    matched: &str,
+    new_string: &str,
+    count: usize,
+    start: Option<usize>,
+) -> ToolResult {
+    match result {
+        Ok(()) => ToolResult {
+            tool_call_id: String::new(),
+            content: format_edit_preview_at(shown, matched, new_string, count, start),
+            is_error: false,
+        },
+        Err(e) => write_edit_error(&e),
+    }
+}
+
+fn write_edit_error(e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Error writing file: {e}"),
+        is_error: true,
     }
 }
 
@@ -236,38 +253,39 @@ fn find_ws_flexible_from(haystack: &str, tokens: &[&str], from: usize) -> Option
         if !left_boundary_ok(haystack, start, first)
             || !right_boundary_ok(haystack, start + first.len(), first)
         {
-            search = start + first.len();
+            search = skip_token_at(start, first.len());
             continue;
         }
-        let mut i = start + first.len();
-        let mut ok = true;
-        for tok in &tokens[1..] {
-            let after_ws = skip_ws(haystack, i);
-            if after_ws == i {
-                ok = false;
-                break;
-            }
-            if !haystack[after_ws..].starts_with(tok)
-                || !right_boundary_ok(haystack, after_ws + tok.len(), tok)
-            {
-                ok = false;
-                break;
-            }
-            i = after_ws + tok.len();
+        if let Some(end) = tokens_match_after(haystack, &tokens[1..], start + first.len()) {
+            return Some((start, end));
         }
-        if ok {
-            return Some((start, i));
-        }
-        search = start + first.len();
+        search = skip_token_at(start, first.len());
     }
     None
 }
 
+fn skip_token_at(start: usize, len: usize) -> usize {
+    start + len
+}
+
+fn tokens_match_after(haystack: &str, tokens: &[&str], mut i: usize) -> Option<usize> {
+    for tok in tokens {
+        let after_ws = skip_ws(haystack, i);
+        if after_ws == i {
+            return tokens_need_ws();
+        }
+        if !haystack[after_ws..].starts_with(tok)
+            || !right_boundary_ok(haystack, after_ws + tok.len(), tok)
+        {
+            return tokens_mismatch();
+        }
+        i = after_ws + tok.len();
+    }
+    Some(i)
+}
+
 fn skip_ws(s: &str, mut i: usize) -> usize {
-    while i < s.len() {
-        let Some(ch) = s[i..].chars().next() else {
-            break;
-        };
+    for ch in s[i..].chars() {
         if !ch.is_whitespace() {
             break;
         }
@@ -280,6 +298,10 @@ fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
+fn ident_boundary_missing() -> bool {
+    true
+}
+
 fn left_boundary_ok(haystack: &str, start: usize, token: &str) -> bool {
     let Some(first) = token.chars().next() else {
         return false;
@@ -287,10 +309,22 @@ fn left_boundary_ok(haystack: &str, start: usize, token: &str) -> bool {
     if start == 0 || !is_ident_char(first) {
         return true;
     }
+    ident_left_ok(haystack, start)
+}
+
+fn ident_left_ok(haystack: &str, start: usize) -> bool {
     match haystack[..start].chars().next_back() {
         Some(prev) => !is_ident_char(prev),
-        None => true,
+        None => ident_boundary_missing(),
     }
+}
+
+fn tokens_need_ws() -> Option<usize> {
+    None
+}
+
+fn tokens_mismatch() -> Option<usize> {
+    None
 }
 
 fn right_boundary_ok(haystack: &str, end: usize, token: &str) -> bool {
@@ -300,9 +334,13 @@ fn right_boundary_ok(haystack: &str, end: usize, token: &str) -> bool {
     if end >= haystack.len() || !is_ident_char(last) {
         return true;
     }
+    ident_right_ok(haystack, end)
+}
+
+fn ident_right_ok(haystack: &str, end: usize) -> bool {
     match haystack[end..].chars().next() {
         Some(next) => !is_ident_char(next),
-        None => true,
+        None => ident_boundary_missing(),
     }
 }
 

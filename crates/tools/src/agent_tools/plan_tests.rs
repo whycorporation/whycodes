@@ -4,6 +4,7 @@ use crate::tool::ToolContext;
 #[test]
 fn plan_module_loads() {
     assert!(!module_path!().is_empty());
+    let _ = PlanTool::default();
 }
 
 #[tokio::test]
@@ -107,6 +108,19 @@ fn plan_result_helpers_cover_ok_fs_and_invalid() {
     );
     assert!(mkdir.is_error);
     assert!(mkdir.content.contains("Error creating .whycodes directory"));
+
+    let enter = plan_enter_write_error(std::io::Error::other("denied"));
+    assert!(enter.is_error);
+    assert!(
+        enter.content.contains("Error entering planning mode"),
+        "{}",
+        enter.content
+    );
+    let blocked = tempfile::tempdir().unwrap();
+    let as_dir = blocked.path().join("plan_mode");
+    std::fs::create_dir(&as_dir).unwrap();
+    let wrote = write_plan_mode(&as_dir);
+    assert!(wrote.is_error, "{}", wrote.content);
 
     let bad = plan_invalid_action("nope");
     assert!(bad.is_error);

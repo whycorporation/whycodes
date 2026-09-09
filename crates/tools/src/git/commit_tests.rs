@@ -44,6 +44,50 @@ fn init_repo() -> tempfile::TempDir {
 #[test]
 fn commit_module_loads() {
     assert!(!module_path!().is_empty());
+    let _ = GitCommitTool::default();
+    let cmd_err = git_cmd_error("Failed to run git commit", "gone");
+    assert!(cmd_err.is_error);
+    assert!(cmd_err.content.contains("Failed to run git commit"));
+    let stderr = git_stderr_error(b"nothing staged");
+    assert!(stderr.is_error);
+    assert_eq!(stderr.content, "nothing staged");
+    assert_eq!(commit_stdout(b"", "empty"), "empty");
+    assert_eq!(commit_stdout(b"ok\n", "empty"), "ok\n");
+    let spawn_err = git_output(Err(std::io::Error::other("gone")), "Failed to run git add");
+    assert!(spawn_err.unwrap_err().is_error);
+    let failed = git_output(
+        Ok(std::process::Output {
+            status: fail_status(),
+            stdout: Vec::new(),
+            stderr: b"nothing staged".to_vec(),
+        }),
+        "Failed to run git commit",
+    );
+    assert_eq!(failed.unwrap_err().content, "nothing staged");
+    let bounced = git_output_failed(git_cmd_error("Failed to run git commit", "gone"));
+    assert!(bounced.is_error);
+    assert!(take_git_output(Err(git_cmd_error("Failed to run git commit", "gone"))).is_err());
+    let from_err = commit_from_output(
+        Err(git_cmd_error("Failed to run git commit", "gone")),
+        "empty",
+        false,
+        ".",
+    );
+    assert!(from_err.is_error);
+}
+
+fn fail_status() -> std::process::ExitStatus {
+    #[cfg(windows)]
+    {
+        Command::new("cmd")
+            .args(["/C", "exit", "1"])
+            .status()
+            .unwrap()
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("false").status().unwrap()
+    }
 }
 
 #[tokio::test]

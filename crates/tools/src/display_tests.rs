@@ -97,7 +97,7 @@ async fn missing_content_yields_empty_output() {
 
 #[tokio::test]
 async fn default_constructs() {
-    assert_eq!(DisplayTool.name(), "display");
+    assert_eq!(DisplayTool::default().name(), "display");
 }
 
 #[tokio::test]

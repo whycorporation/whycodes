@@ -3,6 +3,8 @@
 //! Domain modules group related tools; crate-root re-exports keep short
 //! paths (`whycodes_tools::read`, `whycodes_tools::blame`, …) for callers.
 
+#![cfg_attr(test, allow(clippy::default_constructed_unit_structs))]
+
 pub mod agent_tools;
 pub(crate) mod blocking;
 pub mod display;

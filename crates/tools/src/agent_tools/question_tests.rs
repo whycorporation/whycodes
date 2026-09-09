@@ -311,7 +311,7 @@ fn queue_stdin(lines: &[&str]) {
 
 #[test]
 fn default_and_metadata() {
-    let tool = QuestionTool;
+    let tool = QuestionTool::default();
     assert_eq!(tool.name(), "question");
     assert!(!tool.description().is_empty());
 }
@@ -353,6 +353,29 @@ fn validate_answers_covers_remaining_rules() {
         )
         .unwrap_err()
         .contains("single-select")
+    );
+    assert!(too_many_single_select(&["A".into(), "B".into()]));
+    assert!(!too_many_single_select(&["A".into()]));
+    assert!(
+        validate_answers(
+            &multi,
+            &[QuestionAnswer {
+                selected: vec!["A".into()],
+                free_text: None,
+                auto_picked: false,
+            }]
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        resolve_stdin_answer(
+            &parse_questions(&json!({"question": "Pick", "choices": ["A", "B"]})).unwrap()[0],
+            "99",
+            3
+        )
+        .free_text
+        .as_deref(),
+        Some("99")
     );
     assert!(
         validate_answers(
@@ -455,6 +478,32 @@ fn remaining_stdin_and_parse_arms() {
         "{:?}",
         empty_other[0]
     );
+
+    let mut cursor = std::io::Cursor::new("hello\n");
+    assert_eq!(read_line_from(&mut cursor).unwrap(), "hello");
+    let mut failing = FailingReader;
+    assert!(
+        read_line_from(&mut failing)
+            .unwrap_err()
+            .contains("Failed to read input")
+    );
+    TEST_STDIN.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    let _ = read_line_stdin();
+}
+
+struct FailingReader;
+
+impl std::io::Read for FailingReader {
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("nope"))
+    }
+}
+
+impl std::io::BufRead for FailingReader {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        Err(std::io::Error::other("nope"))
+    }
+    fn consume(&mut self, _amt: usize) {}
 }
 
 #[tokio::test]

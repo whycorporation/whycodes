@@ -105,6 +105,47 @@ fn default_matches_new() {
     let a = ToolExecutor::new();
     let b = ToolExecutor::default();
     assert_eq!(a.tool_names(), b.tool_names());
+    let _ = skipped_plugin_toml("boom", "plugins.toml load skipped");
+    assert!(skip_empty_plugin_cfg("", "echo"));
+    assert!(skip_empty_plugin_cfg("ok", " "));
+    assert!(!skip_empty_plugin_cfg("ok", "echo"));
+    let empty_cfg = whycodes_skill::PluginConfig {
+        name: String::new(),
+        command: "echo".into(),
+        description: String::new(),
+        parameters: None,
+        working_dir: None,
+    };
+    assert!(keep_plugin_cfg(empty_cfg).is_none());
+    let ok_cfg = whycodes_skill::PluginConfig {
+        name: "ok".into(),
+        command: "echo".into(),
+        description: String::new(),
+        parameters: None,
+        working_dir: None,
+    };
+    assert!(keep_plugin_cfg(ok_cfg).is_some());
+    assert!(
+        keep_plugin_spec(
+            String::new(),
+            "echo".into(),
+            String::new(),
+            None,
+            std::path::PathBuf::from("."),
+        )
+        .is_none()
+    );
+    assert!(
+        keep_plugin_spec(
+            "ok".into(),
+            "echo".into(),
+            String::new(),
+            None,
+            std::path::PathBuf::from("."),
+        )
+        .is_some()
+    );
+    let _ = load_plugin_toml(None);
 }
 
 #[test]

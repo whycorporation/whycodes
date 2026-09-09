@@ -136,10 +136,28 @@ async fn execute_empty_patch_content_is_error() {
 
 #[test]
 fn default_and_metadata() {
-    let t = ApplyPatchTool;
+    let t = ApplyPatchTool::default();
     assert_eq!(t.name(), "apply_patch");
     assert!(!t.description().is_empty());
     assert_eq!(t.parameters()["required"][0], "patch_content");
+    let write_err = write_patch_error("a.rs", "denied");
+    assert!(write_err.is_error);
+    let failed = write_patched_result(Err("denied".into()), "a.rs", "@@ -1 +1 @@\n-a\n+b\n");
+    assert!(failed.is_error);
+    let ok_write = write_patched_result(Ok(()), "a.rs", "@@ -1 +1 @@\n-a\n+b\n");
+    assert!(!ok_write.is_error);
+    assert!(
+        write_err.content.contains("Error writing 'a.rs'"),
+        "{}",
+        write_err.content
+    );
+    assert_eq!(
+        resolve_target("/proj", ".", Some("/abs/x.rs")).unwrap(),
+        "/abs/x.rs"
+    );
+    let mut lines = vec!["a".into(), String::new()];
+    pop_empty_split(&mut lines);
+    assert_eq!(lines, vec!["a".to_string()]);
 }
 
 #[test]
@@ -201,6 +219,8 @@ unprefixed context
 ";
     let hunks = parse_hunks(patch).unwrap();
     assert_eq!(hunks.len(), 2);
+    assert!(require_hunks(&[]).unwrap_err().contains("no @@ hunks"));
+    assert!(require_hunks(&hunks).is_ok());
     assert_eq!(parse_hunk_header("@@ -12,4 +12,5 @@").unwrap(), 12);
     assert_eq!(parse_hunk_header("@@ -0,0 +1 @@").unwrap(), 0);
     assert!(parse_hunk_header("@@ no minus @@").is_err());

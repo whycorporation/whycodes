@@ -47,6 +47,7 @@ impl Drop for IsolatedHome {
 #[test]
 fn memory_module_loads() {
     assert!(!module_path!().is_empty());
+    let _ = MemoryTool::default();
 }
 
 #[tokio::test]
@@ -257,4 +258,33 @@ async fn learn_index_code_search_and_metadata() {
         assert!(disabled.is_error, "{flag}: {}", disabled.content);
         unsafe { std::env::remove_var("WHYCODES_NO_MEMORY") };
     }
+
+    let ok = memory_ok("saved".into());
+    assert!(!ok.is_error);
+    assert_eq!(ok.content, "saved");
+    let err = memory_err("boom".into());
+    assert!(err.is_error);
+    assert_eq!(err.content, "boom");
+    assert_eq!(memory_svc_err("svc"), "svc");
+    assert_eq!(
+        map_svc(Result::<&str, String>::Err("boom".into()), |s| s
+            .to_string())
+        .unwrap_err(),
+        "boom"
+    );
+    assert_eq!(
+        map_svc(Result::<u32, String>::Ok(3), |n| format!("{n}")).unwrap(),
+        "3"
+    );
+    assert_eq!(
+        format_memory_list(Vec::new()),
+        "No memories for this project."
+    );
+    assert_eq!(format_memory_hits(Vec::new()), "No matching memories.");
+    assert!(format_code_hits(Vec::new()).contains("No code hits"));
+    assert_eq!(format_delete("abc", true), "Deleted memory abc");
+    assert_eq!(format_delete("abc", false), "No memory matching 'abc'");
+    let failed = memory_result(Err("nope".into()));
+    assert!(failed.is_error);
+    assert_eq!(failed.content, "nope");
 }

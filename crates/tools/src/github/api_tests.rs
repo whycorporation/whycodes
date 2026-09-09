@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 
 #[test]
 fn explicit_token_takes_precedence_without_environment_access() {
@@ -241,32 +242,65 @@ password=gho_from_gcm
 
 #[test]
 fn wait_child_stdout_reads_success_and_times_out() {
-    let child = Command::new("sh")
-        .args(["-c", "printf 'token-ok'"])
+    let child = hang_cmd(false)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn printf");
-    assert_eq!(
-        wait_child_stdout(child, Duration::from_secs(2), "printf").as_deref(),
-        Some("token-ok")
-    );
+    let got = wait_child_stdout(child, Duration::from_secs(2), "printf");
+    assert_eq!(got.as_deref().map(str::trim), Some("token-ok"));
 
-    let child = Command::new("sh")
-        .args(["-c", "exit 1"])
+    let child = fail_cmd()
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn fail");
     assert!(wait_child_stdout(child, Duration::from_secs(2), "fail").is_none());
 
-    let child = Command::new("sh")
-        .args(["-c", "sleep 2"])
+    let child = hang_cmd(true)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn sleep");
     assert!(wait_child_stdout(child, Duration::from_millis(40), "sleep").is_none());
+}
+
+fn fail_cmd() -> Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "exit", "1"]);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "exit 1"]);
+        cmd
+    }
+}
+
+fn hang_cmd(sleep: bool) -> Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        if sleep {
+            cmd.args(["/C", "ping", "-n", "30", "127.0.0.1", ">", "NUL"]);
+        } else {
+            cmd.args(["/C", "echo", "token-ok"]);
+        }
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new("sh");
+        if sleep {
+            cmd.args(["-c", "sleep 2"]);
+        } else {
+            cmd.args(["-c", "printf 'token-ok'"]);
+        }
+        cmd
+    }
 }
 
 #[test]
@@ -394,6 +428,166 @@ fn git_credential_cli_probe_does_not_panic() {
     if let Some(token) = git_credential_token_from_cli() {
         assert!(!token.is_empty());
     }
+}
+
+#[test]
+fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let prev_skip = std::env::var_os("WHYCODES_TEST_SKIP_GH_AUTH");
+    let prev_mock = std::env::var_os("WHYCODES_TEST_GH_AUTH_TOKEN");
+    let prev_hosts = std::env::var_os("WHYCODES_TEST_GH_HOSTS_TOKEN");
+    let prev_skip_git = std::env::var_os("WHYCODES_TEST_SKIP_GIT_CREDENTIAL");
+    let prev_git = std::env::var_os("WHYCODES_TEST_GIT_CREDENTIAL_TOKEN");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_SKIP_GH_AUTH");
+        std::env::set_var("WHYCODES_TEST_GH_AUTH_TOKEN", "from-cli");
+        std::env::set_var("WHYCODES_TEST_GH_HOSTS_TOKEN", "from-hosts");
+        std::env::remove_var("WHYCODES_TEST_SKIP_GIT_CREDENTIAL");
+        std::env::set_var("WHYCODES_TEST_GIT_CREDENTIAL_TOKEN", "from-git");
+    }
+    assert_eq!(gh_auth_token_with(true).as_deref(), Some("from-cli"));
+    assert_eq!(
+        gh_hosts_file_token_with(true).as_deref(),
+        Some("from-hosts")
+    );
+    assert_eq!(git_credential_token_with(true).as_deref(), Some("from-git"));
+    let _ = gh_auth_token_with(false);
+    let _ = gh_hosts_file_token_with(false);
+    let _ = git_credential_token_with(false);
+    assert!(spawn_gh_from_paths(Vec::new()).is_none());
+    if let Some(mut child) = spawn_gh_from_paths(vec![std::env::current_exe().unwrap()]) {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    skip_missing_gh_path();
+    skip_git_credential_stdin();
+    wait_poll_sleep();
+    kill_child_debug(Err(std::io::Error::other("kill")), "kill after timeout");
+    let mut hanging = hang_cmd(true)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn hang");
+    assert!(write_or_skip_git_credential_stdin(&mut hanging, "github.com").is_some());
+    let _ = hanging.kill();
+    let _ = hanging.wait();
+    let mut hanging = hang_cmd(true)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn hang");
+    assert!(write_or_skip_git_credential_stdin(&mut hanging, "github.com").is_some());
+    let _ = hanging.kill();
+    let _ = hanging.wait();
+    let mut hanging = hang_cmd(false)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn printf");
+    let _ = hanging.wait();
+    let got = read_child_stdout_mut(&mut hanging, "printf");
+    assert!(got.is_none() || got.as_deref().map(str::trim) == Some("token-ok"));
+    let mut hanging = hang_cmd(true)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn hang");
+    match wait_child_poll(
+        &mut hanging,
+        Instant::now(),
+        Duration::from_secs(2),
+        "sleep",
+    ) {
+        WaitPoll::Continue | WaitPoll::Done(_) => {}
+    }
+    match wait_poll_from(
+        Err(std::io::Error::other("wait")),
+        &mut hanging,
+        Instant::now(),
+        Duration::from_secs(2),
+        "sleep",
+    ) {
+        WaitPoll::Done(_) => {}
+        WaitPoll::Continue => panic!("expected done"),
+    }
+    assert!(take_stdout_text(Err(std::io::Error::other("eof")), "printf").is_none());
+    let _ = hanging.kill();
+    let _ = hanging.wait();
+    let mut hanging = hang_cmd(true)
+        .stdout(Stdio::piped())
+        .stdin(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn hang");
+    struct FailWrite;
+    impl std::io::Write for FailWrite {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("stdin"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    assert!(write_git_credential_payload(&mut hanging, &mut FailWrite, "github.com").is_none());
+    let _ = hanging.kill();
+    let _ = hanging.wait();
+    let mut hanging = hang_cmd(true)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn hang");
+    hanging.stdout.take();
+    assert!(read_child_stdout_mut(&mut hanging, "sleep").is_none());
+    let _ = hanging.kill();
+    let _ = hanging.wait();
+    let dir = tempfile::tempdir().unwrap();
+    let not_exe = dir.path().join("hosts.yml");
+    std::fs::write(&not_exe, "x").unwrap();
+    assert!(spawn_gh_from_paths(vec![not_exe.clone()]).is_none());
+    assert!(spawn_gh_from_paths(vec![dir.path().to_path_buf()]).is_none());
+    assert!(spawn_gh_fallback_from(std::io::Error::other("gh missing"), Vec::new()).is_none());
+    assert!(spawn_or_fallback_from(Err(std::io::Error::other("gh missing")), Vec::new()).is_none());
+    let child = hang_cmd(true)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn hang");
+    let spawned = spawn_or_fallback_from(Ok(child), Vec::new());
+    assert!(spawned.is_some());
+    if let Some(mut child) = spawned {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    assert!(spawn_git_credential(Err(std::io::Error::other("gone"))).is_none());
+    let mut sink = Vec::new();
+    write_git_credential_stdin(&mut sink, b"ok").unwrap();
+    assert_eq!(sink, b"ok");
+    log_gh_spawn_failed(&not_exe, std::io::Error::other("spawn"));
+    assert!(spawn_gh_at(&not_exe).is_err());
+    let _ = well_known_gh_paths();
+    assert_eq!(github_host_from(None), "github.com");
+    assert_eq!(github_host_from(Some("ghe.example".into())), "ghe.example");
+    assert_eq!(github_host_from(Some("  ".into())), "github.com");
+    assert!(git_credential_spawn_failed(std::io::Error::other("gone")).is_none());
+    assert!(wait_stdout_read_failed(std::io::Error::other("eof"), "printf").is_none());
+    assert!(wait_try_wait_failed(std::io::Error::other("wait"), "printf").is_none());
+    let mut hanging = hang_cmd(true)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn hang");
+    assert!(git_credential_stdin_failed(&mut hanging, std::io::Error::other("stdin")).is_none());
+    let mut hanging = hang_cmd(true)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn hang");
+    assert!(wait_timeout_kill(&mut hanging, "sleep").is_none());
+    restore_var("WHYCODES_TEST_SKIP_GH_AUTH", prev_skip);
+    restore_var("WHYCODES_TEST_GH_AUTH_TOKEN", prev_mock);
+    restore_var("WHYCODES_TEST_GH_HOSTS_TOKEN", prev_hosts);
+    restore_var("WHYCODES_TEST_SKIP_GIT_CREDENTIAL", prev_skip_git);
+    restore_var("WHYCODES_TEST_GIT_CREDENTIAL_TOKEN", prev_git);
 }
 
 #[tokio::test]

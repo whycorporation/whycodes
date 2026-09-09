@@ -40,7 +40,7 @@ async fn empty_and_populated() {
 
 #[tokio::test]
 async fn default_and_parameters() {
-    let t = TodoReadTool;
+    let t = TodoReadTool::default();
     assert_eq!(t.name(), "todoread");
     assert!(!t.description().is_empty());
     let _ = t.parameters();

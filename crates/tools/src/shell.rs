@@ -80,32 +80,53 @@ impl Tool for ShellTool {
 
             // Timeout lives inside the spawn: dropping this future must not leak
             // `sleep 999` / hung `cargo test` on a blocking thread.
-            match tokio::task::spawn_blocking(move || sandbox_run(&request, Some(timeout))).await {
-                Ok(Ok(outcome)) => {
-                    let (content, success) = outcome.display_content();
-                    ToolResult {
-                        tool_call_id: String::new(),
-                        content,
-                        is_error: !success,
-                    }
-                }
-                Ok(Err(whycodes_sandbox::SandboxError::TimedOut(secs))) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Command timed out after {secs} seconds"),
-                    is_error: true,
-                },
-                Ok(Err(e)) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Sandbox error: {e}"),
-                    is_error: true,
-                },
-                Err(e) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Task join error: {e}"),
-                    is_error: true,
-                },
-            }
+            shell_from_join(
+                tokio::task::spawn_blocking(move || sandbox_run(&request, Some(timeout)))
+                    .await
+                    .map_err(|e| e.to_string()),
+            )
         })
+    }
+}
+
+fn shell_from_join(
+    result: Result<
+        Result<whycodes_sandbox::SandboxOutcome, whycodes_sandbox::SandboxError>,
+        String,
+    >,
+) -> ToolResult {
+    match result {
+        Ok(Ok(outcome)) => {
+            let (content, success) = outcome.display_content();
+            ToolResult {
+                tool_call_id: String::new(),
+                content,
+                is_error: !success,
+            }
+        }
+        Ok(Err(whycodes_sandbox::SandboxError::TimedOut(secs))) => ToolResult {
+            tool_call_id: String::new(),
+            content: format!("Command timed out after {secs} seconds"),
+            is_error: true,
+        },
+        Ok(Err(e)) => ToolResult {
+            tool_call_id: String::new(),
+            content: format!("Sandbox error: {e}"),
+            is_error: true,
+        },
+        Err(e) => shell_join_failed(&e),
+    }
+}
+
+fn shell_join_failed(e: &str) -> ToolResult {
+    shell_join_error(e)
+}
+
+fn shell_join_error(e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Task join error: {e}"),
+        is_error: true,
     }
 }
 

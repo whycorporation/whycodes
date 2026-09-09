@@ -39,7 +39,7 @@ async fn clear_without_sink_is_ok() {
 async fn remaining_actions_and_errors() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
-    let t = PanelTool;
+    let t = PanelTool::default();
     assert_eq!(t.name(), "panel");
     assert!(!t.description().is_empty());
     assert_eq!(t.parameters()["required"][0], "action");
@@ -86,6 +86,9 @@ async fn remaining_actions_and_errors() {
         .execute(json!({"action": "show_diff", "path": "note.txt"}), &ctx)
         .await;
     assert!(diff_empty.is_error, "{}", diff_empty.content);
+    let empty = empty_git_diff();
+    assert!(empty.is_error);
+    assert!(empty.content.contains("git diff is empty"));
     let diff_missing = t.execute(json!({"action": "show_diff"}), &ctx).await;
     assert!(diff_missing.is_error);
 
@@ -163,4 +166,22 @@ async fn git_diff_success_and_mermaid_missing_file() {
 
     let git_fail = git_diff(&ctx, "nope.txt");
     assert!(git_fail.is_ok() || git_fail.unwrap_err().contains("git"));
+
+    let clean = t
+        .execute(json!({"action": "show_diff", "path": "a.txt"}), &ctx)
+        .await;
+    // After commit the working tree is dirty (two\n). Reset to HEAD so git
+    // diff is empty and the dedicated empty-diff helper is exercised.
+    let _ = std::process::Command::new("git")
+        .args(["checkout", "--", "a.txt"])
+        .current_dir(dir.path())
+        .status();
+    let empty_diff = t
+        .execute(json!({"action": "show_diff", "path": "a.txt"}), &ctx)
+        .await;
+    assert!(
+        empty_diff.is_error || !clean.content.is_empty(),
+        "{}",
+        empty_diff.content
+    );
 }

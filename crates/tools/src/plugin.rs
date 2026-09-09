@@ -89,38 +89,55 @@ pub fn list_shell_plugins(project_dir: Option<&std::path::Path>) -> Vec<ListedPl
         None => whycodes_skill::PluginRegistry::load_from_config().unwrap_or_default(),
     };
     for cfg in toml.plugins {
-        if cfg.name.trim().is_empty() || cfg.command.trim().is_empty() {
-            continue;
+        if let Some(plugin) = listed_toml_plugin(&cfg.name, &cfg.command, &cfg.description) {
+            by_name.insert(cfg.name.clone(), plugin);
         }
-        by_name.insert(
-            cfg.name.clone(),
-            ListedPlugin {
-                tool_name: format!("plugin_{}", cfg.name),
-                command: cfg.command,
-                description: cfg.description,
-                origin: "plugins.toml".into(),
-            },
-        );
     }
 
     let mut mgr = whycodes_plugin::PluginManager::new();
     mgr.discover_standard(project_dir);
     for spec in mgr.shell_specs() {
-        if spec.name.trim().is_empty() || spec.command.trim().is_empty() {
-            continue;
+        if let Some(plugin) =
+            listed_json_plugin(&spec.name, &spec.command, &spec.description, &spec.origin)
+        {
+            by_name.insert(spec.name.clone(), plugin);
         }
-        by_name.insert(
-            spec.name.clone(),
-            ListedPlugin {
-                tool_name: format!("plugin_{}", spec.name),
-                command: spec.command,
-                description: spec.description,
-                origin: spec.origin,
-            },
-        );
     }
 
     by_name.into_values().collect()
+}
+
+fn skip_empty_plugin(name: &str, command: &str) -> bool {
+    name.trim().is_empty() || command.trim().is_empty()
+}
+
+fn listed_toml_plugin(name: &str, command: &str, description: &str) -> Option<ListedPlugin> {
+    if skip_empty_plugin(name, command) {
+        return None;
+    }
+    Some(ListedPlugin {
+        tool_name: format!("plugin_{name}"),
+        command: command.to_string(),
+        description: description.to_string(),
+        origin: "plugins.toml".into(),
+    })
+}
+
+fn listed_json_plugin(
+    name: &str,
+    command: &str,
+    description: &str,
+    origin: &str,
+) -> Option<ListedPlugin> {
+    if skip_empty_plugin(name, command) {
+        return None;
+    }
+    Some(ListedPlugin {
+        tool_name: format!("plugin_{name}"),
+        command: command.to_string(),
+        description: description.to_string(),
+        origin: origin.to_string(),
+    })
 }
 
 #[cfg(test)]

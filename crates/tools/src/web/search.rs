@@ -147,47 +147,10 @@ impl Tool for WebSearchTool {
             }
 
             match http_client().get(&url).send().await {
-                Ok(response) => match response.text().await {
-                    Ok(html) => {
-                        // Simple extraction of result snippets
-                        let mut results: Vec<String> = Vec::new();
-                        for line in html.lines() {
-                            if line.contains("result__snippet")
-                                && let Some(start) = line.find('>')
-                                && let Some(end) = line.rfind('<')
-                                && start + 1 < end
-                            {
-                                let snippet = strip_markup(&line[start + 1..end]);
-                                if !snippet.is_empty() {
-                                    results.push(snippet);
-                                }
-                            }
-                        }
-
-                        results.truncate(num_results as usize);
-
-                        ToolResult {
-                            tool_call_id: String::new(),
-                            content: if results.is_empty() {
-                                "No results found. Set SERPAPI_API_KEY for better results."
-                                    .to_string()
-                            } else {
-                                results
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, s)| format!("{}. {}", i + 1, s))
-                                    .collect::<Vec<_>>()
-                                    .join("\n\n")
-                            },
-                            is_error: false,
-                        }
-                    }
-                    Err(e) => ToolResult {
-                        tool_call_id: String::new(),
-                        content: format!("Error reading response: {}", e),
-                        is_error: true,
-                    },
-                },
+                Ok(response) => search_html_result(
+                    response.text().await.map_err(|e| e.to_string()),
+                    num_results as usize,
+                ),
                 Err(e) => ToolResult {
                     tool_call_id: String::new(),
                     content: format!("Error performing search: {}", e),
@@ -199,6 +162,54 @@ impl Tool for WebSearchTool {
 }
 
 /// Strip residual HTML tags/entities from SERP snippets.
+fn search_text_failed(e: &str) -> ToolResult {
+    search_read_error(e)
+}
+
+fn search_html_result(result: Result<String, String>, num_results: usize) -> ToolResult {
+    match result {
+        Ok(html) => {
+            let mut results: Vec<String> = Vec::new();
+            for line in html.lines() {
+                if line.contains("result__snippet")
+                    && let Some(start) = line.find('>')
+                    && let Some(end) = line.rfind('<')
+                    && start + 1 < end
+                {
+                    let snippet = strip_markup(&line[start + 1..end]);
+                    if !snippet.is_empty() {
+                        results.push(snippet);
+                    }
+                }
+            }
+            results.truncate(num_results);
+            ToolResult {
+                tool_call_id: String::new(),
+                content: if results.is_empty() {
+                    "No results found. Set SERPAPI_API_KEY for better results.".to_string()
+                } else {
+                    results
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| format!("{}. {}", i + 1, s))
+                        .collect::<Vec<_>>()
+                        .join("\n\n")
+                },
+                is_error: false,
+            }
+        }
+        Err(e) => search_text_failed(&e),
+    }
+}
+
+fn search_read_error(e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Error reading response: {e}"),
+        is_error: true,
+    }
+}
+
 fn strip_markup(s: &str) -> String {
     if s.contains('<') || s.contains('&') {
         html_to_text(s)
@@ -218,8 +229,12 @@ fn urlencoding(s: &str) -> String {
 }
 
 fn search_host(env_key: &str, default: &str) -> String {
-    #[cfg(test)]
-    if let Ok(base) = std::env::var(env_key)
+    search_host_with(env_key, default, cfg!(test))
+}
+
+fn search_host_with(env_key: &str, default: &str, use_test: bool) -> String {
+    if use_test
+        && let Ok(base) = std::env::var(env_key)
         && !base.is_empty()
     {
         return base;

@@ -51,11 +51,26 @@ description = "from toml"
     assert_eq!(hello.unwrap().command, "echo json");
 }
 
+fn exit_ok_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "exit 0"
+    }
+    #[cfg(not(windows))]
+    {
+        "true"
+    }
+}
+
 #[tokio::test]
 async fn plugin_shell_tool_execute_and_list_skips() {
+    #[cfg(windows)]
+    let command = "echo %PLUGIN_ARG_INPUT% %PLUGIN_WORKSPACE%";
+    #[cfg(not(windows))]
+    let command = "echo $PLUGIN_ARG_INPUT $PLUGIN_WORKSPACE";
     let cfg = PluginConfig {
         name: "echo".into(),
-        command: "echo $PLUGIN_ARG_INPUT $PLUGIN_WORKSPACE".into(),
+        command: command.into(),
         description: "d".into(),
         parameters: None,
         working_dir: None,
@@ -77,7 +92,7 @@ async fn plugin_shell_tool_execute_and_list_skips() {
     let schema = serde_json::json!({"type": "object"});
     let cfg = PluginConfig {
         name: "typed".into(),
-        command: "true".into(),
+        command: exit_ok_command().into(),
         description: "t".into(),
         parameters: Some(schema.clone()),
         working_dir: Some("/tmp".into()),
@@ -102,6 +117,16 @@ command = ""
     .unwrap();
     let listed = list_shell_plugins(Some(tmp.path()));
     assert!(listed.iter().all(|p| p.tool_name != "plugin_"));
+    assert!(skip_empty_plugin("", "echo"));
+    assert!(skip_empty_plugin("ok", ""));
+    assert!(!skip_empty_plugin("ok", "echo"));
+    assert!(listed_toml_plugin("", "echo", "d").is_none());
+    assert!(listed_toml_plugin("ok", "", "d").is_none());
+    let toml = listed_toml_plugin("ok", "echo", "d").unwrap();
+    assert_eq!(toml.tool_name, "plugin_ok");
+    assert!(listed_json_plugin("", "echo", "d", "origin").is_none());
+    let json = listed_json_plugin("ok", "echo", "d", "origin").unwrap();
+    assert_eq!(json.origin, "origin");
 
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = tempfile::tempdir().unwrap();

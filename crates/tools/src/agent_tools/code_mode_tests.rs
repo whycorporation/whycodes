@@ -4,6 +4,7 @@ use crate::tool::ToolContext;
 #[test]
 fn code_mode_module_loads() {
     assert!(!module_path!().is_empty());
+    let _ = CodeModeTool::default();
 }
 
 #[tokio::test]

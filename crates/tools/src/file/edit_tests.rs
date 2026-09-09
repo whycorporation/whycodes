@@ -126,7 +126,7 @@ async fn execute_missing_required_params_is_error() {
 
 #[tokio::test]
 async fn remaining_edit_branches() {
-    let t = EditTool;
+    let t = EditTool::default();
     assert_eq!(t.name(), "edit");
     assert!(!t.description().is_empty());
     let _ = t.parameters();
@@ -177,6 +177,38 @@ async fn remaining_edit_branches() {
     assert!(right_boundary_ok("x ", 1, "x"));
     let spans = ws_flexible_spans("fooX bar", "foo bar");
     assert!(spans.is_empty() || spans.len() == 1);
+    let write_err = write_edit_error("denied");
+    assert!(write_err.is_error);
+    assert!(
+        write_err.content.contains("Error writing file"),
+        "{}",
+        write_err.content
+    );
+    let failed = write_edit_result(Err("denied".into()), "a.rs", "old", "new", 1, Some(1));
+    assert!(failed.is_error);
+    let ok_write = write_edit_result(Ok(()), "a.rs", "old", "new", 1, Some(1));
+    assert!(!ok_write.is_error);
+    assert!(left_boundary_ok("", 0, "x"));
+    assert!(right_boundary_ok("x", 1, "x"));
+    assert_eq!(skip_ws("  ab", 0), 2);
+    assert_eq!(skip_ws("", 0), 0);
+    assert!(ident_boundary_missing());
+    assert!(ws_flexible_spans("fooXbar", "foo bar").is_empty());
+    assert!(ws_flexible_spans("foobar", "foo bar").is_empty());
+    assert!(ws_flexible_spans("foo bar foo", "foo zzz").is_empty());
+    assert!(ws_flexible_spans("foo barX", "foo bar").is_empty());
+    assert_eq!(tokens_match_after("foo   bar", &["bar"], 3), Some(9));
+    assert!(tokens_match_after("foobar", &["bar"], 3).is_none());
+    assert!(tokens_match_after("fooXbar", &["bar"], 3).is_none());
+    assert_eq!(skip_token_at(3, 3), 6);
+    assert!(tokens_need_ws().is_none());
+    assert!(tokens_mismatch().is_none());
+    assert!(ident_left_ok("", 0));
+    assert!(ident_right_ok("", 0));
+    assert!(ident_left_ok(" foo", 1));
+    assert!(!ident_left_ok("xfoo", 1));
+    assert!(ident_right_ok("foo ", 3));
+    assert!(!ident_right_ok("foox", 3));
 }
 
 #[tokio::test]

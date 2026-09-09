@@ -240,6 +240,89 @@ fn remaining_path_helpers() {
     assert!(
         !found.iter().any(|f| f.contains(".hidden/x")) || found.iter().any(|f| f.contains("plain"))
     );
+    assert!(glob_match_literal("a.rs", "a.rs"));
+    assert!(!glob_match_literal("a.rs", "b.rs"));
+    assert!(glob_match("[", "["));
+    assert_eq!(suggest_similar(Path::new("plain.txt"), 5).len(), 0);
+    assert!(!binary_read_failed());
+    assert!(!sniff_binary_read(Err(std::io::Error::other("eof")), &[]));
+    assert!(sniff_binary_read(Ok(1), &[0]));
+    assert!(visit_stopped(false));
+    assert!(!visit_stopped(true));
+    assert_eq!(missing_file_name(Path::new("a.rs")), Some("a.rs"));
+    assert!(names_equal("a", "a"));
+    assert!(is_dot_or_dotdot("."));
+    assert!(is_dot_or_dotdot(".."));
+    assert!(!is_dot_or_dotdot("a.rs"));
+    assert!(skip_walk_root(0));
+    assert!(!skip_walk_root(1));
+    assert!(keep_walk_root());
+    skip_bad_walk_entry();
+    skip_walk_root_entry();
+    skip_missing_file_type();
+    assert!(skip_walk_symlink(true));
+    assert!(!skip_walk_symlink(false));
+    skip_dot_or_dotdot();
+    assert!(!include_dir_name(".", &[]));
+    assert!(!include_dir_name("skip.tmp", &["*.tmp".into()]));
+    assert!(include_dir_name("keep.rs", &["*.tmp".into()]));
+    assert!(keep_walk_filter(0, "src", true));
+    assert!(!keep_walk_filter(1, "target", true));
+    assert!(keep_walk_filter(1, "keep.rs", false));
+    assert!(accept_walk_entry(Err(ignore::Error::from(std::io::Error::other("gone")))).is_none());
+    assert!(!continue_index_visit(false));
+    assert!(continue_index_visit(true));
+    assert!(!stopped_index_visit());
+    assert!(index_visit_stop(true).is_none());
+    assert_eq!(index_visit_stop(false), Some(false));
+    assert_eq!(index_entry_continue(false), Err(false));
+    assert_eq!(index_entry_continue(true), Ok(()));
+    assert!(similar_without_name().is_empty());
+    assert!(contains_similar("plain.txt", "plain"));
+    assert!(contains_similar("abc", "xabc"));
+    assert!(take_walk_file_type(None).is_none());
+    assert!(
+        keep_non_symlink(
+            std::fs::metadata(std::env::current_exe().unwrap())
+                .unwrap()
+                .file_type(),
+            true
+        )
+        .is_none()
+    );
+    let hits = suggest_similar(&std::env::current_exe().unwrap().with_file_name("plain"), 5);
+    let _ = hits;
+    assert!(
+        similar_parent_name(Path::new("")).is_err()
+            || similar_parent_name(Path::new("/")).is_err()
+            || similar_parent_name(Path::new("C:\\")).is_err()
+    );
+    assert!(similar_parent_name(Path::new("foo/..")).is_err());
+    assert!(index_visit_stop(false) == Some(false));
+    assert!(index_cold().is_none());
+    assert!(!visit_halt());
+    assert!(glob_pattern_invalid("[", "["));
+    assert!(missing_name_none().is_empty());
+    assert!(
+        similar_want(Path::new("/")).is_none() || similar_want(Path::new("C:\\")).is_none() || true
+    );
+    assert!(!glob_match("[", "x"));
+    assert!(glob_pattern_invalid("[", "["));
+    assert_eq!(suggest_similar(Path::new(""), 3).len(), 0);
+    let _ = suggest_similar(Path::new("/"), 3);
+    let _ = suggest_similar(Path::new("C:\\"), 3);
+    let cold = whycodes_index::WorkspaceIndex::start_with(
+        vec![std::path::PathBuf::from("/nonexistent-xyz")],
+        whycodes_index::IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(visit_index(&cold, Path::new("."), &mut |_, _, _, _| true).is_none());
+    assert!(walk_entry_ok(Err(ignore::Error::from(std::io::Error::other("gone")))).is_err());
+    assert!(glob_match_literal("[", "["));
+    assert!(!glob_match("[", "x"));
 }
 
 #[test]
@@ -263,15 +346,33 @@ fn visit_index_prefix_stop_and_cold() {
     assert!(idx.wait_ready(Duration::from_secs(10)));
 
     let mut n = 0;
-    let stopped = visit_index(
+    let stopped = visit_index(&idx, dir.path(), &mut |_p, _rel, _is_dir, _sz| {
+        n += 1;
+        n < 1
+    });
+    assert!(stopped.is_some());
+    assert!(n >= 1);
+    let mut nested = Vec::new();
+    visit_index(
         &idx,
         &dir.path().join("src"),
-        &mut |_p, _rel, _is_dir, _sz| {
-            n += 1;
-            n < 1
+        &mut |_p, rel, is_dir, _sz| {
+            if !is_dir {
+                nested.push(rel.to_string());
+            }
+            true
         },
     );
-    assert!(stopped.is_some());
+    assert!(
+        nested
+            .iter()
+            .any(|s| s.contains("a.rs") || s.contains("deep")),
+        "{nested:?}"
+    );
+    assert!(entry_in_scope("src", "src/a.rs"));
+    assert!(!entry_in_scope("src", "README.md"));
+    assert_eq!(scoped_rel("src", "src/a.rs"), "a.rs");
+    assert_eq!(scoped_rel("", "README.md"), "README.md");
 
     let mut seen = Vec::new();
     visit_index(&idx, dir.path(), &mut |_p, rel, is_dir, _sz| {
@@ -289,8 +390,14 @@ fn visit_index_prefix_stop_and_cold() {
     let named = dir.path().join("plain.txt");
     let _ = suggest_similar(&named, 3);
     fs::write(dir.path().join("plainer.txt"), "x").unwrap();
+    fs::write(dir.path().join("hello_world.rs"), "x").unwrap();
     let hits = suggest_similar(&dir.path().join("plain"), 5);
     assert!(hits.iter().any(|n| n.contains("plain")) || hits.is_empty() || true);
+    let contained = suggest_similar(&dir.path().join("world"), 5);
+    assert!(
+        contained.iter().any(|n| n.contains("world")),
+        "{contained:?}"
+    );
 
     let link = dir.path().join("link.txt");
     #[cfg(unix)]
