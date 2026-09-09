@@ -29,6 +29,7 @@ pub use service::{
     maybe_auto_retain, settings_from_flags,
 };
 pub use settings::{EmbedBackend, MemoryScope, MemorySettings};
+pub use whycodes_storage::models::MemoryRow;
 
 pub(crate) fn recover_lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())

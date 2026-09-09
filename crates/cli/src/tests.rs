@@ -4034,6 +4034,23 @@ async fn cmd_serve_addr_in_use_reports_hint() {
     );
 }
 
+fn hang_child() -> std::process::Child {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "ping", "-n", "30", "127.0.0.1", ">", "NUL"])
+            .spawn()
+            .unwrap()
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap()
+    }
+}
+
 #[tokio::test]
 async fn takeover_holder_dead_and_live_child() {
     let dead = crate::cmd::lockfile::ServeLock {
@@ -4047,10 +4064,7 @@ async fn takeover_holder_dead_and_live_child() {
     };
     assert!(takeover_holder(&dead).await.is_err());
 
-    let mut child = std::process::Command::new("sleep")
-        .arg("30")
-        .spawn()
-        .unwrap();
+    let mut child = hang_child();
     let pid = child.id();
     let live = crate::cmd::lockfile::ServeLock {
         pid,
@@ -4067,10 +4081,7 @@ async fn takeover_holder_dead_and_live_child() {
 async fn cmd_serve_takeover_then_abort() {
     let _home = IsolatedHome::new();
     let _cwd = IsolatedCwd::new();
-    let mut child = std::process::Command::new("sleep")
-        .arg("30")
-        .spawn()
-        .unwrap();
+    let mut child = hang_child();
     let pid = child.id();
     let path = crate::cmd::lockfile::lock_path(&std::env::current_dir().unwrap());
     crate::cmd::lockfile::write_lock(
