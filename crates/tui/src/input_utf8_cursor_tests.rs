@@ -81,3 +81,34 @@ fn word_boundaries_skip_whitespace_then_the_token() {
     assert_eq!(next_word_boundary("", 0), 0);
     assert_eq!(prev_word_boundary("şa ğ", "şa ğ".len()), 4);
 }
+
+#[test]
+fn sidebar_tab_actions_map_to_tabs() {
+    use crate::app::SidebarTab;
+    use crate::keymap::Action;
+    assert_eq!(
+        sidebar_tab_from_action(Action::SidebarTab1),
+        Some(SidebarTab::Files)
+    );
+    assert_eq!(
+        sidebar_tab_from_action(Action::SidebarTab2),
+        Some(SidebarTab::Diagnostics)
+    );
+    assert_eq!(
+        sidebar_tab_from_action(Action::SidebarTab3),
+        Some(SidebarTab::Mcp)
+    );
+    assert_eq!(
+        sidebar_tab_from_action(Action::SidebarTab4),
+        Some(SidebarTab::Todos)
+    );
+    assert_eq!(
+        sidebar_tab_from_action(Action::SidebarTab5),
+        Some(SidebarTab::Preview)
+    );
+    assert_eq!(
+        sidebar_tab_from_action(Action::SidebarTab6),
+        Some(SidebarTab::Agents)
+    );
+    assert_eq!(sidebar_tab_from_action(Action::Quit), None);
+}

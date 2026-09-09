@@ -1534,7 +1534,7 @@ fn cut_to_width(s: &str, max_w: usize) -> String {
     out
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CalloutKind {
     Error,
     Warning,
@@ -1771,7 +1771,7 @@ fn tool_header_verb(name: &str, running: bool) -> String {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerbKind {
     File,
     Search,

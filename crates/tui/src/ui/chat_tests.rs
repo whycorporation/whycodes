@@ -1127,3 +1127,105 @@ fn json_and_grep_detection_reject_malformed_inputs() {
     assert!(super::parse_grep_hit("file:no:number").is_none());
     assert!(super::split_read_line("not a numbered row").is_none());
 }
+
+#[test]
+fn grep_match_count_reads_footer_then_hit_lines() {
+    assert_eq!(
+        super::grep_match_count("(12 matches in 3 files; pattern `foo`)"),
+        Some(12)
+    );
+    assert_eq!(
+        super::grep_match_count("src/a.rs:1:hit\nsrc/a.rs:2:also"),
+        Some(2)
+    );
+    assert_eq!(super::grep_match_count("ordinary text"), None);
+}
+
+#[test]
+fn try_pretty_json_rewrites_minified_and_skips_already_pretty() {
+    let pretty = super::try_pretty_json(r#"{"a":1,"b":2}"#).expect("minified");
+    assert!(pretty.contains('\n'), "{pretty}");
+    assert!(super::try_pretty_json("not json").is_none());
+    let already = "{\n  \"a\": 1\n}";
+    assert!(super::try_pretty_json(already).is_none());
+}
+
+#[test]
+fn diff_stat_skips_file_headers() {
+    let body = "--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-old\n+new\n context\n";
+    assert_eq!(super::diff_stat(body), (1, 1));
+}
+
+#[test]
+fn execute_tool_and_header_verbs_cover_aliases() {
+    assert!(super::is_execute_tool("bash"));
+    assert!(super::is_execute_tool("run"));
+    assert!(!super::is_execute_tool("read"));
+    assert_eq!(super::tool_header_verb("read_file", true), "Reading");
+    assert_eq!(super::tool_header_verb("read_file", false), "Read");
+    assert_eq!(super::tool_header_verb("bash", true), "Running");
+    assert_eq!(super::tool_header_verb("bash", false), "Run");
+    assert_eq!(super::tool_header_verb("search_code", true), "Searching");
+    assert_eq!(super::tool_header_verb("search_code", false), "Searched");
+    assert_eq!(super::tool_header_verb("list_dir", true), "Listing");
+    assert_eq!(super::tool_header_verb("list_dir", false), "Listed");
+    assert_eq!(super::tool_header_verb("write", true), "Editing");
+    assert_eq!(super::tool_header_verb("write", false), "Edited");
+    assert_eq!(super::tool_header_verb("web_fetch", true), "Fetching");
+    assert_eq!(super::tool_header_verb("web_fetch", false), "Fetched");
+    assert_eq!(super::tool_header_verb("web_search", true), "Searching");
+    assert_eq!(super::tool_header_verb("web_search", false), "Searched");
+    assert_eq!(super::tool_header_verb("custom", true), "Calling");
+    assert_eq!(super::tool_header_verb("custom", false), "Custom");
+    assert_eq!(super::tool_header_verb("", false), "Called");
+    assert_eq!(super::verb_kind("read"), Some(super::VerbKind::File));
+    assert_eq!(super::verb_kind("grep"), Some(super::VerbKind::Search));
+    assert_eq!(super::verb_kind("list"), Some(super::VerbKind::Dir));
+    assert_eq!(
+        super::verb_kind("web_search"),
+        Some(super::VerbKind::WebSearch)
+    );
+    assert_eq!(
+        super::verb_kind("web_fetch"),
+        Some(super::VerbKind::WebFetch)
+    );
+    assert_eq!(super::verb_kind("memory"), Some(super::VerbKind::Memory));
+    assert!(super::verb_kind("bash").is_none());
+    assert_eq!(super::VerbKind::File.verb(true), "Reading");
+    assert_eq!(super::VerbKind::File.verb(false), "Read");
+    assert_eq!(super::VerbKind::File.noun(1), "file");
+    assert_eq!(super::VerbKind::File.noun(2), "files");
+    assert_eq!(super::VerbKind::Search.noun(2), "patterns");
+    assert_eq!(super::VerbKind::Dir.noun(1), "dir");
+    assert_eq!(super::VerbKind::WebFetch.noun(2), "websites");
+    assert_eq!(super::VerbKind::Memory.noun(1), "memory");
+}
+
+#[test]
+fn callout_kind_classifies_system_notices() {
+    use super::CalloutKind;
+    assert_eq!(CalloutKind::from_content("error: boom"), CalloutKind::Error);
+    assert_eq!(
+        CalloutKind::from_content("cannot call tool"),
+        CalloutKind::Error
+    );
+    assert_eq!(
+        CalloutKind::from_content("No API key for acme"),
+        CalloutKind::Warning
+    );
+    assert_eq!(CalloutKind::from_content("✓ ready"), CalloutKind::Success);
+    assert_eq!(CalloutKind::from_content("hello"), CalloutKind::Info);
+    let p = crate::theme::ThemeName::DefaultDark.palette();
+    assert_eq!(CalloutKind::Error.accent(&p), p.error);
+    assert_eq!(CalloutKind::Warning.accent(&p), p.warning);
+    assert_eq!(CalloutKind::Success.accent(&p), p.success);
+    assert_eq!(CalloutKind::Info.accent(&p), p.info);
+    assert_eq!(CalloutKind::Error.glyph(), "✕");
+    assert_eq!(CalloutKind::Warning.glyph(), "!");
+    assert_eq!(CalloutKind::Success.glyph(), "✓");
+    assert_eq!(CalloutKind::Info.glyph(), "i");
+    assert_eq!(CalloutKind::Error.label(), "Error");
+    assert_eq!(CalloutKind::Warning.label(), "Setup");
+    assert_eq!(CalloutKind::Success.label(), "Ready");
+    assert_eq!(CalloutKind::Info.label(), "Note");
+}
