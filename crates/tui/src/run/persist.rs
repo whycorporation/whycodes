@@ -3,7 +3,14 @@ use super::*;
 
 /// Best-effort session flush (success, error, or cancel) + structured log.
 pub(super) fn persist_session_best_effort(session: &Session, reason: &str) {
-    let outcome = with_session_db(|db| session.save_to_db(db));
+    persist_session_outcome(
+        session,
+        reason,
+        with_session_db(|db| session.save_to_db(db).map_err(|e| e.to_string())),
+    );
+}
+
+fn persist_session_outcome(session: &Session, reason: &str, outcome: Option<Result<(), String>>) {
     match outcome {
         Some(Ok(())) => {
             whycodes_core::logging::emit_sid(
@@ -25,13 +32,46 @@ pub(super) fn persist_session_best_effort(session: &Session, reason: &str) {
                 Some(session.id.as_str()),
                 Some(serde_json::json!({
                     "reason": reason,
-                    "error": e.to_string(),
+                    "error": e,
                 })),
             );
             tracing::warn!(error = %e, reason, "failed to persist session");
         }
         None => {
             tracing::debug!(reason, "no database available for session persist");
+        }
+    }
+}
+
+fn toast_indexed_chunks(app: &mut TuiApp, n: usize) {
+    if n > 0 {
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            format!("Indexed {n} code chunks"),
+        );
+    }
+}
+
+fn doctor_key_label(key_ok: bool) -> &'static str {
+    if key_ok {
+        "set"
+    } else {
+        "MISSING — /connect or env"
+    }
+}
+
+fn tool_result_chars(content: &whycodes_core::types::MessageContent) -> usize {
+    use whycodes_core::types::{ContentBlock, MessageContent};
+    match content {
+        MessageContent::Text(t) => t.chars().count(),
+        MessageContent::Blocks(b) => {
+            b.iter()
+                .map(|bl| match bl {
+                    ContentBlock::Text { text }
+                    | ContentBlock::ToolResult { content: text, .. } => text.chars().count(),
+                    _ => 0,
+                })
+                .sum()
         }
     }
 }
@@ -124,16 +164,15 @@ pub(super) fn parse_session_rfc3339(s: &str) -> Option<chrono::DateTime<chrono::
 /// `project-ab`) from the first user message so the picker stays useful for
 /// sessions created before auto-title or never refined.
 pub(super) fn load_session_entries() -> Vec<crate::app::SessionEntry> {
-    let Some(db) = with_session_db(|d| {
+    let Some((rows, counts)) = session_list_rows(with_session_db(|d| {
         // Clone rows we need while the lock is held; do backfill with a second
         // borrow after we drop the map borrow (same connection).
         let rows = d.list_sessions().unwrap_or_default();
         let counts = d.message_counts_by_session().unwrap_or_default();
         (rows, counts)
-    }) else {
+    })) else {
         return Vec::new();
     };
-    let (rows, counts) = db;
     let mut out = Vec::with_capacity(rows.len());
     for s in rows {
         let messages = counts.get(&s.id).copied().unwrap_or(0);
@@ -146,16 +185,12 @@ pub(super) fn load_session_entries() -> Vec<crate::app::SessionEntry> {
         {
             // Backfill under the shared handle so we do not re-open the DB.
             let upgraded = with_session_db(|d| {
-                if let Ok(Some(mut loaded)) = Session::load_from_db(d, &s.id)
-                    && loaded.maybe_upgrade_title_from_history()
-                {
-                    if let Err(err) = loaded.save_to_db(d) {
-                        tracing::warn!(error = %err, "failed to persist backfilled session title");
-                    }
-                    Some(loaded.title)
-                } else {
-                    None
-                }
+                upgrade_loaded_title(
+                    upgraded_title_from_load(
+                        Session::load_from_db(d, &s.id).map_err(|e| e.to_string()),
+                    ),
+                    |loaded| loaded.save_to_db(d).map_err(|e| e.to_string()),
+                )
             })
             .flatten();
             if let Some(t) = upgraded {
@@ -196,12 +231,8 @@ pub(super) fn maybe_session_auto_index(
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
     if let Some(n) =
         whycodes_memory::maybe_auto_index(project_dir, &data_dir, &memory_settings(config))
-        && n > 0
     {
-        app.toasts.push(
-            crate::toast::ToastKind::Info,
-            format!("Indexed {n} code chunks"),
-        );
+        toast_indexed_chunks(app, n);
     }
 }
 
@@ -256,10 +287,43 @@ pub(super) fn short_session_id(id: &str) -> String {
 
 /// Load a session by exact id, unique prefix, or [`RESUME_LATEST`].
 pub(super) fn try_load_session(want: &str) -> anyhow::Result<Option<Session>> {
-    match with_session_db(|db| resolve_and_load_session(db, want)) {
-        Some(r) => r,
-        None => anyhow::bail!("database unavailable"),
+    loaded_session_or_unavailable(with_session_db(|db| resolve_and_load_session(db, want)))
+}
+
+fn loaded_session_or_unavailable(
+    loaded: Option<anyhow::Result<Option<Session>>>,
+) -> anyhow::Result<Option<Session>> {
+    loaded.ok_or_else(|| anyhow::anyhow!("database unavailable"))?
+}
+
+fn session_list_rows<T>(rows: Option<T>) -> Option<T> {
+    rows
+}
+
+fn save_backfilled_title(result: Result<(), String>) {
+    if let Err(err) = result {
+        tracing::warn!(error = %err, "failed to persist backfilled session title");
     }
+}
+
+fn upgraded_title_from_load(loaded: Result<Option<Session>, String>) -> Option<Session> {
+    match loaded {
+        Ok(Some(session)) => Some(session),
+        Ok(None) => None,
+        Err(_e) => None,
+    }
+}
+
+fn upgrade_loaded_title(
+    loaded: Option<Session>,
+    save: impl FnOnce(&Session) -> Result<(), String>,
+) -> Option<String> {
+    let mut loaded = loaded?;
+    if !loaded.maybe_upgrade_title_from_history() {
+        return None;
+    }
+    save_backfilled_title(save(&loaded));
+    Some(loaded.title)
 }
 
 /// Resolve `want` against the session table and load the full transcript.
@@ -310,7 +374,7 @@ pub(super) fn context_report(
     config: &Config,
     agent: &whycodes_agent::Agent,
 ) -> String {
-    use whycodes_core::types::{MessageContent, Role};
+    use whycodes_core::types::Role;
 
     let mut lines = vec!["Context".to_string()];
     lines.push(format!(
@@ -339,19 +403,7 @@ pub(super) fn context_report(
         };
         *by_role.entry(role).or_default() += 1;
         if m.role == Role::Tool {
-            let chars = match &m.content {
-                MessageContent::Text(t) => t.chars().count(),
-                MessageContent::Blocks(b) => b
-                    .iter()
-                    .map(|bl| match bl {
-                        whycodes_core::types::ContentBlock::Text { text }
-                        | whycodes_core::types::ContentBlock::ToolResult {
-                            content: text, ..
-                        } => text.chars().count(),
-                        _ => 0,
-                    })
-                    .sum(),
-            };
+            let chars = tool_result_chars(&m.content);
             let label = m.name.clone().unwrap_or_else(|| format!("tool#{i}"));
             tool_sizes.push((chars, label));
         }
@@ -388,13 +440,29 @@ pub(super) fn context_report(
     lines.join("\n")
 }
 
-/// Git status + short diff for the project (Claude Code `/diff` spirit).
-pub(super) fn project_diff_report(project_dir: &std::path::Path) -> String {
-    let mut out = String::from("Diff\n");
-    let status = std::process::Command::new("git")
-        .args(["status", "--short", "--branch"])
-        .current_dir(project_dir)
-        .output();
+fn append_git_stat_block(
+    out: &mut String,
+    header: &str,
+    result: std::io::Result<std::process::Output>,
+    take: usize,
+) {
+    if let Ok(o) = result
+        && o.status.success()
+    {
+        let s = String::from_utf8_lossy(&o.stdout);
+        if !s.trim().is_empty() {
+            out.push_str(header);
+            for line in s.lines().take(take) {
+                out.push_str(&format!("    {line}\n"));
+            }
+        }
+    }
+}
+
+fn append_git_status(
+    out: &mut String,
+    status: std::io::Result<std::process::Output>,
+) -> Result<(), ()> {
     match status {
         Ok(o) if o.status.success() => {
             let s = String::from_utf8_lossy(&o.stdout);
@@ -406,6 +474,7 @@ pub(super) fn project_diff_report(project_dir: &std::path::Path) -> String {
                     out.push_str(&format!("    {line}\n"));
                 }
             }
+            Ok(())
         }
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
@@ -413,45 +482,37 @@ pub(super) fn project_diff_report(project_dir: &std::path::Path) -> String {
                 "  git status failed: {}\n",
                 err.trim().lines().next().unwrap_or("unknown")
             ));
-            return out;
+            Err(())
         }
         Err(e) => {
             out.push_str(&format!("  git unavailable: {e}\n"));
-            return out;
+            Err(())
         }
+    }
+}
+
+/// Git status + short diff for the project (Claude Code `/diff` spirit).
+pub(super) fn project_diff_report(project_dir: &std::path::Path) -> String {
+    let mut out = String::from("Diff\n");
+    let status = std::process::Command::new("git")
+        .args(["status", "--short", "--branch"])
+        .current_dir(project_dir)
+        .output();
+    if append_git_status(&mut out, status).is_err() {
+        return out;
     }
 
     let diff = std::process::Command::new("git")
         .args(["diff", "--stat", "HEAD"])
         .current_dir(project_dir)
         .output();
-    if let Ok(o) = diff
-        && o.status.success()
-    {
-        let s = String::from_utf8_lossy(&o.stdout);
-        if !s.trim().is_empty() {
-            out.push_str("  unstaged/staged vs HEAD:\n");
-            for line in s.lines().take(60) {
-                out.push_str(&format!("    {line}\n"));
-            }
-        }
-    }
+    append_git_stat_block(&mut out, "  unstaged/staged vs HEAD:\n", diff, 60);
 
     let staged = std::process::Command::new("git")
         .args(["diff", "--stat", "--cached"])
         .current_dir(project_dir)
         .output();
-    if let Ok(o) = staged
-        && o.status.success()
-    {
-        let s = String::from_utf8_lossy(&o.stdout);
-        if !s.trim().is_empty() {
-            out.push_str("  staged only:\n");
-            for line in s.lines().take(40) {
-                out.push_str(&format!("    {line}\n"));
-            }
-        }
-    }
+    append_git_stat_block(&mut out, "  staged only:\n", staged, 40);
 
     out
 }
@@ -529,14 +590,7 @@ pub(super) fn doctor_report(
         || std::env::var(&env_name)
             .map(|k| !k.trim().is_empty())
             .unwrap_or(false);
-    lines.push(format!(
-        "  api_key:      {}",
-        if key_ok {
-            "set"
-        } else {
-            "MISSING — /connect or env"
-        }
-    ));
+    lines.push(format!("  api_key:      {}", doctor_key_label(key_ok)));
 
     // ── Paths ─────────────────────────────────────────────────────────
     lines.push(format!("  project:      {}", project_dir.display()));

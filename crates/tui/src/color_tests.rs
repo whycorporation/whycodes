@@ -1,6 +1,7 @@
 use super::*;
 use ratatui::Terminal;
-use ratatui::backend::TestBackend;
+use ratatui::backend::{Backend, TestBackend};
+use std::io::Write;
 
 #[test]
 fn cube_and_gray_round_trip() {
@@ -102,6 +103,46 @@ fn apple_terminal_is_256_even_with_colorterm() {
         ),
         ColorMode::TrueColor
     );
+    assert_eq!(
+        color_mode_from_env(Some("24bit"), None, None, Some("xterm"), false),
+        ColorMode::TrueColor
+    );
+    assert_eq!(
+        color_mode_from_env(Some("24"), None, None, Some("xterm"), false),
+        ColorMode::TrueColor
+    );
+    assert_eq!(
+        color_mode_from_env(Some("ansi256"), None, None, Some("xterm"), false),
+        ColorMode::Ansi256
+    );
+    assert_eq!(
+        color_mode_from_env(Some("ansi"), None, None, Some("xterm-256color"), false),
+        ColorMode::Ansi16
+    );
+    assert_eq!(
+        color_mode_from_env(Some("nope"), None, None, Some("xterm-direct"), false),
+        ColorMode::TrueColor
+    );
+    assert_eq!(
+        color_mode_from_env(Some("  "), None, None, Some("rxvt-unicode"), false),
+        ColorMode::Ansi16
+    );
+    assert_eq!(
+        color_mode_from_env(None, Some("24bit"), None, Some("xterm"), false),
+        ColorMode::TrueColor
+    );
+    assert_eq!(
+        color_mode_from_env(None, None, None, Some("dumb"), false),
+        ColorMode::Ansi16
+    );
+    assert_eq!(
+        color_mode_from_env(None, None, None, Some("unknown"), false),
+        ColorMode::Ansi16
+    );
+    assert_eq!(
+        color_mode_from_env(None, None, None, Some("screen-256colour"), false),
+        ColorMode::Ansi256
+    );
 }
 
 #[test]
@@ -186,4 +227,48 @@ fn quantizing_backend_rewrites_rgb_on_draw() {
 fn paint_color_follows_thread_local_mode() {
     let _g = push_color_mode(ColorMode::Ansi256);
     assert!(matches!(paint_rgb(255, 0, 0), Color::Indexed(196)));
+}
+
+#[test]
+fn color_mode_and_named_rgb_helpers() {
+    assert_eq!(ColorMode::TrueColor.as_str(), "truecolor");
+    assert_eq!(ColorMode::Ansi256.as_str(), "256");
+    assert_eq!(ColorMode::Ansi16.as_str(), "16");
+    assert!(ColorMode::TrueColor.is_truecolor());
+    assert!(!ColorMode::Ansi16.is_truecolor());
+    assert_eq!(named_rgb(0), (0, 0, 0));
+    assert_eq!(named_rgb(15), (255, 255, 255));
+    assert_eq!(named_rgb(99), (255, 255, 255));
+    let _ = detect_color_mode();
+    let mut writer = QuantizingBackend::new(Vec::<u8>::new(), ColorMode::TrueColor);
+    assert_eq!(writer.write(b"ok").unwrap(), 2);
+    assert!(writer.flush().is_ok());
+
+    let inner = TestBackend::new(4, 1);
+    let mut term =
+        Terminal::new(QuantizingBackend::new(inner, ColorMode::TrueColor)).expect("term");
+    term.draw(|f| {
+        let area = f.area();
+        if let Some(cell) = f.buffer_mut().cell_mut((area.x, area.y)) {
+            cell.set_fg(Color::Rgb(1, 2, 3));
+            cell.set_char('x');
+        }
+    })
+    .expect("draw");
+    assert!(matches!(
+        term.backend().inner.buffer().cell((0, 0)).unwrap().fg,
+        Color::Rgb(1, 2, 3)
+    ));
+    let _ = term.backend_mut().size();
+    let _ = term.backend_mut().window_size();
+    let _ = term.backend_mut().hide_cursor();
+    let _ = term.backend_mut().show_cursor();
+    let _ = term.backend_mut().get_cursor_position();
+    let _ = term.backend_mut().set_cursor_position((0, 0));
+    let _ = term.backend_mut().clear();
+    let _ = term
+        .backend_mut()
+        .clear_region(ratatui::backend::ClearType::All);
+    let _ = term.backend_mut().append_lines(0);
+    let _ = Backend::flush(term.backend_mut());
 }

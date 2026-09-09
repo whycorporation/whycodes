@@ -8,7 +8,8 @@
 use super::*;
 use crate::app::{
     AppMode, AuthMethod, ConfirmAction, DialogKind, ImportPickerItem, ImportPickerState,
-    ProviderDialogMode, QuestionDialogState, SessionEntry, TuiApp,
+    LoginProviderRow, ProviderDialogMode, QuestionDialogState, SessionDashboardRow, SessionEntry,
+    TuiApp,
 };
 use crate::config::TuiAppConfig;
 use crate::theme::ThemeName;
@@ -696,9 +697,24 @@ fn render_dispatches_all_dialog_kinds() {
 
     // Login
     app.dialogs.clear();
+    app.login_dialog.rows = vec![
+        LoginProviderRow {
+            provider: "anthropic".into(),
+            label: "Anthropic".into(),
+            connected: true,
+        },
+        LoginProviderRow {
+            provider: "openai".into(),
+            label: "OpenAI".into(),
+            connected: false,
+        },
+    ];
     app.dialogs.push(DialogKind::Login);
-    let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
     assert!(app.dialog_list_hit.is_some());
+    assert!(text.contains("Anthropic"), "{text}");
+    assert!(text.contains("connected"), "{text}");
+    assert!(text.contains("not connected"), "{text}");
 
     // Reasoning effort
     app.dialogs.clear();
@@ -730,6 +746,37 @@ fn render_dispatches_all_dialog_kinds() {
     assert!(text.contains("MCP `fs`"), "{text}");
     assert!(text.contains("[x]"), "{text}");
     assert!(text.contains("[ ]"), "{text}");
+
+    // Approval mode picker
+    app.dialogs.clear();
+    app.dialogs.push(DialogKind::ApprovalMode);
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    assert!(app.dialog_list_hit.is_some());
+    assert!(text.contains("current"), "{text}");
+
+    // Live sessions dashboard
+    app.dialogs.clear();
+    app.sessions_rows = vec![SessionDashboardRow {
+        parked_idx: None,
+        title: "Active".into(),
+        glyph: "●".into(),
+        state_label: "running".into(),
+        preview: "hello".into(),
+        unread: true,
+    }];
+    app.dialogs.push(DialogKind::Sessions);
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    assert!(app.dialog_list_hit.is_some());
+    assert!(text.contains("Active"), "{text}");
+    assert!(text.contains("running"), "{text}");
+
+    // Catch-all kinds (Status / Workspace) are no-ops.
+    app.dialogs.clear();
+    app.dialogs.push(DialogKind::Status);
+    let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    app.dialogs.clear();
+    app.dialogs.push(DialogKind::Workspace);
+    let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
 
     // Close all — renders as no-op without panic.
     app.dialogs.clear();

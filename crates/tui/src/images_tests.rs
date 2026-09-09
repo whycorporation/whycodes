@@ -96,3 +96,117 @@ fn tokenize_respects_quotes() {
     assert_eq!(t.len(), 3);
     assert_eq!(t[1], "\"/tmp/my photo.png\"");
 }
+
+#[test]
+fn normalize_tilde_and_empty_tokens() {
+    assert!(normalize_path_token("").is_none());
+    assert!(normalize_path_token("   ").is_none());
+    assert!(normalize_path_token("\"\"").is_none());
+    let prev_home = std::env::var_os("HOME");
+    let prev_profile = std::env::var_os("USERPROFILE");
+    let home = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("USERPROFILE", home.path());
+    }
+    let tilde = normalize_path_token("~").unwrap();
+    assert_eq!(tilde, home.path());
+    let nested = normalize_path_token("~/shot.png").unwrap();
+    assert_eq!(nested, home.path().join("shot.png"));
+    unsafe {
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match prev_profile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+    }
+    assert!(from_hex(b'g').is_none());
+    assert_eq!(from_hex(b'A'), Some(10));
+    assert_eq!(from_hex(b'a'), Some(10));
+    assert_eq!(percent_decode("%zz"), "%zz");
+    assert_eq!(
+        normalize_path_token("file://localhost/tmp/shot.png").unwrap(),
+        PathBuf::from("/tmp/shot.png")
+    );
+    assert_eq!(
+        normalize_path_token("file://shot.png").unwrap(),
+        PathBuf::from("shot.png")
+    );
+    assert!(is_image_extension(Path::new("a.gif")));
+    assert!(!is_image_extension(Path::new("a.txt")));
+    for (name, mime) in [
+        ("a.gif", "image/gif"),
+        ("a.webp", "image/webp"),
+        ("a.bmp", "image/bmp"),
+        ("a.tif", "image/tiff"),
+        ("a.tiff", "image/tiff"),
+        ("a.ico", "image/x-icon"),
+        ("a.svg", "image/svg+xml"),
+        ("a.heic", "image/heic"),
+        ("a.heif", "image/heic"),
+        ("a.avif", "image/avif"),
+        ("a.jpg", "image/jpeg"),
+    ] {
+        assert_eq!(media_type_for_path(Path::new(name)), Some(mime));
+    }
+    assert_eq!(
+        PromptImage::label_for(Path::new("dir/shot.png")),
+        "shot.png"
+    );
+}
+
+#[test]
+fn classify_empty_and_load_rejects() {
+    let empty = classify_paste("   ");
+    assert!(empty.images.is_empty());
+    assert!(empty.text.is_empty());
+
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("gone.png");
+    assert!(load_prompt_image(&missing).is_err());
+    let txt = dir.path().join("notes.txt");
+    std::fs::write(&txt, b"hi").unwrap();
+    assert!(
+        load_prompt_image(&txt)
+            .unwrap_err()
+            .contains("not a supported")
+    );
+    let zero = dir.path().join("empty.png");
+    std::fs::write(&zero, b"").unwrap();
+    assert!(load_prompt_image(&zero).unwrap_err().contains("empty"));
+    assert!(build_user_blocks("", &[]).is_err());
+
+    let huge = dir.path().join("huge.png");
+    {
+        let f = std::fs::File::create(&huge).unwrap();
+        f.set_len(MAX_IMAGE_BYTES + 1).unwrap();
+    }
+    assert!(load_prompt_image(&huge).unwrap_err().contains("too large"));
+
+    let img = PromptImage {
+        path: dir.path().join("gone-encode.png"),
+        label: "gone-encode.png".into(),
+        media_type: "image/png".into(),
+    };
+    assert!(encode_image_block(&img).is_err());
+    let huge_img = PromptImage {
+        path: huge,
+        label: "huge.png".into(),
+        media_type: "image/png".into(),
+    };
+    assert!(
+        encode_image_block(&huge_img)
+            .unwrap_err()
+            .contains("too large")
+    );
+
+    let ok = dir.path().join("ok.png");
+    std::fs::write(&ok, b"png").unwrap();
+    let loaded = load_prompt_image(&ok).unwrap();
+    let blocks = build_user_blocks("see this", &[loaded]).unwrap();
+    assert!(matches!(&blocks[0], ContentBlock::Text { text } if text == "see this"));
+    assert!(matches!(&blocks[1], ContentBlock::Image { .. }));
+}

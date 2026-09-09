@@ -87,9 +87,13 @@ impl TuiLoginUi {
     /// Best-effort delivery to the TUI event loop: a send only fails when the
     /// loop is gone (shutdown), and then the note has nowhere to land anyway.
     fn send(&self, event: AuthFlowEvent) {
-        if self.tx.send(event).is_err() {
-            tracing::debug!("auth-flow event dropped: TUI event loop closed");
-        }
+        send_auth_event(&self.tx, event);
+    }
+}
+
+fn send_auth_event(tx: &mpsc::UnboundedSender<AuthFlowEvent>, event: AuthFlowEvent) {
+    if tx.send(event).is_err() {
+        tracing::debug!("auth-flow event dropped: TUI event loop closed");
     }
 }
 
@@ -157,16 +161,16 @@ fn spawn_oauth_login(
             .await
             .map(|_| p.clone())
             .map_err(|e| e.to_string());
-        if tx
-            .send(AuthFlowEvent::Done {
-                provider: p,
-                result,
-            })
-            .is_err()
-        {
-            tracing::debug!("auth-flow Done dropped: TUI event loop closed");
-        }
+        send_auth_done(&tx, p, result);
     });
+}
+
+fn send_auth_done(
+    tx: &mpsc::UnboundedSender<AuthFlowEvent>,
+    provider: String,
+    result: Result<String, String>,
+) {
+    send_auth_event(tx, AuthFlowEvent::Done { provider, result });
 }
 
 fn bind_agent_prompters(
@@ -237,7 +241,25 @@ fn apply_resume(
     want: &str,
     auto_title: bool,
 ) {
-    match try_load_session(want) {
+    apply_resume_loaded(
+        app,
+        session,
+        system_prompt,
+        want,
+        auto_title,
+        try_load_session(want).map_err(|e| e.to_string()),
+    );
+}
+
+fn apply_resume_loaded(
+    app: &mut TuiApp,
+    session: &mut Session,
+    system_prompt: &str,
+    want: &str,
+    auto_title: bool,
+    loaded: Result<Option<Session>, String>,
+) {
+    match loaded {
         Ok(Some(loaded)) => {
             let n = loaded.messages.len();
             *session = loaded;
@@ -253,14 +275,8 @@ fn apply_resume(
             );
         }
         Ok(None) => {
-            app.toasts.push(
-                crate::toast::ToastKind::Warning,
-                if want == RESUME_LATEST {
-                    "No saved sessions to continue".into()
-                } else {
-                    format!("Session not found: {want}")
-                },
-            );
+            app.toasts
+                .push(crate::toast::ToastKind::Warning, resume_missing_toast(want));
         }
         Err(e) => {
             app.toasts.push(
@@ -268,6 +284,14 @@ fn apply_resume(
                 format!("Resume failed: {e}"),
             );
         }
+    }
+}
+
+fn resume_missing_toast(want: &str) -> String {
+    if want == RESUME_LATEST {
+        "No saved sessions to continue".into()
+    } else {
+        format!("Session not found: {want}")
     }
 }
 
@@ -347,9 +371,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
         .filter(|a| a.mode == AgentMode::Primary || a.mode == AgentMode::All)
         .map(|a| a.name.clone())
         .collect();
-    if app.primary_agents.is_empty() {
-        app.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
-    }
+    ensure_primary_agents(&mut app.primary_agents);
     if let Some(idx) = app
         .primary_agents
         .iter()
@@ -382,21 +404,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     let agent_info = config
         .get_agent(&opts.agent_name)
         .cloned()
-        .unwrap_or_else(|| whycodes_core::types::AgentInfo {
-            name: opts.agent_name.clone(),
-            description: "Default".into(),
-            mode: AgentMode::Primary,
-            permission: whycodes_core::types::PermissionSet {
-                allow_file_writes: true,
-                allow_network: true,
-                allow_shell: true,
-                ..whycodes_core::types::PermissionSet::default()
-            },
-            model: None,
-            system_prompt: None,
-            temperature: None,
-            top_p: None,
-        });
+        .unwrap_or_else(|| default_agent_info(&opts.agent_name));
 
     let base = agent_info
         .system_prompt
@@ -524,31 +532,61 @@ fn open_tui_writer() -> io::Result<TuiWriter> {
 fn open_controlling_console() -> Option<std::fs::File> {
     #[cfg(unix)]
     {
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/tty")
-        {
-            Ok(f) => Some(f),
-            Err(e) => {
-                tracing::debug!(error = %e, "open /dev/tty failed, trying stdout");
-                None
-            }
-        }
+        console_open_result(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/tty"),
+            "open /dev/tty failed, trying stdout",
+        )
     }
     #[cfg(windows)]
     {
-        match std::fs::OpenOptions::new().write(true).open("CONOUT$") {
-            Ok(f) => Some(f),
-            Err(e) => {
-                tracing::debug!(error = %e, "open CONOUT$ failed, trying stdout");
-                None
-            }
-        }
+        console_open_result(
+            std::fs::OpenOptions::new().write(true).open("CONOUT$"),
+            "open CONOUT$ failed, trying stdout",
+        )
     }
     #[cfg(not(any(unix, windows)))]
     {
         None
+    }
+}
+
+fn console_open_result(
+    result: io::Result<std::fs::File>,
+    msg: &'static str,
+) -> Option<std::fs::File> {
+    match result {
+        Ok(f) => Some(f),
+        Err(e) => {
+            tracing::debug!(error = %e, "{msg}");
+            None
+        }
+    }
+}
+
+fn ensure_primary_agents(agents: &mut Vec<String>) {
+    if agents.is_empty() {
+        *agents = vec!["build".into(), "plan".into(), "ask".into()];
+    }
+}
+
+fn default_agent_info(name: &str) -> whycodes_core::types::AgentInfo {
+    whycodes_core::types::AgentInfo {
+        name: name.to_string(),
+        description: "Default".into(),
+        mode: AgentMode::Primary,
+        permission: whycodes_core::types::PermissionSet {
+            allow_file_writes: true,
+            allow_network: true,
+            allow_shell: true,
+            ..whycodes_core::types::PermissionSet::default()
+        },
+        model: None,
+        system_prompt: None,
+        temperature: None,
+        top_p: None,
     }
 }
 
@@ -4463,7 +4501,7 @@ fn spawn_model_context_fetch(
     tx: mpsc::UnboundedSender<(String, String, u32)>,
 ) {
     // Opt-out for debugging hang/crash suspicions: WHYCODES_NO_MODEL_CATALOG=1
-    if std::env::var_os("WHYCODES_NO_MODEL_CATALOG").is_some() {
+    if skip_model_catalog() {
         tracing::debug!("WHYCODES_NO_MODEL_CATALOG set — skip /v1/models");
         return;
     }
@@ -4518,4 +4556,8 @@ fn spawn_model_context_fetch(
             }
         }
     });
+}
+
+fn skip_model_catalog() -> bool {
+    std::env::var_os("WHYCODES_NO_MODEL_CATALOG").is_some()
 }

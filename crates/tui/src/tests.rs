@@ -2169,13 +2169,26 @@ fn user_message_preserves_newlines_in_panel() {
     assert!(rows >= 3, "expected at least 3 rows, got {rows}");
 }
 
+fn hang_git_cmd() -> std::process::Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", "ping", "-n", "3", "127.0.0.1", ">", "NUL"]);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("2");
+        cmd
+    }
+}
+
 #[test]
 fn git_output_timeout_kills_a_sleeping_child() {
     let start = std::time::Instant::now();
-    let out = crate::app::git_output_timeout(
-        std::process::Command::new("sleep").arg("2"),
-        std::time::Duration::from_millis(80),
-    );
+    let out =
+        crate::app::git_output_timeout(&mut hang_git_cmd(), std::time::Duration::from_millis(80));
     assert!(out.is_none(), "sleep must not outlast the cap");
     assert!(
         start.elapsed() < std::time::Duration::from_millis(800),

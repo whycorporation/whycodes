@@ -1025,6 +1025,32 @@ mod wrap_tests {
         let token_span = spans.iter().find(|s| s.content.as_ref() == token).unwrap();
         assert_eq!(token_span.style.fg, Some(Color::Yellow));
     }
+
+    #[test]
+    fn truncate_pick_hint_and_cursor_helpers() {
+        assert!(truncate_to_width("hello", 0).is_empty());
+        assert_eq!(truncate_to_width("hello", 3), "hel");
+        let _ = pick_hint();
+        assert_eq!(cursor_row_col(&[], "hi", 0), (0, 0));
+        let rows = wrap_text("hello world", 5);
+        let (row, col) = cursor_row_col(&rows, "hello world", 0);
+        assert_eq!(row, 0);
+        assert_eq!(col, 0);
+
+        let mut app = crate::app::TuiApp::new(crate::config::TuiAppConfig::default());
+        assert_eq!(attach_row_count(&app), 0);
+        app.pending_images.push(crate::images::PromptImage {
+            path: "a.png".into(),
+            label: "a.png".into(),
+            media_type: "image/png".into(),
+        });
+        assert_eq!(attach_row_count(&app), 1);
+        assert!(prompt_height(&app, 80) > 1);
+        assert!(content_width(&app, 80) >= 8);
+        assert!(prompt_owns_caret(&app));
+        app.focus = crate::app::FocusPane::Scrollback;
+        assert!(!prompt_owns_caret(&app));
+    }
 }
 
 #[cfg(test)]

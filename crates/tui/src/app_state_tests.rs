@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::TuiAppConfig;
+use std::time::Instant;
 use whycodes_tools::question::QuestionOption;
 
 fn app() -> TuiApp {
@@ -273,4 +274,114 @@ fn import_picker_toggle_and_select_all() {
     assert!(!state.any_checked());
     state.select_all(true);
     assert_eq!(state.checked_count(), 2);
+}
+
+#[test]
+fn subagent_headline_and_question_clipboard() {
+    let running = SubagentUi {
+        id: "a".into(),
+        kind: "explore".into(),
+        description: "x".repeat(80),
+        status: "running".into(),
+        activity: "Thinking".into(),
+        started_at: Instant::now(),
+        elapsed_ms: 0,
+        output: String::new(),
+    };
+    let head = running.headline();
+    assert!(head.contains("running"), "{head}");
+    assert!(head.contains("Thinking"), "{head}");
+    assert!(head.contains('…'), "long desc truncated: {head}");
+
+    let done = SubagentUi {
+        id: "b".into(),
+        kind: "explore".into(),
+        description: "short".into(),
+        status: "completed".into(),
+        activity: String::new(),
+        started_at: Instant::now(),
+        elapsed_ms: 1500,
+        output: String::new(),
+    };
+    let head = done.headline();
+    assert!(head.contains("completed"), "{head}");
+    assert!(head.contains("1.5s"), "{head}");
+
+    for status in ["failed", "cancelled", "started"] {
+        let row = SubagentUi {
+            id: status.into(),
+            kind: "k".into(),
+            description: "d".into(),
+            status: status.into(),
+            activity: String::new(),
+            started_at: Instant::now(),
+            elapsed_ms: 0,
+            output: String::new(),
+        };
+        let h = row.headline();
+        assert!(!h.is_empty(), "{status}");
+    }
+
+    let mut state = QuestionDialogState::new(vec![
+        question("Pick", &["A", "B"], false),
+        question("Why", &[], false),
+    ]);
+    let clip = state.clipboard_text();
+    assert!(clip.contains("Pick"), "{clip}");
+    assert!(clip.contains("Other"), "{clip}");
+    assert!(clip.contains("free-text") || clip.contains("Why"), "{clip}");
+
+    state.set_cursor(0);
+    assert!(state.confirm_current().is_none());
+    state.free_text = "because".into();
+    let answers = state.confirm_current().expect("done");
+    assert_eq!(answers.len(), 2);
+
+    let mut multi = QuestionDialogState::new(vec![question("Many", &["A", "B"], true)]);
+    multi.toggle_multi_at_cursor();
+    multi.toggle_multi_at_cursor();
+    assert!(multi.multi_selected.is_empty());
+    multi.free_text_focus = true;
+    multi.toggle_multi_at_cursor();
+    assert!(multi.free_text_focus);
+    multi.free_text_focus = false;
+    multi.set_cursor(2);
+    multi.toggle_multi_at_cursor();
+    assert!(multi.free_text_focus);
+
+    let mut hole = QuestionDialogState::new(vec![
+        question("Pick", &["A", "B"], false),
+        question("Why", &[], false),
+    ]);
+    hole.index = 1;
+    hole.free_text = "because".into();
+    assert!(hole.confirm_current().is_none());
+    assert_eq!(hole.index, 0);
+
+    let mut empty = QuestionDialogState::new(vec![]);
+    empty.move_cursor(1);
+    empty.set_cursor(3);
+    assert!(empty.confirm_current().is_none());
+
+    let _ = DialogManager::default();
+}
+
+#[test]
+fn sidebar_hover_clears_and_todos_toggle() {
+    let mut app = app();
+    app.sidebar.tab_hits[0].hovered = true;
+    assert!(app.sidebar.update_tab_hover(None));
+    assert!(!app.sidebar.tab_hits[0].hovered);
+
+    app.replace_todos(vec![whycodes_core::TodoItem::new(
+        "t1",
+        "do it",
+        whycodes_core::TodoStatus::Pending,
+    )]);
+    app.focus = FocusPane::Todos;
+    app.toggle_todos_panel();
+    assert!(app.todos_collapsed);
+    assert_eq!(app.focus, FocusPane::Prompt);
+    app.toggle_todos_panel();
+    assert!(!app.todos_collapsed);
 }

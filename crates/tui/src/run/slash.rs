@@ -233,21 +233,10 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                         .toasts
                         .push(crate::toast::ToastKind::Info, "No background jobs");
                 } else {
-                    let mut lines = vec![format!(
-                        "Background jobs ({} running)",
-                        ctx.agent.background_registry().running_count()
-                    )];
-                    for j in jobs {
-                        lines.push(format!(
-                            "{} [{}] {:.0}s  {}",
-                            j.id,
-                            j.status.as_str(),
-                            j.elapsed.as_secs_f64(),
-                            j.label
-                        ));
-                    }
-                    lines.push("Hint: /bg kill bg-N".into());
-                    ctx.app.add_message(ChatRole::System, lines.join("\n"));
+                    ctx.app.add_message(
+                        ChatRole::System,
+                        format_bg_jobs(ctx.agent.background_registry().running_count(), &jobs),
+                    );
                 }
             } else if let Some(id) = rest.strip_prefix("kill ").map(str::trim) {
                 match ctx.agent.background_registry().kill(id) {
@@ -295,17 +284,9 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                             );
                             ctx.app.status_message = format!("Saved memory: {text}");
                         }
-                        Err(e) => {
-                            ctx.app
-                                .toasts
-                                .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
-                        }
+                        Err(e) => memory_err_toast(ctx.app, e),
                     },
-                    Err(e) => {
-                        ctx.app
-                            .toasts
-                            .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
-                    }
+                    Err(e) => memory_err_toast(ctx.app, e),
                 }
             }
         }
@@ -328,48 +309,11 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.add_message(ChatRole::System, msg);
                 ctx.app.status_message = format!("Memory · {n} entries");
             }
-            Err(e) => {
-                ctx.app
-                    .toasts
-                    .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
-            }
+            Err(e) => memory_err_toast(ctx.app, e),
         },
         "/share" | "/export" => match ctx.session.export_share() {
-            Ok(p) => {
-                let md = p.replace(".json", ".md");
-                let id = ctx.session.id.clone();
-                let port = std::env::var("WHYCODES_SHARE_PORT")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(3030u16);
-                let url = format!("http://127.0.0.1:{port}/s/{id}");
-                let live = share_server_up(port);
-                ctx.app.status_message = if live {
-                    format!("Share: {url}")
-                } else {
-                    format!("Exported — run `whycodes serve` then open {url}")
-                };
-                ctx.app.add_message(
-                    ChatRole::System,
-                    format!(
-                        "Session shared locally:\n\
-                         - {p}\n\
-                         - {md}\n\
-                         - View URL: {url}\n\
-                         {}\n\
-                         /unshare removes local share files.",
-                        if live {
-                            "(server is up)"
-                        } else {
-                            "Start server: whycodes serve 3030"
-                        }
-                    ),
-                );
-            }
-            Err(e) => ctx.app.toasts.push(
-                crate::toast::ToastKind::Error,
-                format!("Export failed: {e}"),
-            ),
+            Ok(p) => apply_share_ok(ctx.app, &p, &ctx.session.id, share_server_up),
+            Err(e) => export_failed_toast(ctx.app, e),
         },
         "/unshare" => {
             let id = ctx.session.id.clone();
@@ -546,25 +490,7 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         }
         "/mode" => apply_approval_mode_raw(ctx.app, ctx.agent, ctx.config, rest),
         "/models" => {
-            if rest.is_empty() {
-                let src = if ctx
-                    .app
-                    .api_context_for
-                    .as_ref()
-                    .is_some_and(|(p, m)| p == ctx.provider.as_str() && m == ctx.model.as_str())
-                {
-                    "api"
-                } else {
-                    "local"
-                };
-                ctx.app.status_message = format!(
-                    "Model: {}/{}  ·  ctx {} / {} ({src})",
-                    ctx.provider,
-                    ctx.model,
-                    crate::app::format_token_count(ctx.app.context_used),
-                    crate::app::format_token_count(ctx.app.max_context_tokens),
-                );
-            } else if let Some((p, m)) = rest.split_once('/') {
+            if let Some((p, m)) = rest.split_once('/') {
                 apply_model_choice(
                     ctx.app,
                     ctx.provider,
@@ -690,6 +616,64 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             );
         }
     }
+}
+
+fn format_bg_jobs(running: usize, jobs: &[whycodes_agent::JobSnapshot]) -> String {
+    let mut lines = vec![format!("Background jobs ({running} running)")];
+    for j in jobs {
+        lines.push(format!(
+            "{} [{}] {:.0}s  {}",
+            j.id,
+            j.status.as_str(),
+            j.elapsed.as_secs_f64(),
+            j.label
+        ));
+    }
+    lines.push("Hint: /bg kill bg-N".into());
+    lines.join("\n")
+}
+
+fn memory_err_toast(app: &mut TuiApp, e: impl std::fmt::Display) {
+    app.toasts
+        .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
+}
+
+fn export_failed_toast(app: &mut TuiApp, e: impl std::fmt::Display) {
+    app.toasts.push(
+        crate::toast::ToastKind::Error,
+        format!("Export failed: {e}"),
+    );
+}
+
+fn apply_share_ok(app: &mut TuiApp, path: &str, session_id: &str, live: impl FnOnce(u16) -> bool) {
+    let md = path.replace(".json", ".md");
+    let port = std::env::var("WHYCODES_SHARE_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3030u16);
+    let url = format!("http://127.0.0.1:{port}/s/{session_id}");
+    let live = live(port);
+    app.status_message = if live {
+        format!("Share: {url}")
+    } else {
+        format!("Exported — run `whycodes serve` then open {url}")
+    };
+    app.add_message(
+        ChatRole::System,
+        format!(
+            "Session shared locally:\n\
+             - {path}\n\
+             - {md}\n\
+             - View URL: {url}\n\
+             {}\n\
+             /unshare removes local share files.",
+            if live {
+                "(server is up)"
+            } else {
+                "Start server: whycodes serve 3030"
+            }
+        ),
+    );
 }
 
 /// Spawn a tiny follow-up suggestion when `tui.prompt_suggestions = "idle"`.

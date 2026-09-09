@@ -1959,3 +1959,100 @@ fn prompt_backspace_and_word_kill_do_not_full_clear() {
     assert!(a.input_buffer.is_empty());
     assert_eq!(a.pending_full_clears, 0);
 }
+
+#[test]
+fn attach_image_paths_mixed_success_and_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let ok = dir.path().join("a.png");
+    let ok2 = dir.path().join("b.png");
+    std::fs::write(&ok, b"\x89PNG\r\n\x1a\nhello").unwrap();
+    std::fs::write(&ok2, b"\x89PNG\r\n\x1a\nworld").unwrap();
+    let missing = dir.path().join("gone.png");
+
+    let mut a = app();
+    attach_image_paths(&mut a, [ok.clone(), missing, ok2]);
+    assert_eq!(a.pending_images.len(), 2);
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Attached 2")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.kind == crate::toast::ToastKind::Warning)
+    );
+}
+
+#[test]
+fn coalesce_unbracketed_paste_bails_on_modal_mode_and_existing_paste() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    let mut events = vec![key(KeyCode::Char('a')); 20];
+    let before = events.clone();
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert_eq!(events, before);
+
+    a.mode = AppMode::Normal;
+    a.confirm("Quit", "sure?", ConfirmAction::Quit);
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert_eq!(events, before);
+
+    let a = app();
+    let mut events = vec![Event::Paste("already".into()), key(KeyCode::Char('x'))];
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert!(matches!(events[0], Event::Paste(_)));
+}
+
+#[test]
+fn slash_nav_focus_todos_and_help_q() {
+    let mut a = app();
+    a.input_buffer = "/".into();
+    a.slash_suggest.refresh(&a.input_buffer);
+    handle_event(&mut a, key(KeyCode::Up));
+    handle_event(&mut a, key(KeyCode::Down));
+    assert!(a.slash_suggest.active);
+
+    a.add_message(ChatRole::User, "hi");
+    a.focus = FocusPane::Scrollback;
+    handle_event(&mut a, key(KeyCode::Char('i')));
+    assert_eq!(a.focus, FocusPane::Prompt);
+
+    a.focus = FocusPane::Scrollback;
+    handle_event(&mut a, key(KeyCode::Char('t')));
+    // empty todos is a no-op; add one then toggle
+    a.replace_todos(vec![whycodes_core::TodoItem::new(
+        "t1",
+        "do",
+        whycodes_core::TodoStatus::Pending,
+    )]);
+    a.focus = FocusPane::Scrollback;
+    handle_event(&mut a, key(KeyCode::Char('t')));
+    assert!(a.todos_collapsed);
+
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Normal;
+    handle_event(&mut a, key(KeyCode::Char('q')));
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":help".into();
+    handle_event(&mut a, key(KeyCode::Esc));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert!(a.command.buffer.is_empty());
+
+    let mut a = app();
+    a.sidebar.visible = false;
+    handle_event(&mut a, ctrl('.'));
+    assert!(a.sidebar.visible);
+}

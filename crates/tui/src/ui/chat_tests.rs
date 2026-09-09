@@ -1043,6 +1043,66 @@ fn slash_command_token_uses_accent() {
 }
 
 #[test]
+fn home_recents_and_layout_cache_hits() {
+    use crate::app::{ChatRole, SessionEntry, TuiApp};
+    use crate::config::TuiAppConfig;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn paint_chat(app: &mut TuiApp, w: u16, h: u16) -> String {
+        let backend = TestBackend::new(w, h);
+        let mut terminal = Terminal::new(backend).expect("term");
+        terminal
+            .draw(|f| super::render(f, f.area(), app, &app.config.palette()))
+            .expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let area = buf.area();
+        let mut out = String::new();
+        for y in area.y..area.y.saturating_add(area.height) {
+            for x in area.x..area.x.saturating_add(area.width) {
+                if let Some(cell) = buf.cell((x, y)) {
+                    out.push_str(cell.symbol());
+                }
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.session_list.sessions = vec![SessionEntry {
+        id: "s1".into(),
+        title: "recent session title".into(),
+        messages: 2,
+        updated_at: Some(chrono::Utc::now()),
+        live: None,
+    }];
+    let home = paint_chat(&mut app, 80, 24);
+    assert!(
+        home.contains("recent") || home.contains("resume") || home.contains("session"),
+        "{home:?}"
+    );
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "hello cache");
+    app.add_message(ChatRole::Assistant, "world cache");
+    let width = 80u16;
+    let (starts1, total1) = super::message_row_layout(&app, width);
+    let (starts2, total2) = super::message_row_layout(&app, width);
+    assert_eq!(starts1, starts2);
+    assert_eq!(total1, total2);
+    let _ = super::session_line_count(&app, width);
+
+    let _ = super::message_row_layout_mut(&mut app, width);
+    let _ = super::session_line_count_mut(&mut app, width);
+    let session = paint_chat(&mut app, 80, 16);
+    assert!(
+        session.contains("hello") || session.contains("world") || session.contains('\u{276F}'),
+        "{session:?}"
+    );
+}
+
+#[test]
 fn visible_range_clamps_bottom_anchored_scroll() {
     assert_eq!(super::visible_range(0, 10, 0), (0, 0));
     assert_eq!(super::visible_range(10, 0, 0), (0, 0));

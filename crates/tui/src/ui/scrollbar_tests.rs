@@ -113,3 +113,77 @@ fn thumb_is_flush_with_track_top_when_offset_is_zero() {
         "top cell should be thumb at offset 0"
     );
 }
+
+#[test]
+fn scrollbar_metrics_and_content_helpers() {
+    assert!(scrollbar_metrics(5, 10, 10).is_none());
+    assert_eq!(thumb_top_for_offset(0, 0, 0), 0);
+    assert_eq!(offset_for_thumb_top(0, 0, 0), 0);
+    assert_eq!(scroll_to_selected(0, 0, 0), 0);
+    assert_eq!(selection_for_offset(0, 0, 5), 0);
+    let track = Rect::new(0, 2, 1, 8);
+    assert!(scrollbar_contains(track, 0, 2));
+    assert!(!scrollbar_contains(track, 1, 2));
+    let area = Rect::new(0, 0, 10, 6);
+    let mut buf = Buffer::empty(area);
+    let colors = ScrollbarColors {
+        track: Color::Rgb(20, 20, 20),
+        thumb: Color::Rgb(90, 90, 90),
+    };
+    let content = content_with_scrollbar(&mut buf, area, 3, 10, 0, colors);
+    assert_eq!(content, area);
+    let _ = elevate(Color::Black, 8);
+    let _ = contrast_ok(Color::Black, Color::White);
+    let _ = to_rgb(Color::Reset);
+    for c in [
+        Color::Black,
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+        Color::Gray,
+        Color::DarkGray,
+        Color::LightRed,
+        Color::LightGreen,
+        Color::LightYellow,
+        Color::LightBlue,
+        Color::LightMagenta,
+        Color::LightCyan,
+        Color::White,
+        Color::Indexed(5),
+        Color::Indexed(16),
+        Color::Indexed(232),
+        Color::Indexed(196),
+    ] {
+        let _ = to_rgb(c);
+    }
+    let palette = crate::theme::ThemeName::DefaultDark.palette();
+    let colors = ScrollbarColors::from_palette(&palette);
+    assert_ne!(colors.track, colors.thumb);
+    let mut low = palette.clone();
+    low.scrollbar = palette.bg;
+    low.dim = palette.bg;
+    let fallback = ScrollbarColors::from_palette(&low);
+    assert_ne!(fallback.track, fallback.thumb);
+    let mut buf = Buffer::empty(area);
+    let shrunk = content_with_scrollbar(&mut buf, area, 20, 4, 0, colors);
+    assert!(shrunk.width < area.width);
+    paint_scrollbar(
+        &mut buf,
+        Rect::new(0, 0, 0, 4),
+        20,
+        4,
+        0,
+        colors.track,
+        colors.thumb,
+    );
+    assert_eq!(
+        offset_from_pointer_y(0, Rect::new(0, 2, 1, 8), 5, 10, None),
+        0
+    );
+    let track = Rect::new(0, 2, 1, 8);
+    assert_eq!(offset_from_pointer_y(1, track, 30, 10, Some(0)), 0);
+    let _ = offset_from_pointer_y(20, track, 30, 10, None);
+}

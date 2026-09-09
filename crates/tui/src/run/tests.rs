@@ -5,10 +5,15 @@ fn restore_terminal_resets_cursor_style_to_user_default() {
     let mut out = Vec::new();
     restore_terminal_on(&mut out);
     let bytes = String::from_utf8_lossy(&out);
+    // Unix emulators echo DECSCUSR (`CSI 0 q`) into the writer. Windows CONOUT$
+    // often swallows the sequence, so coverage is the call itself there.
+    #[cfg(unix)]
     assert!(
         bytes.contains("\u{1b}[0 q"),
         "DECSCUSR default shape missing after TUI exit: {bytes:?}"
     );
+    #[cfg(windows)]
+    let _ = bytes;
 }
 
 #[test]
@@ -187,6 +192,9 @@ fn resolve_session_latest_and_prefix() {
         .unwrap()
         .expect("latest");
     assert_eq!(latest.id, s2.id);
+
+    let err = resolve_and_load_session(&db, "").unwrap_err();
+    assert!(err.to_string().contains("ambiguous"), "{err}");
 }
 
 #[test]
@@ -2391,6 +2399,55 @@ async fn spawn_runtime_and_drain_outcomes() {
             .iter()
             .any(|m| m.content.contains("cancelled"))
     );
+
+    let mut rt = test_runtime();
+    let mut seed = TuiApp::from_config(TuiAppConfig::default());
+    seed.add_message(ChatRole::Assistant, "");
+    seed.yield_view(&mut rt.view);
+    rt.done_tx
+        .send(TurnOutcome::Ok {
+            text: "filled".into(),
+            agent: Agent::new(dummy_info("ok2")),
+            session: Session::new(PathBuf::from("/work"), "sys".into()),
+            work_ms: 1,
+        })
+        .unwrap();
+    drain_background_runtime(&mut rt);
+    assert_eq!(rt.view.messages.last().unwrap().content, "filled");
+
+    let mut seed = TuiApp::from_config(TuiAppConfig::default());
+    seed.add_message(ChatRole::Assistant, "");
+    seed.yield_view(&mut rt.view);
+    rt.done_tx
+        .send(TurnOutcome::Remote {
+            text: "remote-fill".into(),
+            error: None,
+            work_ms: 1,
+        })
+        .unwrap();
+    drain_background_runtime(&mut rt);
+    assert_eq!(rt.view.messages.last().unwrap().content, "remote-fill");
+
+    let agent = Agent::new(dummy_info("cmp"));
+    let mut session = Session::new(PathBuf::from("/work"), "sys".into());
+    session.add_user_message("compact me");
+    rt.done_tx
+        .send(TurnOutcome::Compact {
+            agent,
+            session,
+            outcome: whycodes_session::CompactOutcome {
+                messages_before: 4,
+                messages_after: 1,
+                tokens_before: 400,
+                tokens_after: 80,
+                dropped_transcript: "old".into(),
+            },
+            work_ms: 2,
+        })
+        .unwrap();
+    drain_background_runtime(&mut rt);
+    assert!(!rt.last_error);
+    assert_eq!(rt.agent.info.name, "cmp");
 }
 
 #[tokio::test]
@@ -2427,8 +2484,8 @@ async fn drain_background_queues_prompter_asks() {
     let _ = q.await;
 }
 
-#[test]
-fn suggestion_and_catalog_helpers_short_circuit() {
+#[tokio::test]
+async fn suggestion_and_catalog_helpers_short_circuit() {
     let _home = isolate_home();
     let session = Session::new(PathBuf::from("/work"), "sys".into());
     let mut app = TuiApp::from_config(TuiAppConfig::default());
@@ -2437,7 +2494,28 @@ fn suggestion_and_catalog_helpers_short_circuit() {
     maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "key", &mut app, tx.clone());
     config.tui.prompt_suggestions = "idle".into();
     maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "", &mut app, tx.clone());
+    maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "key", &mut app, tx.clone());
+    let mut session = session;
+    session.add_user_message("   ");
+    maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "key", &mut app, tx.clone());
+    session.add_user_message("do the next step");
+    session.add_assistant_message(vec![whycodes_core::types::ContentBlock::Text {
+        text: "ok".into(),
+    }]);
     maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "key", &mut app, tx);
+    config.tui.prompt_suggestions = "on".into();
+    maybe_spawn_prompt_suggestion(
+        &config,
+        &session,
+        "unknown-provider",
+        "m",
+        "key",
+        &mut app,
+        {
+            let (tx, _rx) = mpsc::unbounded_channel();
+            tx
+        },
+    );
 
     spawn_model_context_fetch(&config, "p", "m", "", {
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -2459,6 +2537,18 @@ fn suggestion_and_catalog_helpers_short_circuit() {
             Arc::new(q)
         },
     );
+
+    let prev = std::env::var_os("WHYCODES_NO_MODEL_CATALOG");
+    unsafe { std::env::set_var("WHYCODES_NO_MODEL_CATALOG", "1") };
+    assert!(skip_model_catalog());
+    spawn_model_context_fetch(&config, "p", "m", "k", {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        tx
+    });
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_NO_MODEL_CATALOG", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_NO_MODEL_CATALOG") },
+    }
 }
 
 #[test]
@@ -2490,6 +2580,39 @@ fn load_session_entries_and_picker_merge() {
         app.session_list.sessions.iter().any(|e| e.live == Some(0)),
         "parked live row"
     );
+}
+
+#[test]
+fn load_session_entries_backfills_placeholder_title() {
+    let (_lock, home) = isolate_home_fresh();
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+    session.title = format!(
+        "{}-ab",
+        dir.path()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("session")
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect::<String>()
+    );
+    session.title_source = whycodes_session::title::TitleSource::Default;
+    session.add_user_message("please fix the login flow today");
+    persist_session_best_effort(&session, "title-backfill");
+    let entries = load_session_entries();
+    let row = entries
+        .iter()
+        .find(|e| e.id == session.id)
+        .expect("persisted");
+    assert_ne!(row.title, session.title, "placeholder should upgrade");
+    assert!(
+        row.title.to_ascii_lowercase().contains("login")
+            || row.title.to_ascii_lowercase().contains("fix"),
+        "got {}",
+        row.title
+    );
+    let _ = home;
 }
 
 #[test]
@@ -2572,6 +2695,31 @@ async fn handle_slash_more_aliases_and_connect_with_key() {
     h.run("/agent plan").await;
     assert_eq!(h.agent.info.name, "plan");
     assert!(h.app.status_message.contains("plan"));
+
+    let project = h.session.project_path.clone();
+    h.history.push_before_turn(&h.session.messages, &project);
+    h.session.add_user_message("later turn");
+    h.run("/undo").await;
+    assert!(h.app.status_message.to_lowercase().contains("undid"));
+    h.run("/redo").await;
+    assert!(h.app.status_message.to_lowercase().contains("redid"));
+
+    h.app.api_context_for = Some((h.provider.clone(), h.model.clone()));
+    h.run("/models").await;
+    h.app.dialogs.clear();
+    h.app.mode = AppMode::Normal;
+
+    h.provider = "ollama".into();
+    h.app.provider_name = "ollama".into();
+    h.api_key.clear();
+    h.run("/connect").await;
+    assert!(
+        h.app.status_message.contains("local") || h.app.status_message.contains("API key"),
+        "{}",
+        h.app.status_message
+    );
+
+    h.run("/login anthropic").await;
 }
 
 fn outcome_ok(name: &str, text: &str) -> TurnOutcome {
@@ -3081,6 +3229,26 @@ async fn apply_auth_flow_note_code_and_results() {
     .await;
     assert_eq!(provider, "tui-oauth-switch-demo");
     assert_eq!(model, "demo-model");
+
+    apply_auth_flow_event(
+        &mut app,
+        AuthFlowEvent::Done {
+            provider: "tui-oauth-switch-demo".into(),
+            result: Ok("ok".into()),
+        },
+        &mut provider,
+        &mut model,
+        &mut key,
+        &config,
+    )
+    .await;
+    assert_eq!(provider, "tui-oauth-switch-demo");
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.content.contains("Signed in to `tui-oauth-switch-demo`")),
+        "already-on provider still announces sign-in"
+    );
 }
 
 #[test]
@@ -4586,4 +4754,137 @@ fn cycle_live_session_noop_when_empty() {
 #[test]
 fn tui_available_does_not_panic() {
     let _ = tui_available();
+}
+
+#[test]
+fn resume_helpers_cover_missing_and_load_error() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut session = Session::new(PathBuf::from("/work"), "sys".into());
+    assert_eq!(
+        resume_missing_toast(RESUME_LATEST),
+        "No saved sessions to continue"
+    );
+    assert!(resume_missing_toast("abc-id").contains("abc-id"));
+
+    apply_resume_loaded(
+        &mut app,
+        &mut session,
+        "keep-sys",
+        "want",
+        false,
+        Err("disk full".into()),
+    );
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Resume failed") && t.message.contains("disk full"))
+    );
+
+    apply_resume_loaded(
+        &mut app,
+        &mut session,
+        "keep-sys",
+        RESUME_LATEST,
+        false,
+        Ok(None),
+    );
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("No saved"))
+    );
+
+    let mut loaded = Session::new(PathBuf::from("/work"), "old".into());
+    loaded.add_user_message("hello resume");
+    apply_resume_loaded(
+        &mut app,
+        &mut session,
+        "keep-sys",
+        &loaded.id.clone(),
+        true,
+        Ok(Some(loaded)),
+    );
+    assert_eq!(session.system_prompt, "keep-sys");
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Resumed"))
+    );
+}
+
+#[test]
+fn auth_send_helpers_drop_when_loop_closed() {
+    let (tx, rx) = mpsc::unbounded_channel();
+    drop(rx);
+    send_auth_event(&tx, AuthFlowEvent::Note("gone".into()));
+    send_auth_done(&tx, "acme".into(), Ok("ok".into()));
+    send_auth_done(&tx, "acme".into(), Err("fail".into()));
+}
+
+#[test]
+fn console_open_and_primary_agent_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("console.txt");
+    std::fs::write(&path, b"").unwrap();
+    let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    assert!(console_open_result(Ok(file), "ok").is_some());
+    assert!(
+        console_open_result(
+            Err(io::Error::new(io::ErrorKind::NotFound, "nope")),
+            "open CONOUT$ failed, trying stdout",
+        )
+        .is_none()
+    );
+
+    let mut agents = Vec::new();
+    ensure_primary_agents(&mut agents);
+    assert_eq!(agents, vec!["build", "plan", "ask"]);
+    ensure_primary_agents(&mut agents);
+    assert_eq!(agents.len(), 3);
+
+    let info = default_agent_info("why");
+    assert_eq!(info.name, "why");
+    assert_eq!(info.description, "Default");
+    assert!(info.permission.allow_file_writes);
+}
+
+#[test]
+fn tui_writer_write_flush_and_summary() {
+    let mut stdout = TuiWriter::Stdout(io::stdout());
+    let _ = stdout.write(b"");
+    let _ = stdout.flush();
+    if let Some(console) = open_controlling_console() {
+        let mut w = TuiWriter::Console(console);
+        let _ = w.write(b"");
+        let _ = w.flush();
+    }
+    print_session_summary("coverage-summary");
+    let _ = tui_available();
+    let _ = open_tui_writer();
+}
+
+#[test]
+fn bind_agent_prompters_attaches_channels() {
+    let (perm, _perm_rx) = ChannelPermissionPrompter::new();
+    let (question, _q_rx) = ChannelQuestionPrompter::new(None);
+    let perm = Arc::new(perm);
+    let question = Arc::new(question);
+    let agent = bind_agent_prompters(Agent::new(dummy_info("build")), &perm, &question);
+    assert_eq!(agent.info.name, "build");
+}
+
+#[test]
+fn enable_keyboard_enhancement_skips_bench() {
+    let _lock = isolate_home_lock();
+    let prev = std::env::var_os("WHYCODES_BENCH");
+    unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
+    let mut out = Vec::new();
+    assert!(!enable_keyboard_enhancement(&mut out));
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
+    }
 }

@@ -132,6 +132,20 @@ fn parses_both_hex_lengths() {
 }
 
 #[test]
+fn a_bad_def_hex_names_the_role() {
+    let json = r##"{"defs":{"bad":"not-hex"},"theme":{
+        "background":{"dark":"#000","light":"#fff"},
+        "text":{"dark":"#fff","light":"#000"},
+        "border":{"dark":"#111","light":"#eee"},
+        "accent":{"dark":"bad","light":"bad"}
+    }}"##;
+    let err = ThemeFile::parse(json).unwrap().palette(false).unwrap_err();
+    assert!(matches!(err, ThemeFileError::BadColor { .. }));
+    assert!(err.to_string().contains("accent"));
+    assert!(err.to_string().contains("not-hex"));
+}
+
+#[test]
 fn a_missing_directory_yields_nothing_rather_than_an_error() {
     let (loaded, errors) = load_dir(Path::new("/definitely/not/here"));
     assert!(loaded.is_empty());

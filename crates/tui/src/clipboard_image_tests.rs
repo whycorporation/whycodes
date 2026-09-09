@@ -83,3 +83,89 @@ fn stub_roundtrip() {
     let got = with_stub(Err("boom".into()), read_for_prompt).unwrap_err();
     assert_eq!(got, "boom");
 }
+
+#[test]
+fn bytes_to_prompt_covers_empty_unknown_and_errors() {
+    assert!(matches!(
+        bytes_to_prompt(Ok(Vec::new())).unwrap(),
+        PromptClipboard::Empty
+    ));
+    assert!(matches!(
+        bytes_to_prompt(Ok(b"not-an-image".to_vec())).unwrap(),
+        PromptClipboard::Empty
+    ));
+    assert!(matches!(
+        bytes_to_prompt(Err(RunErr::NotFound)).unwrap(),
+        PromptClipboard::Empty
+    ));
+    assert!(matches!(
+        bytes_to_prompt(Err(RunErr::Exit)).unwrap(),
+        PromptClipboard::Empty
+    ));
+    assert!(matches!(
+        bytes_to_prompt(Err(RunErr::Timeout)).unwrap(),
+        PromptClipboard::Empty
+    ));
+    let err = bytes_to_prompt(Err(RunErr::TooLarge)).unwrap_err();
+    assert!(err.contains("too large"), "{err}");
+    let err = bytes_to_prompt(Err(RunErr::Io("boom".into()))).unwrap_err();
+    assert_eq!(err, "boom");
+}
+
+#[test]
+fn send_run_drops_when_receiver_is_gone() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    drop(rx);
+    send_run(tx, Ok(b"png".to_vec()));
+}
+
+#[test]
+fn command_stdout_not_found_and_timeout() {
+    match command_stdout("whycodes-no-such-clipboard-bin", &[], TIMEOUT) {
+        Err(RunErr::NotFound) => {}
+        other => panic!("expected NotFound, got {other:?}"),
+    }
+    match command_stdout(
+        "cmd",
+        &["/C", "ping -n 30 127.0.0.1 > NUL"],
+        Duration::from_millis(1),
+    ) {
+        Err(RunErr::Timeout) | Err(RunErr::Exit) | Err(RunErr::Io(_)) => {}
+        other => panic!("expected timeout/exit, got {other:?}"),
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn command_status_and_cleanup_temp() {
+    assert!(command_status("cmd", &["/C", "exit 0"], TIMEOUT).is_ok());
+    match command_status("whycodes-no-such-clipboard-bin", &[], TIMEOUT) {
+        Err(RunErr::NotFound) => {}
+        other => panic!("expected NotFound, got {other:?}"),
+    }
+    let path = std::env::temp_dir().join("whycodes-clip-missing.png");
+    cleanup_temp(&path);
+}
+
+#[test]
+fn prune_old_clipboard_images_skips_missing_and_keeps_fresh() {
+    prune_old_clipboard_images(std::path::Path::new(
+        "C:/dev/whycodes/target/no-such-clipboard-dir",
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    let fresh = dir.path().join("fresh.png");
+    std::fs::write(&fresh, b"\x89PNG\r\n\x1a\n").unwrap();
+    prune_old_clipboard_images(dir.path());
+    assert!(fresh.exists());
+}
+
+#[test]
+fn sniff_covers_remaining_headers() {
+    assert_eq!(sniff_image(b"GIF87a....").unwrap().ext, "gif");
+    assert_eq!(sniff_image(b"MM\0*....").unwrap().ext, "tiff");
+    assert!(sniff_image(b"RIFF????XXXX").is_none());
+    assert_eq!(
+        first_image_mime(["image/jpeg"].into_iter()),
+        Some("image/jpeg")
+    );
+}
