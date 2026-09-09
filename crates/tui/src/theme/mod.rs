@@ -1587,7 +1587,29 @@ mod color_mode_tests {
         let _ = to_rgb(Color::Indexed(0));
         let _ = to_rgb(Color::Indexed(16));
         let _ = to_rgb(Color::Indexed(232));
-        let _ = to_rgb(Color::Black);
+        for c in [
+            Color::Black,
+            Color::Red,
+            Color::Green,
+            Color::Yellow,
+            Color::Blue,
+            Color::Magenta,
+            Color::Cyan,
+            Color::Gray,
+            Color::DarkGray,
+            Color::LightRed,
+            Color::LightGreen,
+            Color::LightYellow,
+            Color::LightBlue,
+            Color::LightMagenta,
+            Color::LightCyan,
+            Color::White,
+        ] {
+            let _ = to_rgb(c);
+        }
+        for i in 1..=14u8 {
+            let _ = to_rgb(Color::Indexed(i));
+        }
         assert_eq!(dark.parse_spec("secondary"), Some(dark.user_msg));
         assert_eq!(dark.parse_spec("warning"), Some(dark.warning));
         assert_eq!(dark.parse_spec("error"), Some(dark.error));

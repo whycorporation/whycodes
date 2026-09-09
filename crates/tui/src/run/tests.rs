@@ -288,6 +288,16 @@ fn cost_report_includes_last_turn_usage() {
 fn context_report_lists_roles_and_tool_sizes() {
     let mut session = Session::new(PathBuf::from("/work/proj"), "sys".into());
     session.add_user_message("do it");
+    session.add_assistant_message(vec![whycodes_core::types::ContentBlock::Text {
+        text: "working".into(),
+    }]);
+    session.messages.push(whycodes_core::types::Message {
+        role: whycodes_core::types::Role::System,
+        content: whycodes_core::types::MessageContent::Text("note".into()),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    });
     session.add_tool_results(vec![whycodes_core::types::ToolResult {
         tool_call_id: "tc1".into(),
         content: "short result".into(),
@@ -307,8 +317,10 @@ fn context_report_lists_roles_and_tool_sizes() {
     });
     let out = context_report(&session, &app, &config, &agent);
     assert!(out.contains("Context"), "{out}");
-    assert!(out.contains("messages:  2"), "{out}");
+    assert!(out.contains("messages:  4"), "{out}");
     assert!(out.contains("user: 1"), "{out}");
+    assert!(out.contains("assistant: 1"), "{out}");
+    assert!(out.contains("system: 1"), "{out}");
     assert!(out.contains("tool: 1"), "{out}");
     assert!(out.contains("largest tool results"), "{out}");
     assert!(out.contains("profile="), "{out}");
@@ -1580,6 +1592,9 @@ async fn handle_slash_covers_local_commands() {
 
     h.run("/undo").await;
     assert!(h.app.status_message.to_lowercase().contains("nothing"));
+    h.session.add_user_message("session-only undo");
+    h.run("/undo").await;
+    assert!(h.app.status_message.to_lowercase().contains("undid"));
     h.run("/redo").await;
     assert!(h.app.status_message.to_lowercase().contains("nothing"));
 
@@ -1757,6 +1772,21 @@ async fn handle_slash_covers_local_commands() {
     );
 
     h.run("/unshare").await;
+    assert!(
+        h.app.status_message.contains("No share files")
+            || h.app.status_message.contains("Unshared"),
+        "{}",
+        h.app.status_message
+    );
+    let shares = h.session.project_path.join(".whycodes").join("shares");
+    std::fs::create_dir_all(&shares).unwrap();
+    std::fs::write(shares.join(format!("{}.json", h.session.id)), "{}").unwrap();
+    h.run("/unshare").await;
+    assert!(
+        h.app.status_message.contains("Unshared"),
+        "{}",
+        h.app.status_message
+    );
     h.run("/share").await;
     h.run("/connect").await;
     h.run("/login").await;
@@ -1814,7 +1844,8 @@ fn memory_and_index_helpers() {
         top_p: None,
     });
     refresh_session_memory(&mut session, &agent, dir.path(), &config, None);
-    let _ = memory_service(dir.path(), &config);
+    let svc = memory_service(dir.path(), &config).expect("memory service");
+    let _ = svc.list(1);
 }
 
 #[test]
@@ -2720,6 +2751,38 @@ async fn handle_slash_more_aliases_and_connect_with_key() {
     );
 
     h.run("/login anthropic").await;
+
+    let prev_ci = std::env::var_os("CI");
+    let prev_skip = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+        std::env::remove_var("CI");
+    }
+    h.run("/import").await;
+    unsafe {
+        match prev_ci {
+            Some(v) => std::env::set_var("CI", v),
+            None => std::env::remove_var("CI"),
+        }
+        match prev_skip {
+            Some(v) => std::env::set_var("WHYCODES_SKIP_IMPORT", v),
+            None => std::env::remove_var("WHYCODES_SKIP_IMPORT"),
+        }
+    }
+    assert!(
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Import skipped")),
+        "{:?}",
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
 }
 
 fn outcome_ok(name: &str, text: &str) -> TurnOutcome {
@@ -4471,6 +4534,16 @@ fn maybe_offer_import_confirms_on_empty_home() {
     maybe_offer_import(&mut app);
     assert!(app.import_prompted);
     assert!(!app.dialogs.is_open());
+
+    std::fs::write(
+        home.path().join("config.toml"),
+        "default_agent = \"build\"\n",
+    )
+    .unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_offer_import(&mut app);
+    assert!(app.import_prompted);
+    assert!(!app.dialogs.is_open());
 }
 
 #[test]
@@ -4481,6 +4554,13 @@ fn maybe_offer_import_skips_when_env_set() {
     maybe_offer_import(&mut app);
     assert!(!app.import_prompted);
     assert!(!app.dialogs.is_open());
+    handle_import_slash(&mut app, "");
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Import skipped"))
+    );
 }
 
 #[test]
