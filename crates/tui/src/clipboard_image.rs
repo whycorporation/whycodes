@@ -358,34 +358,41 @@ fn read_windows_image() -> Result<PromptClipboard, String> {
         &["-NoProfile", "-STA", "-Command", &script],
         TIMEOUT,
     );
+    finish_windows_clipboard(dest, result)
+}
+
+#[cfg(target_os = "windows")]
+fn finish_windows_clipboard(
+    dest: PathBuf,
+    result: Result<(), RunErr>,
+) -> Result<PromptClipboard, String> {
     match result {
-        Ok(()) => {
-            let bytes = match std::fs::read(&dest) {
-                Ok(b) => b,
-                Err(e) => {
-                    cleanup_temp(&dest);
-                    return Err(format!("read clipboard temp: {e}"));
-                }
-            };
-            cleanup_temp(&dest);
-            bytes_to_prompt(Ok(bytes))
+        Ok(()) => finish_windows_saved_image(&dest),
+        Err(e) => windows_clipboard_run_err(&dest, e),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn finish_windows_saved_image(dest: &Path) -> Result<PromptClipboard, String> {
+    let bytes = match std::fs::read(dest) {
+        Ok(b) => b,
+        Err(e) => {
+            cleanup_temp(dest);
+            return Err(format!("read clipboard temp: {e}"));
         }
-        Err(RunErr::Exit) | Err(RunErr::Timeout) => {
-            cleanup_temp(&dest);
-            Ok(PromptClipboard::Empty)
-        }
-        Err(RunErr::NotFound) => {
-            cleanup_temp(&dest);
-            Err("PowerShell is required to paste images from the clipboard".into())
-        }
-        Err(RunErr::TooLarge) => {
-            cleanup_temp(&dest);
-            Err("clipboard image is too large".into())
-        }
-        Err(RunErr::Io(e)) => {
-            cleanup_temp(&dest);
-            Err(e)
-        }
+    };
+    cleanup_temp(dest);
+    bytes_to_prompt(Ok(bytes))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_clipboard_run_err(dest: &Path, err: RunErr) -> Result<PromptClipboard, String> {
+    cleanup_temp(dest);
+    match err {
+        RunErr::Exit | RunErr::Timeout => Ok(PromptClipboard::Empty),
+        RunErr::NotFound => Err("PowerShell is required to paste images from the clipboard".into()),
+        RunErr::TooLarge => Err("clipboard image is too large".into()),
+        RunErr::Io(e) => Err(e),
     }
 }
 
@@ -467,6 +474,32 @@ fn bytes_to_prompt(result: Result<Vec<u8>, RunErr>) -> Result<PromptClipboard, S
     }
 }
 
+fn classify_command_output(output: io::Result<std::process::Output>) -> Result<Vec<u8>, RunErr> {
+    match output {
+        Ok(out) => classify_stdout(out.stdout, out.status.success()),
+        Err(e) => Err(classify_spawn_err(e)),
+    }
+}
+
+fn classify_stdout(stdout: Vec<u8>, success: bool) -> Result<Vec<u8>, RunErr> {
+    if (stdout.len() as u64) > MAX_IMAGE_BYTES {
+        return Err(RunErr::TooLarge);
+    }
+    if success {
+        Ok(stdout)
+    } else {
+        Err(RunErr::Exit)
+    }
+}
+
+fn classify_spawn_err(e: io::Error) -> RunErr {
+    if e.kind() == io::ErrorKind::NotFound {
+        RunErr::NotFound
+    } else {
+        RunErr::Io(e.to_string())
+    }
+}
+
 fn send_run(tx: mpsc::Sender<Result<Vec<u8>, RunErr>>, value: Result<Vec<u8>, RunErr>) {
     if let Err(error) = tx.send(value) {
         tracing::debug!(?error, "clipboard paste: result receiver dropped");
@@ -484,21 +517,7 @@ fn command_stdout(bin: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .output();
-        match output {
-            Ok(out) => {
-                if (out.stdout.len() as u64) > MAX_IMAGE_BYTES {
-                    send_run(tx, Err(RunErr::TooLarge));
-                    return;
-                }
-                if out.status.success() {
-                    send_run(tx, Ok(out.stdout));
-                } else {
-                    send_run(tx, Err(RunErr::Exit));
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => send_run(tx, Err(RunErr::NotFound)),
-            Err(e) => send_run(tx, Err(RunErr::Io(e.to_string()))),
-        }
+        send_run(tx, classify_command_output(output));
     });
     match rx.recv_timeout(timeout) {
         Ok(r) => r,

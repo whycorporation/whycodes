@@ -273,6 +273,87 @@ fn bytes_to_prompt_covers_empty_invalid_and_errors() {
     );
 }
 
+#[test]
+fn classify_stdout_too_large_ok_and_exit() {
+    let too = vec![0u8; (MAX_IMAGE_BYTES as usize) + 1];
+    match classify_stdout(too, true) {
+        Err(RunErr::TooLarge) => {}
+        other => panic!("expected TooLarge, got {other:?}"),
+    }
+    let png = b"\x89PNG\r\n\x1a\n".to_vec();
+    match classify_stdout(png.clone(), true) {
+        Ok(out) => assert_eq!(out, png),
+        other => panic!("expected Ok, got {other:?}"),
+    }
+    match classify_stdout(png, false) {
+        Err(RunErr::Exit) => {}
+        other => panic!("expected Exit, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_spawn_err_not_found_and_io() {
+    match classify_spawn_err(io::Error::new(io::ErrorKind::NotFound, "gone")) {
+        RunErr::NotFound => {}
+        other => panic!("expected NotFound, got {other:?}"),
+    }
+    match classify_spawn_err(io::Error::other("disk")) {
+        RunErr::Io(msg) => assert!(msg.contains("disk"), "{msg}"),
+        other => panic!("expected Io, got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_command_output_maps_spawn_and_stdout() {
+    match classify_command_output(Err(io::Error::new(io::ErrorKind::NotFound, "x"))) {
+        Err(RunErr::NotFound) => {}
+        other => panic!("expected NotFound, got {other:?}"),
+    }
+    match classify_command_output(Err(io::Error::other("pipe"))) {
+        Err(RunErr::Io(msg)) => assert!(msg.contains("pipe"), "{msg}"),
+        other => panic!("expected Io, got {other:?}"),
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn finish_windows_clipboard_covers_temp_read_and_run_errs() {
+    let missing = std::env::temp_dir().join("whycodes-clip-no-such-file.png");
+    let _ = std::fs::remove_file(&missing);
+    let err = finish_windows_saved_image(&missing).unwrap_err();
+    assert!(err.contains("read clipboard temp"), "{err}");
+
+    let dest = tempfile::NamedTempFile::new().unwrap();
+    let path = dest.path().to_path_buf();
+    std::fs::write(&path, b"\x89PNG\r\n\x1a\nhello").unwrap();
+    match finish_windows_saved_image(&path) {
+        Ok(PromptClipboard::ImagePaths(p)) => assert_eq!(p.len(), 1),
+        other => panic!("expected ImagePaths, got {other:?}"),
+    }
+
+    assert!(matches!(
+        windows_clipboard_run_err(&missing, RunErr::Exit),
+        Ok(PromptClipboard::Empty)
+    ));
+    assert!(matches!(
+        windows_clipboard_run_err(&missing, RunErr::Timeout),
+        Ok(PromptClipboard::Empty)
+    ));
+    let err = windows_clipboard_run_err(&missing, RunErr::NotFound).unwrap_err();
+    assert!(err.contains("PowerShell"), "{err}");
+    let err = windows_clipboard_run_err(&missing, RunErr::TooLarge).unwrap_err();
+    assert!(err.contains("too large"), "{err}");
+    let err = windows_clipboard_run_err(&missing, RunErr::Io("disk".into())).unwrap_err();
+    assert_eq!(err, "disk");
+
+    let dest = tempfile::NamedTempFile::new().unwrap();
+    let path = dest.path().to_path_buf();
+    match finish_windows_clipboard(path.clone(), Err(RunErr::Exit)) {
+        Ok(PromptClipboard::Empty) => {}
+        other => panic!("expected Empty, got {other:?}"),
+    }
+}
+
 #[cfg(target_os = "windows")]
 #[test]
 fn command_stdout_echo_and_missing_bin() {

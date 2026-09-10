@@ -1908,6 +1908,63 @@ fn auto_index_zero_chunks_does_not_toast() {
     );
 }
 
+#[tokio::test]
+async fn spawn_model_context_fetch_sends_window_from_live_http() {
+    let _home = isolate_home();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 512];
+        loop {
+            let n = stream.read(&mut tmp).await.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+            if buf.len() > 16 * 1024 {
+                break;
+            }
+        }
+        let body = r#"{"data":[{"id":"m1","context_length":128000}]}"#;
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(resp.as_bytes()).await;
+        let _ = stream.shutdown().await;
+    });
+    let mut config = Config::default();
+    config.providers.insert(
+        "acme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "acme".into(),
+            api_key: Some("sk-test".into()),
+            api_base: None,
+            base_url: Some(format!("http://{addr}")),
+            headers: None,
+            models: vec!["m1".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    spawn_model_context_fetch(&config, "acme", "m1", "sk-test", tx);
+    let got = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+        .await
+        .ok()
+        .flatten();
+    let _ = server.await;
+    assert_eq!(got, Some(("acme".into(), "m1".into(), 128_000)));
+}
+
 fn dummy_info(name: &str) -> whycodes_core::types::AgentInfo {
     whycodes_core::types::AgentInfo {
         name: name.into(),
@@ -6558,6 +6615,77 @@ async fn run_live_buf_empty_key_hydrates_from_env_then_quits() {
 }
 
 #[tokio::test]
+async fn run_live_buf_first_frame_hydrates_plugin_sessions_and_config_key() {
+    let (_lock, home) = isolate_home_fresh();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("lib.rs"), "pub fn x() {}").unwrap();
+    let plugins = home.path().join("plugins").join("demo-auth");
+    std::fs::create_dir_all(&plugins).unwrap();
+    std::fs::write(
+        plugins.join("plugin.json"),
+        r#"{
+            "kind": "auth",
+            "auth": {
+                "provider": "tui-hydrate-plugin",
+                "label": "Hydrate",
+                "flow": "device-code",
+                "client_id": "abc",
+                "authorize_url": "https://example.com/device/code",
+                "token_url": "https://example.com/token",
+                "scopes": "read"
+            }
+        }"#,
+    )
+    .unwrap();
+    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+    session.add_user_message("hydrate session list");
+    persist_session_best_effort(&session, "hydrate");
+
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    let prev_key = std::env::var_os("ACME_API_KEY");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+        std::env::remove_var("ACME_API_KEY");
+    }
+    set_headless_events(None);
+    set_headless_live(true);
+    set_crossterm_stub(std::collections::VecDeque::from([ctrl('q')]));
+    let mut opts = boot_opts(dir.path(), "");
+    opts.config.providers.insert(
+        "acme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "acme".into(),
+            api_key: Some("sk-from-config".into()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec!["m1".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    match prev_key {
+        Some(v) => unsafe { std::env::set_var("ACME_API_KEY", v) },
+        None => unsafe { std::env::remove_var("ACME_API_KEY") },
+    }
+    set_headless_live(false);
+    clear_crossterm_stub();
+    let _ = home;
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
 async fn run_headless_confirms_self_install_upgrade() {
     let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
@@ -7369,8 +7497,6 @@ async fn run_headless_remote_turn_ok_then_quits() {
     }
     let mut events = Vec::new();
     events.extend(type_line("hi remote"));
-    events.push(ctrl('q'));
-    events.push(press(KeyCode::Enter));
     set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.remote = Some(crate::remote::RemoteAttach::new(
