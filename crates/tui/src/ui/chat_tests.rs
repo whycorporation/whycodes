@@ -1931,6 +1931,94 @@ fn session_bar_layout_gives_the_gutter_back_when_narrower_wrap_fits() {
 }
 
 #[test]
+fn refresh_live_markdown_seeds_stream_and_skip_omits_growing_answer() {
+    use crate::app::AgentState;
+    let palette = ThemeName::DefaultDark.palette();
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "hi");
+    app.add_message(ChatRole::Assistant, "growing **answer**");
+    app.current_agent_state = AgentState::Generating;
+    let i = app.messages.len() - 1;
+    assert!(app.messages[i].stream_md.is_none());
+    super::refresh_live_markdown(&mut app, i, 60);
+    assert!(
+        app.messages[i].stream_md.is_some(),
+        "a live assistant must seed IncrementalMarkdown"
+    );
+    super::refresh_live_markdown(&mut app, 0, 60);
+    assert!(
+        app.messages[0].stream_md.is_none(),
+        "a closed user bubble must not grow a stream buffer"
+    );
+
+    let skipped = super::render_message_live(&mut app, i, &palette, 60, false);
+    let joined: String = skipped
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        !joined.contains("growing"),
+        "include_live_md=false must omit the growing answer, got {joined:?}"
+    );
+    let full = super::render_message_live(&mut app, i, &palette, 60, true);
+    let joined: String = full
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains("growing") || joined.contains("answer"),
+        "include_live_md=true must paint the growing answer, got {joined:?}"
+    );
+}
+
+#[test]
+fn thinking_lines_puts_elapsed_on_the_right_while_running() {
+    use crate::app::ThinkingBlock;
+    let palette = ThemeName::DefaultDark.palette();
+    let mut t = ThinkingBlock::new("reason");
+    t.started_at = std::time::Instant::now() - std::time::Duration::from_millis(1400);
+    let lines = super::thinking_lines(&t, &palette, 40, 0);
+    let joined: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains("Thinking") && (joined.contains("1.") || joined.contains("s")),
+        "running thought with elapsed > 0 must put a timer on the right, got {joined:?}"
+    );
+}
+
+#[test]
+fn collapsed_file_tools_group_instead_of_expanding_each_card() {
+    let palette = ThemeName::DefaultDark.palette();
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::Assistant, "");
+    let i = app.messages.len() - 1;
+    app.messages[i].results_expanded = false;
+    app.messages[i].blocks = vec![
+        crate::app::ChatBlock::ToolUse {
+            id: "a".into(),
+            name: "read".into(),
+            input: json!({"path": "a.rs"}),
+        },
+        crate::app::ChatBlock::ToolUse {
+            id: "b".into(),
+            name: "read".into(),
+            input: json!({"path": "b.rs"}),
+        },
+    ];
+    let lines = super::render_message(&app.messages[i], &app, &palette, i, 60, None, true);
+    let joined: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains("read") || joined.contains("file") || joined.contains("Read"),
+        "collapsed file tools must paint as a grouped run, got {joined:?}"
+    );
+}
+
+#[test]
 fn session_paint_blanks_leftover_rows_when_layout_cache_undershoots() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
