@@ -2281,3 +2281,112 @@ fn sidebar_and_tasks_hotkeys() {
     assert!(handle_event(&mut a, ctrl('.')));
     assert!(handle_event(&mut a, ctrl(',')));
 }
+
+#[test]
+fn help_jk_scroll_and_backspace() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Help;
+    assert!(handle_event(&mut a, key(KeyCode::Char('j'))));
+    assert!(a.help_scroll > 0);
+    assert!(handle_event(&mut a, key(KeyCode::Char('k'))));
+    assert!(handle_event(&mut a, key(KeyCode::Down)));
+    assert!(handle_event(&mut a, key(KeyCode::Up)));
+    handle_event(&mut a, key(KeyCode::Char('/')));
+    handle_event(&mut a, key(KeyCode::Char('x')));
+    assert_eq!(a.help_query, "x");
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert!(a.help_query.is_empty());
+}
+
+#[test]
+fn import_picker_space_select_all_and_none() {
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    assert!(handle_event(&mut a, key(KeyCode::Char('a'))));
+    assert!(a.import_picker.any_checked());
+    assert!(handle_event(&mut a, key(KeyCode::Char('n'))));
+}
+
+#[test]
+fn modal_mouse_click_outside_and_drag() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 1, 1));
+    assert!(a.dialogs.is_open());
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 20, 8),
+    );
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Drag(MouseButton::Left), 24, 9),
+    );
+    assert!(a.mouse_sel.as_ref().is_some_and(|s| s.dragging));
+}
+
+#[test]
+fn focus_prompt_scrollback_and_pending_suggestion() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "hi");
+    a.focus_scrollback();
+    assert!(handle_event(&mut a, key(KeyCode::Char('i'))));
+    a.pending_suggestion = Some("try this".into());
+    a.input_buffer.clear();
+    a.input_cursor = 0;
+    a.focus_prompt();
+    assert!(handle_event(&mut a, key(KeyCode::Tab)));
+    assert!(a.input_buffer.contains("try this") || a.pending_suggestion.is_none());
+}
+
+#[test]
+fn cwd_click_copies_or_warns() {
+    let mut a = app();
+    a.project_dir = std::path::PathBuf::from("/work/proj");
+    a.cwd_hit.set_rect(Some(Rect {
+        x: 2,
+        y: 1,
+        width: 10,
+        height: 1,
+    }));
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 4, 1));
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 4, 1));
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Copied") || t.message.contains("clipboard"))
+    );
+}
+
+#[test]
+fn colon_sidebar_and_clear_commands() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.command.buffer = ":sidebar".into();
+    handle_event(&mut a, key(KeyCode::Enter));
+    a.mode = AppMode::Command;
+    a.add_message(ChatRole::User, "x");
+    a.command.buffer = ":clear".into();
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert!(a.messages.is_empty());
+}
