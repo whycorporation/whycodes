@@ -2068,8 +2068,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         && let Event::Key(key) = &ev
                         && key.kind == KeyEventKind::Press
                     {
-                        match key.code {
-                            KeyCode::Esc => {
+                        match busy_key_action(key) {
+                            BusyKey::Esc => {
                                 // First Esc: cooperative cancel. Second: force-stop now.
                                 if cancel_requested_at.is_some() {
                                     force_stop_turn(
@@ -2092,11 +2092,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                                 app.esc_armed_at = None;
                                 continue;
                             }
-                            KeyCode::Char('q')
-                                if key
-                                    .modifiers
-                                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                            {
+                            BusyKey::Quit => {
                                 // Quit: always force-stop so we never hang on exit.
                                 if rt.agent_busy {
                                     force_stop_turn(
@@ -2111,11 +2107,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                                 app.running = false;
                                 continue;
                             }
-                            KeyCode::Char('c')
-                                if key
-                                    .modifiers
-                                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                            {
+                            BusyKey::CtrlC => {
                                 match busy_ctrl_c(&mut app, cancel_requested_at) {
                                     BusyCtrlC::ClearedDraft => {}
                                     BusyCtrlC::BeginCancel => begin_cancel(
@@ -2136,11 +2128,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                                 }
                                 continue;
                             }
-                            KeyCode::Enter => {
+                            BusyKey::WaitEnter => {
                                 toast_wait_for_turn(&mut app);
                                 continue;
                             }
-                            _ => {
+                            BusyKey::PassThrough => {
                                 // Typing, scroll, focus toggle — all allowed mid-turn.
                                 let _ = input::handle_event(&mut app, ev);
                                 continue;
@@ -2321,7 +2313,7 @@ fn poll_timeout(requested: Duration, force_zero: bool) -> Duration {
 }
 
 /// Mouse motion is tracked for hover; it must not by itself schedule a
-/// full chat paint (handle_mouse marks dirty only when chrome hover changes).
+/// full chat paint (handle_mouseks dirty only when chrome hover changes).
 fn event_forces_redraw(ev: &Event) -> bool {
     !matches!(
         ev,
@@ -2348,6 +2340,37 @@ fn print_session_summary(summary: &str) {
     let mut err = io::stderr();
     let _ = writeln!(err, "{summary}");
     let _ = err.flush();
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BusyKey {
+    Esc,
+    Quit,
+    CtrlC,
+    WaitEnter,
+    PassThrough,
+}
+
+fn busy_key_action(key: &crossterm::event::KeyEvent) -> BusyKey {
+    match key.code {
+        KeyCode::Esc => BusyKey::Esc,
+        KeyCode::Char('q')
+            if key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+        {
+            BusyKey::Quit
+        }
+        KeyCode::Char('c')
+            if key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+        {
+            BusyKey::CtrlC
+        }
+        KeyCode::Enter => BusyKey::WaitEnter,
+        _ => BusyKey::PassThrough,
+    }
 }
 
 fn toast_wait_for_turn(app: &mut TuiApp) {

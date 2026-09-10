@@ -1534,6 +1534,35 @@ fn toast_wait_for_turn_pushes_info_toast() {
     );
 }
 
+#[test]
+fn busy_key_action_maps_esc_quit_ctrl_c_enter_and_passthrough() {
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        BusyKey::Esc
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+        BusyKey::Quit
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        BusyKey::CtrlC
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        BusyKey::WaitEnter
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+        BusyKey::PassThrough
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+        BusyKey::PassThrough
+    );
+}
+
 #[tokio::test]
 async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
     let _home = isolate_home();
