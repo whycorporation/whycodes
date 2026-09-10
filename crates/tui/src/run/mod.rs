@@ -870,21 +870,42 @@ fn windows_console_open_options() -> std::fs::OpenOptions {
     o
 }
 
+/// Open `/dev/tty` with Unix flags. Always compiled so tests can drive the
+/// builder + path without a Unix host.
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+fn try_open_unix_tty() -> io::Result<std::fs::File> {
+    unix_tty_open_options().open("/dev/tty")
+}
+
+/// Open `CONOUT$` with Windows flags. Always compiled so tests can drive it
+/// without a live console.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn try_open_windows_console() -> io::Result<std::fs::File> {
+    windows_console_open_options().open("CONOUT$")
+}
+
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+fn open_unix_controlling_console() -> Option<std::fs::File> {
+    console_open_result(try_open_unix_tty(), "open /dev/tty failed, trying stdout")
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn open_windows_controlling_console() -> Option<std::fs::File> {
+    console_open_result(
+        try_open_windows_console(),
+        "open CONOUT$ failed, trying stdout",
+    )
+}
+
 /// `/dev/tty` on Unix, `CONOUT$` on Windows. `None` if this process has no console.
 fn open_controlling_console() -> Option<std::fs::File> {
     #[cfg(unix)]
     {
-        console_open_result(
-            unix_tty_open_options().open("/dev/tty"),
-            "open /dev/tty failed, trying stdout",
-        )
+        open_unix_controlling_console()
     }
     #[cfg(windows)]
     {
-        console_open_result(
-            windows_console_open_options().open("CONOUT$"),
-            "open CONOUT$ failed, trying stdout",
-        )
+        open_windows_controlling_console()
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -1743,17 +1764,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 if batch.iter().any(event_forces_redraw) {
                     app.mark_dirty();
                 }
-                if batch
-                    .iter()
-                    .any(crate::redraw_schedule::event_needs_full_clear)
-                {
-                    // Two frames: some emulators echo the paste *after*
-                    // Event::Paste, so one clear is overwritten by the ghost.
-                    app.request_full_clear(2);
-                }
-                if crate::redraw_schedule::batch_looks_like_unbracketed_paste(&batch) {
-                    app.request_full_clear(2);
-                }
+                apply_batch_full_clears(&mut app, &batch);
 
                 for ev in batch {
                     if apply_permission_overlay_event(&mut app, &mut rt, &ev) {
@@ -4685,6 +4696,21 @@ pub(super) fn settle_first_frame_hydrate(
     if !animate {
         app.needs_redraw = false;
         app.pending_full_clears = 0;
+    }
+}
+
+/// Paste / focus / resize echo leftover glyphs onto the PTY; clear twice.
+fn apply_batch_full_clears(app: &mut TuiApp, batch: &[Event]) {
+    if batch
+        .iter()
+        .any(crate::redraw_schedule::event_needs_full_clear)
+    {
+        // Two frames: some emulators echo the paste *after*
+        // Event::Paste, so one clear is overwritten by the ghost.
+        app.request_full_clear(2);
+    }
+    if crate::redraw_schedule::batch_looks_like_unbracketed_paste(batch) {
+        app.request_full_clear(2);
     }
 }
 

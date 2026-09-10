@@ -6139,6 +6139,40 @@ fn tui_available_does_not_panic() {
     assert!(matches!(ev, Event::Key(_)));
     let err = read_crossterm_with(|| Err(io::Error::other("read"))).unwrap_err();
     assert!(err.to_string().contains("read"));
+
+    // Drive the Unix `/dev/tty` open path on every host (ENOENT on Windows).
+    let unix = open_unix_controlling_console();
+    let _ = unix;
+    let _ = try_open_unix_tty();
+    let _ = open_windows_controlling_console();
+    let _ = try_open_windows_console();
+}
+
+#[test]
+fn apply_batch_full_clears_on_paste_and_unbracketed_flood() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_batch_full_clears(&mut app, &[Event::Paste("hello".into())]);
+    assert!(
+        app.pending_full_clears >= 2,
+        "Event::Paste must request two full clears, got {}",
+        app.pending_full_clears
+    );
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let flood: Vec<Event> = (0..40).map(|_| press(KeyCode::Char('x'))).collect();
+    apply_batch_full_clears(&mut app, &flood);
+    assert!(
+        app.pending_full_clears >= 2,
+        "an unbracketed paste flood must request two full clears, got {}",
+        app.pending_full_clears
+    );
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_batch_full_clears(&mut app, &[press(KeyCode::Char('a'))]);
+    assert_eq!(
+        app.pending_full_clears, 0,
+        "a single key must not force a full terminal clear"
+    );
 }
 
 #[test]
