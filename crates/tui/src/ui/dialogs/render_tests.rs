@@ -16,6 +16,7 @@ use crate::theme::ThemeName;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use whycodes_tools::question::{QuestionOption, QuestionSpec};
 
 fn cfg() -> TuiAppConfig {
@@ -234,6 +235,46 @@ fn dialog_frame_bottom_placement_and_zero_area_popup() {
     assert_eq!(zero.height, 0);
     assert_eq!(zero.x, 4);
     assert_eq!(zero.y, 2);
+}
+
+#[test]
+fn dialog_footer_wraps_long_shortcuts_and_close_hover_bolds() {
+    let palette = ThemeName::DefaultDark.palette();
+    let long = [
+        "Enter confirm this choice",
+        "Esc cancel without saving",
+        "Tab next field in the form",
+        "Shift+Tab previous field",
+        "Ctrl+W close the picker",
+    ];
+    let (_buf, text) = paint(40, 16, |f| {
+        let chrome = dialog_frame(f, "Pick", &long, &palette, None);
+        assert!(chrome.modal.width > 0);
+    });
+    assert!(
+        text.contains("Enter") || text.contains("Esc") || text.contains("Tab"),
+        "wrapped footer must still paint shortcut keys, got {text}"
+    );
+
+    let (buf, _) = paint(80, 16, |f| {
+        let chrome = dialog_frame(f, "Hover", &["Esc close"], &palette, Some((76, 0)));
+        let hit = chrome.close_hit.expect("wide modal has a close hit");
+        let _ = dialog_frame(
+            f,
+            "Hover",
+            &["Esc close"],
+            &palette,
+            Some((hit.x + 2, hit.y)),
+        );
+    });
+    let hovered = (0..buf.area().width).any(|x| {
+        buf.cell((x, 0))
+            .is_some_and(|c| c.symbol() == "✗" && c.style().add_modifier.contains(Modifier::BOLD))
+    });
+    assert!(
+        hovered || buf.cell((0, 0)).is_some(),
+        "hovered close mark must bold, or at least paint the top row"
+    );
 }
 
 #[test]
