@@ -197,7 +197,9 @@ fn set_mtime_old(path: &std::path::Path) {
     #[cfg(not(windows))]
     {
         let status = std::process::Command::new("touch")
-            .args(["-d", "2 days ago", path])
+            .arg("-d")
+            .arg("2 days ago")
+            .arg(path)
             .status()
             .expect("touch mtime");
         assert!(status.success(), "touch -d failed: {status}");

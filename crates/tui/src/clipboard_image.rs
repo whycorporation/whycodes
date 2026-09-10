@@ -366,8 +366,9 @@ fn read_windows_image() -> Result<PromptClipboard, String> {
     finish_windows_clipboard(dest, result)
 }
 
-/// PowerShell snippet that dumps the clipboard bitmap to `dest`. Always
-/// compiled so tests can drive the script body without a live pasteboard.
+/// PowerShell snippet that dumps the clipboard bitmap to `dest`. Compiled on
+/// Windows and in tests so tests can drive the script without a pasteboard.
+#[cfg(any(windows, test))]
 fn windows_clipboard_script(dest: &str) -> String {
     format!(
         "Add-Type -AssemblyName System.Windows.Forms; \
