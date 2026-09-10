@@ -1050,8 +1050,10 @@ mod wrap_tests {
         assert!(truncate_to_width("hello", 0).is_empty());
         assert_eq!(truncate_to_width("hello", 3), "hel");
         let _ = pick_hint();
-        assert!(HINTS.iter().any(|h| h.contains("/ for commands")));
-        assert!(HINTS.iter().any(|h| h.contains("ctrl+t")));
+        assert_eq!(HINTS.len(), 9);
+        for hint in HINTS {
+            assert!(!hint.is_empty(), "rotating home hints must be non-empty");
+        }
         use ratatui::style::{Color, Style};
         assert!(
             styled_input_row(
@@ -1547,6 +1549,17 @@ mod overflow_render_tests {
             app.approval_hit.rect.is_none(),
             "dropped approval has no hit"
         );
+
+        // Narrower still: drop effort after approval (issue #45).
+        let (terminal, _) = draw_prompt_footer(&mut app, 22, 16);
+        let buf = terminal.backend().buffer();
+        let row = footer_line_containing(buf, 22, 16, "build");
+        assert!(row.contains("build"), "{row}");
+        assert!(
+            !row.contains("Med") && !row.contains("auto"),
+            "effort drops after approval on a tighter footer: {row}"
+        );
+        assert!(app.effort_hit.rect.is_none(), "dropped effort has no hit");
     }
 
     #[test]

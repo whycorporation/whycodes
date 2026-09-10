@@ -1743,6 +1743,35 @@ fn render_session_paints_subagent_system_tool_and_error() {
         text.contains("note") || text.contains("Error") || text.contains("Subagent"),
         "{text}"
     );
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::Assistant, "");
+    let last = app.messages.len() - 1;
+    app.messages[last].blocks = vec![crate::app::ChatBlock::Subagent {
+        id: "done".into(),
+        kind: "explore".into(),
+        description: "scan".into(),
+        status: "completed".into(),
+        activity: String::new(),
+        elapsed_ms: 2500,
+    }];
+    let backend = ratatui::backend::TestBackend::new(80, 12);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol().to_string())
+        .collect();
+    assert!(
+        text.contains("Subagent") && (text.contains("completed") || text.contains("2.5")),
+        "completed subagent must paint status and elapsed, got {text}"
+    );
 }
 
 #[test]
