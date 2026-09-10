@@ -4745,6 +4745,102 @@ fn handle_event_confirms_login_effort_and_approval_pickers() {
 }
 
 #[test]
+fn word_left_and_left_jump_to_paste_placeholder_start() {
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    a.input_buffer = format!("keep {token}");
+    a.input_cursor = a.input_buffer.len();
+    handle_event(
+        &mut a,
+        Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL)),
+    );
+    assert!(
+        a.input_cursor < a.input_buffer.len(),
+        "Ctrl+Left must land at placeholder start"
+    );
+    let after_word = a.input_cursor;
+    handle_event(&mut a, key(KeyCode::Left));
+    assert!(a.input_cursor <= after_word);
+}
+
+#[test]
+fn mouse_model_header_toggles_group_and_question_row_answers() {
+    let mut a = app();
+    a.model_selection.models = vec![
+        ("acme".into(), "m1".into()),
+        ("acme".into(), "m2".into()),
+        ("xai".into(), "grok".into()),
+    ];
+    open_model_dialog(&mut a);
+    a.model_selection.selected = 0;
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 6,
+    });
+    a.dialog_list_total = a.model_selection.visible_rows().len().max(1);
+    a.dialog_list_visible = 6;
+    a.dialog_list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 8),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 8));
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)) || a.pending_model.is_some());
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![
+            whycodes_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            },
+            whycodes_tools::question::QuestionOption {
+                label: "No".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: false,
+        important: false,
+    }]);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 4,
+    });
+    a.dialog_list_total = 2;
+    a.dialog_list_visible = 4;
+    a.dialog_list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 8),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 8));
+    assert!(
+        a.pending_question_answers.is_some()
+            || matches!(a.dialogs.active(), Some(DialogKind::Question(_)))
+    );
+}
+
+#[test]
 fn copy_modal_selection_warns_when_clipboard_fails() {
     crate::clipboard::with_copy_stub(false, || {
         let mut a = app();

@@ -5036,6 +5036,46 @@ async fn spawn_local_turn_scripted_ok_delivers_outcome() {
     }
 }
 
+#[tokio::test]
+async fn spawn_local_turn_auto_title_still_delivers_ok() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "title-ok") };
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    inject_test_llm(&mut rt.agent, "acme");
+    let mut cancel_at = None;
+    let (title_tx, mut title_rx) = mpsc::unbounded_channel();
+    let mut config = Config::default();
+    config.session.auto_title = true;
+    spawn_local_turn(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        "please title this session",
+        &[],
+        dir.path(),
+        &config,
+        "acme",
+        "m1",
+        "sk-test",
+        None,
+        title_tx,
+    );
+    let outcome = tokio::time::timeout(Duration::from_secs(3), rt.done_rx.recv()).await;
+    let _ = tokio::time::timeout(Duration::from_millis(200), title_rx.recv()).await;
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert!(
+        matches!(outcome, Ok(Some(TurnOutcome::Ok { .. }))),
+        "auto-title local turn must still finish Ok"
+    );
+}
+
 #[test]
 fn auto_prompts_are_fifo_and_do_not_replace_pending_work() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
