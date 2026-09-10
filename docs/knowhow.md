@@ -144,6 +144,23 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-10 — `IsolatedHome` restore asserted after dropping `ENV_LOCK`
+
+**Symptom:** CI `Test (linux)` failed
+`http_tests::isolated_home_restores_previous_env`
+(`crates/server/src/http_tests.rs`) with
+`left: Some("/tmp/.tmp…")` / `right: Some("/tmp/whycodes-prev-home")`.
+
+**Root cause:** The test `drop(home)` then reads `WHYCODES_HOME`. Drop
+restores the sentinel *and* releases `ENV_LOCK`. A sibling IsolatedHome
+can then overwrite the env before the assertion.
+
+**Fix:** Call `restore_env()` while the guard is still held, assert,
+then `set_prev(None)` so Drop does not leak the sentinel.
+
+**Prevention:** Never sample process env after releasing a lock that
+serializes that env. Assert under the same guard that wrote it.
+
 ### 2026-09-10 — Fake LSP extras modes raced `initialized` into Broken pipe
 
 **Symptom:** CI `Test (linux)` failed after ~4m at
