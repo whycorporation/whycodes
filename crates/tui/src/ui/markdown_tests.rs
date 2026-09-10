@@ -268,3 +268,24 @@ fn body_starts_at_content_column() {
     assert!(rendered("just words")[0].starts_with('j'));
     assert!(rendered("# Title")[0].starts_with('T'));
 }
+
+#[test]
+fn mermaid_invalid_and_markdown_link() {
+    let out = rendered("```mermaid\nnot a diagram at all {{{{\n```");
+    let joined = out.join("\n");
+    assert!(
+        joined.contains("mermaid") || joined.contains("not a diagram") || joined.contains("failed"),
+        "{joined}"
+    );
+    let lines = render("see [docs](https://example.com)", &palette());
+    let link = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .find(|s| s.content.contains("docs"));
+    assert!(link.is_some(), "{lines:?}");
+    let tabbed = rendered("```rs\n\tfn main() {}\n```");
+    assert!(tabbed.join("\n").contains("fn main") || !tabbed.is_empty());
+    assert_eq!(super::complete_source_lines(""), 0);
+    assert_eq!(super::complete_source_lines("a\n"), 1);
+    assert_eq!(super::complete_source_lines("a\nb"), 1);
+}

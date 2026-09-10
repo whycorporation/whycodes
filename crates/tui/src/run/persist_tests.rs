@@ -237,3 +237,25 @@ fn upgrade_loaded_title_skips_unchanged_and_saves_heuristic() {
     assert!(upgraded.is_some(), "{upgraded:?}");
     assert!(upgrade_loaded_title(None, |_| Ok(())).is_none());
 }
+
+#[test]
+fn doctor_helpers_and_short_id() {
+    assert_eq!(doctor_key_label(true), "set");
+    assert!(doctor_key_label(false).contains("MISSING"));
+    assert_eq!(short_session_id("abc"), "abc");
+    assert!(short_session_id("abcdefghijklmnop").starts_with("abcdefgh"));
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    toast_indexed_chunks(&mut app, 0);
+    toast_indexed_chunks(&mut app, 3);
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Indexed 3"))
+    );
+    let chars = tool_result_chars(&whycodes_core::types::MessageContent::Text("hi".into()));
+    assert_eq!(chars, 2);
+    assert!(!share_server_up(1));
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(unshare_session(dir.path(), "nope"), 0);
+}

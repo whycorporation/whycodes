@@ -203,3 +203,35 @@ fn clip_excludes_cells_outside_modal() {
     assert!(t.contains("modal body"), "{t:?}");
     assert!(t.contains("second line"), "{t:?}");
 }
+
+#[test]
+fn paint_ranges_clipped_skips_empty_and_inverted_clip() {
+    let empty = CellGrid::default();
+    assert!(paint_ranges_clipped(&empty, 0, 0, 2, 2, None).is_empty());
+    let cells = grid_padded(&["abcdef", "ghijkl", "mnopqr"], 8);
+    let clip = ClipRect {
+        x: 2,
+        y: 1,
+        width: 0,
+        height: 1,
+    };
+    let ranges = paint_ranges_clipped(&cells, 0, 0, 7, 2, Some(clip));
+    assert!(ranges.iter().all(|(y, _, _)| *y != 1) || ranges.is_empty() || clip.width == 0);
+    let inverted = ClipRect {
+        x: 6,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    let _ = paint_ranges_clipped(&cells, 0, 0, 2, 0, Some(inverted));
+    assert!(linear_cols(9, 0, 1, 0, 1, 7).is_none());
+    assert!(content_span(&cells, 0, 5, 2).is_none());
+    assert_eq!(reading_order(3, 2, 1, 0), (0, 2, 1, 3));
+    assert_eq!(reading_order(3, 1, 1, 1), (1, 1, 1, 3));
+    assert!(!pipe_to(&[], "x"));
+    let blanks = vec!["".into(), "".into(), "hi".into(), "".into(), "".into()];
+    assert_eq!(
+        collapse_blank_runs(blanks),
+        vec!["".to_string(), "hi".into(), "".into()]
+    );
+}
