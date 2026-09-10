@@ -1472,6 +1472,49 @@ fn modal_scrollbar_and_copy_selection() {
 }
 
 #[test]
+fn modal_mouse_up_on_close_and_drag_copy() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_close_hit = Some(Rect {
+        x: 46,
+        y: 5,
+        width: 3,
+        height: 1,
+    });
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 47, 5));
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.mouse_sel = Some(crate::app::MouseSelection {
+        anchor_x: 12,
+        anchor_y: 6,
+        focus_x: 20,
+        focus_y: 8,
+        dragging: true,
+    });
+    a.screen_cells = crate::cell_grid::CellGrid::from_rows(
+        (0..20)
+            .map(|_| (0..50).map(|_| "x".to_string()).collect())
+            .collect(),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 20, 8));
+    assert!(a.mouse_sel.is_none() || a.dialogs.is_open() || a.mode == AppMode::Normal);
+}
+
+#[test]
 fn chat_scrollbar_offset_snaps_and_noops() {
     let mut a = app();
     apply_chat_scrollbar_offset(&mut a, 5, None);
