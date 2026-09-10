@@ -148,3 +148,19 @@ fn suggestion_prompt_and_oauth_hint_helpers() {
     );
     assert_eq!(rx.try_recv().unwrap(), "try cargo test");
 }
+
+#[tokio::test]
+async fn complete_prompt_suggestion_sends_scripted_text() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let prov = whycodes_llm::ScriptedProvider::repeating(
+        "acme",
+        [whycodes_llm::ScriptedStep::Text("try cargo test".into())],
+    );
+    complete_prompt_suggestion(&prov, "do the next step", "ok", "sk", "m1", tx).await;
+    let got = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .ok()
+        .flatten()
+        .expect("suggestion text");
+    assert_eq!(got, "try cargo test");
+}

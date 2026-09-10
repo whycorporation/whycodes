@@ -726,14 +726,28 @@ pub(super) fn maybe_spawn_prompt_suggestion(
         let Some(prov) = reg.get(&p) else {
             return;
         };
-        let request = suggestion_llm_request(&last_user, &last_asst);
-        if let Ok(resp) = suggestion_transport()
-            .complete(prov, &request, &api_key, &m)
-            .await
-        {
-            send_suggestion_text(&resp.content, &suggest_tx);
-        }
+        complete_prompt_suggestion(prov, &last_user, &last_asst, &api_key, &m, suggest_tx).await;
     });
+}
+
+pub(super) async fn complete_prompt_suggestion(
+    prov: &dyn whycodes_llm::LlmProvider,
+    last_user: &str,
+    last_asst: &str,
+    api_key: &str,
+    model: &str,
+    suggest_tx: mpsc::UnboundedSender<String>,
+) {
+    let request = suggestion_llm_request(last_user, last_asst);
+    match suggestion_transport()
+        .complete(prov, &request, api_key, model)
+        .await
+    {
+        Ok(resp) => send_suggestion_text(&resp.content, &suggest_tx),
+        Err(error) => {
+            tracing::debug!(%error, "idle suggestion complete failed");
+        }
+    }
 }
 
 pub(super) fn suggestion_prompt_body(last_user: &str, last_asst: &str) -> String {
