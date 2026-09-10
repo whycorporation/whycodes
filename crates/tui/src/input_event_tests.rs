@@ -5375,6 +5375,19 @@ fn mouse_confirms_login_effort_mode_and_agent_rows() {
         "agent row click confirms or keeps the picker, got {:?}",
         a.pending_agent
     );
+
+    let mut a = app();
+    open_provider_dialog(&mut a);
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::Select;
+    if a.provider_dialog.providers.is_empty() {
+        a.provider_dialog.providers.push("acme".into());
+    }
+    let n = a.provider_dialog.providers.len().max(1);
+    click_list_row(&mut a, 8, n);
+    assert!(
+        a.mode == AppMode::Normal || matches!(a.dialogs.active(), Some(DialogKind::Provider)),
+        "provider Select-row click dismisses or keeps the picker"
+    );
     let grab = chat_scrollbar_grab_at(
         &a,
         20,
