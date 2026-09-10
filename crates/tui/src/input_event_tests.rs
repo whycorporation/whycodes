@@ -1773,6 +1773,35 @@ fn focus_gained_is_ignored_keep_running() {
 }
 
 #[test]
+fn help_overlay_slash_search_types_and_esc_clears() {
+    let mut a = app();
+    open_help(&mut a);
+    assert_eq!(a.mode, AppMode::Help);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.help_searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+    assert!(a.help_query.contains('q'));
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert!(!a.help_searching);
+    assert!(a.help_query.is_empty());
+}
+
+#[test]
+fn model_picker_slash_search_types_and_backspace() {
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
+    open_model_dialog(&mut a);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.model_selection.searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('m'))));
+    assert!(a.model_selection.query.contains('m'));
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert!(!a.model_selection.searching);
+}
+
+#[test]
 fn dialog_question_keys_move_without_free_text() {
     let mut a = app();
     a.ask_question(vec![whycodes_tools::question::QuestionSpec {

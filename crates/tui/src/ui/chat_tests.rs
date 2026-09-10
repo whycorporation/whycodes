@@ -1663,6 +1663,41 @@ fn tool_header_verb_covers_named_and_fallback() {
 }
 
 #[test]
+fn render_user_bubble_with_image_labels_and_running_subagent() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "[Image: shot.png]");
+    let i = app.messages.len() - 1;
+    app.messages[i].image_labels = vec!["shot.png".into()];
+    app.add_message(ChatRole::Assistant, "");
+    let last = app.messages.len() - 1;
+    app.messages[last].blocks = vec![crate::app::ChatBlock::Subagent {
+        id: "kid".into(),
+        kind: "explore".into(),
+        description: "scan".into(),
+        status: "running".into(),
+        activity: "listing".into(),
+        elapsed_ms: 0,
+    }];
+    let backend = ratatui::backend::TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol().to_string())
+        .collect();
+    assert!(
+        text.contains("shot") || text.contains("Subagent") || text.contains("listing"),
+        "{text}"
+    );
+}
+
+#[test]
 fn paint_chat_row_fills_and_skips_empty() {
     let mut buf = Buffer::empty(Rect::new(0, 0, 20, 2));
     let row = super::ChatRowPaint {
