@@ -4050,3 +4050,134 @@ models = ["disk-m1"]
         None => unsafe { std::env::remove_var("WHYCODES_HOME") },
     }
 }
+
+#[test]
+fn dialog_help_types_then_esc_clears_search_not_dialog() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    assert_eq!(a.key_context, KeymapContext::Dialog);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.help_searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+    assert_eq!(a.help_query, "q");
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert!(!a.help_searching);
+    assert!(a.help_query.is_empty());
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Help)));
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert_eq!(a.mode, AppMode::Normal);
+}
+
+#[test]
+fn execute_colon_quit_help_model_and_unknown() {
+    let mut a = app();
+    execute_command(&mut a, ":q");
+    assert!(!a.running);
+
+    let mut a = app();
+    execute_command(&mut a, ":h");
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    execute_command(&mut a, ":help");
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    execute_command(&mut a, ":model");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+
+    let mut a = app();
+    execute_command(&mut a, ":quit");
+    assert!(!a.running);
+
+    let mut a = app();
+    execute_command(&mut a, ":nope");
+    assert!(a.status_message.contains("Unknown command"));
+}
+
+#[test]
+fn chat_wheel_without_todos_scrolls_transcript() {
+    let mut a = app();
+    a.chat_viewport_rows = 12;
+    a.chat_scroll_total = 80;
+    a.add_message(ChatRole::User, "keep scrolling");
+    for i in 0..30 {
+        a.add_message(ChatRole::Assistant, format!("line {i}"));
+    }
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+    assert!(
+        a.scroll_offset > 0,
+        "wheel up must move toward older transcript rows"
+    );
+    let after_up = a.scroll_offset;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    assert!(
+        a.scroll_offset < after_up,
+        "wheel down must move toward the newest lines"
+    );
+}
+
+#[test]
+fn mouse_drag_starts_selection_without_prior_down() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "drag me");
+    handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 4, 2));
+    let sel = a
+        .mouse_sel
+        .expect("drag without Down still starts a selection");
+    assert!(sel.dragging);
+    assert_eq!((sel.anchor_x, sel.anchor_y), (4, 2));
+}
+
+#[test]
+fn paste_ignored_in_help_and_empty_text_is_noop() {
+    let mut a = app();
+    open_help(&mut a);
+    handle_event(&mut a, Event::Paste("should-not-land".into()));
+    assert!(a.input_buffer.is_empty());
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    handle_event(&mut a, Event::Paste(String::new()));
+    assert!(a.input_buffer.is_empty());
+}
+
+#[test]
+fn command_mode_esc_returns_to_normal_and_clears_buffer() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":sidebar".into();
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert!(a.command.buffer.is_empty());
+}
+
+#[test]
+fn kill_word_forward_expands_overlapping_paste_placeholder() {
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    a.input_buffer = format!("keep {token} tail");
+    a.input_cursor = 5; // just after "keep "
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputKillWordForward,
+        &KeyEvent::new(KeyCode::Delete, KeyModifiers::CONTROL),
+    );
+    assert!(
+        !a.input_buffer.contains('\n'),
+        "kill-word-forward must swallow the paste chip: {:?}",
+        a.input_buffer
+    );
+}
+
+#[test]
+fn session_paste_from_scrollback_still_lands_on_prompt() {
+    let mut a = app();
+    a.mode = AppMode::Session;
+    a.focus = FocusPane::Scrollback;
+    handle_event(&mut a, Event::Paste("from scrollback".into()));
+    assert_eq!(a.focus, FocusPane::Prompt);
+    assert!(a.input_buffer.contains("from scrollback"));
+}

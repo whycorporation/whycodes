@@ -164,3 +164,45 @@ async fn complete_prompt_suggestion_sends_scripted_text() {
         .expect("suggestion text");
     assert_eq!(got, "try cargo test");
 }
+
+#[tokio::test]
+async fn complete_prompt_suggestion_logs_fail_open_without_sending() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let prov = whycodes_llm::ScriptedProvider::repeating(
+        "acme",
+        [whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())],
+    );
+    complete_prompt_suggestion(&prov, "do the next step", "ok", "sk", "m1", tx).await;
+    assert!(
+        rx.try_recv().is_err(),
+        "fail-open must not enqueue a suggestion"
+    );
+}
+
+#[test]
+fn send_suggestion_text_drops_when_loop_closed() {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    send_suggestion_text(
+        &[whycodes_core::types::ContentBlock::Text {
+            text: "try cargo test".into(),
+        }],
+        &tx,
+    );
+}
+
+#[test]
+fn expand_at_files_truncates_long_and_keeps_absolute() {
+    let dir = tempfile::tempdir().unwrap();
+    let long: String = "x".repeat(AT_FILE_MAX_CHARS + 40);
+    std::fs::write(dir.path().join("big.txt"), &long).unwrap();
+    let out = expand_at_files("see @big.txt please", dir.path());
+    assert!(out.contains("characters omitted from @big.txt"), "{out}");
+    assert!(out.contains("--- file: big.txt ---"), "{out}");
+
+    let abs = dir.path().join("note.txt");
+    std::fs::write(&abs, "abs-body").unwrap();
+    let mention = format!("see @{} end", abs.display());
+    let out = expand_at_files(&mention, dir.path());
+    assert!(out.contains("abs-body"), "{out}");
+}

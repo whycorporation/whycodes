@@ -1962,15 +1962,6 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
 
     match action {
         Some(Action::DialogCancel) => {
-            if matches!(active, DialogKind::Help)
-                && (app.help_searching || !app.help_query.is_empty())
-            {
-                app.help_query.clear();
-                app.help_searching = false;
-                app.help_scroll = 0;
-                app.mark_dirty();
-                return true;
-            }
             if matches!(active, DialogKind::Model) && app.model_selection.is_searching() {
                 app.model_selection.query.clear();
                 app.model_selection.searching = false;
@@ -2014,15 +2005,6 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
                     _ => return true,
                 };
                 field_val.pop();
-            }
-            if matches!(active, DialogKind::Model)
-                && (app.model_selection.searching || !app.model_selection.query.is_empty())
-            {
-                if app.model_selection.query.pop().is_none() {
-                    app.model_selection.searching = false;
-                }
-                app.model_selection.clamp_selected();
-                app.mark_dirty();
             }
         }
         _ => {
@@ -2104,10 +2086,6 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
                     _ => return true,
                 };
                 field_val.push(c);
-            }
-            if matches!(active, DialogKind::Help) && handle_help_type(app, key) {
-                app.mark_dirty();
-                return true;
             }
         }
     }

@@ -5675,6 +5675,31 @@ fn tui_writer_write_flush_and_summary() {
     let (term, _, tw, th) = attach_for_loop(color, true).expect("live buf attach");
     assert_eq!((tw, th), (0, 0));
     term.restore(false);
+
+    let (open_live, raw_live, size_live) = loop_attach_io(true);
+    assert!(matches!(open_live().unwrap(), TuiWriter::Buf(_)));
+    raw_live().expect("live buf raw");
+    assert_eq!(size_live().unwrap(), (0, 0));
+    let (open_prod, _raw_prod, size_prod) = loop_attach_io(false);
+    let _ = open_prod();
+    let size = size_prod().unwrap_or((0, 0));
+    assert!(size.0 < 10_000 && size.1 < 10_000);
+}
+
+#[test]
+fn permission_overlay_reply_maps_allow_deny_and_other() {
+    assert_eq!(permission_overlay_reply(KeyCode::Char('y')), Some(true));
+    assert_eq!(permission_overlay_reply(KeyCode::Char('Y')), Some(true));
+    assert_eq!(permission_overlay_reply(KeyCode::Char('a')), Some(true));
+    assert_eq!(permission_overlay_reply(KeyCode::Char('A')), Some(true));
+    assert_eq!(permission_overlay_reply(KeyCode::Enter), Some(true));
+    assert_eq!(permission_overlay_reply(KeyCode::Char('n')), Some(false));
+    assert_eq!(permission_overlay_reply(KeyCode::Char('N')), Some(false));
+    assert_eq!(permission_overlay_reply(KeyCode::Char('d')), Some(false));
+    assert_eq!(permission_overlay_reply(KeyCode::Char('D')), Some(false));
+    assert_eq!(permission_overlay_reply(KeyCode::Esc), Some(false));
+    assert_eq!(permission_overlay_reply(KeyCode::Char('x')), None);
+    assert_eq!(permission_overlay_reply(KeyCode::Tab), None);
 }
 
 #[test]

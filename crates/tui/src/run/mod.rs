@@ -1935,26 +1935,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     if matches!(app.dialogs.active(), Some(DialogKind::Permission { .. }))
                         && let Event::Key(key) = &ev
                         && key.kind == KeyEventKind::Press
+                        && let Some(allow) = permission_overlay_reply(key.code)
                     {
-                        match key.code {
-                            KeyCode::Char('y')
-                            | KeyCode::Char('Y')
-                            | KeyCode::Char('a')
-                            | KeyCode::Char('A')
-                            | KeyCode::Enter => {
-                                reply_permission(&mut app, &mut rt.pending_perm_queue, true);
-                                continue;
-                            }
-                            KeyCode::Char('n')
-                            | KeyCode::Char('N')
-                            | KeyCode::Char('d')
-                            | KeyCode::Char('D')
-                            | KeyCode::Esc => {
-                                reply_permission(&mut app, &mut rt.pending_perm_queue, false);
-                                continue;
-                            }
-                            _ => {}
-                        }
+                        reply_permission(&mut app, &mut rt.pending_perm_queue, allow);
+                        continue;
                     }
 
                     // Questionnaire dialog (Grok-style `question` tool).
@@ -2319,26 +2303,36 @@ fn live_buf_size() -> io::Result<(u16, u16)> {
     Ok((0, 0))
 }
 
+type OpenTui = fn() -> io::Result<TuiWriter>;
+type EnableRaw = fn() -> io::Result<()>;
+type TermSize = fn() -> io::Result<(u16, u16)>;
+
+/// Live-buffer tests swap in memory writers; production uses the controlling
+/// console, raw mode, and the real terminal size.
+fn loop_attach_io(live_buf: bool) -> (OpenTui, EnableRaw, TermSize) {
+    if live_buf {
+        (live_buf_open, live_buf_raw, live_buf_size)
+    } else {
+        (open_tui_writer, enable_raw_mode, production_term_size)
+    }
+}
+
 fn attach_for_loop(
     color_mode: ColorMode,
     live_buf: bool,
 ) -> anyhow::Result<(LoopTerm, bool, u16, u16)> {
-    let open: fn() -> io::Result<TuiWriter> = if live_buf {
-        live_buf_open
-    } else {
-        open_tui_writer
-    };
-    let raw: fn() -> io::Result<()> = if live_buf {
-        live_buf_raw
-    } else {
-        enable_raw_mode
-    };
-    let size: fn() -> io::Result<(u16, u16)> = if live_buf {
-        live_buf_size
-    } else {
-        production_term_size
-    };
+    let (open, raw, size) = loop_attach_io(live_buf);
     attach_live(color_mode, open, raw, size)
+}
+
+/// Overlay keys that answer a permission prompt (allow / deny). Other keys
+/// fall through to the normal dialog handler.
+fn permission_overlay_reply(code: KeyCode) -> Option<bool> {
+    match code {
+        KeyCode::Char('y' | 'Y' | 'a' | 'A') | KeyCode::Enter => Some(true),
+        KeyCode::Char('n' | 'N' | 'd' | 'D') | KeyCode::Esc => Some(false),
+        _ => None,
+    }
 }
 
 fn live_poll_crossterm(timeout: Duration) -> io::Result<bool> {

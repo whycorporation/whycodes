@@ -270,3 +270,32 @@ fn paint_ranges_clipped_skips_empty_and_inverted_clip() {
         vec!["".to_string(), "hi".into(), "".into()]
     );
 }
+
+#[test]
+fn clipped_linear_copy_skips_rows_outside_modal() {
+    let cells = grid_padded(&["aaaaaa", "bbbbbb", "cccccc", "dddddd"], 8);
+    let clip = ClipRect {
+        x: 0,
+        y: 1,
+        width: 6,
+        height: 2,
+    };
+    let t = text_from_cells_clipped(&cells, 0, 0, 5, 3, clip);
+    assert_eq!(t, "bbbbbb\ncccccc");
+    assert!(!t.contains('a'), "{t}");
+    assert!(!t.contains('d'), "{t}");
+
+    let empty = CellGrid::default();
+    assert!(text_from_cells(&empty, 0, 0, 2, 2).is_empty());
+    let tall = text_from_cells(&cells, 0, 0, 5, 40);
+    assert!(tall.contains("aaaaaa"), "{tall}");
+
+    let inverted = ClipRect {
+        x: 5,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    let t = text_from_cells_clipped(&cells, 0, 0, 2, 0, inverted);
+    assert!(t.is_empty() || t.len() <= 1, "{t:?}");
+}
