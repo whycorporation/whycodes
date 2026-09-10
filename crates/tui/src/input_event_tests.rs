@@ -4569,3 +4569,93 @@ fn handle_event_help_wheel_and_list_wheel() {
     handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
     assert_eq!(a.agent_picker_selected, 0);
 }
+
+#[test]
+fn import_enter_without_selection_toasts_and_stays_open() {
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    a.import_picker.select_all(false);
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Select at least one")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Import)));
+}
+
+#[test]
+fn session_list_ctrl_w_on_persisted_row_toasts() {
+    let mut a = app();
+    a.session_list.sessions = vec![crate::app::SessionEntry {
+        id: "saved".into(),
+        title: "t".into(),
+        messages: 1,
+        updated_at: None,
+        live: None,
+    }];
+    open_dialog(&mut a, DialogKind::SessionList);
+    assert!(handle_event(&mut a, ctrl('w')));
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("persisted") || t.message.contains("history")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn provider_form_headers_field_types_and_out_of_range_is_noop() {
+    let mut a = app();
+    open_provider_dialog(&mut a);
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::AddCustom;
+    a.provider_dialog.active_field = 3;
+    handle_event(&mut a, key(KeyCode::Char('h')));
+    assert_eq!(a.provider_dialog.form_headers, "h");
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert!(a.provider_dialog.form_headers.is_empty());
+    a.provider_dialog.active_field = 9;
+    assert!(handle_event(&mut a, key(KeyCode::Char('z'))));
+    assert!(a.provider_dialog.form_headers.is_empty());
+}
+
+#[test]
+fn model_picker_left_right_fold_group_at_cursor() {
+    let mut a = app();
+    a.model_selection.models = vec![
+        ("acme".into(), "m1".into()),
+        ("acme".into(), "m2".into()),
+        ("xai".into(), "grok".into()),
+    ];
+    open_model_dialog(&mut a);
+    a.model_selection.selected = 0;
+    handle_event(&mut a, key(KeyCode::Left));
+    handle_event(&mut a, key(KeyCode::Right));
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+}
