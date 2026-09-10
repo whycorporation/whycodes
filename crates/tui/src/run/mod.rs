@@ -1495,35 +1495,18 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 apply_pending_agent(&mut app, &mut rt, &config, &project_dir, &name).await;
             }
 
-            // ── Apply model picker selection ──────────────────────────
-            if let Some((p, m)) = app.pending_model.take() {
-                apply_model_choice(
-                    &mut app,
-                    &mut provider,
-                    &mut model,
-                    &mut api_key,
-                    p,
-                    m,
-                    &config,
-                );
-                fill_oauth_credential(&mut api_key, &provider).await;
-                defer_or_spawn_catalog(
-                    rt.agent_busy,
-                    &mut catalog_fetch_pending,
-                    &config,
-                    &provider,
-                    &model,
-                    &api_key,
-                    catalog_tx.clone(),
-                );
-            }
-
-            if let Some(effort) = app.pending_effort.take() {
-                apply_reasoning_effort(&mut app, &mut rt.agent, &mut config, &effort);
-            }
-            if let Some(mode) = app.pending_approval_mode.take() {
-                apply_approval_mode(&mut app, &mut rt.agent, &mut config, mode);
-            }
+            apply_pending_picker_choices(
+                &mut app,
+                &mut rt,
+                &mut config,
+                &mut provider,
+                &mut model,
+                &mut api_key,
+                &mut catalog_fetch_pending,
+                catalog_tx.clone(),
+                &auth_tx,
+            )
+            .await;
 
             if app.pending_import && !rt.agent_busy {
                 app.pending_import = false;
@@ -1535,28 +1518,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     &file_index,
                 )
                 .await;
-            }
-
-            // ── `/login` picker selection → start OAuth sign-in ──
-            if let Some(p) = app.pending_login_provider.take()
-                && let Ok(dir) = Config::data_dir()
-            {
-                spawn_oauth_login(&mut app, &auth_tx, dir, &p);
-            }
-
-            // ── Re-fetch when slash /models switches provider ──
-            if app.pending_catalog_refresh {
-                app.pending_catalog_refresh = false;
-                app.clear_api_context_window();
-                defer_or_spawn_catalog(
-                    rt.agent_busy,
-                    &mut catalog_fetch_pending,
-                    &config,
-                    &provider,
-                    &model,
-                    &api_key,
-                    catalog_tx.clone(),
-                );
             }
 
             // Deferred / idle catalog: never race the first (or any) user turn.
@@ -3514,6 +3475,58 @@ fn warn_missing_api_key(app: &mut TuiApp, provider: &str) {
         crate::toast::ToastKind::Warning,
         format!("Missing {provider} API key"),
     );
+}
+
+/// Apply model / effort / approval / login / catalog flags set by dialogs.
+#[allow(clippy::too_many_arguments)]
+async fn apply_pending_picker_choices(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    config: &mut Config,
+    provider: &mut String,
+    model: &mut String,
+    api_key: &mut String,
+    catalog_fetch_pending: &mut bool,
+    catalog_tx: mpsc::UnboundedSender<(String, String, u32)>,
+    auth_tx: &mpsc::UnboundedSender<AuthFlowEvent>,
+) {
+    if let Some((p, m)) = app.pending_model.take() {
+        apply_model_choice(app, provider, model, api_key, p, m, config);
+        fill_oauth_credential(api_key, provider).await;
+        defer_or_spawn_catalog(
+            rt.agent_busy,
+            catalog_fetch_pending,
+            config,
+            provider,
+            model,
+            api_key,
+            catalog_tx.clone(),
+        );
+    }
+    if let Some(effort) = app.pending_effort.take() {
+        apply_reasoning_effort(app, &mut rt.agent, config, &effort);
+    }
+    if let Some(mode) = app.pending_approval_mode.take() {
+        apply_approval_mode(app, &mut rt.agent, config, mode);
+    }
+    if let Some(p) = app.pending_login_provider.take()
+        && let Ok(dir) = Config::data_dir()
+    {
+        spawn_oauth_login(app, auth_tx, dir, &p);
+    }
+    if app.pending_catalog_refresh {
+        app.pending_catalog_refresh = false;
+        app.clear_api_context_window();
+        defer_or_spawn_catalog(
+            rt.agent_busy,
+            catalog_fetch_pending,
+            config,
+            provider,
+            model,
+            api_key,
+            catalog_tx,
+        );
+    }
 }
 
 fn apply_idle_suggestion(app: &mut TuiApp, suggestion: String, agent_busy: bool) {

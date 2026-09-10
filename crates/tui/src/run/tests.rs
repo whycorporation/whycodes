@@ -5123,6 +5123,47 @@ async fn spawn_local_turn_hang_then_force_stop_aborts() {
     assert!(!rt.agent_busy);
 }
 
+#[tokio::test]
+async fn apply_pending_picker_choices_applies_model_effort_mode_login_and_catalog() {
+    let _home = isolate_home();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut config = Config::default();
+    let mut provider = "acme".into();
+    let mut model = "m1".into();
+    let mut api_key = "sk-test".into();
+    let mut catalog_fetch_pending = false;
+    let (catalog_tx, mut catalog_rx) = mpsc::unbounded_channel();
+    let (auth_tx, mut auth_rx) = mpsc::unbounded_channel();
+
+    app.pending_model = Some(("xai".into(), "grok-4".into()));
+    app.pending_effort = Some("nope".into());
+    app.pending_approval_mode = Some(ApprovalMode::Manual);
+    app.pending_login_provider = Some("not-oauth".into());
+    app.pending_catalog_refresh = true;
+    apply_pending_picker_choices(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+        &mut catalog_fetch_pending,
+        catalog_tx,
+        &auth_tx,
+    )
+    .await;
+    assert_eq!(provider, "xai");
+    assert_eq!(model, "grok-4");
+    assert_eq!(app.approval_mode, ApprovalMode::Manual);
+    assert!(!app.pending_catalog_refresh);
+    assert!(app.pending_model.is_none());
+    assert!(app.pending_effort.is_none());
+    assert!(app.pending_approval_mode.is_none());
+    let _ = catalog_rx.try_recv();
+    let _ = auth_rx.try_recv();
+}
+
 #[test]
 fn auto_prompts_are_fifo_and_do_not_replace_pending_work() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
