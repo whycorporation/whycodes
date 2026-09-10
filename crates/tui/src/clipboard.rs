@@ -22,7 +22,6 @@ use crate::cell_grid::CellGrid;
 
 /// Copy `text` to the clipboard. Returns true if at least one path succeeded.
 pub fn copy_text(text: &str) -> bool {
-    #[cfg(test)]
     if let Some(forced) = stub_copy_result() {
         return forced;
     }
@@ -34,18 +33,16 @@ pub fn copy_text(text: &str) -> bool {
     ok
 }
 
-#[cfg(test)]
 thread_local! {
     static COPY_STUB: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
-#[cfg(test)]
 fn stub_copy_result() -> Option<bool> {
     COPY_STUB.with(|c| c.get())
 }
 
-/// Force `copy_text` for this thread (unit tests).
-#[cfg(test)]
+/// Force `copy_text` for this thread (unit tests). Production never sets this.
+#[allow(dead_code)]
 pub(crate) fn with_copy_stub<R>(ok: bool, f: impl FnOnce() -> R) -> R {
     COPY_STUB.with(|c| c.set(Some(ok)));
     struct Reset;

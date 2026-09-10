@@ -3265,3 +3265,118 @@ fn remaining_dispatch_and_dialog_confirm_arms() {
     execute_command(&mut a, ":theme");
     assert!(matches!(a.dialogs.active(), Some(DialogKind::Theme)));
 }
+
+#[test]
+fn dialog_import_fold_page_and_confirm_remaining_arms() {
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    let mut a = app();
+    a.open_import_picker(&plan);
+    assert!(handle_event(&mut a, key(KeyCode::Char(' '))));
+    assert!(handle_event(&mut a, key(KeyCode::Char('a'))));
+    assert!(handle_event(&mut a, key(KeyCode::Char('n'))));
+    a.import_picker.select_all(true);
+    confirm_dialog(&mut a, &DialogKind::Import);
+    assert!(a.pending_import);
+
+    let mut a = app();
+    a.confirm("Import", "copy?", ConfirmAction::ImportSettings);
+    confirm_dialog(
+        &mut a,
+        &DialogKind::Confirm {
+            title: "Import".into(),
+            message: "copy?".into(),
+            on_confirm: ConfirmAction::ImportSettings,
+        },
+    );
+    assert!(a.pending_import);
+
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
+    open_model_dialog(&mut a);
+    handle_event(&mut a, key(KeyCode::Left));
+    handle_event(&mut a, key(KeyCode::Right));
+    handle_event(&mut a, key(KeyCode::PageDown));
+    handle_event(&mut a, key(KeyCode::PageUp));
+    a.model_selection.searching = true;
+    a.model_selection.query = "m".into();
+    handle_event(&mut a, key(KeyCode::Backspace));
+    a.model_selection.selected = 0;
+    confirm_dialog(&mut a, &DialogKind::Model);
+
+    let mut a = app();
+    a.primary_agents = vec!["build".into(), "plan".into()];
+    a.agent_picker_selected = 1;
+    open_dialog(&mut a, DialogKind::Agent);
+    confirm_dialog(&mut a, &DialogKind::Agent);
+    assert_eq!(a.pending_agent.as_deref(), Some("plan"));
+
+    let mut a = app();
+    a.sessions_rows = vec![crate::app::SessionDashboardRow {
+        parked_idx: Some(1),
+        title: "parked".into(),
+        glyph: "·".into(),
+        state_label: "idle".into(),
+        preview: String::new(),
+        unread: false,
+    }];
+    a.sessions_cursor = 0;
+    open_dialog(&mut a, DialogKind::Sessions);
+    confirm_dialog(&mut a, &DialogKind::Sessions);
+    assert_eq!(a.pending_session_switch, Some(1));
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "theme me");
+    a.theme_selected = 0;
+    open_dialog(&mut a, DialogKind::Theme);
+    confirm_dialog(&mut a, &DialogKind::Theme);
+
+    let mut a = app();
+    a.session_list.sessions = vec![
+        crate::app::SessionEntry {
+            id: "persisted".into(),
+            title: "old".into(),
+            messages: 1,
+            updated_at: None,
+            live: None,
+        },
+        crate::app::SessionEntry {
+            id: "live".into(),
+            title: "now".into(),
+            messages: 2,
+            updated_at: None,
+            live: Some(usize::MAX),
+        },
+    ];
+    a.session_list.selected = 0;
+    open_dialog(&mut a, DialogKind::SessionList);
+    confirm_dialog(&mut a, &DialogKind::SessionList);
+    assert_eq!(a.pending_session_id.as_deref(), Some("persisted"));
+    a.session_list.selected = 1;
+    confirm_dialog(&mut a, &DialogKind::SessionList);
+    assert_eq!(a.pending_session_switch, Some(usize::MAX));
+
+    let mut a = app();
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::AddCustom;
+    a.provider_dialog.active_field = 4;
+    open_dialog(&mut a, DialogKind::Provider);
+    assert!(handle_event(&mut a, key(KeyCode::Char('x'))));
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    a.help_searching = true;
+    a.help_query = "find".into();
+    handle_event(&mut a, key(KeyCode::Esc));
+    assert!(a.help_query.is_empty());
+}

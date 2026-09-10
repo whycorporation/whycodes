@@ -235,9 +235,14 @@ fn paint_ranges_clipped_skips_empty_and_inverted_clip() {
     assert!(write_osc52_to(&mut buf, &seq));
     assert_eq!(buf, seq.as_bytes());
     let _ = copy_text("coverage");
+    assert!(with_copy_stub(true, || copy_text("stub-ok")));
+    assert!(!with_copy_stub(false, || copy_text("stub-fail")));
     let _ = try_pbcopy("coverage");
     let _ = try_xclip("coverage");
     let _ = try_wl_copy("coverage");
+    assert!(!pipe_to(&["whycodes-no-such-copy-bin"], "x"));
+    #[cfg(windows)]
+    assert!(pipe_to(&["cmd", "/C", "exit", "0"], "coverage"));
     let blanks = vec!["".into(), "".into(), "hi".into(), "".into(), "".into()];
     assert_eq!(
         collapse_blank_runs(blanks),
