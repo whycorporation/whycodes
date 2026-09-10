@@ -760,6 +760,29 @@ fn sticky_todo_panel_aligns_with_chat_and_leaves_gaps() {
 }
 
 #[test]
+fn open_subagent_paints_an_inset_frame_over_the_session() {
+    let mut a = session_with_overflow();
+    a.upsert_subagent(crate::app::SubagentUpdate {
+        id: "kid".into(),
+        kind: "explore".into(),
+        description: "scan".into(),
+        status: "running".into(),
+        activity: "listing".into(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    a.open_subagent = Some("kid".into());
+    let (_buf, text) = paint_full_shell(&mut a, 100, 24);
+    assert!(
+        text.contains("Subagent")
+            || text.contains("explore")
+            || text.contains("scan")
+            || text.contains("kid"),
+        "open subagent view must paint the inset frame, got {text}"
+    );
+}
+
+#[test]
 fn sticky_tasks_panel_aligns_with_chat_and_leaves_gaps() {
     let mut a = session_with_overflow();
     a.upsert_subagent(crate::app::SubagentUpdate {

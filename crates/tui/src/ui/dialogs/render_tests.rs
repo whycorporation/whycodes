@@ -203,6 +203,40 @@ fn bottom_rect_stays_docked_after_min_expand() {
 }
 
 #[test]
+fn dialog_frame_bottom_placement_and_zero_area_popup() {
+    let palette = ThemeName::DefaultDark.palette();
+    let (_buf, _text) = paint(80, 24, |f| {
+        let chrome = dialog_frame_sized(
+            f,
+            "Docked",
+            &["Esc close"],
+            &palette,
+            DialogSizing::popup(),
+            None,
+            DialogPlacement::Bottom,
+        );
+        assert_eq!(
+            chrome.modal.y + chrome.modal.height,
+            24,
+            "Bottom placement docks the modal on the last row"
+        );
+    });
+    let zero = popup_rect(
+        Rect {
+            x: 4,
+            y: 2,
+            width: 0,
+            height: 0,
+        },
+        DialogSizing::popup(),
+    );
+    assert_eq!(zero.width, 0);
+    assert_eq!(zero.height, 0);
+    assert_eq!(zero.x, 4);
+    assert_eq!(zero.y, 2);
+}
+
+#[test]
 fn close_button_rect_needs_room() {
     // Narrow modal → no close button.
     let narrow = Rect {
