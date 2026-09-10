@@ -5546,3 +5546,30 @@ fn confirm_dialog_help_status_and_workspace_are_dismiss_only() {
     confirm_dialog(&mut a, &DialogKind::Workspace);
     assert_eq!(a.mode, AppMode::Normal);
 }
+
+#[test]
+fn help_q_closes_when_key_context_is_still_normal() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Normal;
+    a.help_searching = false;
+    a.help_query.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert_eq!(a.key_context, KeymapContext::Normal);
+}
+
+#[test]
+fn second_slash_on_a_bare_draft_reopens_the_menu() {
+    let mut a = app();
+    a.input_buffer = "/".into();
+    a.input_cursor = 1;
+    a.slash_suggest.dismiss();
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert_eq!(a.input_buffer, "/");
+    assert_eq!(a.input_cursor, 1);
+    assert!(
+        a.slash_suggest.active,
+        "second / on a leftover slash draft must reopen the menu"
+    );
+}
