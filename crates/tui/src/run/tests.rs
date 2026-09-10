@@ -5686,6 +5686,97 @@ async fn run_headless_hydrates_api_key_from_env() {
     assert_eq!(exit, TuiExit::Quit);
 }
 
+#[tokio::test]
+async fn run_headless_update_offer_self_install_then_quit() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tx.send(UpdateOffer::SelfInstall("9.9.9".into())).unwrap();
+    drop(tx);
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            press(KeyCode::Esc),
+            press(KeyCode::Char(':')),
+            press(KeyCode::Char('q')),
+            press(KeyCode::Enter),
+        ]));
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.update_rx = Some(rx);
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_update_offer_homebrew() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tx.send(UpdateOffer::Homebrew("9.9.9".into())).unwrap();
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            press(KeyCode::Enter),
+            press(KeyCode::Char(':')),
+            press(KeyCode::Char('q')),
+            press(KeyCode::Enter),
+        ]));
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.update_rx = Some(rx);
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_mouse_stop_while_hanging() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "HANG");
+    }
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            press(KeyCode::Char('h')),
+            press(KeyCode::Enter),
+            Event::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: 78,
+                row: 0,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }),
+            Event::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: 78,
+                row: 0,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }),
+            ctrl('q'),
+        ]));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
 fn press(code: KeyCode) -> Event {
     Event::Key(crossterm::event::KeyEvent::from(code))
 }
