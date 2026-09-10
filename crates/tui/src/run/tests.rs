@@ -5504,8 +5504,122 @@ async fn run_headless_loop_slash_and_ctrl_n() {
     let mut events = Vec::new();
     events.extend(type_line("/loop 2 ping"));
     events.push(ctrl_n);
+    events.push(Event::Key(crossterm::event::KeyEvent::new(
+        KeyCode::PageDown,
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
+    events.push(Event::Key(crossterm::event::KeyEvent::new(
+        KeyCode::PageUp,
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
+    events.push(Event::Key(crossterm::event::KeyEvent::new(
+        KeyCode::Char('o'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
+    events.push(press(KeyCode::Esc));
+    events.push(Event::Key(crossterm::event::KeyEvent::new(
+        KeyCode::Tab,
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
     events.extend(type_line(":q"));
     *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+fn ctrl(c: char) -> Event {
+    Event::Key(crossterm::event::KeyEvent::new(
+        KeyCode::Char(c),
+        crossterm::event::KeyModifiers::CONTROL,
+    ))
+}
+
+#[tokio::test]
+async fn run_headless_shell_permission_allow() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "SHELL");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("please rm that"));
+    events.push(press(KeyCode::Char('y')));
+    events.extend(type_line(":q"));
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_shell_permission_deny() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "SHELL");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("please rm that"));
+    events.push(press(KeyCode::Char('n')));
+    events.extend(type_line(":q"));
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_hang_ctrl_c_and_enter() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "HANG");
+    }
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            press(KeyCode::Char('h')),
+            press(KeyCode::Enter),
+            press(KeyCode::Char('x')),
+            press(KeyCode::Enter),
+            ctrl('c'),
+            ctrl('c'),
+            ctrl('q'),
+        ]));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },

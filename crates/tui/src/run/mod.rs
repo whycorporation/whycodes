@@ -98,6 +98,26 @@ fn send_auth_event(tx: &mpsc::UnboundedSender<AuthFlowEvent>, event: AuthFlowEve
     }
 }
 
+fn headless_busy_key_ready(ev: Option<&Event>) -> bool {
+    let Some(Event::Key(key)) = ev else {
+        return true;
+    };
+    if key.kind != KeyEventKind::Press {
+        return true;
+    }
+    if key
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::CONTROL)
+    {
+        return true;
+    }
+    // Hold permission answers until the overlay owns the keyboard.
+    !matches!(
+        key.code,
+        KeyCode::Char('y' | 'Y' | 'n' | 'N' | 'a' | 'A' | 'd' | 'D')
+    )
+}
+
 /// Unit tests: `WHYCODES_TEST_LLM` replaces the registry with a repeating
 /// [`whycodes_llm::ScriptedProvider`] so a headless turn never hits the network.
 fn inject_test_llm(_agent: &mut Agent, _provider: &str) {
@@ -109,18 +129,33 @@ fn inject_test_llm(_agent: &mut Agent, _provider: &str) {
         if text.is_empty() {
             return;
         }
-        let step = if text == "FAIL" {
-            whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())
-        } else if text == "HANG" {
-            whycodes_llm::ScriptedStep::Hang(std::time::Duration::from_secs(30))
-        } else {
-            whycodes_llm::ScriptedStep::Text(text)
-        };
         let mut registry = whycodes_llm::ProviderRegistry::new();
-        registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
-            _provider.to_string(),
-            [step],
-        )));
+        if text == "SHELL" {
+            // One tool call, then a text reply — repeating would loop tools forever.
+            registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+                _provider.to_string(),
+                [
+                    vec![whycodes_llm::ScriptedStep::ToolCall {
+                        id: "call-1".into(),
+                        name: "bash".into(),
+                        input: serde_json::json!({"command": "echo hi"}),
+                    }],
+                    vec![whycodes_llm::ScriptedStep::Text("shell-done".into())],
+                ],
+            )));
+        } else {
+            let step = if text == "FAIL" {
+                whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())
+            } else if text == "HANG" {
+                whycodes_llm::ScriptedStep::Hang(std::time::Duration::from_secs(30))
+            } else {
+                whycodes_llm::ScriptedStep::Text(text)
+            };
+            registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+                _provider.to_string(),
+                [step],
+            )));
+        }
         _agent.set_provider_registry(registry);
     }
 }
@@ -470,6 +505,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
             Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
         )
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
+    agent.set_approval_mode(app.approval_mode);
     inject_test_llm(&mut agent, &opts.provider);
 
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
@@ -564,6 +600,10 @@ impl LoopIo {
 
     fn is_headless(&self) -> bool {
         self.scripted.is_some()
+    }
+
+    fn peek(&self) -> Option<&Event> {
+        self.scripted.as_ref().and_then(|q| q.front())
     }
 
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
@@ -1736,6 +1776,20 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 idle_trim_armed = false;
             }
 
+            let overlay_owns_keys = matches!(
+                app.dialogs.active(),
+                Some(DialogKind::Permission { .. } | DialogKind::Question(_))
+            );
+            // Headless: while a turn is in flight, hold non-cancel keys until a
+            // permission/question overlay opens (so `y` is not typed into the prompt).
+            if headless
+                && rt.agent_busy
+                && !overlay_owns_keys
+                && !headless_busy_key_ready(loop_io.peek())
+            {
+                tokio::task::yield_now().await;
+                continue;
+            }
             let has_ev = match loop_io.poll(poll_for) {
                 Ok(v) => v,
                 Err(e) => {
@@ -2539,16 +2593,18 @@ async fn spawn_new_session_runtime(
         question_prompter.with_notify(whycodes_agent::notify::handle_from_config(&config.notify));
     let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
 
-    let agent = Agent::new(agent_info)
+    let mut agent = Agent::new(agent_info)
         .with_config(config)
         .with_file_index(file_index.clone())
         .with_session_claims(session_claims)
         .with_permission_prompter(
             Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
         )
-        .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
-        .with_mcp(config)
-        .await;
+        .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
+    agent.set_approval_mode(config.general.approval_mode.unwrap_or_default());
+    if !cfg!(test) {
+        agent = agent.with_mcp(config).await;
+    }
 
     let session = Session::new(project_dir.to_path_buf(), system_prompt);
     let history = SessionHistory::new();
