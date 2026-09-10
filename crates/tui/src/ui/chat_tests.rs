@@ -835,6 +835,9 @@ fn width_helpers_respect_unicode_and_tiny_budgets() {
         UnicodeWidthStr::width(super::cut_to_width("a界b", 3).as_str()),
         3
     );
+    assert_eq!(super::cut_to_width("hello", 0), "");
+    assert_eq!(super::cut_to_width("hello", 20), "hello");
+    assert_eq!(super::cut_to_width("hello", 3), "hel");
 
     let style = Style::default().fg(Color::Cyan);
     let mut spans = vec![Span::styled("a界".to_string(), style), Span::raw("tail")];
@@ -842,6 +845,12 @@ fn width_helpers_respect_unicode_and_tiny_budgets() {
     assert_eq!(spans.len(), 1);
     assert_eq!(spans[0].content.as_ref(), "a");
     assert_eq!(spans[0].style, style);
+    let mut empty = vec![Span::raw("keep")];
+    super::truncate_spans_to(&mut empty, 0);
+    assert!(empty.is_empty());
+    let mut fits = vec![Span::raw("ok")];
+    super::truncate_spans_to(&mut fits, 10);
+    assert_eq!(fits.len(), 1);
 }
 
 #[test]
@@ -1146,6 +1155,17 @@ fn right_align_keeps_clock_at_the_row_end() {
     // Last column is a gutter (scrollbar); clock sits just left of it.
     assert_eq!(unicode_width::UnicodeWidthStr::width(text.as_str()), 19);
     assert!(text.ends_with("14:32"), "got {text:?}");
+    let none = super::line_with_right(vec![Span::raw("plain")], None, Style::default(), 20);
+    let none_text: String = none.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(none_text, "plain");
+    let empty_clock =
+        super::line_with_right(vec![Span::raw("plain")], Some(""), Style::default(), 20);
+    let empty_text: String = empty_clock
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(empty_text, "plain");
 }
 
 #[test]

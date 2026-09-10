@@ -2161,6 +2161,12 @@ async fn handle_slash_covers_local_commands() {
     h.app.mode = AppMode::Normal;
     h.run("/models m2").await;
     assert_eq!(h.model, "m2");
+    assert_eq!(h.app.model_name, "m2");
+    assert!(
+        h.app.status_message.contains("Model") || h.app.status_message.contains("window"),
+        "model-only /models must update the status, got {}",
+        h.app.status_message
+    );
     h.run("/models acme/m3").await;
     assert_eq!(h.provider, "acme");
     assert_eq!(h.model, "m3");
