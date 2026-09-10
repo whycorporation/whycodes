@@ -2084,6 +2084,21 @@ fn dispatch_resolved_action_covers_unmapped_keymap_arms() {
         &k
     ));
     assert!(a.auto_scroll);
+    assert!(
+        a.status_message.contains("ON") || a.status_message.contains("OFF"),
+        "toggle must set an auto-scroll status, got {}",
+        a.status_message
+    );
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SwitchAgent),
+        &k
+    ));
+    assert!(
+        a.status_message.contains("Ctrl+T") || a.status_message.contains("agent"),
+        "SwitchAgent is owned by the run loop and must leave a status hint, got {}",
+        a.status_message
+    );
     assert!(dispatch_resolved_action(
         &mut a,
         Some(Action::ClearSession),

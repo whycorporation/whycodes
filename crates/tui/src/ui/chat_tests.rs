@@ -1975,6 +1975,95 @@ fn user_prompt_empty_body_and_image_placeholder_skip() {
 }
 
 #[test]
+fn stamp_first_content_line_skips_empty_clock_and_already_stamped() {
+    let style = Style::default().fg(Color::Gray);
+    let mut empty = vec![Line::from("")];
+    assert!(!super::stamp_first_content_line(
+        &mut empty, None, style, 40
+    ));
+    assert!(!super::stamp_first_content_line(
+        &mut empty,
+        Some(""),
+        style,
+        40
+    ));
+
+    let mut blank_then_text = vec![Line::from(""), Line::from(Span::raw("hello"))];
+    assert!(super::stamp_first_content_line(
+        &mut blank_then_text,
+        Some("12:00"),
+        style,
+        40
+    ));
+    let joined: String = blank_then_text
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains("hello") && joined.contains("12:00"),
+        "clock must land on the first non-empty line, got {joined:?}"
+    );
+    assert!(
+        super::stamp_first_content_line(&mut blank_then_text, Some("12:00"), style, 40),
+        "a line that already carries the clock must return true without restamping"
+    );
+
+    let rail = super::accent_line(vec![Span::raw("body")], false, Style::default());
+    let text: String = rail.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(text, "body");
+}
+
+#[test]
+fn live_content_skips_duplicate_text_block_markdown() {
+    let palette = ThemeName::DefaultDark.palette();
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::Assistant, "live answer");
+    let i = app.messages.len() - 1;
+    app.messages[i].blocks = vec![crate::app::ChatBlock::Text("duplicate block".into())];
+    let lines = super::render_message(&app.messages[i], &app, &palette, i, 60, None, false);
+    let joined: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains("live") || joined.contains("answer"),
+        "non-empty content must paint the live answer, got {joined:?}"
+    );
+    assert!(
+        !joined.contains("duplicate"),
+        "Text blocks are skipped when live content is already present, got {joined:?}"
+    );
+}
+
+#[test]
+fn user_prompt_slash_token_and_long_first_line_wrap() {
+    let palette = ThemeName::DefaultDark.palette();
+    let skill = Style::default().fg(palette.accent);
+    let body = Style::default().fg(palette.fg);
+    let spans = super::prompt_body_spans("please /help now", body, skill);
+    assert!(
+        spans.iter().any(|s| s.content.as_ref().contains("/help")),
+        "a leading slash command must be its own skill span, got {spans:?}"
+    );
+    assert!(
+        super::prompt_body_spans("", body, skill)
+            .iter()
+            .all(|s| s.content.is_empty())
+    );
+
+    let long = "word ".repeat(40);
+    let wrapped = super::user_prompt_lines(&long, &[], Some("1:00"), &palette, 24, false, true);
+    let joined: String = wrapped
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains("word"),
+        "a long first line must wrap onto continuation rows, got {joined:?}"
+    );
+}
+
+#[test]
 fn last_scrolled_past_user_and_empty_sticky_header() {
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.add_message(ChatRole::User, "");
