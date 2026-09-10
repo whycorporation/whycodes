@@ -2690,6 +2690,17 @@ fn tool_role_auto_detects_diff_and_json() {
         json_text.contains("ok") || json_text.contains("true") || json_text.contains('{'),
         "Auto JSON tool output must paint as code, got {json_text:?}"
     );
+
+    app.add_message(ChatRole::Tool, "# src/main.rs\nfn main() {}\n");
+    let from_path = super::render_message(&app.messages[2], &app, &palette, 2, 60, None, false);
+    let path_text: String = from_path
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        path_text.contains("main") || path_text.contains("src"),
+        "Auto `# path` header must pick a code language, got {path_text:?}"
+    );
 }
 
 #[test]
