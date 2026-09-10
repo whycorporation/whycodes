@@ -1728,6 +1728,20 @@ fn tool_result_auto_picks_grep_code_and_plain() {
         !joined(&unnumbered).is_empty(),
         "code without a read gutter still highlights"
     );
+    let long_code = format!("     1|{}\n     2|ok", "x".repeat(200));
+    let cut = tool_result(
+        &long_code,
+        false,
+        &palette,
+        true,
+        ToolOutHint::Code(Some("rust".into())),
+        16,
+    );
+    let cut_text = joined(&cut);
+    assert!(
+        cut_text.contains('…') || cut_text.contains("x"),
+        "a long highlighted code row must truncate, got {cut_text}"
+    );
     let long_body = format!("{}\n{}", "x".repeat(200), vec!["line"; 20].join("\n"));
     let long_plain = tool_result(&long_body, false, &palette, false, ToolOutHint::Auto, 12);
     assert!(!long_plain.is_empty());

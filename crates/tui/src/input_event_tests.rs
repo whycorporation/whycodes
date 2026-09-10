@@ -3756,6 +3756,35 @@ fn dialog_help_and_alert_click_and_arrows() {
     );
     click_list_row(&mut a, 8, 1);
     assert!(matches!(a.dialogs.active(), Some(DialogKind::Alert { .. })));
+    confirm_dialog(
+        &mut a,
+        &DialogKind::Alert {
+            title: "Note".into(),
+            message: "hi".into(),
+        },
+    );
+    assert!(
+        !a.dialogs.is_open(),
+        "Alert confirm must dismiss the notice"
+    );
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![whycodes_tools::question::QuestionOption {
+            label: "Yes".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+        important: false,
+    }]);
+    let q = a.dialogs.active().cloned().expect("question dialog");
+    confirm_dialog(&mut a, &q);
+    assert!(
+        matches!(a.dialogs.active(), Some(DialogKind::Question(_))),
+        "keyboard confirm on Question must not dismiss the questionnaire"
+    );
 
     let mut a = app();
     a.provider_name = "xai".into();
