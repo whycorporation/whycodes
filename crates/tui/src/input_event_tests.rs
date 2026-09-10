@@ -4231,3 +4231,73 @@ fn mouse_confirms_model_row_and_header_toggle() {
         assert!(a.pending_model.is_some() || a.mode == AppMode::Normal);
     }
 }
+
+#[test]
+fn mouse_clicks_slash_and_file_suggest_rows() {
+    let mut a = app();
+    a.input_buffer = "/".into();
+    a.input_cursor = 1;
+    a.slash_suggest.refresh(&a.input_buffer);
+    assert!(a.slash_suggest.active);
+    a.slash_suggest.list_hit = Some(Rect {
+        x: 2,
+        y: 10,
+        width: 20,
+        height: 4,
+    });
+    a.slash_suggest.list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 4, 10),
+    );
+    assert!(!a.slash_suggest.active);
+    assert!(a.input_buffer.starts_with('/'));
+
+    let mut a = app();
+    a.file_suggest.active = true;
+    a.file_suggest.token_start = 0;
+    a.file_suggest.matches = vec![whycodes_index::FileMatch {
+        rel: "src/main.rs".into(),
+        ..Default::default()
+    }];
+    a.file_suggest.list_hit = Some(Rect {
+        x: 2,
+        y: 12,
+        width: 24,
+        height: 2,
+    });
+    a.input_buffer = "@x".into();
+    a.input_cursor = 2;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 4, 12),
+    );
+    assert!(!a.file_suggest.active);
+    assert!(a.input_buffer.contains("src/main.rs"));
+}
+
+#[test]
+fn todo_body_click_without_overflow_does_not_steal_focus() {
+    let mut a = app();
+    a.replace_todos(vec![whycodes_core::TodoItem::new(
+        "1",
+        "only",
+        whycodes_core::TodoStatus::Pending,
+    )]);
+    a.todos_viewport_rows = 8;
+    a.todos_body_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 3,
+        width: 40,
+        height: 8,
+    }));
+    a.todos_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 2,
+        width: 40,
+        height: 1,
+    }));
+    a.focus_prompt();
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 4, 5));
+    assert_eq!(a.focus, FocusPane::Prompt);
+}
