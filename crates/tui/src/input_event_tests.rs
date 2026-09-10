@@ -2069,6 +2069,16 @@ fn dispatch_resolved_action_covers_unmapped_keymap_arms() {
         &k
     ));
     assert_eq!(a.mode, AppMode::Help);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SubmitInput),
+        &k
+    ));
+    assert_eq!(
+        a.mode,
+        AppMode::Help,
+        "SubmitInput in Help must be a no-op and keep the overlay open"
+    );
 
     let mut a = app();
     a.auto_scroll = true;
