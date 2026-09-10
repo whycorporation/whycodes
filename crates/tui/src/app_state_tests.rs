@@ -611,6 +611,36 @@ fn chat_messages_from_session_tool_blocks_skip_non_text() {
 }
 
 #[test]
+fn chat_messages_from_session_tool_image_only_stays_empty() {
+    use whycodes_core::types::{ContentBlock, ImageSource, Message, MessageContent, Role};
+    use whycodes_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.messages.push(
+        Message {
+            role: Role::Tool,
+            content: MessageContent::Blocks(vec![ContentBlock::Image {
+                source: ImageSource::Url {
+                    url: "https://example.com/only.png".into(),
+                },
+            }]),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }
+        .stamp(),
+    );
+    let msgs = chat_messages_from_session(&session);
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].role, ChatRole::Tool);
+    assert!(
+        msgs[0].content.is_empty(),
+        "image-only tool role has no text to fold, got {:?}",
+        msgs[0].content
+    );
+}
+
+#[test]
 fn catalog_models_merges_config_and_dedups() {
     let mut cfg = whycodes_config::Config::default();
     cfg.providers.insert(

@@ -4559,6 +4559,20 @@ fn hidden_sidebar_tab_hotkeys_still_select_tabs() {
         a.sidebar.active_tab, before,
         "tab 6 must change the active tab even when the rail started hidden"
     );
+
+    let mut a = app();
+    a.sidebar.visible = false;
+    let tab = a.sidebar.active_tab;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarPrevTab),
+        &k
+    ));
+    assert!(a.sidebar.visible);
+    assert_eq!(
+        a.sidebar.active_tab, tab,
+        "PrevTab on a hidden rail must reveal the current tab, not wrap"
+    );
 }
 
 #[test]
