@@ -3517,6 +3517,27 @@ async fn apply_auth_flow_note_code_and_results() {
         app.messages.iter().map(|m| &m.content).collect::<Vec<_>>()
     );
 
+    apply_auth_flow_event(
+        &mut app,
+        AuthFlowEvent::Done {
+            provider: "openai".into(),
+            result: Ok("already".into()),
+        },
+        &mut provider,
+        &mut model,
+        &mut key,
+        &config,
+    )
+    .await;
+    assert_eq!(provider, "openai");
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.content.contains("Signed in to `openai`") && !m.content.contains("using")),
+        "{:?}",
+        app.messages.iter().map(|m| &m.content).collect::<Vec<_>>()
+    );
+
     whycodes_auth::register_spec(whycodes_auth::ProviderSpec {
         name: "tui-oauth-switch-demo".into(),
         label: "Demo".into(),
@@ -5335,6 +5356,16 @@ fn tui_writer_write_flush_and_summary() {
     if io.poll(Duration::ZERO).unwrap_or(false) {
         let _ = io.read_crossterm();
     }
+    let size = production_term_size().unwrap_or((0, 0));
+    assert!(size.0 < 10_000 && size.1 < 10_000);
+    let w = live_buf_open().expect("buf writer");
+    assert!(matches!(w, TuiWriter::Buf(_)));
+    live_buf_raw().expect("live buf raw is a no-op");
+    assert_eq!(live_buf_size().unwrap(), (0, 0));
+    let color = crate::color::ColorMode::Ansi256;
+    let (term, _, tw, th) = attach_for_loop(color, true).expect("live buf attach");
+    assert_eq!((tw, th), (0, 0));
+    term.restore(false);
 }
 
 #[test]

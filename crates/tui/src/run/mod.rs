@@ -1146,7 +1146,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let perm_rx = boot.perm_rx;
     let question_rx = boot.question_rx;
     let session_claims = boot.session_claims;
-    let mut missing_key = boot.missing_key;
+    let missing_key = boot.missing_key;
     let remote = opts.remote.clone();
 
     let mut provider = opts.provider.clone();
@@ -1181,19 +1181,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
     // `live_buf` runs the production `!headless` arms (panic restore,
     // first-frame hydrate, crossterm poll) into a memory buffer.
-    let (mut terminal, keyboard_enhanced, tw, th) = if live_buf {
-        attach_live(
-            color_mode,
-            || Ok(TuiWriter::Buf(Vec::new())),
-            || Ok(()),
-            || Ok((0, 0)),
-        )?
-    } else if headless {
+    let (mut terminal, keyboard_enhanced, tw, th) = if headless && !live_buf {
         (LoopTerm::headless(color_mode)?, false, 80u16, 24u16)
     } else {
-        attach_live(color_mode, open_tui_writer, enable_raw_mode, || {
-            term_size().or(Ok((0, 0)))
-        })?
+        attach_for_loop(color_mode, live_buf)?
     };
 
     whycodes_core::logging::emit(
@@ -1465,22 +1456,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         }
                         if let Some(k) = fetched {
                             api_key = k;
-                            missing_key = api_key.is_empty()
-                                && whycodes_llm::provider_requires_api_key(
-                                    &provider,
-                                    Some(&config),
-                                );
-                            app.status_message = if missing_key {
-                                format!(
-                                    "agent={}  {}/{}  — no API key · /connect  /help",
-                                    app.agent_name, provider, model
-                                )
-                            } else {
-                                format!(
-                                    "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
-                                    app.agent_name, provider, model
-                                )
-                            };
+                            app.status_message = format!(
+                                "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
+                                app.agent_name, provider, model
+                            );
                         }
                     }
 
@@ -2414,6 +2393,44 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
 /// Real crossterm poll. Tests call this with `Duration::ZERO` so the
 /// production line runs without a TTY wait.
+fn production_term_size() -> io::Result<(u16, u16)> {
+    term_size().or(Ok((0, 0)))
+}
+
+fn live_buf_open() -> io::Result<TuiWriter> {
+    Ok(TuiWriter::Buf(Vec::new()))
+}
+
+fn live_buf_raw() -> io::Result<()> {
+    Ok(())
+}
+
+fn live_buf_size() -> io::Result<(u16, u16)> {
+    Ok((0, 0))
+}
+
+fn attach_for_loop(
+    color_mode: ColorMode,
+    live_buf: bool,
+) -> anyhow::Result<(LoopTerm, bool, u16, u16)> {
+    let open: fn() -> io::Result<TuiWriter> = if live_buf {
+        live_buf_open
+    } else {
+        open_tui_writer
+    };
+    let raw: fn() -> io::Result<()> = if live_buf {
+        live_buf_raw
+    } else {
+        enable_raw_mode
+    };
+    let size: fn() -> io::Result<(u16, u16)> = if live_buf {
+        live_buf_size
+    } else {
+        production_term_size
+    };
+    attach_live(color_mode, open, raw, size)
+}
+
 fn live_poll_crossterm(timeout: Duration) -> io::Result<bool> {
     crossterm::event::poll(timeout)
 }
