@@ -3526,7 +3526,25 @@ fn help_scrollbar_copy_without_modal_and_empty_metrics() {
     });
     a.screen_cells =
         crate::cell_grid::CellGrid::from_rows(vec![(0..8).map(|_| "x".to_string()).collect()]);
-    copy_modal_selection(&mut a, 4, 0);
+    crate::clipboard::with_copy_stub(true, || {
+        copy_modal_selection(&mut a, 4, 0);
+    });
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Copied") && t.message.contains("chars")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    let mut a = app();
+    copy_modal_selection(&mut a, 0, 0);
+    assert!(a.mouse_sel.is_none());
 }
 
 #[test]
