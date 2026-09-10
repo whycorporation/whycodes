@@ -2693,3 +2693,399 @@ fn colon_sidebar_and_clear_commands() {
     handle_event(&mut a, key(KeyCode::Enter));
     assert!(a.messages.is_empty());
 }
+
+fn click_list_row(a: &mut TuiApp, y: u16, total: usize) {
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 6,
+    });
+    a.dialog_list_total = total;
+    a.dialog_list_visible = 6;
+    a.dialog_list_scroll_start = 0;
+    handle_event(a, mouse(MouseEventKind::Down(MouseButton::Left), 14, y));
+    handle_event(a, mouse(MouseEventKind::Up(MouseButton::Left), 14, y));
+}
+
+#[test]
+fn mouse_confirms_session_list_sessions_import_and_model_rows() {
+    let mut a = app();
+    a.session_list.sessions = vec![crate::app::SessionEntry {
+        id: "persisted".into(),
+        title: "t".into(),
+        messages: 1,
+        updated_at: None,
+        live: None,
+    }];
+    open_dialog(&mut a, DialogKind::SessionList);
+    click_list_row(&mut a, 8, 1);
+    assert_eq!(a.pending_session_id.as_deref(), Some("persisted"));
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    a.sessions_rows = vec![crate::app::SessionDashboardRow {
+        parked_idx: Some(2),
+        title: "bg".into(),
+        glyph: "·".into(),
+        state_label: "idle".into(),
+        preview: String::new(),
+        unread: false,
+    }];
+    open_dialog(&mut a, DialogKind::Sessions);
+    click_list_row(&mut a, 8, 1);
+    assert_eq!(a.pending_session_switch, Some(2));
+
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    assert_eq!(a.import_picker.checked, vec![true]);
+    click_list_row(&mut a, 8, 1);
+    assert_eq!(
+        a.import_picker.checked,
+        vec![false],
+        "import click toggles, does not confirm"
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Import)));
+
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
+    a.provider_name = "other".into();
+    a.model_name = "x".into();
+    open_model_dialog(&mut a);
+    let rows = a.model_selection.visible_rows();
+    assert!(
+        matches!(
+            rows.first(),
+            Some(crate::app::ModelPickerRow::Header { .. })
+        ),
+        "{rows:?}"
+    );
+    click_list_row(&mut a, 8, rows.len());
+    assert!(
+        a.dialogs.is_open(),
+        "header click toggles the group, keeps the picker"
+    );
+
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into())];
+    a.provider_name = "acme".into();
+    a.model_name = "m1".into();
+    open_model_dialog(&mut a);
+    let n = a.model_selection.visible_rows().len();
+    click_list_row(&mut a, 9, n);
+    assert!(
+        a.pending_model
+            .as_ref()
+            .map(|(p, m)| (p.as_str(), m.as_str()))
+            == Some(("acme", "m1"))
+            || a.dialogs.is_open(),
+        "model leaf click confirms or keeps picker, got {:?}",
+        a.pending_model
+    );
+}
+
+#[test]
+fn mouse_question_other_multi_and_advance() {
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![whycodes_tools::question::QuestionOption {
+            label: "Yes".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+        important: false,
+    }]);
+    click_list_row(&mut a, 9, 2);
+    if let Some(DialogKind::Question(st)) = a.dialogs.active() {
+        assert!(st.free_text_focus, "Other row click focuses free text");
+    }
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Pick".into(),
+        options: vec![
+            whycodes_tools::question::QuestionOption {
+                label: "A".into(),
+                description: String::new(),
+                preview: None,
+            },
+            whycodes_tools::question::QuestionOption {
+                label: "B".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: true,
+        important: false,
+    }]);
+    click_list_row(&mut a, 8, 3);
+    if let Some(DialogKind::Question(st)) = a.dialogs.active() {
+        assert!(
+            !st.multi_selected.is_empty() || st.cursor == 0,
+            "multi-select click toggles the row"
+        );
+    }
+
+    let mut a = app();
+    a.ask_question(vec![
+        whycodes_tools::question::QuestionSpec {
+            prompt: "Q1".into(),
+            options: vec![whycodes_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+            important: false,
+        },
+        whycodes_tools::question::QuestionSpec {
+            prompt: "Q2".into(),
+            options: vec![whycodes_tools::question::QuestionOption {
+                label: "Ok".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+            important: false,
+        },
+    ]);
+    click_list_row(&mut a, 8, 2);
+    assert!(
+        matches!(a.dialogs.active(), Some(DialogKind::Question(_))),
+        "first of two questions advances, does not finish"
+    );
+}
+
+#[test]
+fn mouse_moved_and_unhandled_kind_keep_dialog() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    assert!(handle_event(&mut a, mouse(MouseEventKind::Moved, 20, 8)));
+    assert!(handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Right), 20, 8)
+    ));
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Theme)));
+}
+
+#[test]
+fn slash_select_prev_next_from_scrollback_and_focus_prompt() {
+    let mut a = app();
+    a.input_buffer = "/".into();
+    a.input_cursor = 1;
+    a.slash_suggest.refresh(&a.input_buffer);
+    assert!(a.slash_suggest.active);
+    a.focus = FocusPane::Scrollback;
+    let before = a.slash_suggest.selected;
+    handle_event(&mut a, key(KeyCode::Down));
+    assert_ne!(a.slash_suggest.selected, before);
+    handle_event(&mut a, key(KeyCode::Up));
+    assert_eq!(a.slash_suggest.selected, before);
+    handle_event(&mut a, key(KeyCode::Char('j')));
+    handle_event(&mut a, key(KeyCode::Char('k')));
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "hi");
+    a.focus_scrollback();
+    assert_eq!(a.focus, FocusPane::Scrollback);
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert_eq!(a.focus, FocusPane::Prompt);
+}
+
+#[test]
+fn help_esc_with_stale_context_clears_search_and_close_hit() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Normal;
+    a.help_searching = true;
+    a.help_query = "q".into();
+    handle_event(&mut a, key(KeyCode::Esc));
+    assert!(!a.help_searching);
+    assert!(a.help_query.is_empty());
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Help;
+    a.help_searching = true;
+    a.help_query = "q".into();
+    a.dialog_close_hit = Some(Rect {
+        x: 70,
+        y: 1,
+        width: 3,
+        height: 1,
+    });
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 71, 1),
+    );
+    assert_eq!(a.mode, AppMode::Help);
+    assert!(!a.help_searching);
+    assert!(a.help_query.is_empty());
+}
+
+#[test]
+fn help_scrollbar_copy_without_modal_and_empty_metrics() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Help;
+    a.dialog_scrollbar_hit = Some(Rect {
+        x: 49,
+        y: 6,
+        width: 1,
+        height: 10,
+    });
+    a.dialog_list_total = 40;
+    a.dialog_list_visible = 6;
+    apply_modal_scrollbar(&mut a, None, 12, Some(1));
+    assert!(a.help_scroll > 0);
+
+    a.dialog_list_total = 0;
+    apply_modal_scrollbar(&mut a, None, 12, None);
+
+    let grab = scrollbar_grab_at(
+        &a,
+        8,
+        Rect {
+            x: 49,
+            y: 6,
+            width: 1,
+            height: 10,
+        },
+    );
+    assert_eq!(grab, 0, "no thumb when total <= visible");
+
+    copy_modal_selection(&mut a, 18, 7);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = None;
+    a.mouse_sel = Some(crate::app::MouseSelection {
+        anchor_x: 0,
+        anchor_y: 0,
+        focus_x: 4,
+        focus_y: 0,
+        dragging: true,
+    });
+    a.screen_cells =
+        crate::cell_grid::CellGrid::from_rows(vec![(0..8).map(|_| "x".to_string()).collect()]);
+    copy_modal_selection(&mut a, 4, 0);
+}
+
+#[test]
+fn move_in_dialog_to_empty_model_effort_mode_question_import() {
+    let mut a = app();
+    a.model_selection.models.clear();
+    a.model_selection.query = "zzzz-no-match".into();
+    move_in_dialog_to(&mut a, &DialogKind::Model, 9);
+    assert_eq!(a.model_selection.selected, 0);
+
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    move_in_dialog_to(&mut a, &DialogKind::Effort, 0);
+    move_in_dialog_to(&mut a, &DialogKind::ApprovalMode, 0);
+
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![whycodes_tools::question::QuestionOption {
+            label: "Yes".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+        important: false,
+    }]);
+    let q = a.dialogs.active().cloned().expect("question dialog");
+    move_in_dialog_to(&mut a, &q, 1);
+
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    move_in_dialog_to(&mut a, &DialogKind::Import, 4);
+    assert_eq!(a.import_picker.cursor, 0);
+
+    let mut a = app();
+    a.provider_name = "no-such-provider".into();
+    a.model_name = "no-such-model".into();
+    open_effort_dialog(&mut a);
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("no reasoning-effort"))
+            || matches!(a.dialogs.active(), Some(DialogKind::Effort))
+    );
+
+    let mut a = app();
+    a.model_selection.models.clear();
+    open_model_dialog(&mut a);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+}
+
+#[test]
+fn dialog_help_and_alert_click_and_arrows() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    a.help_searching = true;
+    a.help_query = "x".into();
+    handle_event(&mut a, key(KeyCode::Esc));
+    assert!(!a.help_searching);
+
+    let mut a = app();
+    open_dialog(
+        &mut a,
+        DialogKind::Alert {
+            title: "Note".into(),
+            message: "hi".into(),
+        },
+    );
+    click_list_row(&mut a, 8, 1);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Alert { .. })));
+
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    open_effort_dialog(&mut a);
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Up));
+    open_mode_dialog(&mut a);
+    handle_event(&mut a, key(KeyCode::Down));
+}

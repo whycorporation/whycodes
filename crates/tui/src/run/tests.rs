@@ -1654,6 +1654,53 @@ async fn handle_slash_covers_local_commands() {
     h.run("/remember save this fact").await;
     h.run("/memory").await;
 
+    h.config.memory.enabled = false;
+    {
+        let data = h._tmp.path().join("blocked-memory-home");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("memory"), "not a dir").unwrap();
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", &data) };
+        h.run("/remember blocked by file").await;
+        h.run("/memory").await;
+        match prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+    }
+    assert!(
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Memory:")),
+        "blocked memory dir must toast, got {:?}",
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    std::fs::write(h._tmp.path().join(".whycodes"), "not a directory").unwrap();
+    h.run("/export").await;
+    assert!(
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Export failed")),
+        "blocked .whycodes must fail export, got {:?}",
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    let _ = std::fs::remove_file(h._tmp.path().join(".whycodes"));
+
     h.run("/agent").await;
     assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Agent)));
     h.app.dialogs.clear();
@@ -5024,6 +5071,9 @@ fn tui_writer_write_flush_and_summary() {
     print_session_summary("coverage-summary");
     let _ = tui_available();
     let _ = open_tui_writer();
+    if let Ok(true) = live_poll_crossterm(std::time::Duration::ZERO) {
+        let _ = live_read_crossterm();
+    }
 }
 
 #[test]

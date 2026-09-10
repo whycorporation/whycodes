@@ -180,6 +180,30 @@ fn stash_clipboard_image_writes_under_data_dir() {
     }
 }
 
+fn set_mtime_old(path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        let p = path.to_string_lossy().replace('\'', "''");
+        let status = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!("(Get-Item -LiteralPath '{p}').LastWriteTime = (Get-Date).AddDays(-2)"),
+            ])
+            .status()
+            .expect("powershell mtime");
+        assert!(status.success(), "set LastWriteTime failed: {status}");
+    }
+    #[cfg(not(windows))]
+    {
+        let status = std::process::Command::new("touch")
+            .args(["-d", "2 days ago", path])
+            .status()
+            .expect("touch mtime");
+        assert!(status.success(), "touch -d failed: {status}");
+    }
+}
+
 #[test]
 fn prune_old_clipboard_images_skips_missing_and_keeps_fresh() {
     prune_old_clipboard_images(std::path::Path::new(
@@ -190,6 +214,26 @@ fn prune_old_clipboard_images_skips_missing_and_keeps_fresh() {
     std::fs::write(&fresh, b"\x89PNG\r\n\x1a\n").unwrap();
     prune_old_clipboard_images(dir.path());
     assert!(fresh.exists());
+}
+
+#[test]
+fn prune_old_clipboard_images_removes_stale_and_skips_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let stale = dir.path().join("stale.png");
+    std::fs::write(&stale, b"\x89PNG\r\n\x1a\nold").unwrap();
+    set_mtime_old(&stale);
+    let nested = dir.path().join("nested-dir");
+    std::fs::create_dir(&nested).unwrap();
+    set_mtime_old(&nested);
+    let fresh = dir.path().join("fresh.png");
+    std::fs::write(&fresh, b"\x89PNG\r\n\x1a\n").unwrap();
+    prune_old_clipboard_images(dir.path());
+    assert!(!stale.exists(), "files older than 24h must be pruned");
+    assert!(fresh.exists(), "fresh clipboard images must stay");
+    assert!(
+        nested.exists(),
+        "directories must survive remove_file failure"
+    );
 }
 
 #[test]

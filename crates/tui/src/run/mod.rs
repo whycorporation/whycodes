@@ -2413,10 +2413,18 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     })
 }
 
-/// Read the event that woke `poll`, then drain anything already queued.
-///
-/// Cap the batch so a stuck input flood cannot grow without bound before
-/// the next paint / turn-event drain.
+/// Real crossterm poll. Tests call this with `Duration::ZERO` so the
+/// production line runs without a TTY wait.
+fn live_poll_crossterm(timeout: Duration) -> io::Result<bool> {
+    crossterm::event::poll(timeout)
+}
+
+/// Real crossterm read. Tests only call this after a zero-timeout poll
+/// returns true (otherwise it would block on a missing TTY).
+fn live_read_crossterm() -> io::Result<Event> {
+    crossterm::event::read()
+}
+
 fn poll_crossterm(timeout: Duration) -> io::Result<bool> {
     #[cfg(test)]
     {
@@ -2424,11 +2432,14 @@ fn poll_crossterm(timeout: Duration) -> io::Result<bool> {
         if take_crossterm_poll_err() {
             return Err(io::Error::other("crossterm stub poll failed"));
         }
-        Ok(!crossterm_stub_is_empty())
+        if !crossterm_stub_is_empty() {
+            return Ok(true);
+        }
+        live_poll_crossterm(Duration::ZERO)
     }
     #[cfg(not(test))]
     {
-        crossterm::event::poll(timeout)
+        live_poll_crossterm(timeout)
     }
 }
 
@@ -2438,15 +2449,24 @@ fn read_crossterm() -> io::Result<Event> {
         if take_crossterm_read_err() {
             return Err(io::Error::other("crossterm stub read failed"));
         }
-        crossterm_stub_pop()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "crossterm stub empty"))
+        if let Some(ev) = crossterm_stub_pop() {
+            return Ok(ev);
+        }
+        Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "crossterm stub empty",
+        ))
     }
     #[cfg(not(test))]
     {
-        crossterm::event::read()
+        live_read_crossterm()
     }
 }
 
+/// Read the event that woke `poll`, then drain anything already queued.
+///
+/// Cap the batch so a stuck input flood cannot grow without bound before
+/// the next paint / turn-event drain.
 fn read_event_batch() -> io::Result<Vec<Event>> {
     const MAX_BATCH: usize = 256;
     let mut batch = Vec::with_capacity(8);

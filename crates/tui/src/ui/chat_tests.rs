@@ -1,7 +1,7 @@
 use super::{
-    SparseLines, ToolOutHint, ToolPaint, ellipsize_bytes, hard_truncate_line,
-    message_row_layout_mut, parse_grep_hit, prettify_tool_result, split_read_line, tool_block,
-    tool_display_name, tool_result, tool_summary, visible_message_range,
+    SparseLines, ToolOutHint, ToolPaint, ToolRef, ellipsize_bytes, hard_truncate_line,
+    message_row_layout_mut, paint_tool_run, parse_grep_hit, prettify_tool_result, split_read_line,
+    tool_block, tool_display_name, tool_out_hint, tool_result, tool_summary, visible_message_range,
 };
 use crate::app::{ChatRole, TuiApp};
 use crate::config::TuiAppConfig;
@@ -1740,4 +1740,169 @@ fn grep_match_count_and_diff_stat() {
     assert!(super::grep_match_count("no hits here").is_none());
     let (a, d) = super::diff_stat("--- a\n+++ b\n-old\n+new\n+also\n");
     assert_eq!((a, d), (2, 1));
+}
+
+fn joined(lines: &[Line<'_>]) -> String {
+    lines
+        .iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn tool_block_expanded_headers_execute_error_diff_grep_and_hints() {
+    let palette = ThemeName::DefaultDark.palette();
+    let paint = |expanded: bool, is_error: bool| ToolPaint {
+        is_error,
+        palette: &palette,
+        expanded,
+        width: 80,
+        spin: 0,
+    };
+
+    let run = tool_block(
+        "bash",
+        &json!({"command": "seq"}),
+        Some("ok\n"),
+        paint(true, false),
+    );
+    let header = joined(&run);
+    assert!(header.contains('┃') || header.contains('•'), "{header}");
+    assert!(header.contains("Run"), "{header}");
+
+    let err = tool_block(
+        "bash",
+        &json!({"command": "false"}),
+        Some("boom"),
+        paint(true, true),
+    );
+    let header = joined(&err);
+    assert!(header.contains('✕') || header.contains("boom"), "{header}");
+
+    let diff = tool_block(
+        "apply_patch",
+        &json!({}),
+        Some("--- a\n+++ b\n-old\n+new\n+also\n"),
+        paint(true, false),
+    );
+    let header = joined(&diff);
+    assert!(header.contains("+2") && header.contains("−1"), "{header}");
+
+    let grep = tool_block(
+        "grep",
+        &json!({"pattern": "foo"}),
+        Some("src/a.rs:1:foo\nsrc/b.rs:2:foo\n\n(2 matches in 2 files; pattern `foo`)"),
+        paint(true, false),
+    );
+    let header = joined(&grep);
+    assert!(
+        header.contains("2") && header.contains("matches"),
+        "{header}"
+    );
+
+    let grep1 = tool_block(
+        "search_code",
+        &json!({"query": "bar"}),
+        Some("(1 match)"),
+        paint(true, false),
+    );
+    let header = joined(&grep1);
+    assert!(header.contains("match"), "{header}");
+
+    let read = tool_block(
+        "read",
+        &json!({"path": "src/lib.rs"}),
+        Some("fn main() {}\n"),
+        paint(true, false),
+    );
+    assert!(!joined(&read).is_empty());
+
+    let unknown_diff = tool_block(
+        "custom",
+        &json!({}),
+        Some("diff --git a/x b/x\n+added\n-removed\n"),
+        paint(true, false),
+    );
+    assert!(joined(&unknown_diff).contains('+') || joined(&unknown_diff).contains("added"));
+
+    assert!(matches!(
+        tool_out_hint("git_diff", &json!({}), ""),
+        ToolOutHint::Diff
+    ));
+    assert!(matches!(
+        tool_out_hint("edit", &json!({}), "diff --git a b\n+x"),
+        ToolOutHint::Diff
+    ));
+    assert!(matches!(
+        tool_out_hint("read_file", &json!({"file_path": "a.rs"}), "fn x() {}"),
+        ToolOutHint::Code(_)
+    ));
+    assert!(matches!(
+        tool_out_hint("rg", &json!({"pattern": "x"}), "a.rs:1:x"),
+        ToolOutHint::Grep { .. }
+    ));
+    assert!(matches!(
+        tool_out_hint("other", &json!({}), "diff --git a b\n+x"),
+        ToolOutHint::Diff
+    ));
+    assert!(matches!(
+        tool_out_hint("other", &json!({}), "plain"),
+        ToolOutHint::Auto
+    ));
+    assert_eq!(super::tool_header_verb("web_fetch", false), "Fetched");
+    assert_eq!(super::tool_header_verb("list_dir", false), "Listed");
+    assert_eq!(super::tool_header_verb("repomap", false), "Mapped");
+
+    let fail_group = paint_tool_run(
+        &[
+            ToolRef {
+                name: "read",
+                input: &json!({"path": "a.rs"}),
+                result: Some("nope"),
+                is_error: true,
+            },
+            ToolRef {
+                name: "grep",
+                input: &json!({"pattern": "x"}),
+                result: Some("miss"),
+                is_error: true,
+            },
+        ],
+        paint(false, false),
+    );
+    let grouped = joined(&fail_group);
+    assert!(
+        grouped.contains("failed") || grouped.contains("Read") || grouped.contains("Searched"),
+        "{grouped}"
+    );
+
+    let empty = paint_tool_run(&[], paint(true, false));
+    assert!(empty.is_empty());
+
+    let long_plain = tool_block(
+        "other",
+        &json!({}),
+        Some(&format!("{}\n{}", "x".repeat(80), "y".repeat(80))),
+        paint(true, false),
+    );
+    assert!(joined(&long_plain).contains('…') || joined(&long_plain).len() > 10);
+
+    let long_diff = tool_block(
+        "apply_patch",
+        &json!({}),
+        Some(
+            &(0..30)
+                .map(|i| format!("+line-{i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        paint(true, false),
+    );
+    assert!(joined(&long_diff).contains('+') || joined(&long_diff).contains("line"));
 }
