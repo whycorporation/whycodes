@@ -15,7 +15,7 @@ Start here, then pick the page you need.
 | [budgets.md](budgets.md) | Contributors | CI quality budgets (panic, swallow, edges) |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Contributors | Setup and required checks |
 | [../CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) | Everyone | Community standards |
-| [../SUPPORT.md](../SUPPORT.md) | Everyone | Where to ask for help |
+| [../SUPPORT.md](../SUPPORT.md) | Everyone | Where to ask for help; GitHub Sponsors |
 | [../SECURITY.md](../SECURITY.md) | Everyone | Vulnerability reporting |
 | [../AGENTS.md](../AGENTS.md) | Agents | Build, commit, and crate rules |
 | [packaging.md](packaging.md) | Maintainers | Homebrew, installers, release download counts |

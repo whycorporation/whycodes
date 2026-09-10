@@ -21,6 +21,11 @@ happened. Use the issue templates when they fit.
 There is no Discord, forum, or mailing list. GitHub issues are the public
 support channel.
 
+## Funding
+
+WhyCodes is independently developed and needs funding to keep shipping.
+Sponsor the project on [GitHub Sponsors](https://github.com/sponsors/whycorporation).
+
 ## Contributing a change
 
 [CONTRIBUTING.md](CONTRIBUTING.md) is the short path from clone to a merged

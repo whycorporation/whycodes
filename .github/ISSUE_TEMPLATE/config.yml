@@ -9,3 +9,6 @@ contact_links:
   - name: Code of Conduct
     url: https://github.com/whycorporation/whycodes/blob/main/CODE_OF_CONDUCT.md
     about: Community standards. For a private report, open an issue titled [conduct] with no sensitive details
+  - name: Sponsor WhyCodes
+    url: https://github.com/sponsors/whycorporation
+    about: Fund development on GitHub Sponsors

@@ -142,3 +142,8 @@ Issues labelled `good first issue` are meant for a first contribution.
 
 **Security issues:** please use the process in [SECURITY.md](SECURITY.md)
 instead of opening a public issue.
+
+## Sponsors
+
+WhyCodes is independently developed and needs funding to keep shipping.
+Sponsor the project on [GitHub Sponsors](https://github.com/sponsors/whycorporation).
