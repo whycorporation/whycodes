@@ -897,6 +897,46 @@ fn coalesce_chat_wheels_sums_notches_into_one_scroll() {
 }
 
 #[test]
+fn coalesce_chat_wheels_on_todos_header_scrolls_the_list() {
+    let mut app = TuiApp::new(cfg());
+    app.replace_todos(
+        (0..20)
+            .map(|i| {
+                whycodes_core::TodoItem::new(
+                    format!("{i}"),
+                    format!("item {i}"),
+                    whycodes_core::TodoStatus::Pending,
+                )
+            })
+            .collect(),
+    );
+    app.todos_viewport_rows = 8;
+    app.todos_body_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 3,
+        width: 40,
+        height: 8,
+    }));
+    app.todos_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 2,
+        width: 40,
+        height: 1,
+    }));
+    let mut events = vec![
+        mouse(MouseEventKind::ScrollDown, 4, 2),
+        mouse(MouseEventKind::ScrollDown, 4, 2),
+        mouse(MouseEventKind::ScrollUp, 4, 2),
+    ];
+    input::coalesce_chat_wheels(&mut app, &mut events);
+    assert_eq!(
+        app.todos_scroll, 1,
+        "two down + one up on the todo header must net +1 list scroll"
+    );
+    assert!(events.is_empty());
+}
+
+#[test]
 fn selected_scrollback_paint_reuses_line_cache() {
     use crate::app::FocusPane;
     let mut app = TuiApp::new(cfg());

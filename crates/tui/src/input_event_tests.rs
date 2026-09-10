@@ -1030,6 +1030,19 @@ fn todo_wheel_scrolls_list_not_chat() {
     assert_eq!(a.scroll_offset, 0);
     handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 4, 5));
     assert_eq!(a.todos_scroll, 0);
+
+    overflowing_todos(&mut a);
+    assert!(
+        a.todos_panel_wheel_hit(4, 2),
+        "header cells must count as the todo panel for wheel"
+    );
+    assert!(a.todos_panel_wheel_hit(4, 5));
+    assert!(!a.todos_panel_wheel_hit(80, 20));
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 4, 2));
+    assert!(
+        a.todos_scroll > 0,
+        "wheel on the todo header must scroll the list, not the chat"
+    );
 }
 
 #[test]
