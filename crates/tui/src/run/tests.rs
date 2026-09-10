@@ -9268,3 +9268,38 @@ async fn maybe_spawn_prompt_suggestion_true_and_one_modes() {
     config.tui.prompt_suggestions = "1".into();
     maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "key", &mut app, tx);
 }
+
+#[tokio::test]
+async fn run_headless_ctrl_n_then_sessions_ctrl_w_closes_live_row() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut events = Vec::new();
+    events.push(ctrl('n'));
+    events.extend(type_line("/sessions"));
+    events.push(Event::Key(crossterm::event::KeyEvent::new(
+        KeyCode::Char('w'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
+    events.push(press(KeyCode::Esc));
+    events.push(ctrl('q'));
+    events.push(press(KeyCode::Enter));
+    set_headless_events(Some(events.into()));
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
