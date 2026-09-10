@@ -2737,6 +2737,23 @@ async fn cycle_agent_walks_primary_list() {
     assert_eq!(app.agent_name, "plan");
     assert_eq!(agent.info.name, "plan");
     assert!(app.status_message.contains("plan"));
+
+    // Wrap from the last primary agent back to the first (Ctrl+T).
+    let (perm2, _) = ChannelPermissionPrompter::new();
+    let (question2, _) = ChannelQuestionPrompter::new(None);
+    cycle_agent(
+        &mut app,
+        &mut agent,
+        &mut session,
+        &config,
+        dir.path(),
+        Arc::new(perm2),
+        Arc::new(question2),
+        &event_tx,
+    )
+    .await;
+    assert_eq!(app.agent_name, "build");
+    assert_eq!(app.agent_cycle_idx, 0);
 }
 
 #[tokio::test]
@@ -3167,6 +3184,25 @@ async fn spawn_runtime_and_drain_outcomes() {
     drain_background_runtime(&mut rt);
     assert!(!rt.last_error);
     assert_eq!(rt.agent.info.name, "cmp");
+
+    let mut seed = TuiApp::from_config(TuiAppConfig::default());
+    seed.add_message(ChatRole::Assistant, "keep");
+    seed.yield_view(&mut rt.view);
+    rt.done_tx
+        .send(TurnOutcome::Ok {
+            text: String::new(),
+            agent: Agent::new(dummy_info("ok-empty")),
+            session: Session::new(PathBuf::from("/work"), "sys".into()),
+            work_ms: 1,
+        })
+        .unwrap();
+    drain_background_runtime(&mut rt);
+    assert_eq!(rt.agent.info.name, "ok-empty");
+    assert_eq!(
+        rt.view.messages.last().unwrap().content,
+        "keep",
+        "empty Ok text must not wipe an existing assistant bubble"
+    );
 
     rt.done_tx
         .send(TurnOutcome::Remote {
@@ -9586,5 +9622,56 @@ async fn run_headless_file_complete_then_quit_polls_the_picker() {
         Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
         None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
     }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_live_buf_mouse_select_then_key_clears_screen_cells() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    set_headless_events(None);
+    set_headless_live(true);
+    set_crossterm_stub(std::collections::VecDeque::from([
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 2,
+            row: 2,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }),
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+            column: 8,
+            row: 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }),
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+            column: 8,
+            row: 3,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }),
+        press(KeyCode::Esc),
+        ctrl('q'),
+        press(KeyCode::Enter),
+    ]));
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    set_headless_live(false);
+    clear_crossterm_stub();
     assert_eq!(exit, TuiExit::Quit);
 }
