@@ -1747,6 +1747,8 @@ fn chat_scrollbar_offset_snaps_and_noops() {
         },
     );
     assert_eq!(grab_empty, 0, "no overflow → no thumb, grab is 0");
+    a.chat_scroll_total = 100;
+    a.chat_viewport_rows = 10;
     let grab_mid = chat_scrollbar_grab_at(
         &a,
         6,
@@ -1758,6 +1760,21 @@ fn chat_scrollbar_offset_snaps_and_noops() {
         },
     );
     assert!(grab_mid < 10);
+
+    a.chat_scroll_total = 80;
+    a.chat_viewport_rows = 8;
+    a.chat_scrollbar_hit = Some(Rect {
+        x: 40,
+        y: 1,
+        width: 1,
+        height: 8,
+    });
+    let before = a.scroll_offset;
+    apply_chat_scrollbar_offset(&mut a, 7, Some(0));
+    assert!(
+        a.scroll_offset != before || a.auto_scroll || a.scroll_offset == 0,
+        "mid-track grab=0 must still map to a valid offset"
+    );
 }
 
 #[test]
