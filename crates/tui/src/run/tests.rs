@@ -3462,6 +3462,28 @@ async fn handle_slash_more_aliases_and_connect_with_key() {
             .collect::<Vec<_>>()
     );
 
+    // Disk config (not the live Config clone) must still resolve a key.
+    h.config.providers.remove("acme");
+    h.api_key.clear();
+    let home = std::env::var_os("WHYCODES_HOME").expect("isolate_home sets WHYCODES_HOME");
+    std::fs::write(
+        std::path::Path::new(&home).join("config.toml"),
+        r#"
+schema_version = 1
+[providers.acme]
+name = "acme"
+api_key = "sk-from-disk"
+models = ["m1"]
+"#,
+    )
+    .unwrap();
+    h.run("/connect").await;
+    let _ = std::fs::remove_file(std::path::Path::new(&home).join("config.toml"));
+    assert_eq!(
+        h.api_key, "sk-from-disk",
+        "/connect must pick up the key from on-disk config.toml"
+    );
+
     h.config.agents.push(dummy_info("plan"));
     h.run("/agent plan").await;
     assert_eq!(h.agent.info.name, "plan");
