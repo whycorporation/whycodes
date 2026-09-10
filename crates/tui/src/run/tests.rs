@@ -7173,6 +7173,23 @@ fn loop_io_scripted_poll_and_read_batch() {
 }
 
 #[test]
+fn loop_io_live_buf_empty_read_is_eof() {
+    let mut inject = LoopInject {
+        live_buf: true,
+        ..Default::default()
+    };
+    let mut io = LoopIo::from_inject(&mut inject);
+    assert!(!io.is_headless());
+    assert!(io.crossterm_empty());
+    assert!(!io.poll(Duration::from_millis(50)).unwrap());
+    let err = io.read_crossterm().expect_err("empty live-buf must eof");
+    assert!(
+        err.to_string().contains("empty") || err.to_string().contains("eof"),
+        "{err}"
+    );
+}
+
+#[test]
 fn enter_raw_and_alt_ok_and_restore_backend() {
     let mut out = Vec::new();
     enter_raw_and_alt(&mut out, || Ok(())).unwrap();
@@ -8832,6 +8849,30 @@ async fn apply_idle_loop_key_covers_session_and_slash_arms() {
     )
     .await;
     assert_eq!(app.agent_cycle_idx, 1);
+
+    config.agents.push(dummy_info("plan"));
+    app.input_buffer = "/agent plan".into();
+    app.input_cursor = app.input_buffer.len();
+    app.mode = AppMode::Normal;
+    assert!(
+        apply_idle_loop_key(
+            IdleLoopKey::SlashEnter,
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut mru,
+            &mut config,
+            dir.path(),
+            &idx,
+            &claims,
+            &mut provider,
+            &mut model,
+            &mut api_key,
+            &auth_tx,
+        )
+        .await
+    );
+    assert_eq!(app.agent_name, "plan");
 }
 
 #[test]
