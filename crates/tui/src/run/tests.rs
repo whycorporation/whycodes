@@ -5777,6 +5777,79 @@ async fn run_headless_mouse_stop_while_hanging() {
     assert_eq!(exit, TuiExit::Quit);
 }
 
+#[tokio::test]
+async fn run_headless_missing_api_key_warns_then_quits() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_key = std::env::var_os("ACME_API_KEY");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::remove_var("ACME_API_KEY");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("hello without key"));
+    events.extend(type_line(":q"));
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    let mut opts = boot_opts(dir.path(), "");
+    opts.config.providers.insert(
+        "acme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "acme".into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec!["m1".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_key {
+        Some(v) => unsafe { std::env::set_var("ACME_API_KEY", v) },
+        None => unsafe { std::env::remove_var("ACME_API_KEY") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_remote_turn_errors_then_quits() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    let mut events = Vec::new();
+    events.extend(type_line("hi remote"));
+    events.extend(type_line(":q"));
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.remote = Some(crate::remote::RemoteAttach::new(
+        "http://127.0.0.1:1",
+        "sid-remote",
+    ));
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[test]
+fn read_event_batch_from_crossterm_stub() {
+    *CROSSTERM_STUB.lock().unwrap_or_else(|e| e.into_inner()) = std::collections::VecDeque::from([
+        Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('a'))),
+        Event::Resize(40, 12),
+    ]);
+    let batch = super::read_event_batch().unwrap();
+    assert_eq!(batch.len(), 2);
+}
+
 fn press(code: KeyCode) -> Event {
     Event::Key(crossterm::event::KeyEvent::from(code))
 }

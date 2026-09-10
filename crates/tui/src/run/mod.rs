@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use crate::color::{ColorMode, QuantizingBackend, detect_color_mode, set_active_color_mode};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, MouseEventKind,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    KeyCode, KeyEventKind, KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -635,7 +635,7 @@ impl LoopIo {
         if let Some(q) = &self.scripted {
             return Ok(!q.is_empty());
         }
-        event::poll(timeout)
+        poll_crossterm(timeout)
     }
 
     fn read_batch(&mut self) -> io::Result<Vec<Event>> {
@@ -2291,19 +2291,52 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 ///
 /// Cap the batch so a stuck input flood cannot grow without bound before
 /// the next paint / turn-event drain.
+fn poll_crossterm(timeout: Duration) -> io::Result<bool> {
+    #[cfg(test)]
+    {
+        let _ = timeout;
+        return Ok(!CROSSTERM_STUB
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty());
+    }
+    #[cfg(not(test))]
+    {
+        crossterm::event::poll(timeout)
+    }
+}
+
+fn read_crossterm() -> io::Result<Event> {
+    #[cfg(test)]
+    {
+        return CROSSTERM_STUB
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop_front()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "crossterm stub empty"));
+    }
+    #[cfg(not(test))]
+    {
+        crossterm::event::read()
+    }
+}
+
 fn read_event_batch() -> io::Result<Vec<Event>> {
     const MAX_BATCH: usize = 256;
     let mut batch = Vec::with_capacity(8);
-    batch.push(event::read()?);
+    batch.push(read_crossterm()?);
     while batch.len() < MAX_BATCH {
-        match event::poll(Duration::ZERO) {
-            Ok(true) => batch.push(event::read()?),
+        match poll_crossterm(Duration::ZERO) {
+            Ok(true) => batch.push(read_crossterm()?),
             Ok(false) => break,
             Err(e) => return Err(e),
         }
     }
     Ok(batch)
 }
+
+#[cfg(test)]
+static CROSSTERM_STUB: std::sync::Mutex<VecDeque<Event>> = std::sync::Mutex::new(VecDeque::new());
 
 /// Mouse motion is tracked for hover; it must not by itself schedule a
 /// full chat paint (handle_mouse marks dirty only when chrome hover changes).
