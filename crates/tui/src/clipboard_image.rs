@@ -357,19 +357,25 @@ fn read_windows_image() -> Result<PromptClipboard, String> {
         STASH_SEQ.fetch_add(1, Ordering::Relaxed)
     ));
     let dest_str = dest.to_string_lossy().replace('\'', "''");
-    let script = format!(
-        "Add-Type -AssemblyName System.Windows.Forms; \
-         Add-Type -AssemblyName System.Drawing; \
-         $img = [System.Windows.Forms.Clipboard]::GetImage(); \
-         if ($null -eq $img) {{ exit 2 }}; \
-         $img.Save('{dest_str}', [System.Drawing.Imaging.ImageFormat]::Png)"
-    );
+    let script = windows_clipboard_script(&dest_str);
     let result = command_status(
         "powershell",
         &["-NoProfile", "-STA", "-Command", &script],
         TIMEOUT,
     );
     finish_windows_clipboard(dest, result)
+}
+
+/// PowerShell snippet that dumps the clipboard bitmap to `dest`. Always
+/// compiled so tests can drive the script body without a live pasteboard.
+fn windows_clipboard_script(dest: &str) -> String {
+    format!(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         Add-Type -AssemblyName System.Drawing; \
+         $img = [System.Windows.Forms.Clipboard]::GetImage(); \
+         if ($null -eq $img) {{ exit 2 }}; \
+         $img.Save('{dest}', [System.Drawing.Imaging.ImageFormat]::Png)"
+    )
 }
 
 #[cfg(target_os = "windows")]

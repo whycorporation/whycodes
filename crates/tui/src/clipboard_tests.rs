@@ -264,6 +264,13 @@ fn paint_ranges_clipped_skips_empty_and_inverted_clip() {
     assert!(!pipe_to(&["whycodes-no-such-copy-bin"], "x"));
     #[cfg(windows)]
     assert!(pipe_to(&["cmd", "/C", "exit", "0"], "coverage"));
+    assert!(spawn_clipboard_pipe("whycodes-no-such-copy-bin", &[]).is_none());
+    #[cfg(windows)]
+    {
+        let mut child = spawn_clipboard_pipe("cmd", &["/C", "exit", "0"]).expect("cmd");
+        assert!(write_child_stdin(&mut child, "coverage"));
+        let _ = child.wait();
+    }
     let blanks = vec!["".into(), "".into(), "hi".into(), "".into(), "".into()];
     assert_eq!(
         collapse_blank_runs(blanks),

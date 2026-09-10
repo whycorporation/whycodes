@@ -852,22 +852,37 @@ fn choose_tui_writer(console: Option<std::fs::File>, stdout_is_tty: bool) -> io:
     ))
 }
 
+/// Open flags for `/dev/tty` (Unix). Always compiled so tests can drive the
+/// builder without a Unix TTY.
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+fn unix_tty_open_options() -> std::fs::OpenOptions {
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true).write(true);
+    o
+}
+
+/// Open flags for `CONOUT$` (Windows). Always compiled so tests can drive the
+/// builder without a live console.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn windows_console_open_options() -> std::fs::OpenOptions {
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true);
+    o
+}
+
 /// `/dev/tty` on Unix, `CONOUT$` on Windows. `None` if this process has no console.
 fn open_controlling_console() -> Option<std::fs::File> {
     #[cfg(unix)]
     {
         console_open_result(
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open("/dev/tty"),
+            unix_tty_open_options().open("/dev/tty"),
             "open /dev/tty failed, trying stdout",
         )
     }
     #[cfg(windows)]
     {
         console_open_result(
-            std::fs::OpenOptions::new().write(true).open("CONOUT$"),
+            windows_console_open_options().open("CONOUT$"),
             "open CONOUT$ failed, trying stdout",
         )
     }
@@ -1994,13 +2009,25 @@ fn apply_question_overlay_event(app: &mut TuiApp, rt: &mut SessionRuntime, ev: &
 }
 
 fn live_poll_crossterm(timeout: Duration) -> io::Result<bool> {
-    crossterm::event::poll(timeout)
+    poll_crossterm_with(timeout, crossterm::event::poll)
+}
+
+/// Injected poll so tests can drive the live-poll wrapper without a TTY.
+fn poll_crossterm_with(
+    timeout: Duration,
+    poll: impl FnOnce(Duration) -> io::Result<bool>,
+) -> io::Result<bool> {
+    poll(timeout)
 }
 
 /// Real crossterm read. Tests only call this after a zero-timeout poll
 /// returns true (otherwise it would block on a missing TTY).
 fn live_read_crossterm() -> io::Result<Event> {
-    crossterm::event::read()
+    read_crossterm_with(crossterm::event::read)
+}
+
+fn read_crossterm_with(read: impl FnOnce() -> io::Result<Event>) -> io::Result<Event> {
+    read()
 }
 
 /// Tests force a zero timeout so an empty stub cannot block on a missing TTY.

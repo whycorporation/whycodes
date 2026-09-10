@@ -83,23 +83,31 @@ fn pipe_to(cmd: &[&str], text: &str) -> bool {
         Some((b, a)) => (*b, a),
         None => return false,
     };
-    let mut child = match Command::new(bin)
+    let mut child = match spawn_clipboard_pipe(bin, args) {
+        Some(c) => c,
+        None => return false,
+    };
+    let ok = write_child_stdin(&mut child, text);
+    let status = child.wait().map(|s| s.success()).unwrap_or(false);
+    ok && status
+}
+
+fn spawn_clipboard_pipe(bin: &str, args: &[&str]) -> Option<std::process::Child> {
+    Command::new(bin)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-    {
-        Ok(c) => c,
-        Err(_spawn) => return false,
-    };
-    let ok = child
+        .ok()
+}
+
+fn write_child_stdin(child: &mut std::process::Child, text: &str) -> bool {
+    child
         .stdin
         .as_mut()
         .and_then(|stdin| stdin.write_all(text.as_bytes()).ok())
-        .is_some();
-    let status = child.wait().map(|s| s.success()).unwrap_or(false);
-    ok && status
+        .is_some()
 }
 
 // ── Linear selection geometry ──────────────────────────────────────────

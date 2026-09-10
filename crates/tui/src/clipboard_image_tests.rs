@@ -386,6 +386,15 @@ fn finish_windows_clipboard_covers_temp_read_and_run_errs() {
     assert!(dir.path().exists(), "directory must survive remove_file");
 }
 
+#[test]
+fn windows_clipboard_script_embeds_the_dest_path() {
+    let script = windows_clipboard_script(r"C:\tmp\clip.png");
+    assert!(script.contains("System.Windows.Forms"));
+    assert!(script.contains("GetImage()"));
+    assert!(script.contains(r"C:\tmp\clip.png"));
+    assert!(script.contains("ImageFormat]::Png"));
+}
+
 #[cfg(target_os = "windows")]
 #[test]
 fn command_stdout_echo_and_missing_bin() {

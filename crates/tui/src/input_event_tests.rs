@@ -4719,12 +4719,14 @@ fn session_list_ctrl_w_on_persisted_row_toasts() {
     open_dialog(&mut a, DialogKind::SessionList);
     assert!(handle_event(&mut a, ctrl('w')));
     assert!(
+        a.session_list.pending_close.is_none(),
+        "persisted rows must not queue a live close"
+    );
+    assert!(
         a.toasts
             .visible()
             .iter()
-            .any(|t| t.message.contains("Only live sessions")
-                || t.message.contains("persisted")
-                || t.message.contains("history")),
+            .any(|t| t.message.contains("Only live sessions close here")),
         "{:?}",
         a.toasts
             .visible()
@@ -5572,4 +5574,40 @@ fn second_slash_on_a_bare_draft_reopens_the_menu() {
         a.slash_suggest.active,
         "second / on a leftover slash draft must reopen the menu"
     );
+}
+
+#[test]
+fn import_confirm_without_checked_items_toasts_instead_of_applying() {
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    a.import_picker.select_all(false);
+    assert!(!a.import_picker.any_checked());
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(!a.pending_import, "empty import confirm must not apply");
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Select at least one item")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Import)));
 }

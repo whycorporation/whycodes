@@ -6121,6 +6121,24 @@ fn tui_available_does_not_panic() {
         Ok(TuiWriter::Console(_)) => {}
         _ => panic!("expected console writer"),
     }
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    assert!(
+        unix_tty_open_options().open(tmp.path()).is_ok(),
+        "unix /dev/tty flags (read+write) must open a regular file in tests"
+    );
+    assert!(
+        windows_console_open_options().open(tmp.path()).is_ok(),
+        "windows CONOUT$ flags (write) must open a regular file in tests"
+    );
+    assert!(!poll_crossterm_with(Duration::from_millis(5), |_| Ok(false)).unwrap());
+    assert!(poll_crossterm_with(Duration::ZERO, |_| Ok(true)).unwrap());
+    let err = poll_crossterm_with(Duration::ZERO, |_| Err(io::Error::other("poll"))).unwrap_err();
+    assert!(err.to_string().contains("poll"));
+    let ev = read_crossterm_with(|| Ok(press(KeyCode::Char('z')))).unwrap();
+    assert!(matches!(ev, Event::Key(_)));
+    let err = read_crossterm_with(|| Err(io::Error::other("read"))).unwrap_err();
+    assert!(err.to_string().contains("read"));
 }
 
 #[test]
