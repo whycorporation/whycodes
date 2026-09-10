@@ -2182,6 +2182,15 @@ fn dispatch_resolved_action_covers_unmapped_keymap_arms() {
         Some(Action::SidebarTab6),
         &k
     ));
+    for action in [
+        Action::SidebarTab1,
+        Action::SidebarTab2,
+        Action::SidebarTab3,
+        Action::SidebarTab4,
+        Action::SidebarTab5,
+    ] {
+        assert!(dispatch_resolved_action(&mut a, Some(action), &k));
+    }
 
     let mut a = app();
     a.sidebar.visible = true;

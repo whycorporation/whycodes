@@ -138,6 +138,30 @@ fn styled_input_row_highlights_paste_token() {
 }
 
 #[test]
+fn styled_input_row_skips_inverted_and_out_of_row_cuts() {
+    use ratatui::style::{Color, Style};
+    let cmd = Style::default().fg(Color::Cyan);
+    let text = Style::default().fg(Color::White);
+    let paste = Style::default().fg(Color::Yellow);
+    let buf = "/help extra";
+    let spans = styled_input_row(
+        buf,
+        0,
+        buf.len(),
+        Some(5),
+        cmd,
+        text,
+        paste,
+        &[(8, 3), (0, 0), (20, 22)],
+    );
+    let joined: String = spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        joined.contains("/help") || joined.contains("/he"),
+        "inverted / out-of-row paste cuts must still paint the command, got {spans:?}"
+    );
+}
+
+#[test]
 fn truncate_pick_hint_and_cursor_helpers() {
     assert!(truncate_to_width("hello", 0).is_empty());
     assert_eq!(truncate_to_width("hello", 3), "hel");
