@@ -1482,6 +1482,40 @@ fn should_spawn_idle_catalog_requires_pending_and_quiet_session() {
     assert!(!should_spawn_idle_catalog(true, false, false, true));
 }
 
+#[test]
+fn overlay_owns_keys_only_for_permission_and_question() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    assert!(!dialog_overlay_owns_keys(app.dialogs.active()));
+    app.ask_permission("bash", "ls");
+    assert!(dialog_overlay_owns_keys(app.dialogs.active()));
+    app.dialogs.clear();
+    app.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![whycodes_tools::question::QuestionOption {
+            label: "Yes".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+        important: false,
+    }]);
+    assert!(dialog_overlay_owns_keys(app.dialogs.active()));
+    app.dialogs.clear();
+    crate::input::open_dialog(&mut app, DialogKind::Theme);
+    assert!(!dialog_overlay_owns_keys(app.dialogs.active()));
+}
+
+#[test]
+fn headless_and_live_buf_quit_when_idle_and_empty() {
+    assert!(headless_should_quit(false, false, false));
+    assert!(!headless_should_quit(true, false, false));
+    assert!(!headless_should_quit(false, true, false));
+    assert!(!headless_should_quit(false, false, true));
+    assert!(live_buf_should_quit(false, true));
+    assert!(!live_buf_should_quit(true, true));
+    assert!(!live_buf_should_quit(false, false));
+}
+
 #[tokio::test]
 async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
     let _home = isolate_home();

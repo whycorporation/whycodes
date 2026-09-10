@@ -1803,10 +1803,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 &mut idle_trim_armed,
             );
 
-            let overlay_owns_keys = matches!(
-                app.dialogs.active(),
-                Some(DialogKind::Permission { .. } | DialogKind::Question(_))
-            );
+            let overlay_owns_keys = dialog_overlay_owns_keys(app.dialogs.active());
             // Headless: while a turn is in flight, hold non-cancel keys until a
             // permission/question overlay opens (so `y` is not typed into the prompt).
             if headless
@@ -1833,7 +1830,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             // turn (or compact) to finish instead of aborting it on shutdown.
             // `#[tokio::test]` is current-thread: yield so spawned turns run.
             if headless {
-                if !has_ev && !rt.agent_busy && rt.turn_join.is_none() {
+                if headless_should_quit(has_ev, rt.agent_busy, rt.turn_join.is_some()) {
                     app.running = false;
                 } else if rt.agent_busy || rt.turn_join.is_some() {
                     tokio::task::yield_now().await;
@@ -1844,7 +1841,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             if live_buf && !headless {
                 if rt.agent_busy || rt.turn_join.is_some() {
                     tokio::task::yield_now().await;
-                } else if !has_ev && loop_io.crossterm_empty() {
+                } else if live_buf_should_quit(has_ev, loop_io.crossterm_empty()) {
                     app.running = false;
                 }
             }
@@ -2065,10 +2062,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     // While busy: Esc cancels (draft preserved — Grok). Typing, scroll,
                     // and focus still work so the user can queue thoughts.
                     // Permission / question overlays own Esc/Enter — do not steal them.
-                    let overlay_owns_keys = matches!(
-                        app.dialogs.active(),
-                        Some(DialogKind::Permission { .. } | DialogKind::Question(_))
-                    );
+                    let overlay_owns_keys = dialog_overlay_owns_keys(app.dialogs.active());
                     if rt.agent_busy
                         && !overlay_owns_keys
                         && let Event::Key(key) = &ev
@@ -2357,6 +2351,21 @@ fn print_session_summary(summary: &str) {
     let mut err = io::stderr();
     let _ = writeln!(err, "{summary}");
     let _ = err.flush();
+}
+
+fn dialog_overlay_owns_keys(active: Option<&DialogKind>) -> bool {
+    matches!(
+        active,
+        Some(DialogKind::Permission { .. } | DialogKind::Question(_))
+    )
+}
+
+fn headless_should_quit(has_ev: bool, agent_busy: bool, turn_join: bool) -> bool {
+    !has_ev && !agent_busy && !turn_join
+}
+
+fn live_buf_should_quit(has_ev: bool, crossterm_empty: bool) -> bool {
+    !has_ev && crossterm_empty
 }
 
 /// Idle catalog: only after a deferred fetch, with no in-flight turn or prompt.
