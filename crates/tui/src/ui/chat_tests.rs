@@ -919,6 +919,23 @@ fn assistant_reply_puts_clock_on_the_first_content_line() {
         foot.contains(':'),
         "Worked for line also carries the clock, got {foot:?}"
     );
+
+    app.turn_usage = Some(whycodes_core::types::Usage {
+        input_tokens: 1200,
+        output_tokens: 80,
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: None,
+    });
+    let (left, _) = super::turn_done_footer(&app.messages[1], true, &app);
+    assert!(
+        left.contains("Worked for") && (left.contains("in") || left.contains("·")),
+        "last finished turn must append usage, got {left}"
+    );
+    let (left, _) = super::turn_done_footer(&app.messages[1], false, &app);
+    assert!(
+        !left.contains("in") && !left.contains("out"),
+        "non-last turns must not append token usage, got {left}"
+    );
 }
 
 #[test]
@@ -2438,6 +2455,23 @@ fn tool_block_expanded_headers_execute_error_diff_grep_and_hints() {
         paint(true, false),
     );
     assert!(joined(&long_diff).contains('+') || joined(&long_diff).contains("line"));
+
+    let over_budget = tool_result(
+        &(0..30)
+            .map(|i| format!("+line-{i}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        false,
+        &palette,
+        false,
+        ToolOutHint::Diff,
+        80,
+    );
+    let collapsed = joined(&over_budget);
+    assert!(
+        collapsed.contains('…'),
+        "collapsed over-budget diff must ellipsize, got {collapsed}"
+    );
 }
 
 #[test]
