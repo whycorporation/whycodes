@@ -712,6 +712,16 @@ fn provider_form_types_and_backspaces() {
     assert!(a.provider_dialog.form_name.is_empty());
     handle_event(&mut a, key(KeyCode::Down));
     assert_eq!(a.provider_dialog.active_field, 1);
+    handle_event(&mut a, key(KeyCode::Char('k')));
+    assert_eq!(a.provider_dialog.form_api_key, "k");
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Char('u')));
+    assert_eq!(a.provider_dialog.form_base_url, "u");
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Char('h')));
+    assert_eq!(a.provider_dialog.form_headers, "h");
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert!(a.provider_dialog.form_headers.is_empty());
 }
 
 #[test]
@@ -4180,4 +4190,44 @@ fn session_paste_from_scrollback_still_lands_on_prompt() {
     handle_event(&mut a, Event::Paste("from scrollback".into()));
     assert_eq!(a.focus, FocusPane::Prompt);
     assert!(a.input_buffer.contains("from scrollback"));
+}
+
+#[test]
+fn help_dialog_search_backspace_clears_then_exits_search() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.help_searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('z'))));
+    assert_eq!(a.help_query, "z");
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert!(a.help_query.is_empty());
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert!(!a.help_searching);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Help)));
+}
+
+#[test]
+fn mouse_confirms_model_row_and_header_toggle() {
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
+    open_model_dialog(&mut a);
+    a.model_selection.selected = 0;
+    let n = a.model_selection.visible_rows().len();
+    if matches!(
+        a.model_selection.selected_row(),
+        Some(crate::app::ModelPickerRow::Header { .. })
+    ) {
+        click_list_row(&mut a, 8, n);
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+    }
+    a.model_selection.selected = 1;
+    let n = a.model_selection.visible_rows().len();
+    if matches!(
+        a.model_selection.selected_row(),
+        Some(crate::app::ModelPickerRow::Model { .. })
+    ) {
+        click_list_row(&mut a, 9, n);
+        assert!(a.pending_model.is_some() || a.mode == AppMode::Normal);
+    }
 }
