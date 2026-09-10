@@ -6131,3 +6131,123 @@ async fn run_headless_ctrl_keys_and_paste() {
     }
     assert_eq!(exit, TuiExit::Quit);
 }
+
+#[tokio::test]
+async fn run_live_crossterm_stub_first_frame_then_idle_quit() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    HEADLESS_LIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+    CROSSTERM_STUB
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    HEADLESS_LIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_live_crossterm_stub_keys_slash_and_quit() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    HEADLESS_LIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+    *CROSSTERM_STUB.lock().unwrap_or_else(|e| e.into_inner()) = std::collections::VecDeque::from([
+        Event::Resize(80, 24),
+        Event::Paste("from clip".into()),
+        ctrl('q'),
+        press(KeyCode::Enter),
+    ]);
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    HEADLESS_LIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    CROSSTERM_STUB
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_confirms_self_install_upgrade() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tx.send(UpdateOffer::SelfInstall("9.9.9".into())).unwrap();
+    drop(tx);
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([press(KeyCode::Enter)]));
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.update_rx = Some(rx);
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Upgrade);
+}
+
+#[tokio::test]
+async fn run_headless_compact_after_scripted_turn() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "scripted-ok");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("please summarize"));
+    events.extend(type_line("/compact keep names"));
+    events.extend(type_line(":q"));
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}

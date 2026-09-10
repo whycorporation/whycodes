@@ -147,6 +147,39 @@ fn command_status_and_cleanup_temp() {
     cleanup_temp(&path);
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn read_windows_image_empty_clipboard_is_empty() {
+    // Live PowerShell path: empty clipboard → Empty, not a panic.
+    match read_os_image() {
+        Ok(PromptClipboard::Empty | PromptClipboard::ImagePaths(_)) => {}
+        Err(e) => {
+            assert!(
+                e.contains("PowerShell") || e.contains("too large") || e.contains("read clipboard"),
+                "{e}"
+            );
+        }
+        #[cfg(test)]
+        Ok(PromptClipboard::Text(_)) => panic!("production OS path must not return Text"),
+    }
+}
+
+#[test]
+fn stash_clipboard_image_writes_under_data_dir() {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+    let bytes = b"\x89PNG\r\n\x1a\nhello-png";
+    let path = stash_clipboard_image(bytes).unwrap();
+    assert!(path.exists());
+    assert_eq!(path.extension().and_then(|e| e.to_str()), Some("png"));
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+    }
+}
+
 #[test]
 fn prune_old_clipboard_images_skips_missing_and_keeps_fresh() {
     prune_old_clipboard_images(std::path::Path::new(

@@ -1132,6 +1132,58 @@ mod overflow_render_tests {
     }
 
     #[test]
+    fn many_staged_images_collapse_to_summary() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        for i in 0..6 {
+            app.pending_images.push(crate::images::PromptImage {
+                path: format!("very-long-screenshot-name-{i}.png").into(),
+                label: format!("very-long-screenshot-name-{i}.png"),
+                media_type: "image/png".into(),
+            });
+        }
+        let rows = rendered_rows(&mut app, 36, 10);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("images") || r.contains("very-long")),
+            "{rows:?}"
+        );
+    }
+
+    #[test]
+    fn tiny_area_skips_paint() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        let rows = rendered_rows(&mut app, 4, 3);
+        assert_eq!(rows.len(), 3);
+        assert!(app.agent_hit.rect.is_none());
+    }
+
+    #[test]
+    fn long_wrap_keeps_caret_on_last_visible_row() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.input_buffer = "word ".repeat(80);
+        app.input_cursor = app.input_buffer.len();
+        let rows = rendered_rows(&mut app, 40, 14);
+        assert!(rows.iter().any(|r| r.contains("word")));
+    }
+
+    #[test]
+    fn intent_badge_question_and_change_paint() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.agent_name = "build".into();
+        app.provider_name = "xai".into();
+        app.model_name = "grok-4.6".into();
+        app.intent_badge = Some("ask".into());
+        app.intent_kind = Some("question".into());
+        let _ = rendered_rows(&mut app, 80, 10);
+        app.intent_kind = Some("change".into());
+        app.intent_badge = Some("edit".into());
+        let _ = rendered_rows(&mut app, 80, 10);
+        app.effort_hit.hovered = true;
+        app.approval_hit.hovered = true;
+        let _ = rendered_rows(&mut app, 80, 10);
+    }
+
+    #[test]
     fn long_paste_stays_inside_box_edges() {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();

@@ -1064,7 +1064,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     app.config.color_mode = color_mode;
     app.config.extra.quantize_for(color_mode);
 
-    let live_buf = HEADLESS_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) && headless;
+    // Tests may set this without scripted `HEADLESS_EVENTS` so the production
+    // `!headless` arms (panic restore, first-frame hydrate, crossterm poll)
+    // still run into a memory buffer instead of a real TTY.
+    let live_buf = HEADLESS_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst);
     let (mut terminal, keyboard_enhanced, tw, th) = if live_buf {
         attach_live(
             color_mode,
@@ -1381,9 +1384,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
                     // After first paint: MCP connect + code RAG auto-index.
                     // Both can block; doing them here keeps startup feel snappy.
-                    // Headless tests skip live MCP/index I/O (stdio servers hang
-                    // the current-thread runtime).
-                    if !headless {
+                    // Tests skip live MCP/index I/O (stdio servers hang the
+                    // current-thread `#[tokio::test]` runtime).
+                    if !cfg!(test) {
                         rt.agent.load_mcp(&config).await;
                         maybe_session_auto_index(&project_dir, &config, &mut app);
                     }
@@ -1875,6 +1878,21 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     app.running = false;
                 } else if rt.agent_busy || rt.turn_join.is_some() {
                     tokio::task::yield_now().await;
+                }
+            }
+            // Live-buffer tests drive `poll_crossterm` via `CROSSTERM_STUB`.
+            // When the stub is empty the loop would wait forever (no TTY).
+            #[cfg(test)]
+            if !headless {
+                if rt.agent_busy || rt.turn_join.is_some() {
+                    tokio::task::yield_now().await;
+                } else if !has_ev
+                    && CROSSTERM_STUB
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .is_empty()
+                {
+                    app.running = false;
                 }
             }
             if has_ev {
