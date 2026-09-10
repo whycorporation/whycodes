@@ -111,10 +111,10 @@ fn headless_busy_key_ready(ev: Option<&Event>) -> bool {
     {
         return true;
     }
-    // Hold permission answers until the overlay owns the keyboard.
+    // Hold overlay answers until the dialog owns the keyboard.
     !matches!(
         key.code,
-        KeyCode::Char('y' | 'Y' | 'n' | 'N' | 'a' | 'A' | 'd' | 'D')
+        KeyCode::Char('y' | 'Y' | 'n' | 'N' | 'a' | 'A' | 'd' | 'D') | KeyCode::Enter
     )
 }
 
@@ -130,7 +130,27 @@ fn inject_test_llm(_agent: &mut Agent, _provider: &str) {
             return;
         }
         let mut registry = whycodes_llm::ProviderRegistry::new();
-        if text == "SHELL" {
+        if text == "ASK" {
+            registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+                _provider.to_string(),
+                [
+                    vec![whycodes_llm::ScriptedStep::ToolCall {
+                        id: "q1".into(),
+                        name: "question".into(),
+                        input: serde_json::json!({
+                            "questions": [{
+                                "prompt": "Pick?",
+                                "options": [
+                                    {"label": "Yes"},
+                                    {"label": "No"}
+                                ]
+                            }]
+                        }),
+                    }],
+                    vec![whycodes_llm::ScriptedStep::Text("asked-ok".into())],
+                ],
+            )));
+        } else if text == "SHELL" {
             // One tool call, then a text reply — repeating would loop tools forever.
             registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
                 _provider.to_string(),

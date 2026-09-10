@@ -2273,6 +2273,67 @@ fn ctrl_v_clipboard_error_empty_and_command_mode() {
 }
 
 #[test]
+fn mouse_stop_effort_approval_and_slash_row() {
+    let mut a = app();
+    a.current_agent_state = AgentState::Generating;
+    a.turn_stop_hit.set_rect(Some(Rect {
+        x: 70,
+        y: 0,
+        width: 8,
+        height: 1,
+    }));
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 72, 0),
+    );
+    assert!(a.pending_cancel);
+
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    a.effort_hit.set_rect(Some(Rect {
+        x: 10,
+        y: 20,
+        width: 6,
+        height: 1,
+    }));
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 12, 20),
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Effort)));
+
+    let mut a = app();
+    a.approval_hit.set_rect(Some(Rect {
+        x: 20,
+        y: 20,
+        width: 6,
+        height: 1,
+    }));
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 22, 20),
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::ApprovalMode)));
+
+    let mut a = app();
+    a.input_buffer = "/he".into();
+    a.slash_suggest.refresh(&a.input_buffer);
+    if a.slash_suggest.active {
+        a.slash_suggest.list_hit = Some(Rect {
+            x: 2,
+            y: 10,
+            width: 20,
+            height: 2,
+        });
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 4, 10),
+        );
+    }
+}
+
+#[test]
 fn sidebar_and_tasks_hotkeys() {
     let mut a = app();
     assert!(handle_event(&mut a, ctrl('b')));

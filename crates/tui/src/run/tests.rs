@@ -5632,6 +5632,60 @@ async fn run_headless_hang_ctrl_c_and_enter() {
     assert_eq!(exit, TuiExit::Quit);
 }
 
+#[tokio::test]
+async fn run_headless_question_tool_enter() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "ASK");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("please ask"));
+    events.push(press(KeyCode::Enter));
+    events.extend(type_line(":q"));
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_hydrates_api_key_from_env() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_key = std::env::var_os("ACME_API_KEY");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("ACME_API_KEY", "sk-from-env");
+    }
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(
+        std::collections::VecDeque::from([press(KeyCode::Char('x'))]),
+    );
+    let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_key {
+        Some(v) => unsafe { std::env::set_var("ACME_API_KEY", v) },
+        None => unsafe { std::env::remove_var("ACME_API_KEY") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
 fn press(code: KeyCode) -> Event {
     Event::Key(crossterm::event::KeyEvent::from(code))
 }
