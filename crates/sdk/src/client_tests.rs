@@ -752,23 +752,12 @@ fn python3() -> PathBuf {
         #[cfg(not(windows))]
         {
             let path = system_bin(cmd);
-            if path.is_file() || cmd == "python3" {
-                if path.is_file() || command_exists(cmd) {
-                    return if path.is_file() {
-                        path
-                    } else {
-                        PathBuf::from(cmd)
-                    };
-                }
+            if path.is_file() {
+                return path;
             }
         }
     }
     PathBuf::from("python3")
-}
-
-#[cfg(not(windows))]
-fn command_exists(cmd: &str) -> bool {
-    system_bin(cmd).is_file()
 }
 
 fn write_health_serve_script(dir: &std::path::Path, protocol: u32) {
