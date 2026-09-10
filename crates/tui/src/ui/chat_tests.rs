@@ -1545,6 +1545,25 @@ fn paint_chat_row_caret_and_band() {
         super::paint_concat_slices(&mut buf, 0, &row, &[], &[], 2..2, false),
         0
     );
+
+    let mut tiny = Buffer::empty(Rect::new(0, 0, 4, 1));
+    let tiny_row = super::ChatRowPaint {
+        x: 0,
+        width: 4,
+        bg: Color::Black,
+        caret_style: Style::default().fg(Color::White),
+    };
+    super::paint_chat_row(
+        &mut tiny,
+        0,
+        &tiny_row,
+        Some(&Line::from(vec![
+            Span::styled("abcdefghij", Style::default().bg(Color::Blue)),
+            Span::styled("more", Style::default().bg(Color::Blue)),
+        ])),
+        false,
+    );
+    assert_eq!(tiny.area().width, 4);
 }
 
 #[test]
