@@ -1682,6 +1682,25 @@ fn callout_kind_classifies_system_notices() {
     );
     assert_eq!(CalloutKind::from_content("✓ ready"), CalloutKind::Success);
     assert_eq!(CalloutKind::from_content("hello"), CalloutKind::Info);
+    assert_eq!(
+        CalloutKind::from_content("denied: path"),
+        CalloutKind::Error
+    );
+    assert_eq!(CalloutKind::from_content("turn failed"), CalloutKind::Error);
+    assert_eq!(
+        CalloutKind::from_content("missing api key for acme"),
+        CalloutKind::Warning
+    );
+    assert_eq!(CalloutKind::from_content("⚠ setup"), CalloutKind::Warning);
+    assert_eq!(
+        CalloutKind::from_content("models loaded"),
+        CalloutKind::Success
+    );
+    assert_eq!(CalloutKind::from_content("success"), CalloutKind::Success);
+    assert_eq!(
+        CalloutKind::from_content("compacted 12 messages"),
+        CalloutKind::Success
+    );
     let p = crate::theme::ThemeName::DefaultDark.palette();
     assert_eq!(CalloutKind::Error.accent(&p), p.error);
     assert_eq!(CalloutKind::Warning.accent(&p), p.warning);

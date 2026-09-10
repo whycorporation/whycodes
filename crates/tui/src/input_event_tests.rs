@@ -1194,6 +1194,16 @@ fn mouse_clicks_todos_header_tasks_sidebar_and_chat_scrollbar() {
     );
     handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 40, 8));
     assert!(a.chat_scrollbar_grab.is_none());
+
+    let mut a = app();
+    a.mouse_sel = None;
+    handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 6, 3));
+    let sel = a
+        .mouse_sel
+        .expect("drag without Down still starts a selection");
+    assert!(sel.dragging);
+    assert_eq!(sel.anchor_x, 6);
+    assert_eq!(sel.anchor_y, 3);
 }
 
 #[test]
@@ -2684,6 +2694,22 @@ fn prompt_backspace_and_word_kill_do_not_full_clear() {
     );
     assert!(a.input_buffer.is_empty());
     assert_eq!(a.pending_full_clears, 0);
+
+    a.pending_images.push(crate::images::PromptImage {
+        path: "shot.png".into(),
+        label: "shot.png".into(),
+        media_type: "image/png".into(),
+    });
+    a.input_buffer = "draft".into();
+    a.input_cursor = 5;
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputClear,
+        &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+    );
+    assert!(a.input_buffer.is_empty());
+    assert!(a.pending_images.is_empty());
+    assert_eq!(a.input_cursor, 0);
 }
 
 #[test]
