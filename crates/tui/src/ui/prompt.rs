@@ -1047,6 +1047,22 @@ mod wrap_tests {
         assert!(truncate_to_width("hello", 0).is_empty());
         assert_eq!(truncate_to_width("hello", 3), "hel");
         let _ = pick_hint();
+        assert!(HINTS.iter().any(|h| h.contains("/ for commands")));
+        assert!(HINTS.iter().any(|h| h.contains("ctrl+t")));
+        use ratatui::style::{Color, Style};
+        assert!(
+            styled_input_row(
+                "abc",
+                2,
+                2,
+                None,
+                Style::default(),
+                Style::default(),
+                Style::default().fg(Color::Yellow),
+                &[],
+            )
+            .is_empty()
+        );
         assert_eq!(cursor_row_col(&[], "hi", 0), (0, 0));
         let rows = wrap_text("hello world", 5);
         let (row, col) = cursor_row_col(&rows, "hello world", 0);
@@ -1512,6 +1528,24 @@ mod overflow_render_tests {
         assert!(
             app.approval_hit.rect.is_none(),
             "dropped approval has no hit"
+        );
+    }
+
+    #[test]
+    fn bottom_meta_falls_back_to_truncated_agent_on_tiny_width() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.agent_name = "build".into();
+        app.provider_name = "anthropic".into();
+        app.model_name = "claude-sonnet-4-5".into();
+        app.intent_badge = Some("plan".into());
+        app.intent_kind = Some("plan".into());
+        app.reasoning_effort = Some("high".into());
+        app.approval_mode = ApprovalMode::Manual;
+        let rows = rendered_rows(&mut app, 16, 8);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("build") || r.contains("bui")),
+            "tiny footer must keep a truncated agent name, got {rows:?}"
         );
     }
 
