@@ -2709,6 +2709,66 @@ fn focus_prompt_scrollback_and_pending_suggestion() {
 }
 
 #[test]
+fn cwd_click_copy_fail_toasts_no_clipboard() {
+    crate::clipboard::with_copy_stub(false, || {
+        let mut a = app();
+        a.project_dir = std::path::PathBuf::from("/work/proj");
+        a.cwd_hit.set_rect(Some(Rect {
+            x: 0,
+            y: 23,
+            width: 20,
+            height: 1,
+        }));
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 23),
+        );
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 2, 23));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clipboard") || t.message.contains("Copied")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
+fn drag_copy_fail_toasts_no_clipboard() {
+    crate::clipboard::with_copy_stub(false, || {
+        let mut a = app();
+        a.screen_cells =
+            crate::cell_grid::CellGrid::from_rows(vec![(0..20).map(|_| "x".to_string()).collect()]);
+        a.mouse_sel = Some(crate::app::MouseSelection {
+            anchor_x: 0,
+            anchor_y: 0,
+            focus_x: 8,
+            focus_y: 0,
+            dragging: true,
+        });
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 8, 0));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clipboard") || t.message.contains("Copied")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
 fn cwd_click_copies_or_warns() {
     let mut a = app();
     a.project_dir = std::path::PathBuf::from("/work/proj");

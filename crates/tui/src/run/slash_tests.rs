@@ -97,3 +97,27 @@ fn format_bg_jobs_and_share_helpers() {
         None => unsafe { std::env::remove_var("WHYCODES_SHARE_PORT") },
     }
 }
+
+#[test]
+fn suggestion_text_from_blocks_skips_empty_and_quotes() {
+    use whycodes_core::types::ContentBlock;
+    assert!(suggestion_text_from_blocks(&[]).is_empty());
+    assert!(
+        suggestion_text_from_blocks(&[ContentBlock::Text {
+            text: "\n  \n".into(),
+        }])
+        .is_empty()
+    );
+    assert_eq!(
+        suggestion_text_from_blocks(&[
+            ContentBlock::Thinking {
+                text: "ignore".into(),
+                signature: None,
+            },
+            ContentBlock::Text {
+                text: "\n\"next step\"\n".into()
+            }
+        ]),
+        "next step"
+    );
+}

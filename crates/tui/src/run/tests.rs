@@ -1872,6 +1872,36 @@ async fn handle_slash_covers_local_commands() {
     h.run("/connect").await;
     h.run("/login").await;
     h.run("/login not-oauth").await;
+    {
+        let plugins = std::env::var_os("WHYCODES_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| h._tmp.path().to_path_buf())
+            .join("plugins")
+            .join("oauth-demo");
+        std::fs::create_dir_all(&plugins).unwrap();
+        std::fs::write(
+            plugins.join("plugin.json"),
+            r#"{
+                "kind": "auth",
+                "auth": {
+                    "provider": "tui-oauth-demo",
+                    "label": "Demo",
+                    "flow": "device-code",
+                    "client_id": "abc",
+                    "authorize_url": "https://example.com/device/code",
+                    "token_url": "https://example.com/token",
+                    "scopes": "read"
+                }
+            }"#,
+        )
+        .unwrap();
+        let _ = whycodes_auth::plugin::load_from_dirs(&[plugins.parent().unwrap().to_path_buf()]);
+        h.provider = "tui-oauth-demo".into();
+        h.app.provider_name = "tui-oauth-demo".into();
+        h.api_key.clear();
+        h.run("/connect").await;
+        h.run("/login tui-oauth-demo").await;
+    }
     h.run("/nope").await;
     assert!(
         h.app

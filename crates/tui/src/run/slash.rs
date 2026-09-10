@@ -759,26 +759,31 @@ pub(super) fn maybe_spawn_prompt_suggestion(
             },
         };
         if let Ok(resp) = transport.complete(prov, &request, &api_key, &m).await {
-            let text = resp
-                .content
-                .iter()
-                .filter_map(|b| match b {
-                    whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
-                .lines()
-                .map(str::trim)
-                .find(|l| !l.is_empty())
-                .unwrap_or("")
-                .trim_matches('"')
-                .to_string();
+            let text = suggestion_text_from_blocks(&resp.content);
             if !text.is_empty() {
                 let _ = suggest_tx.send(text);
             }
         }
     });
+}
+
+pub(super) fn suggestion_text_from_blocks(
+    content: &[whycodes_core::types::ContentBlock],
+) -> String {
+    content
+        .iter()
+        .filter_map(|b| match b {
+            whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .trim_matches('"')
+        .to_string()
 }
 
 #[cfg(test)]

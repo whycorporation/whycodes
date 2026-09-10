@@ -22,12 +22,40 @@ use crate::cell_grid::CellGrid;
 
 /// Copy `text` to the clipboard. Returns true if at least one path succeeded.
 pub fn copy_text(text: &str) -> bool {
+    #[cfg(test)]
+    if let Some(forced) = stub_copy_result() {
+        return forced;
+    }
     let osc = osc52(text);
     let mut ok = write_osc52_to(&mut io::stdout().lock(), &osc);
     ok |= try_wl_copy(text);
     ok |= try_xclip(text);
     ok |= try_pbcopy(text);
     ok
+}
+
+#[cfg(test)]
+thread_local! {
+    static COPY_STUB: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn stub_copy_result() -> Option<bool> {
+    COPY_STUB.with(|c| c.get())
+}
+
+/// Force `copy_text` for this thread (unit tests).
+#[cfg(test)]
+pub(crate) fn with_copy_stub<R>(ok: bool, f: impl FnOnce() -> R) -> R {
+    COPY_STUB.with(|c| c.set(Some(ok)));
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            COPY_STUB.with(|c| c.set(None));
+        }
+    }
+    let _reset = Reset;
+    f()
 }
 
 fn osc52(text: &str) -> String {
