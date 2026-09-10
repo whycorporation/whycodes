@@ -2050,6 +2050,14 @@ fn user_prompt_slash_token_and_long_first_line_wrap() {
             .iter()
             .all(|s| s.content.is_empty())
     );
+    let not_cmd = super::prompt_body_spans("a/b /1 /", body, skill);
+    let not_cmd_text: String = not_cmd.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(not_cmd_text, "a/b /1 /");
+    let hyphen = super::prompt_body_spans("/foo-bar rest", body, skill);
+    assert!(
+        hyphen.iter().any(|s| s.content.as_ref() == "/foo-bar"),
+        "hyphenated slash tokens must stay one skill span, got {hyphen:?}"
+    );
 
     let long = "word ".repeat(40);
     let wrapped = super::user_prompt_lines(&long, &[], Some("1:00"), &palette, 24, false, true);
@@ -2091,6 +2099,17 @@ fn user_prompt_slash_token_and_long_first_line_wrap() {
     assert!(
         !img.contains("[Images:"),
         "multi-image placeholder must not repeat when chips exist, got {img:?}"
+    );
+
+    let short_then_long = format!("hi\n{}", "word ".repeat(30));
+    let cont = super::user_prompt_lines(&short_then_long, &[], None, &palette, 20, false, true);
+    let cont_text: String = cont
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        cont_text.contains("hi") && cont_text.contains("word"),
+        "a short first line then a long wrap must paint both, got {cont_text:?}"
     );
 }
 
