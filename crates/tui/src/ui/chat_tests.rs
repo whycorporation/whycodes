@@ -1902,6 +1902,70 @@ fn last_scrolled_past_user_and_empty_sticky_header() {
 }
 
 #[test]
+fn session_bar_layout_gives_the_gutter_back_when_narrower_wrap_fits() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "short");
+    app.add_message(ChatRole::Assistant, "ok");
+    let full = 80u16;
+    let height = 40usize;
+    let (starts, total, width, needs_bar) = super::session_bar_layout(&mut app, full, height);
+    assert!(!needs_bar, "two short bubbles must fit a 40-row pane");
+    assert_eq!(
+        width, full,
+        "gutter must be given back when the wrap still fits"
+    );
+    assert!(!starts.is_empty());
+    assert!(total > 0);
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    for i in 0..40 {
+        app.add_message(ChatRole::User, format!("user line {i} that wraps a bit"));
+        app.add_message(ChatRole::Assistant, format!("assistant reply {i}"));
+    }
+    let (_s, total, width, needs_bar) = super::session_bar_layout(&mut app, 80, 8);
+    assert!(needs_bar, "a tall transcript in an 8-row pane needs a bar");
+    assert!(
+        width < 80,
+        "overflow must reserve the scrollbar gutter, got width={width} total={total}"
+    );
+}
+
+#[test]
+fn session_paint_blanks_leftover_rows_when_layout_cache_undershoots() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "hi");
+    app.add_message(ChatRole::Assistant, "ok");
+    // Inflate height cache so the viewport thinks there are leftover rows
+    // after the live paint (stale layout).
+    for m in &mut app.messages {
+        m.layout_cache = Some((40, true, 30));
+        m.line_cache = None;
+    }
+    let backend = TestBackend::new(40, 16);
+    let mut terminal = Terminal::new(backend).expect("term");
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw");
+    let buf = terminal.backend().buffer();
+    let mut out = String::new();
+    for y in 0..buf.area().height {
+        for x in 0..buf.area().width {
+            if let Some(cell) = buf.cell((x, y)) {
+                out.push_str(cell.symbol());
+            }
+        }
+    }
+    assert!(
+        out.contains("hi") || out.contains("ok"),
+        "undershot layout must still paint the transcript, got {out:?}"
+    );
+}
+
+#[test]
 fn paint_chat_row_fills_and_skips_empty() {
     let mut buf = Buffer::empty(Rect::new(0, 0, 20, 2));
     let row = super::ChatRowPaint {

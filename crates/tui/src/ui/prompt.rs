@@ -1280,6 +1280,19 @@ mod overflow_render_tests {
         let rows = rendered_rows(&mut app, 4, 3);
         assert_eq!(rows.len(), 3);
         assert!(app.agent_hit.rect.is_none());
+        // Width is enough to enter paint; two rows are consumed by the
+        // outer gap so the bottom-meta Length chunk is assigned 0.
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.agent_name = "build".into();
+        let short = rendered_rows(&mut app, 40, 2);
+        assert_eq!(short.len(), 2);
+        assert!(
+            app.agent_hit.rect.is_none()
+                && app.model_hit.rect.is_none()
+                && app.effort_hit.rect.is_none()
+                && app.approval_hit.rect.is_none(),
+            "a zero-height footer must clear picker hits"
+        );
     }
 
     #[test]
