@@ -2278,7 +2278,7 @@ fn poll_timeout(requested: Duration, force_zero: bool) -> Duration {
 }
 
 /// Mouse motion is tracked for hover; it must not by itself schedule a
-/// full chat paint (handle_mouseks dirty only when chrome hover changes).
+/// full chat paint (handle_mouse marks dirty only when chrome hover changes).
 fn event_forces_redraw(ev: &Event) -> bool {
     !matches!(
         ev,
