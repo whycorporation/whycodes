@@ -2630,6 +2630,39 @@ fn live_generating_paint_concatenates_growing_markdown() {
 }
 
 #[test]
+fn render_message_paints_tool_role_and_live_thinking_block() {
+    use crate::app::{AgentState, ThinkingBlock};
+    let palette = ThemeName::DefaultDark.palette();
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::Tool, "src/a.rs:1:hit\nsrc/a.rs:2:also");
+    let tool = super::render_message(&app.messages[0], &app, &palette, 0, 60, None, false);
+    let tool_text: String = tool
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        tool_text.contains("src/a.rs") || tool_text.contains("hit"),
+        "ChatRole::Tool must paint Auto tool output, got {tool_text:?}"
+    );
+
+    app.add_message(ChatRole::Assistant, "streaming");
+    let i = app.messages.len() - 1;
+    app.messages[i].blocks = vec![crate::app::ChatBlock::Thinking(ThinkingBlock::new(
+        "step one\nstep two\nstep three",
+    ))];
+    app.current_agent_state = AgentState::Generating;
+    let live = super::render_message_live(&mut app, i, &palette, 60, true);
+    let live_text: String = live
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        live_text.contains("Thinking") || live_text.contains("step"),
+        "live assistant with an open thought must paint thinking_lines, got {live_text:?}"
+    );
+}
+
+#[test]
 fn sticky_header_selected_user_paints_the_band() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

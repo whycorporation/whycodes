@@ -107,6 +107,24 @@ fn busy_empty_prompt_paints_ellipsis_prefix() {
 }
 
 #[test]
+fn short_input_in_tall_prompt_pads_continuation_rows() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(crate::app::ChatRole::User, "hi");
+    app.input_buffer = "ok".into();
+    app.input_cursor = 2;
+    let rows = rendered_rows(&mut app, 40, 14);
+    assert!(
+        rows.iter().any(|r| r.contains("ok") || r.contains('❯')),
+        "typed prompt must paint, got {rows:?}"
+    );
+    assert!(
+        rows.len() >= 8,
+        "a tall prompt area must still fill its reserved rows, got {}",
+        rows.len()
+    );
+}
+
+#[test]
 fn empty_provider_and_model_paint_placeholders() {
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.agent_name = "build".into();

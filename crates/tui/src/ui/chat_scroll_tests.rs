@@ -820,6 +820,10 @@ fn paint_home_shows_question_mark_without_wordmark() {
         !text.contains("whycodes"),
         "home body must not repeat the project label under the model: {text}"
     );
+    assert!(
+        text.contains("Get started") && text.contains("/connect"),
+        "empty recents must paint the Get started /connect /import row: {text}"
+    );
 }
 
 #[test]
