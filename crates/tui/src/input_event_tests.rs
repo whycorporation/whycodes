@@ -3576,6 +3576,31 @@ fn mouse_question_other_multi_and_advance() {
         matches!(a.dialogs.active(), Some(DialogKind::Question(_))),
         "first of two questions advances, does not finish"
     );
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![
+            whycodes_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            },
+            whycodes_tools::question::QuestionOption {
+                label: "No".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: false,
+        important: false,
+    }]);
+    click_list_row(&mut a, 8, 3);
+    assert!(
+        a.pending_question_answers.is_some(),
+        "clicking a real option on a single question must finish and stash answers"
+    );
+    assert_eq!(a.mode, AppMode::Normal);
 }
 
 #[test]

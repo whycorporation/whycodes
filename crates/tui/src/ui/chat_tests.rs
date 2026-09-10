@@ -2663,6 +2663,36 @@ fn render_message_paints_tool_role_and_live_thinking_block() {
 }
 
 #[test]
+fn tool_role_auto_detects_diff_and_json() {
+    let palette = ThemeName::DefaultDark.palette();
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(
+        ChatRole::Tool,
+        "--- a/src.rs\n+++ b/src.rs\n@@ -1 +1 @@\n-old\n+new\n",
+    );
+    let diff = super::render_message(&app.messages[0], &app, &palette, 0, 60, None, false);
+    let diff_text: String = diff
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        diff_text.contains("old") || diff_text.contains("new") || diff_text.contains("src.rs"),
+        "Auto tool output that looks like a diff must paint as a diff, got {diff_text:?}"
+    );
+
+    app.add_message(ChatRole::Tool, r#"{"ok":true,"n":1}"#);
+    let json = super::render_message(&app.messages[1], &app, &palette, 1, 60, None, false);
+    let json_text: String = json
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        json_text.contains("ok") || json_text.contains("true") || json_text.contains('{'),
+        "Auto JSON tool output must paint as code, got {json_text:?}"
+    );
+}
+
+#[test]
 fn sticky_header_selected_user_paints_the_band() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
