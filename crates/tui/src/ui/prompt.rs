@@ -1095,6 +1095,24 @@ mod overflow_render_tests {
     }
 
     #[test]
+    fn home_prompt_centers_and_narrow_drops_chips() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.agent_name = "build".into();
+        app.provider_name = "anthropic".into();
+        app.model_name = "very-long-model-name-xyz".into();
+        app.reasoning_effort = Some("high".into());
+        app.approval_mode = whycodes_core::types::ApprovalMode::Manual;
+        app.intent_badge = Some("plan".into());
+        app.intent_kind = Some("plan".into());
+        let rows = rendered_rows(&mut app, 36, 10);
+        assert!(rows.iter().any(|r| r.contains("build") || r.contains("╭")));
+        let tiny = rendered_rows(&mut app, 5, 4);
+        assert_eq!(tiny.len(), 4);
+        app.add_message(crate::app::ChatRole::User, "hi");
+        let _ = rendered_rows(&mut app, 40, 8);
+    }
+
+    #[test]
     fn staged_images_render_inside_an_extra_box_row() {
         let mut app = TuiApp::new(TuiAppConfig::default());
         app.pending_images.push(crate::images::PromptImage {

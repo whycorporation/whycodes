@@ -1103,6 +1103,68 @@ fn home_recents_and_layout_cache_hits() {
 }
 
 #[test]
+fn session_paint_overflow_scrollbar_and_live_assistant() {
+    use crate::app::{AgentState, ChatRole, TuiApp};
+    use crate::config::TuiAppConfig;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    for i in 0..12 {
+        app.add_message(ChatRole::User, format!("user {i} wrap wrap wrap wrap wrap"));
+        app.add_message(
+            ChatRole::Assistant,
+            format!("asst {i} more wrap wrap wrap wrap wrap"),
+        );
+    }
+    app.current_agent_state = AgentState::Generating;
+    app.focus = crate::app::FocusPane::Scrollback;
+    app.selected_msg = Some(app.messages.len() - 1);
+    app.scroll_offset = 4;
+    let backend = TestBackend::new(40, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .unwrap();
+
+    let mut tiny = TuiApp::new(TuiAppConfig::default());
+    tiny.add_message(ChatRole::User, "x");
+    let backend = TestBackend::new(4, 2);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let palette = tiny.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut tiny, &palette))
+        .unwrap();
+}
+
+#[test]
+fn paint_chat_row_caret_and_band() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::style::{Color, Style};
+    use ratatui::text::{Line, Span};
+    let area = Rect::new(0, 0, 12, 2);
+    let mut buf = Buffer::empty(area);
+    let row = super::ChatRowPaint {
+        x: 0,
+        width: 12,
+        bg: Color::Black,
+        caret_style: Style::default().fg(Color::White),
+    };
+    let line = Line::from(vec![Span::styled(
+        "hi",
+        Style::default().fg(Color::White).bg(Color::Blue),
+    )]);
+    super::paint_chat_row(&mut buf, 0, &row, Some(&line), true);
+    super::paint_chat_row(&mut buf, 1, &row, None, false);
+    assert_eq!(
+        super::paint_concat_slices(&mut buf, 0, &row, &[], &[], 2..2, false),
+        0
+    );
+}
+
+#[test]
 fn visible_range_clamps_bottom_anchored_scroll() {
     assert_eq!(super::visible_range(0, 10, 0), (0, 0));
     assert_eq!(super::visible_range(10, 0, 0), (0, 0));
