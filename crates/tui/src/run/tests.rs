@@ -3292,6 +3292,60 @@ async fn drain_background_queues_prompter_asks() {
 }
 
 #[tokio::test]
+async fn drain_prompter_queues_opens_permission_then_question() {
+    use whycodes_agent::{PermissionPrompter, QuestionPrompter};
+    let mut rt = test_runtime();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    drain_prompter_queues(&mut app, &mut rt);
+    assert!(rt.pending_perm_queue.is_empty());
+    assert!(app.dialogs.active().is_none());
+
+    let perm = Arc::clone(&rt.perm_prompter);
+    let p = tokio::spawn(async move {
+        perm.ask("bash", "ls").await;
+    });
+    for _ in 0..50 {
+        drain_prompter_queues(&mut app, &mut rt);
+        if matches!(app.dialogs.active(), Some(DialogKind::Permission { .. })) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert!(
+        matches!(app.dialogs.active(), Some(DialogKind::Permission { .. })),
+        "a live permission ask must open the overlay, got {:?}",
+        app.dialogs.active()
+    );
+    if let Some(req) = rt.pending_perm_queue.pop_front() {
+        let _ = req.reply.send(false);
+    }
+    app.dialogs.clear();
+    app.mode = AppMode::Normal;
+    let _ = p.await;
+
+    let question = Arc::clone(&rt.question_prompter);
+    let q = tokio::spawn(async move {
+        let _ = question.ask(vec![sample_question()]).await;
+    });
+    for _ in 0..50 {
+        drain_prompter_queues(&mut app, &mut rt);
+        if matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert!(
+        matches!(app.dialogs.active(), Some(DialogKind::Question(_))),
+        "a live question ask must open the overlay, got {:?}",
+        app.dialogs.active()
+    );
+    if let Some(req) = rt.pending_question_queue.pop_front() {
+        let _ = req.reply.send(Err(QuestionError::Cancelled));
+    }
+    let _ = q.await;
+}
+
+#[tokio::test]
 async fn suggestion_and_catalog_helpers_short_circuit() {
     let _home = isolate_home();
     let session = Session::new(PathBuf::from("/work"), "sys".into());

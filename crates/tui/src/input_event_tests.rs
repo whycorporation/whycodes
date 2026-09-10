@@ -5645,3 +5645,28 @@ fn word_left_and_left_from_inside_a_paste_chip_jump_to_start() {
     ));
     assert_eq!(a.input_cursor, 0);
 }
+
+#[test]
+fn help_search_ignores_control_chars_and_session_mode_unmapped_is_noop() {
+    let mut a = app();
+    open_help(&mut a);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.help_searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('\n'))));
+    assert!(
+        a.help_query.is_empty(),
+        "control chars must not enter the help query, got {:?}",
+        a.help_query
+    );
+    assert!(a.help_searching);
+
+    let mut a = app();
+    a.mode = AppMode::Session;
+    a.key_context = KeymapContext::Normal;
+    a.input_buffer.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Char('z'))));
+    assert!(
+        a.input_buffer.is_empty(),
+        "unmapped Session-mode letters must not type into the prompt"
+    );
+}

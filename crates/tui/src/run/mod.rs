@@ -1433,13 +1433,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             }
 
             // ── Permission / question requests (queued; one at a time) ─
-            while let Ok(req) = rt.perm_rx.try_recv() {
-                rt.pending_perm_queue.push_back(req);
-            }
-            while let Ok(req) = rt.question_rx.try_recv() {
-                rt.pending_question_queue.push_back(req);
-            }
-            maybe_open_queued_dialog(&mut app, &rt);
+            drain_prompter_queues(&mut app, &mut rt);
 
             // ── Async title refine (does not hold rt.agent_busy) ─────────
             while let Ok((sid, title)) = title_rx.try_recv() {
@@ -4253,6 +4247,17 @@ fn maybe_open_queued_dialog(app: &mut TuiApp, rt: &SessionRuntime) {
         app.ask_question(front.questions.clone());
         app.mark_dirty();
     }
+}
+
+/// Move newly arrived prompter requests onto the runtime queues, then open one overlay.
+fn drain_prompter_queues(app: &mut TuiApp, rt: &mut SessionRuntime) {
+    while let Ok(req) = rt.perm_rx.try_recv() {
+        rt.pending_perm_queue.push_back(req);
+    }
+    while let Ok(req) = rt.question_rx.try_recv() {
+        rt.pending_question_queue.push_back(req);
+    }
+    maybe_open_queued_dialog(app, rt);
 }
 
 fn apply_dashboard_switch(
