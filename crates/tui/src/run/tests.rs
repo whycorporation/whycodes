@@ -6579,3 +6579,64 @@ async fn run_headless_hits_session_limit_toast() {
     }
     assert_eq!(exit, TuiExit::Quit);
 }
+
+#[tokio::test]
+async fn run_headless_resume_login_and_dashboard_switch() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("/resume missing-id"));
+    events.extend(type_line("/login"));
+    events.push(press(KeyCode::Esc));
+    events.push(ctrl('n'));
+    events.push(ctrl('o'));
+    events.push(press(KeyCode::Down));
+    events.push(press(KeyCode::Enter));
+    events.push(ctrl('q'));
+    events.push(press(KeyCode::Enter));
+    set_headless_events(Some(events.into()));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_import_then_quit() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("/import"));
+    events.push(press(KeyCode::Esc));
+    events.push(ctrl('q'));
+    events.push(press(KeyCode::Enter));
+    set_headless_events(Some(events.into()));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
