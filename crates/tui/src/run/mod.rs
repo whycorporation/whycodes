@@ -577,7 +577,6 @@ enum TuiWriter {
     Console(std::fs::File),
     Stdout(io::Stdout),
     /// In-memory sink so `LoopTerm::live` can be unit-tested without a TTY.
-    #[cfg(test)]
     Buf(Vec<u8>),
 }
 
@@ -586,7 +585,6 @@ impl Write for TuiWriter {
         match self {
             Self::Console(f) => f.write(buf),
             Self::Stdout(s) => s.write(buf),
-            #[cfg(test)]
             Self::Buf(b) => b.write(buf),
         }
     }
@@ -595,7 +593,6 @@ impl Write for TuiWriter {
         match self {
             Self::Console(f) => f.flush(),
             Self::Stdout(s) => s.flush(),
-            #[cfg(test)]
             Self::Buf(b) => b.flush(),
         }
     }
@@ -868,6 +865,40 @@ fn push_keyboard_flags(out: &mut impl Write, supported: bool) -> bool {
     .is_ok()
 }
 
+fn attach_live(
+    color_mode: ColorMode,
+    open: impl FnOnce() -> io::Result<TuiWriter>,
+    enable_raw: impl FnOnce() -> io::Result<()>,
+    size: impl FnOnce() -> io::Result<(u16, u16)>,
+) -> anyhow::Result<(LoopTerm, bool, u16, u16)> {
+    let mut tui_out = open().map_err(|e| {
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "error",
+            "tui.open_writer_failed",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
+        anyhow::anyhow!(
+            "failed to open terminal for TUI ({e}). \
+             Run inside a real terminal, or use `whycodes --plain`."
+        )
+    })?;
+    enter_raw_and_alt(&mut tui_out, enable_raw)?;
+    let (tw, th) = size().unwrap_or((0, 0));
+    let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out, Some((tw, th)));
+    let mut terminal = LoopTerm::live(tui_out, color_mode)?;
+    if tw == 0 || th == 0 {
+        terminal.resize(Rect::new(0, 0, 80, 24));
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "warn",
+            "tui.size_fallback",
+            Some(serde_json::json!({ "reported_w": tw, "reported_h": th, "using": "80x24" })),
+        );
+    }
+    Ok((terminal, keyboard_enhanced, tw, th))
+}
+
 fn enter_raw_and_alt(
     out: &mut impl Write,
     enable_raw: impl FnOnce() -> io::Result<()>,
@@ -1033,57 +1064,20 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     app.config.color_mode = color_mode;
     app.config.extra.quantize_for(color_mode);
 
-    let live_buf =
-        cfg!(test) && HEADLESS_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) && headless;
+    let live_buf = HEADLESS_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) && headless;
     let (mut terminal, keyboard_enhanced, tw, th) = if live_buf {
-        #[cfg(test)]
-        {
-            let mut tui_out = TuiWriter::Buf(Vec::new());
-            enter_raw_and_alt(&mut tui_out, || Ok(()))?;
-            let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out, Some((0, 0)));
-            let mut terminal = LoopTerm::live(tui_out, color_mode)?;
-            terminal.resize(Rect::new(0, 0, 80, 24));
-            whycodes_core::logging::emit(
-                "whycodes_tui",
-                "warn",
-                "tui.size_fallback",
-                Some(serde_json::json!({ "reported_w": 0, "reported_h": 0, "using": "80x24" })),
-            );
-            (terminal, keyboard_enhanced, 0u16, 0u16)
-        }
-        #[cfg(not(test))]
-        {
-            unreachable!("HEADLESS_LIVE is test-only")
-        }
+        attach_live(
+            color_mode,
+            || Ok(TuiWriter::Buf(Vec::new())),
+            || Ok(()),
+            || Ok((0, 0)),
+        )?
     } else if headless {
         (LoopTerm::headless(color_mode)?, false, 80u16, 24u16)
     } else {
-        let mut tui_out = open_tui_writer().map_err(|e| {
-            whycodes_core::logging::emit(
-                "whycodes_tui",
-                "error",
-                "tui.open_writer_failed",
-                Some(serde_json::json!({ "error": e.to_string() })),
-            );
-            anyhow::anyhow!(
-                "failed to open terminal for TUI ({e}). \
-                 Run inside a real terminal, or use `whycodes --plain`."
-            )
-        })?;
-        enter_raw_and_alt(&mut tui_out, enable_raw_mode)?;
-        let (tw, th) = term_size().unwrap_or((0, 0));
-        let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out, Some((tw, th)));
-        let mut terminal = LoopTerm::live(tui_out, color_mode)?;
-        if tw == 0 || th == 0 {
-            terminal.resize(Rect::new(0, 0, 80, 24));
-            whycodes_core::logging::emit(
-                "whycodes_tui",
-                "warn",
-                "tui.size_fallback",
-                Some(serde_json::json!({ "reported_w": tw, "reported_h": th, "using": "80x24" })),
-            );
-        }
-        (terminal, keyboard_enhanced, tw, th)
+        attach_live(color_mode, open_tui_writer, enable_raw_mode, || {
+            term_size().or(Ok((0, 0)))
+        })?
     };
 
     whycodes_core::logging::emit(

@@ -4874,6 +4874,43 @@ fn tui_available_does_not_panic() {
 }
 
 #[test]
+fn attach_live_open_error_and_raw_error() {
+    let color = crate::color::ColorMode::Ansi256;
+    let err = match attach_live(
+        color,
+        || Err(std::io::Error::other("no tty")),
+        || Ok(()),
+        || Ok((80, 24)),
+    ) {
+        Err(e) => e,
+        Ok(_) => panic!("expected open error"),
+    };
+    assert!(
+        err.to_string().contains("plain") || err.to_string().contains("tty"),
+        "{err}"
+    );
+    let err = match attach_live(
+        color,
+        || Ok(TuiWriter::Buf(Vec::new())),
+        || Err(std::io::Error::other("raw failed")),
+        || Ok((80, 24)),
+    ) {
+        Err(e) => e,
+        Ok(_) => panic!("expected raw error"),
+    };
+    assert!(err.to_string().contains("raw"), "{err}");
+    let (term, _, tw, th) = attach_live(
+        color,
+        || Ok(TuiWriter::Buf(Vec::new())),
+        || Ok(()),
+        || Ok((80, 24)),
+    )
+    .unwrap();
+    assert_eq!((tw, th), (80, 24));
+    term.restore(false);
+}
+
+#[test]
 fn resume_helpers_cover_missing_and_load_error() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut session = Session::new(PathBuf::from("/work"), "sys".into());
