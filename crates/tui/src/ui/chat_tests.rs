@@ -323,6 +323,46 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         truncated_text.contains('…'),
         "collapsed over-budget grep must ellipsize, got {truncated_text}"
     );
+
+    let mixed = tool_result(
+        "src/a.rs:10:hit-one\nsrc/a.rs:11-context-line\n--\nsrc/b.rs:2:hit-two\n(2 matches in 2 files; pattern `hit`)",
+        false,
+        &palette,
+        true,
+        ToolOutHint::Grep {
+            pattern: "hit".into(),
+        },
+        80,
+    );
+    let mixed_text = joined(&mixed);
+    assert!(
+        mixed_text.contains("a.rs")
+            && mixed_text.contains("b.rs")
+            && mixed_text.contains("context"),
+        "context rows and a second path header must paint, got {mixed_text}"
+    );
+    assert!(
+        mixed_text.contains('┆') || mixed_text.contains('│'),
+        "context vs match marks must paint, got {mixed_text}"
+    );
+
+    let bad_re = tool_result(
+        "src/a.rs:1:hello (world)\n",
+        false,
+        &palette,
+        true,
+        ToolOutHint::Grep {
+            pattern: "(".into(),
+        },
+        80,
+    );
+    let bad_text = joined(&bad_re);
+    assert!(
+        bad_text.contains("hello") || bad_text.contains("world"),
+        "an invalid regex pattern must fall back to literal paint, got {bad_text}"
+    );
+    assert!(super::compile_grep_highlighter("").is_none());
+    assert!(super::compile_grep_highlighter("(").is_none());
 }
 
 #[test]
