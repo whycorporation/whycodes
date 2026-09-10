@@ -6262,10 +6262,24 @@ fn tui_writer_write_flush_and_summary() {
     assert!(matches!(open_live().unwrap(), TuiWriter::Buf(_)));
     raw_live().expect("live buf raw");
     assert_eq!(size_live().unwrap(), (0, 0));
-    let (open_prod, _raw_prod, size_prod) = loop_attach_io(false);
+    let (open_prod, raw_prod, size_prod) = loop_attach_io(false);
     let _ = open_prod();
     let size = size_prod().unwrap_or((0, 0));
     assert!(size.0 < 10_000 && size.1 < 10_000);
+    // Production attach uses crossterm `enable_raw_mode`. Drive that fn
+    // pointer here (no TTY → Err; a real console is restored immediately).
+    match raw_prod() {
+        Ok(()) => {
+            if let Err(e) = crossterm::terminal::disable_raw_mode() {
+                tracing::debug!(error = %e, "disable_raw_mode after production enable");
+            }
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "enable_raw_mode without a TTY");
+        }
+    }
+    let _ = open_controlling_console();
+    let _ = tui_available();
 }
 
 #[test]
@@ -9473,4 +9487,37 @@ fn maybe_offer_update_skips_when_a_dialog_is_already_open() {
         "an open dialog must block the update prompt"
     );
     assert!(matches!(app.dialogs.active(), Some(DialogKind::Help)));
+}
+
+#[tokio::test]
+async fn run_headless_file_complete_then_quit_polls_the_picker() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("README.md"), "hi").unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    set_headless_events(Some(std::collections::VecDeque::from([
+        Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::Char(' '),
+            crossterm::event::KeyModifiers::CONTROL,
+        )),
+        ctrl('q'),
+        press(KeyCode::Enter),
+    ])));
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
 }

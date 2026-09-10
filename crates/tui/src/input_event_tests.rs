@@ -3694,6 +3694,26 @@ fn move_in_dialog_status_and_workspace_are_noops() {
 }
 
 #[test]
+fn move_in_dialog_steps_the_provider_select_list() {
+    let mut a = app();
+    open_provider_dialog(&mut a);
+    assert_eq!(
+        a.provider_dialog.mode,
+        crate::app::ProviderDialogMode::Select
+    );
+    assert!(a.provider_dialog.providers.len() > 1);
+    let start = a.provider_dialog.selected;
+    move_in_dialog(&mut a, &DialogKind::Provider, 1);
+    assert_eq!(
+        a.provider_dialog.selected,
+        start + 1,
+        "Down in Select mode must walk the provider list, not the add-custom form"
+    );
+    move_in_dialog(&mut a, &DialogKind::Provider, -1);
+    assert_eq!(a.provider_dialog.selected, start);
+}
+
+#[test]
 fn remaining_dispatch_and_dialog_confirm_arms() {
     use crate::keymap::Action;
     let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
@@ -4836,6 +4856,33 @@ fn word_left_and_left_jump_to_paste_placeholder_start() {
     let after_word = a.input_cursor;
     handle_event(&mut a, key(KeyCode::Left));
     assert!(a.input_cursor <= after_word);
+}
+
+#[test]
+fn word_left_and_left_from_placeholder_end_jump_to_start() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL);
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let end = a.input_buffer.len();
+    a.input_cursor = end;
+    assert!(crate::paste::placeholder_ending_at(&a.input_buffer, end).is_some());
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordLeft),
+        &k
+    ));
+    assert_eq!(a.input_cursor, 0);
+
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    a.input_cursor = a.input_buffer.len();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputLeft),
+        &k
+    ));
+    assert_eq!(a.input_cursor, 0);
 }
 
 #[test]
