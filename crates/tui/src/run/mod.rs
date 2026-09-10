@@ -1664,94 +1664,20 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     continue;
                 }
 
-                let flag = arm_generating(&mut app, &mut rt, &mut cancel_requested_at, "");
-                let expanded = record_user_turn(
+                spawn_local_turn(
                     &mut app,
                     &mut rt,
+                    &mut cancel_requested_at,
                     &prompt,
+                    &submit_images,
                     &project_dir,
                     &config,
-                    &submit_images,
-                );
-                let (route_provider, route_model) = route_turn_model(
-                    rt.session.id.as_str(),
                     &provider,
                     &model,
-                    &expanded,
-                    rt.agent
-                        .model_fast()
-                        .or(config.session.model_fast.as_deref()),
+                    &api_key,
+                    max_turns,
+                    title_tx.clone(),
                 );
-
-                let provider2 = route_provider;
-                let model2 = route_model;
-                let api_key2 = api_key.clone();
-                let event_tx2 = rt.event_tx.clone();
-                let done_tx2 = rt.done_tx.clone();
-                let cancel2 = Some(flag);
-                let auto_title = config.session.auto_title;
-                let title_model = config.session.title_model.clone();
-                let title_tx2 = title_tx.clone();
-                // Title refine still uses rt.session provider/model (or title_model).
-                let title_provider = provider.clone();
-                let title_session_model = model.clone();
-
-                let (ag, sess) = take_turn_owner(&mut rt, &project_dir);
-
-                rt.turn_join = Some(tokio::spawn(async move {
-                    let agent = ag;
-                    let mut session = sess;
-                    // Time only the agent loop. Title refine runs async *after*
-                    // we release rt.agent_busy so the user can type immediately.
-                    let work_t0 = std::time::Instant::now();
-                    let result = agent
-                        .run_turn_with_events(
-                            &mut session,
-                            TurnOpts {
-                                provider_name: &provider2,
-                                model: &model2,
-                                api_key: &api_key2,
-                                max_turns,
-                                events: Some(event_tx2),
-                                cancel: cancel2,
-                            },
-                        )
-                        .await;
-                    let work_ms = work_t0.elapsed().as_millis();
-                    // Kick off small-model title refine without awaiting — the
-                    // main loop applies the title when title_tx delivers.
-                    if auto_title && result.is_ok() {
-                        let _ = agent.spawn_title_refine(
-                            &session,
-                            &title_provider,
-                            &title_session_model,
-                            &api_key2,
-                            title_model.as_deref(),
-                            title_tx2,
-                        );
-                    }
-                    match result {
-                        Ok(text) => {
-                            let _ = done_tx2.send(TurnOutcome::Ok {
-                                text,
-                                agent,
-                                session,
-                                work_ms,
-                            });
-                        }
-                        Err(e) => {
-                            let msg = e.to_string();
-                            let cancelled = msg.to_ascii_lowercase().contains("cancel");
-                            let _ = done_tx2.send(TurnOutcome::Err {
-                                error: msg,
-                                agent,
-                                session,
-                                cancelled,
-                                work_ms,
-                            });
-                        }
-                    }
-                }));
             }
 
             // ── Input ─────────────────────────────────────────────────
@@ -4138,6 +4064,105 @@ fn maybe_force_stop_in_loop(
         project_dir,
         file_index,
     );
+}
+
+/// Local in-process agent turn. Records the user message, routes the model,
+/// and delivers [`TurnOutcome::Ok`] / [`TurnOutcome::Err`].
+#[allow(clippy::too_many_arguments)]
+fn spawn_local_turn(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    prompt: &str,
+    submit_images: &[crate::images::PromptImage],
+    project_dir: &std::path::Path,
+    config: &Config,
+    provider: &str,
+    model: &str,
+    api_key: &str,
+    max_turns: Option<usize>,
+    title_tx: mpsc::UnboundedSender<(String, String)>,
+) {
+    let flag = arm_generating(app, rt, cancel_requested_at, "");
+    let expanded = record_user_turn(app, rt, prompt, project_dir, config, submit_images);
+    let (route_provider, route_model) = route_turn_model(
+        rt.session.id.as_str(),
+        provider,
+        model,
+        &expanded,
+        rt.agent
+            .model_fast()
+            .or(config.session.model_fast.as_deref()),
+    );
+
+    let provider2 = route_provider;
+    let model2 = route_model;
+    let api_key2 = api_key.to_string();
+    let event_tx2 = rt.event_tx.clone();
+    let done_tx2 = rt.done_tx.clone();
+    let cancel2 = Some(flag);
+    let auto_title = config.session.auto_title;
+    let title_model = config.session.title_model.clone();
+    let title_tx2 = title_tx;
+    let title_provider = provider.to_string();
+    let title_session_model = model.to_string();
+
+    let (ag, sess) = take_turn_owner(rt, project_dir);
+
+    rt.turn_join = Some(tokio::spawn(async move {
+        let agent = ag;
+        let mut session = sess;
+        // Time only the agent loop. Title refine runs async *after*
+        // we release rt.agent_busy so the user can type immediately.
+        let work_t0 = Instant::now();
+        let result = agent
+            .run_turn_with_events(
+                &mut session,
+                TurnOpts {
+                    provider_name: &provider2,
+                    model: &model2,
+                    api_key: &api_key2,
+                    max_turns,
+                    events: Some(event_tx2),
+                    cancel: cancel2,
+                },
+            )
+            .await;
+        let work_ms = work_t0.elapsed().as_millis();
+        // Kick off small-model title refine without awaiting — the
+        // main loop applies the title when title_tx delivers.
+        if auto_title && result.is_ok() {
+            let _ = agent.spawn_title_refine(
+                &session,
+                &title_provider,
+                &title_session_model,
+                &api_key2,
+                title_model.as_deref(),
+                title_tx2,
+            );
+        }
+        match result {
+            Ok(text) => {
+                let _ = done_tx2.send(TurnOutcome::Ok {
+                    text,
+                    agent,
+                    session,
+                    work_ms,
+                });
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                let cancelled = msg.to_ascii_lowercase().contains("cancel");
+                let _ = done_tx2.send(TurnOutcome::Err {
+                    error: msg,
+                    agent,
+                    session,
+                    cancelled,
+                    work_ms,
+                });
+            }
+        }
+    }));
 }
 
 /// Remote `whycodes serve` turn: stream over HTTP, deliver [`TurnOutcome::Remote`].

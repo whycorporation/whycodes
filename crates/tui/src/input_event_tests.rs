@@ -4715,6 +4715,36 @@ fn dialog_home_end_jump_theme_and_sessions_mouse_confirm() {
 }
 
 #[test]
+fn handle_event_confirms_login_effort_and_approval_pickers() {
+    let mut a = app();
+    a.login_dialog.rows = vec![crate::app::LoginProviderRow {
+        provider: "anthropic".into(),
+        label: "Anthropic".into(),
+        connected: false,
+    }];
+    open_dialog(&mut a, DialogKind::Login);
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.pending_login_provider.as_deref(), Some("anthropic"));
+
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    open_effort_dialog(&mut a);
+    if matches!(a.dialogs.active(), Some(DialogKind::Effort)) {
+        assert!(handle_event(&mut a, key(KeyCode::Enter)));
+        assert!(
+            a.pending_effort.is_some(),
+            "effort Enter must set pending_effort"
+        );
+    }
+
+    let mut a = app();
+    open_mode_dialog(&mut a);
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(a.pending_approval_mode.is_some());
+}
+
+#[test]
 fn copy_modal_selection_warns_when_clipboard_fails() {
     crate::clipboard::with_copy_stub(false, || {
         let mut a = app();

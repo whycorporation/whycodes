@@ -4983,6 +4983,59 @@ async fn spawn_remote_turn_arms_generating_and_delivers_error() {
     }
 }
 
+#[tokio::test]
+async fn spawn_local_turn_scripted_ok_delivers_outcome() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "local-ok") };
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    inject_test_llm(&mut rt.agent, "acme");
+    let mut cancel_at = None;
+    let (title_tx, _title_rx) = mpsc::unbounded_channel();
+    spawn_local_turn(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        "hello local",
+        &[],
+        dir.path(),
+        &Config::default(),
+        "acme",
+        "m1",
+        "sk-test",
+        None,
+        title_tx,
+    );
+    assert!(rt.agent_busy);
+    let outcome = tokio::time::timeout(Duration::from_secs(3), rt.done_rx.recv()).await;
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    match outcome {
+        Ok(Some(TurnOutcome::Ok { text, .. })) => {
+            assert!(
+                text.contains("local-ok") || text.contains("hello"),
+                "scripted provider must echo the scripted text, got {text:?}"
+            );
+        }
+        Ok(Some(TurnOutcome::Err { error, .. })) => {
+            panic!("scripted local turn must succeed, got error {error}");
+        }
+        Ok(Some(_)) => panic!("expected TurnOutcome::Ok from local turn"),
+        Ok(None) => panic!("local done channel closed"),
+        Err(_) => {
+            if let Some(join) = rt.turn_join.take() {
+                join.abort();
+            }
+            panic!("local spawn timed out");
+        }
+    }
+}
+
 #[test]
 fn auto_prompts_are_fifo_and_do_not_replace_pending_work() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
