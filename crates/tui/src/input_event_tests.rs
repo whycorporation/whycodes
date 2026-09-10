@@ -5611,3 +5611,37 @@ fn import_confirm_without_checked_items_toasts_instead_of_applying() {
     );
     assert!(matches!(a.dialogs.active(), Some(DialogKind::Import)));
 }
+
+#[test]
+fn word_left_and_left_from_inside_a_paste_chip_jump_to_start() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    assert!(
+        token.len() > 4,
+        "collapsed paste chip must be a multi-byte token"
+    );
+    let mid = token.len() / 2;
+    a.input_cursor = mid;
+    assert!(
+        crate::paste::placeholder_at(&a.input_buffer, mid.saturating_sub(1)).is_some(),
+        "cursor must sit inside the chip, not on its end"
+    );
+    assert!(crate::paste::placeholder_ending_at(&a.input_buffer, mid).is_none());
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordLeft),
+        &k
+    ));
+    assert_eq!(a.input_cursor, 0);
+
+    a.input_cursor = mid;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputLeft),
+        &k
+    ));
+    assert_eq!(a.input_cursor, 0);
+}

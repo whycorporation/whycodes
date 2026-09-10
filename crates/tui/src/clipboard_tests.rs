@@ -270,6 +270,15 @@ fn paint_ranges_clipped_skips_empty_and_inverted_clip() {
         let mut child = spawn_clipboard_pipe("cmd", &["/C", "exit", "0"]).expect("cmd");
         assert!(write_child_stdin(&mut child, "coverage"));
         let _ = child.wait();
+        let mut no_in = std::process::Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("cmd");
+        assert!(!write_child_stdin(&mut no_in, "coverage"));
+        let _ = no_in.wait();
     }
     let blanks = vec!["".into(), "".into(), "hi".into(), "".into(), "".into()];
     assert_eq!(

@@ -907,6 +907,9 @@ fn styled_input_row(
 #[cfg(test)]
 mod wrap_tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
 
     fn row_texts(buf: &str, width: u16) -> Vec<String> {
         wrap_text(buf, width)
@@ -1082,6 +1085,21 @@ mod wrap_tests {
         assert!(prompt_owns_caret(&app));
         app.focus = crate::app::FocusPane::Scrollback;
         assert!(!prompt_owns_caret(&app));
+
+        let backend = TestBackend::new(8, 4);
+        let mut terminal = Terminal::new(backend).expect("term");
+        let style = Style::default();
+        terminal
+            .draw(|f| {
+                paint_h_border(f, Rect::new(0, 0, 0, 1), style, true);
+                paint_h_border(f, Rect::new(0, 1, 1, 1), style, true);
+                paint_h_border(f, Rect::new(0, 2, 1, 1), style, false);
+                paint_h_border(f, Rect::new(2, 0, 4, 1), style, true);
+            })
+            .expect("draw");
+        let buf = terminal.backend().buffer();
+        assert_eq!(buf[(0, 1)].symbol(), "╭");
+        assert_eq!(buf[(0, 2)].symbol(), "╰");
     }
 }
 
@@ -1547,6 +1565,9 @@ mod overflow_render_tests {
                 .any(|r| r.contains("build") || r.contains("bui")),
             "tiny footer must keep a truncated agent name, got {rows:?}"
         );
+        let too_short = rendered_rows(&mut app, 6, 6);
+        assert_eq!(too_short.len(), 6);
+        assert!(app.agent_hit.rect.is_none());
     }
 
     #[test]
@@ -1708,6 +1729,15 @@ mod overflow_render_tests {
             "a long :command draft must wrap"
         );
         assert!(prompt_height(&app, 24) > prompt_height(&TuiApp::new(TuiAppConfig::default()), 24));
+        // Past MAX_INPUT_ROWS the box still paints MAX rows (padded blanks).
+        app.mode = AppMode::Normal;
+        app.input_buffer = "word ".repeat(200);
+        app.input_cursor = 0;
+        let tall = rendered_rows(&mut app, 24, 16);
+        assert!(
+            tall.iter().any(|r| r.contains("word") || r.contains("❯")),
+            "over-wrapped prompt must still paint the first visible rows, got {tall:?}"
+        );
     }
 
     #[test]
