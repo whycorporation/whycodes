@@ -37,3 +37,26 @@ fn wrap_spans_and_plain_empty_and_newline_edges() {
     let only_nl = wrap_plain("\n", 8, Style::default());
     assert!(!only_nl.is_empty());
 }
+
+#[test]
+fn wrap_spans_trailing_newline_and_empty_inner_span() {
+    let lines = wrap_spans(vec![Span::raw("hi\n")], 10);
+    assert!(
+        lines.len() >= 2,
+        "trailing newline keeps an empty row: {:?}",
+        lines
+    );
+    let mixed = wrap_spans(
+        vec![
+            Span::raw("ab".to_string()),
+            Span::raw(String::new()),
+            Span::raw("cd".to_string()),
+        ],
+        10,
+    );
+    let text: String = mixed
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(text.contains("ab") && text.contains("cd"), "{text}");
+}

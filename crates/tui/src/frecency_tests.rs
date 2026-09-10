@@ -48,3 +48,59 @@ fn save_and_load_roundtrip() {
     };
     assert!(g.boost("a/b.rs") > 0);
 }
+
+#[test]
+fn load_roundtrip_sets_path_and_age_buckets() {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+    let project = home.path().join("proj");
+    std::fs::create_dir_all(&project).unwrap();
+    let mut f = Frecency::load(&project);
+    f.record("src/lib.rs");
+    let loaded = Frecency::load(&project);
+    assert!(loaded.boost("src/lib.rs") > 0);
+
+    let now = now_epoch();
+    let mut aged = Frecency::ephemeral();
+    aged.inner.map.insert(
+        "day-old.rs".into(),
+        Stats {
+            count: 1,
+            last: now - 10_000,
+        },
+    );
+    aged.inner.map.insert(
+        "week-old.rs".into(),
+        Stats {
+            count: 1,
+            last: now - 200_000,
+        },
+    );
+    aged.inner.map.insert(
+        "ancient.rs".into(),
+        Stats {
+            count: 1,
+            last: now - 8 * 86_400,
+        },
+    );
+    assert_eq!(aged.boost("day-old.rs"), 20 + 8);
+    assert_eq!(aged.boost("week-old.rs"), 8 + 8);
+    assert_eq!(aged.boost("ancient.rs"), 2 + 8);
+
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+    }
+}
+
+#[test]
+fn save_skips_when_parent_is_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocked = dir.path().join("blocked");
+    std::fs::write(&blocked, b"not-a-dir").unwrap();
+    let mut f = Frecency::ephemeral();
+    f.inner.path = Some(blocked.join("x.json"));
+    f.record("a.rs");
+}

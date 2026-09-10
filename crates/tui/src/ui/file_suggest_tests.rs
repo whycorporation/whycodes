@@ -10,6 +10,8 @@ fn at_token_finds_mentions() {
     assert_eq!(at_token("@", 1), Some((0, 1)));
     assert_eq!(at_token("a@", 2), None); // glued to a word → not a mention
     assert_eq!(at_token(" @", 2), Some((1, 2))); // space-separated → mention
+    assert_eq!(at_token("user@host path", 9), None);
+    assert_eq!(at_token("see @file.rs extra", 16), None);
 }
 
 #[test]
