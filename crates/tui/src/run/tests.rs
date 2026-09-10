@@ -223,6 +223,8 @@ fn expand_at_files_truncates_huge_files() {
     std::fs::write(&f, "x".repeat(AT_FILE_MAX_CHARS + 100)).unwrap();
     let out = expand_at_files("@big.txt", dir.path());
     assert!(out.contains("characters omitted"), "{out}");
+    assert!(out.contains("use the read tool"), "{out}");
+    assert!(out.contains("--- file: big.txt ---"), "{out}");
 }
 
 #[test]
@@ -5074,6 +5076,51 @@ async fn spawn_local_turn_auto_title_still_delivers_ok() {
         matches!(outcome, Ok(Some(TurnOutcome::Ok { .. }))),
         "auto-title local turn must still finish Ok"
     );
+}
+
+#[tokio::test]
+async fn spawn_local_turn_hang_then_force_stop_aborts() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "HANG") };
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    inject_test_llm(&mut rt.agent, "acme");
+    let mut cancel_at = None;
+    let (title_tx, _title_rx) = mpsc::unbounded_channel();
+    spawn_local_turn(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        "hang please",
+        &[],
+        dir.path(),
+        &Config::default(),
+        "acme",
+        "m1",
+        "sk-test",
+        None,
+        title_tx,
+    );
+    assert!(rt.agent_busy);
+    let idx = whycodes_index::WorkspaceIndex::start(Vec::new());
+    cancel_at = Instant::now().checked_sub(CANCEL_FORCE_AFTER + Duration::from_millis(1));
+    app.pending_cancel = true;
+    maybe_force_stop_in_loop(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &Config::default(),
+        dir.path(),
+        &idx,
+    );
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert!(!rt.agent_busy);
 }
 
 #[test]

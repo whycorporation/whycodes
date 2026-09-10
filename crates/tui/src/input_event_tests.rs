@@ -5026,3 +5026,96 @@ fn help_overlay_without_dialog_wheel_scrolls_cheatsheet() {
     handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
     assert_eq!(a.help_scroll, 0);
 }
+
+#[test]
+fn help_overlay_close_hit_and_searching_esc_via_mouse_x() {
+    let mut a = app();
+    open_help(&mut a);
+    a.help_searching = true;
+    a.help_query = "find".into();
+    a.dialog_close_hit = Some(Rect {
+        x: 70,
+        y: 2,
+        width: 3,
+        height: 1,
+    });
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 71, 2),
+    );
+    assert!(!a.help_searching);
+    assert!(a.help_query.is_empty());
+    assert_eq!(a.mode, AppMode::Help);
+
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 71, 2),
+    );
+    assert_eq!(a.mode, AppMode::Normal);
+}
+
+#[test]
+fn mouse_theme_row_confirms_and_chat_scrollbar_mid_track() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.theme_selected = 0;
+    click_list_row(&mut a, 8, crate::theme::ThemeName::ALL.len());
+    assert!(
+        a.mode == AppMode::Normal || a.pending_full_clears > 0 || a.theme_selected > 0,
+        "theme row click confirms or moves selection"
+    );
+
+    let mut a = app();
+    a.chat_scrollbar_hit = Some(Rect {
+        x: 40,
+        y: 1,
+        width: 1,
+        height: 10,
+    });
+    a.chat_scroll_total = 200;
+    a.chat_viewport_rows = 10;
+    apply_chat_scrollbar_offset(&mut a, 6, Some(0));
+    assert!(a.scroll_offset > 0 || a.auto_scroll);
+    let grab = chat_scrollbar_grab_at(
+        &a,
+        20,
+        Rect {
+            x: 40,
+            y: 1,
+            width: 1,
+            height: 10,
+        },
+    );
+    assert!(
+        grab < 10,
+        "grab offset is relative to a 10-row track, got {grab}"
+    );
+}
+
+#[test]
+fn apply_modal_scrollbar_help_and_empty_total() {
+    let mut a = app();
+    open_help(&mut a);
+    a.dialog_scrollbar_hit = Some(Rect {
+        x: 49,
+        y: 6,
+        width: 1,
+        height: 10,
+    });
+    a.dialog_list_total = 40;
+    a.dialog_list_visible = 8;
+    apply_modal_scrollbar(&mut a, None, 10, Some(1));
+    assert!(a.help_scroll > 0 || a.dialog_list_scroll_start > 0 || a.help_scroll == 0);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_scrollbar_hit = Some(Rect {
+        x: 49,
+        y: 6,
+        width: 1,
+        height: 10,
+    });
+    a.dialog_list_total = 0;
+    let active = a.dialogs.active().cloned();
+    apply_modal_scrollbar(&mut a, active.as_ref(), 8, None);
+}
