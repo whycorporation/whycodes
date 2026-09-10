@@ -927,6 +927,27 @@ fn default_agent_info(name: &str) -> whycodes_core::types::AgentInfo {
     }
 }
 
+/// Leave alt-screen / raw mode from the panic hook (and from tests).
+fn restore_terminal_on_panic() {
+    if let Ok(mut out) = open_tui_writer() {
+        restore_terminal_on(&mut out);
+    } else {
+        let _ = disable_raw_mode();
+    }
+}
+
+fn install_panic_terminal_restore() {
+    whycodes_core::logging::set_panic_cleanup(restore_terminal_on_panic);
+}
+
+/// After [`IDLE_TRIM_AFTER`] of quiet idle, return retained heap pages.
+fn maybe_idle_heap_trim(agent_busy: bool, idle_for: Duration, armed: &mut bool) {
+    if !agent_busy && idle_for >= crate::heap::IDLE_TRIM_AFTER && *armed {
+        crate::heap::release_retained_heap_debounced("client_idle", crate::heap::IDLE_TRIM_AFTER);
+        *armed = false;
+    }
+}
+
 fn restore_terminal_on(out: &mut impl Write) {
     let _ = disable_raw_mode();
     let _ = execute!(
@@ -1143,13 +1164,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // On panic, leave alt-screen / raw mode so the shell is usable and the
     // crash report (written by whycodes_core::logging) is readable.
     if !headless {
-        whycodes_core::logging::set_panic_cleanup(|| {
-            if let Ok(mut out) = open_tui_writer() {
-                restore_terminal_on(&mut out);
-            } else {
-                let _ = disable_raw_mode();
-            }
-        });
+        install_panic_terminal_restore();
     }
 
     whycodes_core::logging::emit(
@@ -1928,16 +1943,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     toasts_visible: !app.toasts.is_empty(),
                     since_user_input: last_user_input.elapsed(),
                 });
-            if !rt.agent_busy
-                && last_user_input.elapsed() >= crate::heap::IDLE_TRIM_AFTER
-                && idle_trim_armed
-            {
-                crate::heap::release_retained_heap_debounced(
-                    "client_idle",
-                    crate::heap::IDLE_TRIM_AFTER,
-                );
-                idle_trim_armed = false;
-            }
+            maybe_idle_heap_trim(
+                rt.agent_busy,
+                last_user_input.elapsed(),
+                &mut idle_trim_armed,
+            );
 
             let overlay_owns_keys = matches!(
                 app.dialogs.active(),

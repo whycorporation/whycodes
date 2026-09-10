@@ -5077,6 +5077,27 @@ fn tui_writer_write_flush_and_summary() {
 }
 
 #[test]
+fn maybe_idle_heap_trim_fires_once_then_stays_disarmed() {
+    crate::heap::release_retained_heap("idle-trim-setup");
+    let mut armed = true;
+    maybe_idle_heap_trim(true, crate::heap::IDLE_TRIM_AFTER, &mut armed);
+    assert!(armed, "busy agent must not trim");
+    maybe_idle_heap_trim(false, crate::heap::IDLE_TRIM_AFTER / 2, &mut armed);
+    assert!(armed, "quiet shorter than IDLE_TRIM_AFTER must not trim");
+    maybe_idle_heap_trim(false, crate::heap::IDLE_TRIM_AFTER, &mut armed);
+    assert!(!armed, "idle past the threshold disarms after one trim");
+    maybe_idle_heap_trim(false, crate::heap::IDLE_TRIM_AFTER, &mut armed);
+    assert!(!armed, "already-disarmed idle must be a no-op");
+}
+
+#[test]
+fn panic_terminal_restore_installs_and_runs() {
+    install_panic_terminal_restore();
+    restore_terminal_on_panic();
+    whycodes_core::logging::clear_panic_cleanup();
+}
+
+#[test]
 fn bind_agent_prompters_attaches_channels() {
     let (perm, _perm_rx) = ChannelPermissionPrompter::new();
     let (question, _q_rx) = ChannelQuestionPrompter::new(None);
@@ -5529,6 +5550,41 @@ async fn run_headless_compact_after_turn() {
     match prev_llm {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_compact_empty_then_after_turn() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "compact-ok");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("/compact"));
+    events.push(press(KeyCode::Char('a')));
+    events.push(press(KeyCode::Enter));
+    events.extend(type_line("/compact keep auth"));
+    events.push(ctrl('q'));
+    set_headless_events(Some(events.into()));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
     }
     assert_eq!(exit, TuiExit::Quit);
 }
@@ -6275,6 +6331,43 @@ async fn run_live_crossterm_stub_keys_slash_and_quit() {
     match prev_import {
         Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
         None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    set_headless_live(false);
+    clear_crossterm_stub();
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_live_buf_empty_key_hydrates_from_env_then_quits() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("README.md"), "hi").unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    let prev_key = std::env::var_os("ACME_API_KEY");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+        std::env::set_var("ACME_API_KEY", "sk-live-hydrate");
+    }
+    set_headless_events(None);
+    set_headless_live(true);
+    set_crossterm_stub(std::collections::VecDeque::from([
+        Event::Resize(80, 24),
+        ctrl('q'),
+    ]));
+    let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    match prev_key {
+        Some(v) => unsafe { std::env::set_var("ACME_API_KEY", v) },
+        None => unsafe { std::env::remove_var("ACME_API_KEY") },
     }
     set_headless_live(false);
     clear_crossterm_stub();
