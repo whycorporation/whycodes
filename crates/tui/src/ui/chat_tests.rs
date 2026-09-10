@@ -303,6 +303,26 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             .any(|s| s.content.as_ref().contains('9') && s.style.fg == Some(palette.dim)),
         "expected dim line numbers"
     );
+
+    let many_hits: String = (0..20)
+        .map(|i| format!("src/a.rs:{i}:hit-{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let truncated = tool_result(
+        &format!("{many_hits}\n(20 matches in 1 files; pattern `hit`)"),
+        false,
+        &palette,
+        false,
+        ToolOutHint::Grep {
+            pattern: "hit".into(),
+        },
+        80,
+    );
+    let truncated_text = joined(&truncated);
+    assert!(
+        truncated_text.contains('…'),
+        "collapsed over-budget grep must ellipsize, got {truncated_text}"
+    );
 }
 
 #[test]
@@ -1741,6 +1761,49 @@ fn tool_result_auto_picks_grep_code_and_plain() {
     assert!(
         cut_text.contains('…') || cut_text.contains("x"),
         "a long highlighted code row must truncate, got {cut_text}"
+    );
+    let no_grammar = tool_result(
+        "# lines 1–2 of 2\n     1|fn main() {\n     2|    println!(\"hi\");\n}",
+        false,
+        &palette,
+        true,
+        ToolOutHint::Code(None),
+        40,
+    );
+    let no_grammar_text = joined(&no_grammar);
+    assert!(
+        no_grammar_text.contains("fn main") || no_grammar_text.contains("lines"),
+        "numbered read rows still paint without a grammar, got {no_grammar_text}"
+    );
+    let long_no_grammar = tool_result(
+        &format!("     1|{}\n     2|ok", "x".repeat(120)),
+        false,
+        &palette,
+        true,
+        ToolOutHint::Code(None),
+        16,
+    );
+    let long_no_grammar_text = joined(&long_no_grammar);
+    assert!(
+        long_no_grammar_text.contains("long lines truncated") || long_no_grammar_text.contains('…'),
+        "over-wide unhighlighted code must note truncation, got {long_no_grammar_text}"
+    );
+    let many_code: String = (0..20)
+        .map(|i| format!("     {i}|line-{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let over = tool_result(
+        &many_code,
+        false,
+        &palette,
+        false,
+        ToolOutHint::Code(None),
+        40,
+    );
+    let over_text = joined(&over);
+    assert!(
+        over_text.contains('…'),
+        "collapsed over-budget numbered code must ellipsize, got {over_text}"
     );
     let long_body = format!("{}\n{}", "x".repeat(200), vec!["line"; 20].join("\n"));
     let long_plain = tool_result(&long_body, false, &palette, false, ToolOutHint::Auto, 12);
