@@ -521,6 +521,45 @@ fn live_thinking_rail_moves_with_the_spinner() {
 }
 
 #[test]
+fn thinking_lines_ellipsis_when_live_tail_or_expanded_is_truncated() {
+    use crate::app::{THINKING_EXPANDED_MAX_LINES, THINKING_LIVE_TAIL_LINES, ThinkingBlock};
+    let palette = ThemeName::DefaultDark.palette();
+    let live_text = (0..=THINKING_LIVE_TAIL_LINES)
+        .map(|i| format!("live-{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut live = ThinkingBlock::new(live_text);
+    live.collapsed = true;
+    assert!(live.is_truncated_live());
+    let lines = super::thinking_lines(&live, &palette, 40, 0);
+    let joined: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains('…') || joined.contains("..."),
+        "live collapsed tail must paint an ellipsis row, got {joined:?}"
+    );
+
+    let expanded_text = (0..=THINKING_EXPANDED_MAX_LINES)
+        .map(|i| format!("x{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut expanded = ThinkingBlock::finished(expanded_text);
+    expanded.collapsed = false;
+    assert!(expanded.is_truncated_expanded());
+    let lines = super::thinking_lines(&expanded, &palette, 40, 0);
+    let joined: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains('…') || joined.contains("..."),
+        "expanded thought past the cap must paint a trailing ellipsis, got {joined:?}"
+    );
+}
+
+#[test]
 fn running_execute_rail_pulses_and_uses_success() {
     use crate::theme::ThemeName;
     let palette = ThemeName::DefaultDark.palette();
