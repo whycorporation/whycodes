@@ -4358,6 +4358,56 @@ fn todo_body_click_without_overflow_does_not_steal_focus() {
 }
 
 #[test]
+fn left_from_inside_paste_token_jumps_to_start() {
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let end = a.input_buffer.len();
+    assert!(
+        end > 2,
+        "collapsed paste token must span more than one byte"
+    );
+    a.input_cursor = end.saturating_sub(1);
+    handle_event(&mut a, key(KeyCode::Left));
+    assert_eq!(
+        a.input_cursor, 0,
+        "Left from inside the chip must jump to the token start, not a mid-token byte"
+    );
+
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let end = a.input_buffer.len();
+    a.input_cursor = end.saturating_sub(1);
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputWordLeft,
+        &KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL),
+    );
+    assert_eq!(
+        a.input_cursor, 0,
+        "Ctrl+Left from inside the chip must also jump to the token start"
+    );
+}
+
+#[test]
+fn hidden_sidebar_tab_hotkeys_still_select_tabs() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+    let mut a = app();
+    a.sidebar.visible = false;
+    let before = a.sidebar.active_tab;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarTab6),
+        &k
+    ));
+    assert!(a.sidebar.visible, "tab hotkey must reveal the sidebar");
+    assert_ne!(
+        a.sidebar.active_tab, before,
+        "tab 6 must change the active tab even when the rail started hidden"
+    );
+}
+
+#[test]
 fn chat_drag_copy_success_toasts_char_count() {
     crate::clipboard::with_copy_stub(true, || {
         let mut a = app();
