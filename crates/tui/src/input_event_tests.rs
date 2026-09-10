@@ -3697,6 +3697,19 @@ fn file_complete_history_and_help_dialog_wheel() {
 }
 
 #[test]
+fn model_confirm_none_row_dismisses() {
+    let mut a = app();
+    a.model_selection.models.clear();
+    open_dialog(&mut a, DialogKind::Model);
+    a.model_selection.selected = 0;
+    confirm_dialog(&mut a, &DialogKind::Model);
+    assert!(
+        a.pending_model.is_none(),
+        "empty catalog confirm must not pick a model"
+    );
+}
+
+#[test]
 fn command_ctrl_chord_and_paste_word_moves() {
     use crate::keymap::Action;
     let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);

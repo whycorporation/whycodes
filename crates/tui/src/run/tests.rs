@@ -4788,6 +4788,21 @@ fn try_fill_api_key_fills_empty_and_skips_set() {
         Some(v) => unsafe { std::env::set_var("FILLME_API_KEY", v) },
         None => unsafe { std::env::remove_var("FILLME_API_KEY") },
     }
+
+    let (_lock, home) = isolate_home_fresh();
+    std::fs::write(
+        home.path().join("config.toml"),
+        r#"
+schema_version = 1
+[providers.diskfill]
+name = "diskfill"
+api_key = "sk-from-disk"
+"#,
+    )
+    .unwrap();
+    let mut key = String::new();
+    try_fill_api_key(&mut key, "diskfill");
+    assert_eq!(key, "sk-from-disk");
 }
 
 #[test]
@@ -7211,6 +7226,43 @@ async fn run_headless_busy_esc_enter_then_force_quit() {
         press(KeyCode::Enter),
         press(KeyCode::Esc),
         press(KeyCode::Esc),
+        ctrl('q'),
+    ])));
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_busy_typing_is_allowed_then_quit() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "HANG");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('h')),
+        press(KeyCode::Enter),
+        press(KeyCode::Char('x')),
+        press(KeyCode::Enter),
         ctrl('q'),
     ])));
     let exit = run_injected(boot_opts(dir.path(), "sk-test"))
