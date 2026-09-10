@@ -1257,3 +1257,40 @@ fn submit_input_with_two_images_and_no_text_labels_them() {
         app.messages[0].content
     );
 }
+
+#[test]
+fn chat_messages_from_session_folds_inline_tool_result_blocks() {
+    use whycodes_core::types::ContentBlock;
+    use whycodes_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.add_assistant_message(vec![
+        ContentBlock::Text {
+            text: "working".into(),
+        },
+        ContentBlock::ToolUse {
+            id: "t1".into(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "a.rs"}),
+        },
+        ContentBlock::ToolResult {
+            tool_use_id: "t1".into(),
+            content: "fn main() {}".into(),
+            is_error: Some(false),
+        },
+    ]);
+    let msgs = chat_messages_from_session(&session);
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].tool_calls.len(), 1);
+    assert_eq!(
+        msgs[0].tool_calls[0].result.as_deref(),
+        Some("fn main() {}")
+    );
+    assert!(
+        msgs[0]
+            .blocks
+            .iter()
+            .any(|b| matches!(b, ChatBlock::ToolResult { id, .. } if id == "t1")),
+        "inline ToolResult must stay as a UI block"
+    );
+}
