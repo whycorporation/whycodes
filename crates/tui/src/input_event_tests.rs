@@ -1824,6 +1824,119 @@ fn dispatch_resolved_action_covers_unmapped_keymap_arms() {
         &k
     ));
     assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    a.auto_scroll = true;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleAutoScroll),
+        &k
+    ));
+    assert!(!a.auto_scroll);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleAutoScroll),
+        &k
+    ));
+    assert!(a.auto_scroll);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ClearSession),
+        &k
+    ));
+    assert!(matches!(
+        a.dialogs.active(),
+        Some(DialogKind::Confirm {
+            on_confirm: ConfirmAction::ClearSession,
+            ..
+        })
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SwitchAgent),
+        &k
+    ));
+    assert!(a.status_message.contains("Ctrl+T"));
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "one");
+    a.add_message(ChatRole::User, "two");
+    a.focus = FocusPane::Scrollback;
+    assert!(dispatch_resolved_action(&mut a, Some(Action::ScrollUp), &k));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollDown),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollPageUp),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollPageDown),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollToTop),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollToBottom),
+        &k
+    ));
+    a.focus = FocusPane::Todos;
+    a.todos = vec![
+        whycodes_core::TodoItem::new("1", "a", whycodes_core::TodoStatus::Pending),
+        whycodes_core::TodoItem::new("2", "b", whycodes_core::TodoStatus::Pending),
+    ];
+    assert!(dispatch_resolved_action(&mut a, Some(Action::ScrollUp), &k));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollDown),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollPageUp),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollPageDown),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollToTop),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollToBottom),
+        &k
+    ));
+
+    let mut a = app();
+    a.sidebar.visible = false;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarNextTab),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarPrevTab),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarTab6),
+        &k
+    ));
 }
 
 #[test]
