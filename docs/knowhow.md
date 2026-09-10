@@ -144,6 +144,28 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-10 — Fake LSP extras modes raced `initialized` into Broken pipe
+
+**Symptom:** CI `Test (linux)` failed after ~4m at
+`client::tests::background_reader_handles_malformed_and_other_messages`
+(`crates/lsp/src/client_tests.rs`) with
+`initialized notification failed: Broken pipe (os error 32)`.
+
+**Root cause:** The in-process fake LSP (`FAKE_LSP_PY`) treated extras
+modes (`bad_json`, `diag_notify`, `trunc_*`, …) as “emit extra stdout
+then `break`” right after the `initialize` *response*. The client still
+sends `initialized` next. On Linux that write often hits a closed stdin
+and the whole start handshake unwraps. Windows is usually slower to
+reap the child, so the same test can pass locally.
+
+**Fix:** Keep extras modes alive until `initialized` arrives, then
+exit. `close_stdin` / `die_after_init` stay the explicit pipe-fail
+paths.
+
+**Prevention:** Fake servers that the client still talks to after
+`initialize` must not close stdin/stdout until that notification is
+read (or the test is specifically asserting Broken pipe).
+
 ### 2026-09-07 — Serve takeover test spawned a just-written `.sh` (ETXTBSY / noexec)
 
 **Symptom:** CI `Test (linux)` failed
