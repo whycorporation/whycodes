@@ -6282,6 +6282,34 @@ fn panic_restore_falls_back_when_writer_open_fails() {
 }
 
 #[test]
+fn headless_busy_key_ready_holds_overlay_answers() {
+    assert!(headless_busy_key_ready(None));
+    assert!(headless_busy_key_ready(Some(&Event::Resize(80, 24))));
+    let mut release = crossterm::event::KeyEvent::from(KeyCode::Char('y'));
+    release.kind = KeyEventKind::Release;
+    assert!(headless_busy_key_ready(Some(&Event::Key(release))));
+    assert!(headless_busy_key_ready(Some(&ctrl('c'))));
+    assert!(!headless_busy_key_ready(Some(&press(KeyCode::Char('y')))));
+    assert!(!headless_busy_key_ready(Some(&press(KeyCode::Char('A')))));
+    assert!(!headless_busy_key_ready(Some(&press(KeyCode::Enter))));
+    assert!(headless_busy_key_ready(Some(&press(KeyCode::Char('x')))));
+}
+
+#[test]
+fn inject_test_llm_skips_empty_and_missing() {
+    let prev = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe { std::env::remove_var("WHYCODES_TEST_LLM") };
+    let mut agent = Agent::new(dummy_info("build"));
+    inject_test_llm(&mut agent, "acme");
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "") };
+    inject_test_llm(&mut agent, "acme");
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+}
+
+#[test]
 fn on_terminal_new_failed_and_log_resize_failed_are_safe() {
     on_terminal_new_failed(&"backend");
     log_resize_failed("live", "too small");
