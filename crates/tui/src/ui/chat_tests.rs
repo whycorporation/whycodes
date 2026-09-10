@@ -1523,3 +1523,68 @@ fn center_line_pads_and_bolds() {
     assert_eq!(super::empty_dash(""), "—");
     assert_eq!(super::empty_dash("x"), "x");
 }
+
+#[test]
+fn tool_out_hint_classifies_named_tools() {
+    assert!(matches!(
+        super::tool_out_hint("git_diff", &json!({}), "x"),
+        ToolOutHint::Diff
+    ));
+    assert!(matches!(
+        super::tool_out_hint("edit", &json!({}), "--- a\n+++ b\n-old\n+new"),
+        ToolOutHint::Diff
+    ));
+    match super::tool_out_hint("read", &json!({"path": "src/main.rs"}), "") {
+        ToolOutHint::Code(lang) => assert_eq!(lang.as_deref(), Some("rust")),
+        other => panic!("{other:?}"),
+    }
+    match super::tool_out_hint("grep", &json!({"pattern": "foo"}), "") {
+        ToolOutHint::Grep { pattern } => assert_eq!(pattern, "foo"),
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        super::tool_out_hint("custom", &json!({}), "--- a\n+++ b\n-old\n+new"),
+        ToolOutHint::Diff
+    ));
+    assert!(matches!(
+        super::tool_out_hint("custom", &json!({}), "plain"),
+        ToolOutHint::Auto
+    ));
+}
+
+#[test]
+fn render_session_paints_user_assistant_and_tool_blocks() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "hello **user**");
+    app.add_message(ChatRole::Assistant, "reply with `code`");
+    let last = app.messages.len() - 1;
+    app.messages[last].blocks = vec![
+        crate::app::ChatBlock::Thinking(crate::app::ThinkingBlock::new("hmm")),
+        crate::app::ChatBlock::ToolUse {
+            id: "t1".into(),
+            name: "grep".into(),
+            input: json!({"pattern": "foo"}),
+        },
+        crate::app::ChatBlock::ToolResult {
+            id: "t1".into(),
+            content: "src/a.rs:1:foo".into(),
+            is_error: false,
+        },
+        crate::app::ChatBlock::Text("done".into()),
+    ];
+    app.messages[last].duration_ms = Some(42);
+    let backend = ratatui::backend::TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol().to_string())
+        .collect();
+    assert!(text.contains("hello") || text.contains("user"), "{text}");
+}

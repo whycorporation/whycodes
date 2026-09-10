@@ -5484,6 +5484,40 @@ async fn run_headless_compact_after_turn() {
     assert_eq!(exit, TuiExit::Quit);
 }
 
+#[tokio::test]
+async fn run_headless_picker_dialogs_confirm_and_ctrl_q() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("/models"));
+    events.push(press(KeyCode::Enter));
+    events.extend(type_line("/effort"));
+    events.push(press(KeyCode::Enter));
+    events.extend(type_line("/mode"));
+    events.push(press(KeyCode::Enter));
+    events.extend(type_line("/login"));
+    events.push(press(KeyCode::Esc));
+    events.push(ctrl('q'));
+    events.push(press(KeyCode::Enter));
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
 fn type_line(text: &str) -> Vec<Event> {
     let mut out = Vec::new();
     for c in text.chars() {
@@ -5986,6 +6020,25 @@ async fn run_headless_bench_stops_after_first_frame() {
         None => unsafe { std::env::remove_var("WHYCODES_BENCH_DURATION_MS") },
     }
     assert_eq!(exit, TuiExit::Quit);
+}
+
+#[test]
+fn loop_io_scripted_poll_and_read_batch() {
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            press(KeyCode::Char('a')),
+            press(KeyCode::Enter),
+        ]));
+    let mut io = LoopIo::take_from_thread();
+    assert!(io.is_headless());
+    assert!(io.peek().is_some());
+    assert!(io.poll(Duration::from_millis(1)).unwrap());
+    let batch = io.read_batch().unwrap();
+    assert_eq!(batch.len(), 1);
+    assert!(io.poll(Duration::ZERO).unwrap());
+    let _ = io.read_batch().unwrap();
+    assert!(!io.poll(Duration::ZERO).unwrap());
+    assert!(io.read_batch().is_err());
 }
 
 #[test]
