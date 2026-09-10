@@ -93,8 +93,12 @@ impl TuiLoginUi {
 }
 
 fn send_auth_event(tx: &mpsc::UnboundedSender<AuthFlowEvent>, event: AuthFlowEvent) {
-    if tx.send(event).is_err() {
-        tracing::debug!("auth-flow event dropped: TUI event loop closed");
+    seed_unbounded(tx, event, "auth-flow event");
+}
+
+fn seed_unbounded<T>(tx: &mpsc::UnboundedSender<T>, value: T, what: &'static str) {
+    if tx.send(value).is_err() {
+        tracing::debug!("{what} dropped: TUI event loop closed");
     }
 }
 
@@ -1217,15 +1221,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let (suggest_tx, mut suggest_rx) = mpsc::unbounded_channel::<String>();
     // In-TUI OAuth login (`/connect`): flow progress → event loop.
     let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<AuthFlowEvent>();
-    if let Some(win) = seed_catalog
-        && catalog_tx.send(win).is_err()
-    {
-        tracing::debug!("seed catalog dropped: TUI event loop closed");
+    if let Some(win) = seed_catalog {
+        seed_unbounded(&catalog_tx, win, "seed catalog");
     }
-    if let Some(s) = seed_suggest
-        && suggest_tx.send(s).is_err()
-    {
-        tracing::debug!("seed suggestion dropped: TUI event loop closed");
+    if let Some(s) = seed_suggest {
+        seed_unbounded(&suggest_tx, s, "seed suggestion");
     }
     if let Some(ev) = seed_auth {
         send_auth_event(&auth_tx, ev);

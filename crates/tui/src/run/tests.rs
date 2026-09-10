@@ -5522,6 +5522,9 @@ fn auth_send_helpers_drop_when_loop_closed() {
     send_auth_event(&tx, AuthFlowEvent::Note("gone".into()));
     send_auth_done(&tx, "acme".into(), Ok("ok".into()));
     send_auth_done(&tx, "acme".into(), Err("fail".into()));
+    let (catalog_tx, catalog_rx) = mpsc::unbounded_channel::<(String, String, u32)>();
+    drop(catalog_rx);
+    seed_unbounded(&catalog_tx, ("acme".into(), "m".into(), 1), "seed catalog");
 }
 
 #[test]
@@ -6250,6 +6253,61 @@ async fn run_headless_loop_slash_and_ctrl_n() {
     match prev_llm {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_idle_models_switch_fetches_catalog() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 1024];
+            let _ = std::io::Read::read(&mut stream, &mut buf);
+            let body = r#"{"data":[{"id":"m2","context_length":64000}]}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = std::io::Write::write_all(&mut stream, resp.as_bytes());
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    });
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("/models acme/m2"));
+    events.push(ctrl('q'));
+    set_headless_events(Some(events.into()));
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.config.providers.insert(
+        "acme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "acme".into(),
+            api_key: Some("sk-test".into()),
+            api_base: Some(format!("http://{addr}/v1")),
+            base_url: Some(format!("http://{addr}/v1")),
+            headers: None,
+            models: vec!["m1".into(), "m2".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let exit = run_injected(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
     }
     assert_eq!(exit, TuiExit::Quit);
 }

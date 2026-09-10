@@ -1090,6 +1090,27 @@ fn mouse_clicks_todos_header_tasks_sidebar_and_chat_scrollbar() {
 }
 
 #[test]
+fn mouse_empty_drag_clears_selection_and_unhandled_kind() {
+    let mut a = app();
+    a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![vec![
+        " ".into(),
+        " ".into(),
+        " ".into(),
+        " ".into(),
+    ]]);
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 0, 0));
+    handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 3, 0));
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 3, 0));
+    assert!(a.mouse_sel.is_none());
+
+    let mut a = app();
+    assert!(handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Right), 1, 1)
+    ));
+}
+
+#[test]
 fn coalesce_wheels_over_todos_do_not_move_chat() {
     let mut a = app();
     overflowing_todos(&mut a);
