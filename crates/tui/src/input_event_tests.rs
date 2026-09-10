@@ -1180,6 +1180,34 @@ fn coalesce_wheels_over_todos_do_not_move_chat() {
 }
 
 #[test]
+fn handle_event_wheel_over_todos_scrolls_the_list_not_chat() {
+    let mut a = app();
+    overflowing_todos(&mut a);
+    a.chat_viewport_rows = 12;
+    a.chat_content_width = 40;
+    a.chat_scroll_total = 40;
+    a.scroll_offset = 0;
+    for i in 0..8 {
+        a.add_message(ChatRole::User, format!("line {i}"));
+    }
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 4, 5));
+    assert!(
+        a.todos_scroll > 0,
+        "wheel over the overflowing todos body must move the list"
+    );
+    assert_eq!(
+        a.scroll_offset, 0,
+        "todo-panel wheel must not scroll the transcript"
+    );
+    let after_down = a.todos_scroll;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 4, 5));
+    assert!(
+        a.todos_scroll < after_down,
+        "wheel up must reverse the todo list"
+    );
+}
+
+#[test]
 fn scrollback_select_and_open_subagent() {
     let mut a = app();
     a.add_message(ChatRole::User, "one");
