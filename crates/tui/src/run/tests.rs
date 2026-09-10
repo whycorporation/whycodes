@@ -1,5 +1,90 @@
 use super::*;
 
+thread_local! {
+    static HEADLESS_EVENTS: std::cell::RefCell<Option<VecDeque<Event>>> =
+        const { std::cell::RefCell::new(None) };
+    static HEADLESS_LIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CROSSTERM_STUB: std::cell::RefCell<VecDeque<Event>> =
+        const { std::cell::RefCell::new(VecDeque::new()) };
+    static CROSSTERM_POLL_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CROSSTERM_READ_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static DRAW_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CLEAR_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static TEST_CATALOG_WINDOW: std::cell::RefCell<Option<(String, String, u32)>> =
+        const { std::cell::RefCell::new(None) };
+    static TEST_SUGGEST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static TEST_AUTH_EVENT: std::cell::RefCell<Option<AuthFlowEvent>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn set_headless_events(events: Option<VecDeque<Event>>) {
+    HEADLESS_EVENTS.with(|c| *c.borrow_mut() = events);
+}
+
+fn set_headless_live(v: bool) {
+    HEADLESS_LIVE.with(|c| c.set(v));
+}
+
+fn set_crossterm_stub(events: VecDeque<Event>) {
+    CROSSTERM_STUB.with(|c| *c.borrow_mut() = events);
+}
+
+fn clear_crossterm_stub() {
+    CROSSTERM_STUB.with(|c| c.borrow_mut().clear());
+}
+
+fn set_crossterm_poll_err(v: bool) {
+    CROSSTERM_POLL_ERR.with(|c| c.set(v));
+}
+
+fn set_crossterm_read_err(v: bool) {
+    CROSSTERM_READ_ERR.with(|c| c.set(v));
+}
+
+fn set_draw_fail(v: bool) {
+    DRAW_FAIL.with(|c| c.set(v));
+}
+
+fn set_clear_fail(v: bool) {
+    CLEAR_FAIL.with(|c| c.set(v));
+}
+
+fn set_test_catalog_window(v: Option<(String, String, u32)>) {
+    TEST_CATALOG_WINDOW.with(|c| *c.borrow_mut() = v);
+}
+
+fn set_test_suggest(v: Option<String>) {
+    TEST_SUGGEST.with(|c| *c.borrow_mut() = v);
+}
+
+fn set_test_auth_event(v: Option<AuthFlowEvent>) {
+    TEST_AUTH_EVENT.with(|c| *c.borrow_mut() = v);
+}
+
+fn take_loop_inject() -> LoopInject {
+    LoopInject {
+        scripted_events: HEADLESS_EVENTS.with(|c| c.borrow_mut().take()),
+        live_buf: HEADLESS_LIVE.with(|c| c.replace(false)),
+        crossterm_events: CROSSTERM_STUB.with(|c| std::mem::take(&mut *c.borrow_mut())),
+        poll_err: CROSSTERM_POLL_ERR.with(|c| c.replace(false)),
+        read_err: CROSSTERM_READ_ERR.with(|c| c.replace(false)),
+        draw_fail: DRAW_FAIL.with(|c| c.replace(false)),
+        clear_fail: CLEAR_FAIL.with(|c| c.replace(false)),
+        catalog: TEST_CATALOG_WINDOW.with(|c| c.borrow_mut().take()),
+        suggest: TEST_SUGGEST.with(|c| c.borrow_mut().take()),
+        auth: TEST_AUTH_EVENT.with(|c| c.borrow_mut().take()),
+    }
+}
+
+fn with_inject(mut opts: TuiRunOptions) -> TuiRunOptions {
+    opts.inject = take_loop_inject();
+    opts
+}
+
+async fn run_injected(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
+    super::run(with_inject(opts)).await
+}
+
 #[test]
 fn restore_terminal_resets_cursor_style_to_user_default() {
     let mut out = Vec::new();
@@ -1488,6 +1573,7 @@ fn run_options_and_turn_outcome_exist() {
         resume_session_id: Some(RESUME_LATEST.into()),
         remote: None,
         update_rx: None,
+        inject: Default::default(),
     };
     assert_eq!(opts.resume_session_id.as_deref(), Some(RESUME_LATEST));
     let _ = TurnOutcome::Remote {
@@ -3857,6 +3943,7 @@ fn boot_opts(dir: &std::path::Path, key: &str) -> TuiRunOptions {
         resume_session_id: None,
         remote: None,
         update_rx: None,
+        inject: Default::default(),
     }
 }
 
@@ -4377,8 +4464,9 @@ async fn run_returns_quit_when_test_tui_env_set() {
         resume_session_id: None,
         remote: None,
         update_rx: None,
+        inject: Default::default(),
     };
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -4404,8 +4492,9 @@ async fn run_returns_upgrade_when_test_tui_env_upgrade() {
         resume_session_id: None,
         remote: None,
         update_rx: None,
+        inject: Default::default(),
     };
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5045,6 +5134,26 @@ fn tui_available_does_not_panic() {
     let _ = console_open_result(std::fs::File::open(&path), "open tmp");
     let mut sink = Vec::new();
     restore_terminal_on(&mut sink);
+    restore_terminal_with(|| Ok(TuiWriter::Buf(Vec::new())));
+    restore_terminal_with(|| Err(io::Error::other("no writer")));
+    let err = match choose_tui_writer(None, false) {
+        Err(e) => e,
+        Ok(_) => panic!("expected no-tty error"),
+    };
+    assert!(err.to_string().contains("TTY") || err.to_string().contains("terminal"));
+    match choose_tui_writer(None, true) {
+        Ok(TuiWriter::Stdout(_)) => {}
+        _ => panic!("expected stdout writer"),
+    }
+    let path = tempfile::NamedTempFile::new().unwrap();
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path.path())
+        .unwrap();
+    match choose_tui_writer(Some(file), false) {
+        Ok(TuiWriter::Console(_)) => {}
+        _ => panic!("expected console writer"),
+    }
 }
 
 #[test]
@@ -5214,8 +5323,17 @@ fn tui_writer_write_flush_and_summary() {
     print_session_summary("coverage-summary");
     let _ = tui_available();
     let _ = open_tui_writer();
+    let mut fail = TuiWriter::Fail;
+    assert!(fail.write(b"x").is_err());
+    assert!(fail.flush().is_err());
     if let Ok(true) = live_poll_crossterm(std::time::Duration::ZERO) {
         let _ = live_read_crossterm();
+    }
+    let mut inject = LoopInject::default();
+    let mut io = LoopIo::from_inject(&mut inject);
+    assert!(!io.is_headless());
+    if io.poll(Duration::ZERO).unwrap_or(false) {
+        let _ = io.read_crossterm();
     }
 }
 
@@ -5531,7 +5649,7 @@ async fn run_headless_draws_then_quits() {
         Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('x'))),
     ])));
     let opts = boot_opts(dir.path(), "sk-test");
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5546,7 +5664,7 @@ async fn run_headless_empty_queue_quits_after_first_frame() {
     let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
     set_headless_events(Some(std::collections::VecDeque::new()));
-    let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5569,7 +5687,9 @@ async fn run_headless_scripted_turn_then_quit() {
         press(KeyCode::Char('i')),
         press(KeyCode::Enter),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5595,7 +5715,9 @@ async fn run_headless_scripted_fail_turn() {
         press(KeyCode::Char('x')),
         press(KeyCode::Enter),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5620,7 +5742,7 @@ async fn run_headless_initial_prompt_scripted_turn() {
     set_headless_events(Some(std::collections::VecDeque::new()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.initial_prompt = Some("hello from boot".into());
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5648,7 +5770,9 @@ async fn run_headless_hang_then_esc_cancel() {
         press(KeyCode::Esc),
         press(KeyCode::Esc),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5685,7 +5809,9 @@ async fn run_headless_compact_after_turn() {
         press(KeyCode::Char('n')),
         press(KeyCode::Enter),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5716,7 +5842,9 @@ async fn run_headless_compact_empty_then_after_turn() {
     events.extend(type_line("/compact keep auth"));
     events.push(ctrl('q'));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5754,7 +5882,9 @@ async fn run_headless_picker_dialogs_confirm_and_ctrl_q() {
     events.push(ctrl('q'));
     events.push(press(KeyCode::Enter));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5809,7 +5939,9 @@ async fn run_headless_slash_models_effort_mode_and_connect() {
     events.push(press(KeyCode::Esc));
     events.extend(type_line(":q"));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5857,7 +5989,9 @@ async fn run_headless_loop_slash_and_ctrl_n() {
     )));
     events.extend(type_line(":q"));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5893,7 +6027,7 @@ async fn run_headless_shell_permission_allow() {
     set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5922,7 +6056,7 @@ async fn run_headless_shell_permission_deny() {
     set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5953,7 +6087,9 @@ async fn run_headless_hang_ctrl_c_and_enter() {
         ctrl('c'),
         ctrl('q'),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -5982,7 +6118,7 @@ async fn run_headless_question_tool_enter() {
     set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6007,7 +6143,7 @@ async fn run_headless_hydrates_api_key_from_env() {
     set_headless_events(Some(std::collections::VecDeque::from([press(
         KeyCode::Char('x'),
     )])));
-    let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6036,7 +6172,7 @@ async fn run_headless_update_offer_self_install_then_quit() {
     ])));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.update_rx = Some(rx);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6060,7 +6196,7 @@ async fn run_headless_update_offer_homebrew() {
     ])));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.update_rx = Some(rx);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6095,7 +6231,9 @@ async fn run_headless_mouse_stop_while_hanging() {
         }),
         ctrl('q'),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6126,7 +6264,9 @@ async fn run_headless_parked_hang_aborts_on_quit() {
         ctrl('q'),
         press(KeyCode::Enter),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6172,7 +6312,9 @@ async fn run_headless_esc_then_stop_click_force_cancels() {
         }),
         ctrl('q'),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6216,7 +6358,7 @@ async fn run_headless_missing_api_key_warns_then_quits() {
             extra: Default::default(),
         },
     );
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6243,7 +6385,7 @@ async fn run_headless_remote_turn_errors_then_quits() {
         "http://127.0.0.1:1",
         "sid-remote",
     ));
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6257,7 +6399,9 @@ fn read_event_batch_from_crossterm_stub() {
         Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('a'))),
         Event::Resize(40, 12),
     ]));
-    let batch = super::read_event_batch().unwrap();
+    let mut inject = take_loop_inject();
+    let mut io = LoopIo::from_inject(&mut inject);
+    let batch = io.read_event_batch().unwrap();
     assert_eq!(batch.len(), 2);
 }
 
@@ -6273,7 +6417,9 @@ async fn run_headless_catalog_suggest_and_auth_note() {
     set_headless_events(Some(std::collections::VecDeque::from([press(
         KeyCode::Char('x'),
     )])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6303,7 +6449,9 @@ async fn run_headless_slash_help_then_quit_command() {
         press(KeyCode::Char('q')),
         press(KeyCode::Enter),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6327,7 +6475,7 @@ async fn run_headless_bench_stops_after_first_frame() {
     set_headless_events(Some(std::collections::VecDeque::from([press(
         KeyCode::Char('a'),
     )])));
-    let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6349,7 +6497,8 @@ fn loop_io_scripted_poll_and_read_batch() {
         press(KeyCode::Char('a')),
         press(KeyCode::Enter),
     ])));
-    let mut io = LoopIo::take_from_thread();
+    let mut inject = take_loop_inject();
+    let mut io = LoopIo::from_inject(&mut inject);
     assert!(io.is_headless());
     assert!(io.peek().is_some());
     assert!(io.poll(Duration::from_millis(1)).unwrap());
@@ -6386,7 +6535,9 @@ fn read_event_batch_poll_err_after_first() {
         'a',
     ))]));
     set_crossterm_poll_err(true);
-    let err = read_event_batch().expect_err("drain poll err");
+    let mut inject = take_loop_inject();
+    let mut io = LoopIo::from_inject(&mut inject);
+    let err = io.read_event_batch().expect_err("drain poll err");
     assert!(
         err.to_string().contains("poll") || err.to_string().contains("failed"),
         "{err}"
@@ -6397,9 +6548,7 @@ fn read_event_batch_poll_err_after_first() {
 
 #[test]
 fn panic_restore_falls_back_when_writer_open_fails() {
-    set_open_writer_fail(true);
-    restore_terminal_on_panic();
-    set_open_writer_fail(false);
+    restore_terminal_with(|| Err(io::Error::other("no writer")));
 }
 
 #[test]
@@ -6424,6 +6573,10 @@ fn inject_test_llm_skips_empty_and_missing() {
     inject_test_llm(&mut agent, "acme");
     unsafe { std::env::set_var("WHYCODES_TEST_LLM", "") };
     inject_test_llm(&mut agent, "acme");
+    for script in ["ASK", "SHELL", "FAIL", "HANG", "hello-script"] {
+        unsafe { std::env::set_var("WHYCODES_TEST_LLM", script) };
+        inject_test_llm(&mut agent, "acme");
+    }
     match prev {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
@@ -6450,17 +6603,19 @@ fn loop_term_headless_and_live_buf_draw() {
     let color = crate::color::ColorMode::Ansi256;
     let mut term = LoopTerm::headless(color).unwrap();
     term.resize(Rect::new(0, 0, 40, 12));
-    let _ = term.clear();
+    let mut no_fail = false;
+    let _ = term.clear(&mut no_fail);
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.pending_full_clears = 1;
-    let (area, snapshot) = term.draw_app(&mut app).unwrap();
+    let (area, snapshot) = term.draw_app(&mut app, &mut no_fail).unwrap();
     assert!(area.width > 0);
     assert!(snapshot.is_none());
     term.restore(false);
 
     let mut live = LoopTerm::live(TuiWriter::Buf(Vec::new()), color).unwrap();
     live.resize(Rect::new(0, 0, 80, 24));
-    let _ = live.clear();
+    let mut live_fail = false;
+    let _ = live.clear(&mut live_fail);
     app.mouse_sel = Some(crate::app::MouseSelection {
         anchor_x: 1,
         anchor_y: 1,
@@ -6468,13 +6623,14 @@ fn loop_term_headless_and_live_buf_draw() {
         focus_y: 2,
         dragging: true,
     });
-    let (_area, snapshot) = live.draw_app(&mut app).unwrap();
+    let (_area, snapshot) = live.draw_app(&mut app, &mut live_fail).unwrap();
     assert!(snapshot.is_some());
     live.restore(true);
 
     let mut tiny = LoopTerm::headless(color).unwrap();
     tiny.resize(Rect::new(0, 0, 0, 0));
-    let _ = tiny.clear();
+    let mut tiny_fail = false;
+    let _ = tiny.clear(&mut tiny_fail);
     tiny.restore(false);
 }
 
@@ -6492,7 +6648,9 @@ async fn run_live_buf_draws_then_quits() {
         press(KeyCode::Char('q')),
         press(KeyCode::Enter),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6575,7 +6733,9 @@ async fn run_headless_ctrl_keys_and_paste() {
         press(KeyCode::Char('q')),
         press(KeyCode::Enter),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6596,7 +6756,9 @@ async fn run_live_crossterm_stub_first_frame_then_idle_quit() {
     set_headless_events(None);
     set_headless_live(true);
     clear_crossterm_stub();
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6627,7 +6789,9 @@ async fn run_live_crossterm_stub_keys_slash_and_quit() {
         ctrl('q'),
         press(KeyCode::Enter),
     ]));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6660,7 +6824,7 @@ async fn run_live_buf_empty_key_hydrates_from_env_then_quits() {
         Event::Resize(80, 24),
         ctrl('q'),
     ]));
-    let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6730,7 +6894,7 @@ async fn run_live_buf_first_frame_hydrates_plugin_sessions_and_config_key() {
             extra: Default::default(),
         },
     );
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6767,7 +6931,7 @@ async fn run_headless_confirms_self_install_upgrade() {
     )])));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.update_rx = Some(rx);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6794,7 +6958,9 @@ async fn run_headless_compact_after_scripted_turn() {
     events.extend(type_line("/compact keep names"));
     events.extend(type_line(":q"));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6835,7 +7001,9 @@ async fn run_headless_idle_ctrl_n_cycle_dashboard_and_mru() {
         ctrl('q'),
         press(KeyCode::Enter),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6885,7 +7053,7 @@ async fn run_headless_applies_model_effort_mode_from_pickers() {
     events.push(ctrl('q'));
     events.push(press(KeyCode::Enter));
     set_headless_events(Some(events.into()));
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6917,7 +7085,9 @@ async fn run_headless_busy_esc_enter_then_force_quit() {
         press(KeyCode::Esc),
         ctrl('q'),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -6947,7 +7117,7 @@ async fn run_live_crossterm_poll_error_exits() {
     set_headless_live(true);
     set_crossterm_poll_err(true);
     clear_crossterm_stub();
-    let err = super::run(boot_opts(dir.path(), "sk-test"))
+    let err = run_injected(boot_opts(dir.path(), "sk-test"))
         .await
         .expect_err("poll error should fail the loop");
     assert!(
@@ -6982,7 +7152,7 @@ async fn run_live_crossterm_read_error_exits() {
     set_crossterm_stub(std::collections::VecDeque::from([press(KeyCode::Char(
         'x',
     ))]));
-    let err = super::run(boot_opts(dir.path(), "sk-test"))
+    let err = run_injected(boot_opts(dir.path(), "sk-test"))
         .await
         .expect_err("read error should fail the loop");
     assert!(
@@ -7016,7 +7186,7 @@ async fn run_headless_draw_fail_exits() {
         KeyCode::Char('x'),
     )])));
     set_draw_fail(true);
-    let err = super::run(boot_opts(dir.path(), "sk-test"))
+    let err = run_injected(boot_opts(dir.path(), "sk-test"))
         .await
         .expect_err("draw fail should abort the loop");
     assert!(
@@ -7048,7 +7218,9 @@ async fn run_headless_quit_confirm_enter_stops_via_handle_event() {
         ctrl('c'),
         press(KeyCode::Enter),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7075,7 +7247,9 @@ async fn run_headless_clear_fail_still_draws_then_quits() {
         ctrl('q'),
     ])));
     set_clear_fail(true);
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7109,7 +7283,9 @@ async fn run_headless_busy_ctrl_c_clears_then_cancels() {
         ctrl('c'),
         ctrl('q'),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7145,7 +7321,7 @@ async fn run_headless_permission_esc_denies_then_quits() {
     set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7178,7 +7354,9 @@ async fn run_headless_hits_session_limit_toast() {
     events.push(ctrl('q'));
     events.push(press(KeyCode::Enter));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7211,7 +7389,9 @@ async fn run_headless_resume_login_and_dashboard_switch() {
     events.push(ctrl('q'));
     events.push(press(KeyCode::Enter));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7239,7 +7419,9 @@ async fn run_headless_import_then_quit() {
     events.push(ctrl('q'));
     events.push(press(KeyCode::Enter));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7270,7 +7452,9 @@ async fn run_headless_busy_blocks_agent_switch() {
     events.push(press(KeyCode::Enter));
     events.push(ctrl('q'));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7307,7 +7491,9 @@ async fn run_headless_sessions_ctrl_w_closes_live_row() {
     events.push(ctrl('q'));
     events.push(press(KeyCode::Enter));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7335,7 +7521,9 @@ async fn run_headless_idle_ctrl_t_cycles_agent() {
         ctrl('q'),
         press(KeyCode::Enter),
     ])));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7369,7 +7557,9 @@ async fn run_headless_busy_catalog_then_idle_fetch_and_mode() {
     events.push(press(KeyCode::Enter));
     events.push(ctrl('q'));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7405,7 +7595,7 @@ async fn run_headless_permission_allow_with_a() {
     set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7441,7 +7631,7 @@ async fn run_headless_permission_deny_with_d() {
     set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7477,7 +7667,7 @@ async fn run_headless_permission_allow_with_y_and_deny_with_n() {
     set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     assert_eq!(exit, TuiExit::Quit);
 
     let mut events = Vec::new();
@@ -7488,7 +7678,7 @@ async fn run_headless_permission_allow_with_y_and_deny_with_n() {
     set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7522,7 +7712,9 @@ async fn run_headless_busy_then_models_defers_catalog() {
     events.extend(type_line("/models acme/m2"));
     events.push(ctrl('q'));
     set_headless_events(Some(events.into()));
-    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7557,7 +7749,7 @@ async fn run_headless_import_confirm_applies() {
     set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.project_dir = home.path().to_path_buf();
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
@@ -7614,7 +7806,7 @@ async fn run_headless_remote_turn_ok_then_quits() {
         format!("http://{addr}"),
         "sid-ok",
     ));
-    let exit = super::run(opts).await.unwrap();
+    let exit = run_injected(opts).await.unwrap();
     let _ = server.await;
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },

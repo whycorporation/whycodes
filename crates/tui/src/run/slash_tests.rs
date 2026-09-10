@@ -121,3 +121,30 @@ fn suggestion_text_from_blocks_skips_empty_and_quotes() {
         "next step"
     );
 }
+
+#[test]
+fn suggestion_prompt_and_oauth_hint_helpers() {
+    let body = suggestion_prompt_body("do the thing", "ok");
+    assert!(body.contains("do the thing"), "{body}");
+    assert!(body.contains("ok"), "{body}");
+    let req = suggestion_llm_request("user", "asst");
+    assert_eq!(req.max_tokens, Some(40));
+    assert!(!req.system.is_empty());
+    let t = suggestion_transport();
+    assert_eq!(t.retry.max_retries, 0);
+    assert_eq!(oauth_unavailable_hint(Vec::new()), "install an auth plugin");
+    assert_eq!(
+        oauth_unavailable_hint(vec!["anthropic".into(), "openai".into()]),
+        "anthropic, openai"
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    send_suggestion_text(&[], &tx);
+    assert!(rx.try_recv().is_err());
+    send_suggestion_text(
+        &[whycodes_core::types::ContentBlock::Text {
+            text: "try cargo test".into(),
+        }],
+        &tx,
+    );
+    assert_eq!(rx.try_recv().unwrap(), "try cargo test");
+}

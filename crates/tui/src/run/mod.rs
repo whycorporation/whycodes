@@ -118,66 +118,64 @@ fn headless_busy_key_ready(ev: Option<&Event>) -> bool {
     )
 }
 
-/// Unit tests: `WHYCODES_TEST_LLM` replaces the registry with a repeating
+/// `WHYCODES_TEST_LLM` replaces the registry with a repeating
 /// [`whycodes_llm::ScriptedProvider`] so a headless turn never hits the network.
-fn inject_test_llm(_agent: &mut Agent, _provider: &str) {
-    #[cfg(test)]
-    {
-        let Ok(text) = std::env::var("WHYCODES_TEST_LLM") else {
-            return;
-        };
-        if text.is_empty() {
-            return;
-        }
-        let mut registry = whycodes_llm::ProviderRegistry::new();
-        if text == "ASK" {
-            registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
-                _provider.to_string(),
-                [
-                    vec![whycodes_llm::ScriptedStep::ToolCall {
-                        id: "q1".into(),
-                        name: "question".into(),
-                        input: serde_json::json!({
-                            "questions": [{
-                                "prompt": "Pick?",
-                                "options": [
-                                    {"label": "Yes"},
-                                    {"label": "No"}
-                                ]
-                            }]
-                        }),
-                    }],
-                    vec![whycodes_llm::ScriptedStep::Text("asked-ok".into())],
-                ],
-            )));
-        } else if text == "SHELL" {
-            // One tool call, then a text reply — repeating would loop tools forever.
-            registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
-                _provider.to_string(),
-                [
-                    vec![whycodes_llm::ScriptedStep::ToolCall {
-                        id: "call-1".into(),
-                        name: "bash".into(),
-                        input: serde_json::json!({"command": "echo hi"}),
-                    }],
-                    vec![whycodes_llm::ScriptedStep::Text("shell-done".into())],
-                ],
-            )));
-        } else {
-            let step = if text == "FAIL" {
-                whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())
-            } else if text == "HANG" {
-                whycodes_llm::ScriptedStep::Hang(std::time::Duration::from_secs(30))
-            } else {
-                whycodes_llm::ScriptedStep::Text(text)
-            };
-            registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
-                _provider.to_string(),
-                [step],
-            )));
-        }
-        _agent.set_provider_registry(registry);
+/// Empty / missing env is a no-op (production never sets this).
+fn inject_test_llm(agent: &mut Agent, provider: &str) {
+    let Ok(text) = std::env::var("WHYCODES_TEST_LLM") else {
+        return;
+    };
+    if text.is_empty() {
+        return;
     }
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    if text == "ASK" {
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+            provider.to_string(),
+            [
+                vec![whycodes_llm::ScriptedStep::ToolCall {
+                    id: "q1".into(),
+                    name: "question".into(),
+                    input: serde_json::json!({
+                        "questions": [{
+                            "prompt": "Pick?",
+                            "options": [
+                                {"label": "Yes"},
+                                {"label": "No"}
+                            ]
+                        }]
+                    }),
+                }],
+                vec![whycodes_llm::ScriptedStep::Text("asked-ok".into())],
+            ],
+        )));
+    } else if text == "SHELL" {
+        // One tool call, then a text reply — repeating would loop tools forever.
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+            provider.to_string(),
+            [
+                vec![whycodes_llm::ScriptedStep::ToolCall {
+                    id: "call-1".into(),
+                    name: "bash".into(),
+                    input: serde_json::json!({"command": "echo hi"}),
+                }],
+                vec![whycodes_llm::ScriptedStep::Text("shell-done".into())],
+            ],
+        )));
+    } else {
+        let step = if text == "FAIL" {
+            whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())
+        } else if text == "HANG" {
+            whycodes_llm::ScriptedStep::Hang(std::time::Duration::from_secs(30))
+        } else {
+            whycodes_llm::ScriptedStep::Text(text)
+        };
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+            provider.to_string(),
+            [step],
+        )));
+    }
+    agent.set_provider_registry(registry);
 }
 
 impl whycodes_auth::providers::LoginUi for TuiLoginUi {
@@ -286,6 +284,31 @@ pub struct TuiRunOptions {
     pub remote: Option<crate::remote::RemoteAttach>,
     /// Background GitHub latest-release check. `None` skips the home popup.
     pub update_rx: Option<tokio::sync::mpsc::UnboundedReceiver<UpdateOffer>>,
+    /// Event-loop I/O injection. Production callers leave this default (real TTY).
+    pub inject: LoopInject,
+}
+
+/// Test/harness injection for [`run`]. Production leaves every field default.
+///
+/// Headless tests fill `scripted_events` (TestBackend). Live-buffer tests set
+/// `live_buf` and optionally `crossterm_events` so CrosstermBackend / poll
+/// arms execute without a controlling terminal.
+#[derive(Default)]
+pub struct LoopInject {
+    /// Scripted events → TestBackend (headless). `Some` even when empty.
+    pub scripted_events: Option<VecDeque<Event>>,
+    /// Memory-buffer CrosstermBackend (live path, no TTY).
+    pub live_buf: bool,
+    /// Events served by crossterm poll/read instead of the OS.
+    pub crossterm_events: VecDeque<Event>,
+    pub poll_err: bool,
+    pub read_err: bool,
+    pub draw_fail: bool,
+    pub clear_fail: bool,
+    /// Seed the catalog / suggestion / auth channels before the first poll.
+    pub catalog: Option<(String, String, u32)>,
+    pub suggest: Option<String>,
+    pub auth: Option<AuthFlowEvent>,
 }
 
 /// How the TUI left the event loop.
@@ -579,8 +602,8 @@ enum TuiWriter {
     /// In-memory sink so `LoopTerm::live` can be unit-tested without a TTY.
     Buf(Vec<u8>),
     /// Always-failing sink so `Terminal::new` / alt-screen `execute!` error
-    /// arms run in tests without a real TTY.
-    #[cfg(test)]
+    /// arms run without a real TTY.
+    #[allow(dead_code)]
     Fail,
 }
 
@@ -590,7 +613,6 @@ impl Write for TuiWriter {
             Self::Console(f) => f.write(buf),
             Self::Stdout(s) => s.write(buf),
             Self::Buf(b) => b.write(buf),
-            #[cfg(test)]
             Self::Fail => Err(io::Error::other("tui writer fail")),
         }
     }
@@ -600,175 +622,37 @@ impl Write for TuiWriter {
             Self::Console(f) => f.flush(),
             Self::Stdout(s) => s.flush(),
             Self::Buf(b) => b.flush(),
-            #[cfg(test)]
             Self::Fail => Err(io::Error::other("tui writer fail")),
         }
     }
 }
 
-// When set, `run` uses a TestBackend and these events instead of a real TTY.
-// Production never installs this; tests in this module do.
-// Thread-local so parallel `cargo test` / llvm-cov cannot leak a live stub
-// into an unrelated test (that hung the suite on empty `CROSSTERM_STUB`).
-#[cfg(test)]
-thread_local! {
-    static HEADLESS_EVENTS: std::cell::RefCell<Option<VecDeque<Event>>> =
-        const { std::cell::RefCell::new(None) };
-    static HEADLESS_LIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static CROSSTERM_STUB: std::cell::RefCell<VecDeque<Event>> =
-        const { std::cell::RefCell::new(VecDeque::new()) };
-    static CROSSTERM_POLL_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static CROSSTERM_READ_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static DRAW_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static CLEAR_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static OPEN_WRITER_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static TEST_CATALOG_WINDOW: std::cell::RefCell<Option<(String, String, u32)>> =
-        const { std::cell::RefCell::new(None) };
-    static TEST_SUGGEST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-    static TEST_AUTH_EVENT: std::cell::RefCell<Option<AuthFlowEvent>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-fn set_headless_events(events: Option<VecDeque<Event>>) {
-    HEADLESS_EVENTS.with(|c| *c.borrow_mut() = events);
-}
-
-#[cfg(test)]
-fn take_headless_events() -> Option<VecDeque<Event>> {
-    HEADLESS_EVENTS.with(|c| c.borrow_mut().take())
-}
-
-#[cfg(test)]
-fn set_headless_live(v: bool) {
-    HEADLESS_LIVE.with(|c| c.set(v));
-}
-
-#[cfg(test)]
-fn take_headless_live() -> bool {
-    HEADLESS_LIVE.with(|c| c.replace(false))
-}
-
-#[cfg(test)]
-fn set_crossterm_stub(events: VecDeque<Event>) {
-    CROSSTERM_STUB.with(|c| *c.borrow_mut() = events);
-}
-
-#[cfg(test)]
-fn clear_crossterm_stub() {
-    CROSSTERM_STUB.with(|c| c.borrow_mut().clear());
-}
-
-#[cfg(test)]
-fn crossterm_stub_is_empty() -> bool {
-    CROSSTERM_STUB.with(|c| c.borrow().is_empty())
-}
-
-#[cfg(test)]
-fn crossterm_stub_pop() -> Option<Event> {
-    CROSSTERM_STUB.with(|c| c.borrow_mut().pop_front())
-}
-
-#[cfg(test)]
-fn set_crossterm_poll_err(v: bool) {
-    CROSSTERM_POLL_ERR.with(|c| c.set(v));
-}
-
-#[cfg(test)]
-fn take_crossterm_poll_err() -> bool {
-    CROSSTERM_POLL_ERR.with(|c| c.replace(false))
-}
-
-#[cfg(test)]
-fn set_crossterm_read_err(v: bool) {
-    CROSSTERM_READ_ERR.with(|c| c.set(v));
-}
-
-#[cfg(test)]
-fn take_crossterm_read_err() -> bool {
-    CROSSTERM_READ_ERR.with(|c| c.replace(false))
-}
-
-#[cfg(test)]
-fn set_draw_fail(v: bool) {
-    DRAW_FAIL.with(|c| c.set(v));
-}
-
-#[cfg(test)]
-fn take_draw_fail() -> bool {
-    DRAW_FAIL.with(|c| c.replace(false))
-}
-
-#[cfg(test)]
-fn set_clear_fail(v: bool) {
-    CLEAR_FAIL.with(|c| c.set(v));
-}
-
-#[cfg(test)]
-fn take_clear_fail() -> bool {
-    CLEAR_FAIL.with(|c| c.replace(false))
-}
-
-#[cfg(test)]
-fn set_open_writer_fail(v: bool) {
-    OPEN_WRITER_FAIL.with(|c| c.set(v));
-}
-
-#[cfg(test)]
-fn take_open_writer_fail() -> bool {
-    OPEN_WRITER_FAIL.with(|c| c.replace(false))
-}
-
-#[cfg(test)]
-fn set_test_catalog_window(v: Option<(String, String, u32)>) {
-    TEST_CATALOG_WINDOW.with(|c| *c.borrow_mut() = v);
-}
-
-#[cfg(test)]
-fn take_test_catalog_window() -> Option<(String, String, u32)> {
-    TEST_CATALOG_WINDOW.with(|c| c.borrow_mut().take())
-}
-
-#[cfg(test)]
-fn set_test_suggest(v: Option<String>) {
-    TEST_SUGGEST.with(|c| *c.borrow_mut() = v);
-}
-
-#[cfg(test)]
-fn take_test_suggest() -> Option<String> {
-    TEST_SUGGEST.with(|c| c.borrow_mut().take())
-}
-
-#[cfg(test)]
-fn set_test_auth_event(v: Option<AuthFlowEvent>) {
-    TEST_AUTH_EVENT.with(|c| *c.borrow_mut() = v);
-}
-
-#[cfg(test)]
-fn take_test_auth_event() -> Option<AuthFlowEvent> {
-    TEST_AUTH_EVENT.with(|c| c.borrow_mut().take())
-}
-
 struct LoopIo {
     scripted: Option<VecDeque<Event>>,
+    crossterm: VecDeque<Event>,
+    poll_err: bool,
+    read_err: bool,
+    force_zero_poll: bool,
 }
 
 impl LoopIo {
-    fn take_from_thread() -> Self {
-        #[cfg(test)]
-        {
-            Self {
-                scripted: take_headless_events(),
-            }
-        }
-        #[cfg(not(test))]
-        {
-            Self { scripted: None }
+    fn from_inject(inject: &mut LoopInject) -> Self {
+        let scripted = inject.scripted_events.take();
+        Self {
+            force_zero_poll: inject.live_buf || scripted.is_some(),
+            scripted,
+            crossterm: std::mem::take(&mut inject.crossterm_events),
+            poll_err: inject.poll_err,
+            read_err: inject.read_err,
         }
     }
 
     fn is_headless(&self) -> bool {
         self.scripted.is_some()
+    }
+
+    fn crossterm_empty(&self) -> bool {
+        self.crossterm.is_empty()
     }
 
     fn peek(&self) -> Option<&Event> {
@@ -779,7 +663,7 @@ impl LoopIo {
         if let Some(q) = &self.scripted {
             return Ok(!q.is_empty());
         }
-        poll_crossterm(timeout)
+        self.poll_crossterm(timeout)
     }
 
     fn read_batch(&mut self) -> io::Result<Vec<Event>> {
@@ -794,8 +678,50 @@ impl LoopIo {
                 )),
             }
         } else {
-            read_event_batch()
+            self.read_event_batch()
         }
+    }
+
+    fn poll_crossterm(&mut self, timeout: Duration) -> io::Result<bool> {
+        if self.poll_err {
+            self.poll_err = false;
+            return Err(io::Error::other("crossterm stub poll failed"));
+        }
+        if !self.crossterm.is_empty() {
+            return Ok(true);
+        }
+        live_poll_crossterm(poll_timeout(timeout, self.force_zero_poll))
+    }
+
+    fn read_crossterm(&mut self) -> io::Result<Event> {
+        if self.read_err {
+            self.read_err = false;
+            return Err(io::Error::other("crossterm stub read failed"));
+        }
+        if let Some(ev) = self.crossterm.pop_front() {
+            return Ok(ev);
+        }
+        if self.force_zero_poll {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "crossterm stub empty",
+            ));
+        }
+        live_read_crossterm()
+    }
+
+    fn read_event_batch(&mut self) -> io::Result<Vec<Event>> {
+        const MAX_BATCH: usize = 256;
+        let mut batch = Vec::with_capacity(8);
+        batch.push(self.read_crossterm()?);
+        while batch.len() < MAX_BATCH {
+            match self.poll_crossterm(Duration::ZERO) {
+                Ok(true) => batch.push(self.read_crossterm()?),
+                Ok(false) => break,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(batch)
     }
 }
 
@@ -832,9 +758,9 @@ impl LoopTerm {
         }
     }
 
-    fn clear(&mut self) -> anyhow::Result<()> {
-        #[cfg(test)]
-        if take_clear_fail() {
+    fn clear(&mut self, fail: &mut bool) -> anyhow::Result<()> {
+        if *fail {
+            *fail = false;
             return Err(anyhow::anyhow!("tui clear failed"));
         }
         match self {
@@ -846,9 +772,10 @@ impl LoopTerm {
     fn draw_app(
         &mut self,
         app: &mut TuiApp,
+        fail: &mut bool,
     ) -> anyhow::Result<(ratatui::layout::Rect, Option<crate::cell_grid::CellGrid>)> {
-        #[cfg(test)]
-        if take_draw_fail() {
+        if *fail {
+            *fail = false;
             return Err(anyhow::anyhow!("tui draw failed"));
         }
         match self {
@@ -905,17 +832,16 @@ where
 
 /// Writer for alt-screen / draw / mouse: controlling console first, else stdout if TTY.
 fn open_tui_writer() -> io::Result<TuiWriter> {
-    // 1) Controlling terminal — works when stdout is piped/logged by a host.
-    if let Some(console) = open_controlling_console() {
+    choose_tui_writer(open_controlling_console(), io::stdout().is_terminal())
+}
+
+fn choose_tui_writer(console: Option<std::fs::File>, stdout_is_tty: bool) -> io::Result<TuiWriter> {
+    if let Some(console) = console {
         return Ok(TuiWriter::Console(console));
     }
-
-    // 2) Direct stdout when it is a terminal.
-    let out = io::stdout();
-    if out.is_terminal() {
-        return Ok(TuiWriter::Stdout(out));
+    if stdout_is_tty {
+        return Ok(TuiWriter::Stdout(io::stdout()));
     }
-
     Err(io::Error::new(
         io::ErrorKind::NotConnected,
         "no interactive terminal (stdout is not a TTY and the controlling console is unavailable)",
@@ -986,12 +912,11 @@ fn default_agent_info(name: &str) -> whycodes_core::types::AgentInfo {
 
 /// Leave alt-screen / raw mode from the panic hook (and from tests).
 fn restore_terminal_on_panic() {
-    #[cfg(test)]
-    if take_open_writer_fail() {
-        let _ = disable_raw_mode();
-        return;
-    }
-    if let Ok(mut out) = open_tui_writer() {
+    restore_terminal_with(open_tui_writer)
+}
+
+fn restore_terminal_with(open: impl FnOnce() -> io::Result<TuiWriter>) {
+    if let Ok(mut out) = open() {
         restore_terminal_on(&mut out);
     } else {
         let _ = disable_raw_mode();
@@ -1182,8 +1107,15 @@ pub enum TurnOutcome {
 
 /// Run the full-screen TUI until the user quits.
 pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
-    let mut loop_io = LoopIo::take_from_thread();
+    let mut opts = opts;
+    let mut loop_io = LoopIo::from_inject(&mut opts.inject);
     let headless = loop_io.is_headless();
+    let live_buf = opts.inject.live_buf;
+    let mut draw_fail = opts.inject.draw_fail;
+    let mut clear_fail = opts.inject.clear_fail;
+    let seed_catalog = opts.inject.catalog.take();
+    let seed_suggest = opts.inject.suggest.take();
+    let seed_auth = opts.inject.auth.take();
 
     // Unit tests drive CLI `cmd_run` / `cmd_connect` through this entry
     // without opening a terminal. `WHYCODES_TEST_TUI=upgrade` asks the CLI
@@ -1247,13 +1179,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     app.config.color_mode = color_mode;
     app.config.extra.quantize_for(color_mode);
 
-    // Tests may set this without scripted `HEADLESS_EVENTS` so the production
-    // `!headless` arms (panic restore, first-frame hydrate, crossterm poll)
-    // still run into a memory buffer instead of a real TTY.
-    #[cfg(test)]
-    let live_buf = take_headless_live();
-    #[cfg(not(test))]
-    let live_buf = false;
+    // `live_buf` runs the production `!headless` arms (panic restore,
+    // first-frame hydrate, crossterm poll) into a memory buffer.
     let (mut terminal, keyboard_enhanced, tw, th) = if live_buf {
         attach_live(
             color_mode,
@@ -1299,17 +1226,18 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let (suggest_tx, mut suggest_rx) = mpsc::unbounded_channel::<String>();
     // In-TUI OAuth login (`/connect`): flow progress → event loop.
     let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<AuthFlowEvent>();
-    #[cfg(test)]
+    if let Some(win) = seed_catalog
+        && catalog_tx.send(win).is_err()
     {
-        if let Some(win) = take_test_catalog_window() {
-            let _ = catalog_tx.send(win);
-        }
-        if let Some(s) = take_test_suggest() {
-            let _ = suggest_tx.send(s);
-        }
-        if let Some(ev) = take_test_auth_event() {
-            let _ = auth_tx.send(ev);
-        }
+        tracing::debug!("seed catalog dropped: TUI event loop closed");
+    }
+    if let Some(s) = seed_suggest
+        && suggest_tx.send(s).is_err()
+    {
+        tracing::debug!("seed suggestion dropped: TUI event loop closed");
+    }
+    if let Some(ev) = seed_auth {
+        send_auth_event(&auth_tx, ev);
     }
 
     // Background jobs / schedule enqueue use the same long-lived event channel.
@@ -1405,7 +1333,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             let animate = rt.agent_busy || app.running_task_count() > 0;
             if app.needs_redraw || animate || first_frame {
                 if app.pending_full_clears > 0 {
-                    if let Err(e) = terminal.clear() {
+                    if let Err(e) = terminal.clear(&mut clear_fail) {
                         whycodes_core::logging::emit(
                             "whycodes_tui",
                             "warn",
@@ -1415,7 +1343,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     }
                     app.pending_full_clears = app.pending_full_clears.saturating_sub(1);
                 }
-                let (draw_area, snapshot) = match terminal.draw_app(&mut app) {
+                let (draw_area, snapshot) = match terminal.draw_app(&mut app, &mut draw_fail) {
                     Ok(v) => v,
                     Err(e) => {
                         whycodes_core::logging::emit(
@@ -2047,13 +1975,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     tokio::task::yield_now().await;
                 }
             }
-            // Live-buffer tests drive `poll_crossterm` via `CROSSTERM_STUB`.
-            // When the stub is empty the loop would wait forever (no TTY).
-            #[cfg(test)]
-            if !headless {
+            // Live-buffer runs drive crossterm via `LoopInject`. When the
+            // queue is empty the loop would wait forever (no TTY).
+            if live_buf && !headless {
                 if rt.agent_busy || rt.turn_join.is_some() {
                     tokio::task::yield_now().await;
-                } else if !has_ev && crossterm_stub_is_empty() {
+                } else if !has_ev && loop_io.crossterm_empty() {
                     app.running = false;
                 }
             }
@@ -2504,56 +2431,6 @@ fn poll_timeout(requested: Duration, force_zero: bool) -> Duration {
     } else {
         requested
     }
-}
-
-fn poll_crossterm(timeout: Duration) -> io::Result<bool> {
-    #[cfg(test)]
-    if take_crossterm_poll_err() {
-        return Err(io::Error::other("crossterm stub poll failed"));
-    }
-    #[cfg(test)]
-    if !crossterm_stub_is_empty() {
-        return Ok(true);
-    }
-    live_poll_crossterm(poll_timeout(timeout, cfg!(test)))
-}
-
-fn read_crossterm() -> io::Result<Event> {
-    #[cfg(test)]
-    if take_crossterm_read_err() {
-        return Err(io::Error::other("crossterm stub read failed"));
-    }
-    #[cfg(test)]
-    if let Some(ev) = crossterm_stub_pop() {
-        return Ok(ev);
-    }
-    #[cfg(test)]
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "crossterm stub empty",
-        ));
-    }
-    #[allow(unreachable_code)]
-    live_read_crossterm()
-}
-
-/// Read the event that woke `poll`, then drain anything already queued.
-///
-/// Cap the batch so a stuck input flood cannot grow without bound before
-/// the next paint / turn-event drain.
-fn read_event_batch() -> io::Result<Vec<Event>> {
-    const MAX_BATCH: usize = 256;
-    let mut batch = Vec::with_capacity(8);
-    batch.push(read_crossterm()?);
-    while batch.len() < MAX_BATCH {
-        match poll_crossterm(Duration::ZERO) {
-            Ok(true) => batch.push(read_crossterm()?),
-            Ok(false) => break,
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(batch)
 }
 
 /// Mouse motion is tracked for hover; it must not by itself schedule a

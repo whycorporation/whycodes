@@ -481,6 +481,7 @@ pub(crate) async fn cmd_run(
             resume_session_id: resume_want,
             remote: None,
             update_rx,
+            inject: Default::default(),
         })
         .await
         .map_err(map_tui_run_error)?;

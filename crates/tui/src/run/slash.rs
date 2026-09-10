@@ -22,6 +22,14 @@ pub struct SlashContext<'a> {
 
 pub(super) const LOOP_USAGE: &str = "Usage: /loop N prompt…  |  /loop stop";
 
+pub(super) fn oauth_unavailable_hint(names: Vec<String>) -> String {
+    if names.is_empty() {
+        "install an auth plugin".to_string()
+    } else {
+        names.join(", ")
+    }
+}
+
 pub(super) enum LoopSlash {
     Stop,
     Queue { n: usize, prompt: String },
@@ -416,14 +424,10 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     spawn_oauth_login(ctx.app, &ctx.auth_tx, dir, arg);
                 }
             } else {
-                ctx.app.status_message = format!("OAuth login not available for `{arg}` ({})", {
-                    let names = whycodes_auth::oauth_providers();
-                    if names.is_empty() {
-                        "install an auth plugin".to_string()
-                    } else {
-                        names.join(", ")
-                    }
-                });
+                ctx.app.status_message = format!(
+                    "OAuth login not available for `{arg}` ({})",
+                    oauth_unavailable_hint(whycodes_auth::oauth_providers())
+                );
             }
         }
         "/agent" => {
@@ -722,49 +726,72 @@ pub(super) fn maybe_spawn_prompt_suggestion(
         let Some(prov) = reg.get(&p) else {
             return;
         };
-        use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
-        let body = format!(
-            "User last said:\n{}\n\nAssistant replied (excerpt):\n{}\n\n\
-             Suggest ONE short next user message (≤12 words) to continue the coding task. \
-             Reply with only that message, no quotes.",
-            last_user.chars().take(500).collect::<String>(),
-            last_asst.chars().take(400).collect::<String>()
-        );
-        let request = LlmRequest {
-            system: "You propose a single follow-up user prompt for a coding agent.".into(),
-            messages: std::sync::Arc::from(vec![Message {
-                role: Role::User,
-                content: MessageContent::Text(body),
-                tool_call_id: None,
-                name: None,
-                created_at: None,
-            }]),
-            tools: std::sync::Arc::from([]),
-            max_tokens: Some(40),
-            temperature: Some(0.4),
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: false,
-        };
-        let transport = whycodes_llm::LlmTransport {
-            complete_timeout: Some(std::time::Duration::from_secs(8)),
-            retry: whycodes_llm::RetryPolicy {
-                max_retries: 0,
-                initial_backoff: std::time::Duration::from_millis(100),
-                max_backoff: std::time::Duration::from_secs(1),
-                max_elapsed: std::time::Duration::from_secs(8),
-                full_jitter: true,
-            },
-        };
-        if let Ok(resp) = transport.complete(prov, &request, &api_key, &m).await {
-            let text = suggestion_text_from_blocks(&resp.content);
-            if !text.is_empty() {
-                let _ = suggest_tx.send(text);
-            }
+        let request = suggestion_llm_request(&last_user, &last_asst);
+        if let Ok(resp) = suggestion_transport()
+            .complete(prov, &request, &api_key, &m)
+            .await
+        {
+            send_suggestion_text(&resp.content, &suggest_tx);
         }
     });
+}
+
+pub(super) fn suggestion_prompt_body(last_user: &str, last_asst: &str) -> String {
+    format!(
+        "User last said:\n{}\n\nAssistant replied (excerpt):\n{}\n\n\
+         Suggest ONE short next user message (≤12 words) to continue the coding task. \
+         Reply with only that message, no quotes.",
+        last_user.chars().take(500).collect::<String>(),
+        last_asst.chars().take(400).collect::<String>()
+    )
+}
+
+pub(super) fn suggestion_llm_request(
+    last_user: &str,
+    last_asst: &str,
+) -> whycodes_core::types::LlmRequest {
+    use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
+    LlmRequest {
+        system: "You propose a single follow-up user prompt for a coding agent.".into(),
+        messages: std::sync::Arc::from(vec![Message {
+            role: Role::User,
+            content: MessageContent::Text(suggestion_prompt_body(last_user, last_asst)),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }]),
+        tools: std::sync::Arc::from([]),
+        max_tokens: Some(40),
+        temperature: Some(0.4),
+        top_p: None,
+        top_k: None,
+        stop_sequences: None,
+        thinking: None,
+        use_prompt_cache: false,
+    }
+}
+
+pub(super) fn suggestion_transport() -> whycodes_llm::LlmTransport {
+    whycodes_llm::LlmTransport {
+        complete_timeout: Some(std::time::Duration::from_secs(8)),
+        retry: whycodes_llm::RetryPolicy {
+            max_retries: 0,
+            initial_backoff: std::time::Duration::from_millis(100),
+            max_backoff: std::time::Duration::from_secs(1),
+            max_elapsed: std::time::Duration::from_secs(8),
+            full_jitter: true,
+        },
+    }
+}
+
+pub(super) fn send_suggestion_text(
+    content: &[whycodes_core::types::ContentBlock],
+    tx: &mpsc::UnboundedSender<String>,
+) {
+    let text = suggestion_text_from_blocks(content);
+    if !text.is_empty() && tx.send(text).is_err() {
+        tracing::debug!("idle suggestion dropped: TUI event loop closed");
+    }
 }
 
 pub(super) fn suggestion_text_from_blocks(

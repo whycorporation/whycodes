@@ -3196,3 +3196,72 @@ fn dialog_help_and_alert_click_and_arrows() {
     open_mode_dialog(&mut a);
     handle_event(&mut a, key(KeyCode::Down));
 }
+
+#[test]
+fn remaining_dispatch_and_dialog_confirm_arms() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.command.buffer = ":sidebar".into();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SubmitInput),
+        &k
+    ));
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    a.upsert_subagent(crate::app::SubagentUpdate {
+        id: "kid".into(),
+        kind: "explore".into(),
+        description: "d".into(),
+        status: "running".into(),
+        activity: String::new(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    a.add_message(ChatRole::Assistant, "hi");
+    if let Some(msg) = a.messages.last_mut() {
+        msg.blocks.push(ChatBlock::Subagent {
+            id: "kid".into(),
+            kind: "explore".into(),
+            description: "d".into(),
+            status: "running".into(),
+            activity: String::new(),
+            elapsed_ms: 0,
+        });
+    }
+    a.selected_msg = Some(a.messages.len() - 1);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::FocusPrompt),
+        &k
+    ));
+    assert_eq!(a.open_subagent.as_deref(), Some("kid"));
+
+    let mut a = app();
+    a.mode = AppMode::Help;
+    paste_os_clipboard(&mut a);
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    a.confirm("Update", "now?", ConfirmAction::Upgrade);
+    confirm_dialog(
+        &mut a,
+        &DialogKind::Confirm {
+            title: "Update".into(),
+            message: "now?".into(),
+            on_confirm: ConfirmAction::Upgrade,
+        },
+    );
+    assert!(a.pending_upgrade);
+    assert!(!a.running);
+
+    let mut a = app();
+    execute_command(&mut a, ":provider");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Provider)));
+    execute_command(&mut a, ":theme");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Theme)));
+}

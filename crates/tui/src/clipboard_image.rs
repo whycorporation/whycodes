@@ -150,25 +150,36 @@ fn prune_old_clipboard_images(dir: &Path) {
     };
     let cutoff = std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60);
     for entry in entries {
-        let Ok(entry) = entry else {
-            continue;
-        };
-        let path = entry.path();
-        let Ok(meta) = entry.metadata() else {
-            continue;
-        };
-        let Ok(modified) = meta.modified() else {
-            continue;
-        };
-        if modified < cutoff
-            && let Err(error) = std::fs::remove_file(&path)
-        {
-            tracing::debug!(
-                %error,
-                path = %path.display(),
-                "prune old clipboard image"
-            );
-        }
+        prune_clipboard_dir_entry(entry, cutoff);
+    }
+}
+
+fn prune_clipboard_dir_entry(entry: io::Result<std::fs::DirEntry>, cutoff: std::time::SystemTime) {
+    let Ok(entry) = entry else {
+        return;
+    };
+    prune_clipboard_path(&entry.path(), entry.metadata(), cutoff);
+}
+
+fn prune_clipboard_path(
+    path: &Path,
+    meta: io::Result<std::fs::Metadata>,
+    cutoff: std::time::SystemTime,
+) {
+    let Ok(meta) = meta else {
+        return;
+    };
+    let Ok(modified) = meta.modified() else {
+        return;
+    };
+    if modified < cutoff
+        && let Err(error) = std::fs::remove_file(path)
+    {
+        tracing::debug!(
+            %error,
+            path = %path.display(),
+            "prune old clipboard image"
+        );
     }
 }
 

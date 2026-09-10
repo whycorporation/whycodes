@@ -234,6 +234,21 @@ fn prune_old_clipboard_images_removes_stale_and_skips_dirs() {
         nested.exists(),
         "directories must survive remove_file failure"
     );
+    prune_clipboard_dir_entry(
+        Err(std::io::Error::other("bad dirent")),
+        std::time::SystemTime::now(),
+    );
+    prune_clipboard_path(
+        std::path::Path::new("C:/dev/whycodes/target/no-such-prune.png"),
+        Err(std::io::Error::other("no meta")),
+        std::time::SystemTime::now(),
+    );
+    let missing = dir.path().join("no-mtime.png");
+    prune_clipboard_path(
+        &missing,
+        Ok(std::fs::metadata(&fresh).unwrap()),
+        std::time::UNIX_EPOCH,
+    );
 }
 
 #[test]
@@ -352,6 +367,18 @@ fn finish_windows_clipboard_covers_temp_read_and_run_errs() {
         Ok(PromptClipboard::Empty) => {}
         other => panic!("expected Empty, got {other:?}"),
     }
+
+    let dest = tempfile::NamedTempFile::new().unwrap();
+    let ok_path = dest.path().to_path_buf();
+    std::fs::write(&ok_path, b"\x89PNG\r\n\x1a\nhello").unwrap();
+    match finish_windows_clipboard(ok_path, Ok(())) {
+        Ok(PromptClipboard::ImagePaths(p)) => assert_eq!(p.len(), 1),
+        other => panic!("expected ImagePaths, got {other:?}"),
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    cleanup_temp(dir.path());
+    assert!(dir.path().exists(), "directory must survive remove_file");
 }
 
 #[cfg(target_os = "windows")]
