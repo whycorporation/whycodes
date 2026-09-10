@@ -2331,6 +2331,9 @@ fn poll_crossterm(timeout: Duration) -> io::Result<bool> {
     #[cfg(test)]
     {
         let _ = timeout;
+        if CROSSTERM_POLL_ERR.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return Err(io::Error::other("crossterm stub poll failed"));
+        }
         return Ok(!CROSSTERM_STUB
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -2345,6 +2348,9 @@ fn poll_crossterm(timeout: Duration) -> io::Result<bool> {
 fn read_crossterm() -> io::Result<Event> {
     #[cfg(test)]
     {
+        if CROSSTERM_READ_ERR.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return Err(io::Error::other("crossterm stub read failed"));
+        }
         return CROSSTERM_STUB
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -2373,6 +2379,12 @@ fn read_event_batch() -> io::Result<Vec<Event>> {
 
 #[cfg(test)]
 static CROSSTERM_STUB: std::sync::Mutex<VecDeque<Event>> = std::sync::Mutex::new(VecDeque::new());
+#[cfg(test)]
+static CROSSTERM_POLL_ERR: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+static CROSSTERM_READ_ERR: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 #[cfg(test)]
 static TEST_CATALOG_WINDOW: std::sync::Mutex<Option<(String, String, u32)>> =
     std::sync::Mutex::new(None);

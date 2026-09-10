@@ -6304,3 +6304,206 @@ async fn run_headless_compact_after_scripted_turn() {
     }
     assert_eq!(exit, TuiExit::Quit);
 }
+
+#[tokio::test]
+async fn run_headless_idle_ctrl_n_cycle_dashboard_and_mru() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            ctrl('n'),
+            Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::PageDown,
+                crossterm::event::KeyModifiers::CONTROL,
+            )),
+            Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::PageUp,
+                crossterm::event::KeyModifiers::CONTROL,
+            )),
+            ctrl('o'),
+            press(KeyCode::Enter),
+            Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Tab,
+                crossterm::event::KeyModifiers::CONTROL,
+            )),
+            ctrl('q'),
+            press(KeyCode::Enter),
+        ]));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_applies_model_effort_mode_from_pickers() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.provider = "xai".into();
+    opts.model = "grok-4.6".into();
+    opts.config.providers.insert(
+        "xai".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "xai".into(),
+            api_key: Some("sk-test".into()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec!["grok-4.6".into(), "grok-4".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let mut events = Vec::new();
+    events.extend(type_line("/models"));
+    events.push(press(KeyCode::Enter));
+    events.extend(type_line("/effort"));
+    events.push(press(KeyCode::Enter));
+    events.extend(type_line("/mode"));
+    events.push(press(KeyCode::Enter));
+    events.extend(type_line("/agent"));
+    events.push(press(KeyCode::Enter));
+    events.push(ctrl('q'));
+    events.push(press(KeyCode::Enter));
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_busy_esc_enter_then_force_quit() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "HANG");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            press(KeyCode::Char('h')),
+            press(KeyCode::Enter),
+            press(KeyCode::Enter),
+            press(KeyCode::Esc),
+            press(KeyCode::Esc),
+            ctrl('q'),
+        ]));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_ LLM") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_live_crossterm_poll_error_exits() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    HEADLESS_LIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+    CROSSTERM_POLL_ERR.store(true, std::sync::atomic::Ordering::SeqCst);
+    CROSSTERM_STUB
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+    let err = super::run(boot_opts(dir.path(), "sk-test"))
+        .await
+        .expect_err("poll error should fail the loop");
+    assert!(
+        err.to_string().contains("poll") || err.to_string().contains("failed"),
+        "{err}"
+    );
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    HEADLESS_LIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    CROSSTERM_POLL_ERR.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[tokio::test]
+async fn run_live_crossterm_read_error_exits() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    HEADLESS_LIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+    CROSSTERM_READ_ERR.store(true, std::sync::atomic::Ordering::SeqCst);
+    *CROSSTERM_STUB.lock().unwrap_or_else(|e| e.into_inner()) =
+        std::collections::VecDeque::from([press(KeyCode::Char('x'))]);
+    let err = super::run(boot_opts(dir.path(), "sk-test"))
+        .await
+        .expect_err("read error should fail the loop");
+    assert!(
+        err.to_string().contains("read") || err.to_string().contains("failed"),
+        "{err}"
+    );
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    HEADLESS_LIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    CROSSTERM_READ_ERR.store(false, std::sync::atomic::Ordering::SeqCst);
+    CROSSTERM_STUB
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+}
