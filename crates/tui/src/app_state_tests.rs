@@ -534,6 +534,26 @@ fn scroll_todos_returns_false_when_the_list_cannot_move() {
         !app.scroll_todos(-1),
         "a list that fits the viewport cannot scroll"
     );
+
+    app.replace_todos(
+        (0..20)
+            .map(|i| {
+                whycodes_core::TodoItem::new(
+                    format!("{i}"),
+                    format!("item {i}"),
+                    whycodes_core::TodoStatus::Pending,
+                )
+            })
+            .collect(),
+    );
+    app.todos_viewport_rows = 4;
+    app.todos_scroll = app.todos_max_scroll();
+    assert!(
+        !app.scroll_todos(1),
+        "already at the bottom, further down is a no-op"
+    );
+    app.todos_scroll = 0;
+    assert!(!app.scroll_todos(-1), "already at the top");
 }
 
 #[test]
@@ -552,6 +572,23 @@ fn toggle_selected_thinking_on_an_assistant_without_blocks_is_a_noop() {
     app.selected_msg = Some(0);
     app.toggle_selected_thinking();
     assert!(!app.messages[0].results_expanded);
+
+    if let Some(msg) = app.messages.last_mut() {
+        msg.blocks.push(ChatBlock::ToolUse {
+            id: "t1".into(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "a.rs"}),
+        });
+        msg.blocks.push(ChatBlock::Text("body".into()));
+    }
+    app.toggle_selected_thinking();
+    assert!(
+        app.messages[0]
+            .blocks
+            .iter()
+            .all(|b| !matches!(b, ChatBlock::Thinking(_))),
+        "non-thinking blocks must not grow a thinking fold"
+    );
 }
 
 #[test]
