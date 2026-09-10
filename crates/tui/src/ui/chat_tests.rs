@@ -1187,6 +1187,40 @@ fn session_paint_fills_closed_line_cache_on_first_draw() {
 }
 
 #[test]
+fn message_is_closed_opens_running_thinking_and_busy_tail() {
+    use crate::app::{AgentState, ChatBlock, ThinkingBlock};
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    assert!(
+        !super::message_is_closed(&app, 0),
+        "missing index is not a closed bubble"
+    );
+
+    app.add_message(ChatRole::Assistant, "thinking");
+    if let Some(msg) = app.messages.last_mut() {
+        msg.blocks
+            .push(ChatBlock::Thinking(ThinkingBlock::new("plan")));
+    }
+    assert!(
+        !super::message_is_closed(&app, 0),
+        "open thinking must keep the bubble live"
+    );
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "hi");
+    app.add_message(ChatRole::Assistant, "streaming");
+    app.current_agent_state = AgentState::Generating;
+    assert!(
+        super::message_is_closed(&app, 0),
+        "finished user bubble stays closed while a turn runs"
+    );
+    assert!(
+        !super::message_is_closed(&app, 1),
+        "last assistant while busy must stay open"
+    );
+}
+
+#[test]
 fn golden_home_and_session_paint_stable_ascii() {
     use crate::app::{ChatRole, SessionEntry, TuiApp};
     use crate::config::TuiAppConfig;
