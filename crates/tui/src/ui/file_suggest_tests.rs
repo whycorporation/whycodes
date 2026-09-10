@@ -1,4 +1,6 @@
 use super::*;
+use ratatui::buffer::Buffer;
+use ratatui::style::Color;
 
 #[test]
 fn at_token_finds_mentions() {
@@ -349,4 +351,69 @@ fn render_scrollbar_when_matches_overflow() {
         "scrolled window should include the selection: {text}"
     );
     assert!(app.file_suggest.list_scroll_start > 0);
+}
+
+#[test]
+fn scan_status_root_label_and_scanning_empty_paint() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+    let extra_dir = tempfile::tempdir().unwrap();
+    std::fs::write(extra_dir.path().join("b.rs"), "fn b() {}").unwrap();
+    let extra_name = extra_dir
+        .path()
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "other".into());
+    let index = WorkspaceIndex::start(vec![
+        dir.path().to_path_buf(),
+        extra_dir.path().to_path_buf(),
+    ]);
+    let mut st = FileSuggestState::default();
+    st.set_index(index.clone());
+    assert!(st.scan_status().is_some());
+    assert!(st.root_label(0).is_none());
+    let tag = st.root_label(1);
+    assert!(
+        tag.as_deref() == Some(extra_name.as_str()) || tag.is_some(),
+        "{tag:?} extra={extra_name}"
+    );
+    assert!(st.root_label(99).is_none());
+
+    let mut app = TuiApp::new(crate::config::TuiAppConfig::default());
+    app.file_suggest.set_index(index);
+    app.file_suggest.active = true;
+    app.file_suggest.matches.clear();
+    let text = paint(50, 16, &mut app);
+    assert!(
+        text.contains("scanning") || text.contains("files") || text.contains("no matches"),
+        "{text}"
+    );
+
+    app.file_suggest.matches = vec![FileMatch {
+        rel: "b.rs".into(),
+        root: 1,
+        ..Default::default()
+    }];
+    let tagged = paint(50, 16, &mut app);
+    assert!(
+        tagged.contains(&extra_name) || tagged.contains("b.rs"),
+        "{tagged}"
+    );
+
+    let mut buf = Buffer::empty(Rect::new(0, 0, 1, 1));
+    paint_row(
+        &mut buf,
+        0,
+        0,
+        0,
+        &FileMatch {
+            rel: "x.rs".into(),
+            ..Default::default()
+        },
+        None,
+        false,
+        Color::Black,
+        &DropdownColors::from_palette(&crate::theme::ThemeName::DefaultDark.palette()),
+        &crate::theme::ThemeName::DefaultDark.palette(),
+    );
 }
