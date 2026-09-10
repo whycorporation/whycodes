@@ -98,6 +98,12 @@ fn model_picker_toggle_and_fold_keys() {
     assert!(
         matches!(s.selected_row(), Some(ModelPickerRow::Header { provider, .. }) if provider == "anthropic")
     );
+
+    let mut empty = ModelSelectionState::default();
+    assert!(
+        !empty.set_group_collapsed_at_cursor(true),
+        "empty catalog has no row to fold"
+    );
 }
 
 fn question(prompt: &str, labels: &[&str], multi_select: bool) -> QuestionSpec {
@@ -1052,4 +1058,67 @@ fn dialog_list_index_past_total_is_none() {
         None,
         "row past the item count must miss"
     );
+}
+
+#[test]
+fn thinking_body_lines_empty_when_finished_and_collapsed() {
+    let mut tb = crate::app::ThinkingBlock::new("line1\nline2\nline3");
+    tb.finish();
+    tb.collapsed = true;
+    assert!(
+        tb.body_lines().is_empty(),
+        "folded finished thinking hides the body"
+    );
+}
+
+#[test]
+fn insert_paste_text_empty_is_a_noop() {
+    let mut app = app();
+    app.input_buffer = "keep".into();
+    app.input_cursor = 4;
+    app.insert_paste_text("");
+    assert_eq!(app.input_buffer, "keep");
+    assert_eq!(app.input_cursor, 4);
+}
+
+#[test]
+fn ensure_selected_visible_scrolls_when_the_row_is_offscreen() {
+    let mut app = app();
+    for i in 0..20 {
+        app.add_message(ChatRole::User, format!("msg {i}"));
+    }
+    app.chat_viewport_rows = 4;
+    app.chat_content_width = 40;
+    app.scroll_offset = 0;
+    app.selected_msg = Some(0);
+    app.ensure_selected_visible();
+    assert!(
+        app.scroll_offset > 0,
+        "oldest message must pull the viewport up from the bottom"
+    );
+    let high = app.scroll_offset;
+    app.selected_msg = Some(19);
+    app.ensure_selected_visible();
+    assert!(
+        app.scroll_offset < high,
+        "newest message must drop the viewport back toward the bottom"
+    );
+}
+
+#[test]
+fn question_empty_options_require_free_text() {
+    let mut st = crate::app::QuestionDialogState::new(vec![question("Explain", &[], false)]);
+    assert!(st.confirm_current().is_none());
+    assert!(st.free_text_focus);
+    st.free_text = "because".into();
+    let answers = st.confirm_current().expect("free text on empty options");
+    assert_eq!(answers[0].free_text.as_deref(), Some("because"));
+}
+
+#[test]
+fn focus_todos_is_a_noop_when_the_list_cannot_scroll() {
+    let mut app = app();
+    app.focus = crate::app::FocusPane::Prompt;
+    app.focus_todos();
+    assert_eq!(app.focus, crate::app::FocusPane::Prompt);
 }
