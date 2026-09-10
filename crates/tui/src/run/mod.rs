@@ -1510,18 +1510,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     &config,
                 );
                 fill_oauth_credential(&mut api_key, &provider).await;
-                if rt.agent_busy {
-                    catalog_fetch_pending = true;
-                } else {
-                    catalog_fetch_pending = false;
-                    spawn_model_context_fetch(
-                        &config,
-                        &provider,
-                        &model,
-                        &api_key,
-                        catalog_tx.clone(),
-                    );
-                }
+                defer_or_spawn_catalog(
+                    rt.agent_busy,
+                    &mut catalog_fetch_pending,
+                    &config,
+                    &provider,
+                    &model,
+                    &api_key,
+                    catalog_tx.clone(),
+                );
             }
 
             if let Some(effort) = app.pending_effort.take() {
@@ -1554,19 +1551,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             if app.pending_catalog_refresh {
                 app.pending_catalog_refresh = false;
                 app.clear_api_context_window();
-                if rt.agent_busy {
-                    // Don't contend with the in-flight turn; retry when idle.
-                    catalog_fetch_pending = true;
-                } else {
-                    catalog_fetch_pending = false;
-                    spawn_model_context_fetch(
-                        &config,
-                        &provider,
-                        &model,
-                        &api_key,
-                        catalog_tx.clone(),
-                    );
-                }
+                defer_or_spawn_catalog(
+                    rt.agent_busy,
+                    &mut catalog_fetch_pending,
+                    &config,
+                    &provider,
+                    &model,
+                    &api_key,
+                    catalog_tx.clone(),
+                );
             }
 
             // Deferred / idle catalog: never race the first (or any) user turn.
@@ -2363,6 +2356,24 @@ fn print_session_summary(summary: &str) {
     let mut err = io::stderr();
     let _ = writeln!(err, "{summary}");
     let _ = err.flush();
+}
+
+/// Queue a catalog fetch when a turn is in flight; otherwise spawn it now.
+fn defer_or_spawn_catalog(
+    agent_busy: bool,
+    catalog_fetch_pending: &mut bool,
+    config: &Config,
+    provider: &str,
+    model: &str,
+    api_key: &str,
+    catalog_tx: mpsc::UnboundedSender<(String, String, u32)>,
+) {
+    if agent_busy {
+        *catalog_fetch_pending = true;
+        return;
+    }
+    *catalog_fetch_pending = false;
+    spawn_model_context_fetch(config, provider, model, api_key, catalog_tx);
 }
 
 /// Agent picker selection: refuse while a turn is in flight, otherwise switch.

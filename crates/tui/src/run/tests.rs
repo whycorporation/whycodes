@@ -1461,6 +1461,18 @@ async fn apply_pending_agent_warns_when_busy_then_switches_when_idle() {
     assert_eq!(rt.agent.info.name, "plan");
 }
 
+#[test]
+fn defer_or_spawn_catalog_queues_when_busy_and_clears_when_idle() {
+    let (tx, rx) = mpsc::unbounded_channel();
+    drop(rx);
+    let config = Config::default();
+    let mut pending = false;
+    defer_or_spawn_catalog(true, &mut pending, &config, "acme", "m", "sk", tx.clone());
+    assert!(pending, "busy turn must defer the catalog fetch");
+    defer_or_spawn_catalog(false, &mut pending, &config, "acme", "m", "sk", tx);
+    assert!(!pending, "idle must spawn immediately and clear the flag");
+}
+
 #[tokio::test]
 async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
     let _home = isolate_home();
