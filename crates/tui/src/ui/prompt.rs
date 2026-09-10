@@ -1235,6 +1235,25 @@ mod overflow_render_tests {
             rows.iter().any(|r| r.contains("word")),
             "long wrap must still paint prompt text, got {rows:?}"
         );
+        let word_rows: Vec<&String> = rows.iter().filter(|r| r.contains("word")).collect();
+        assert!(
+            !word_rows.is_empty(),
+            "a long wrap must still paint prompt text, got {rows:?}"
+        );
+        assert!(
+            word_rows.iter().any(|r| r.contains("word")
+                && !r.contains('❯')
+                && !r.contains("{276F}")
+                && !r.contains(": ")),
+            "caret-at-end viewport must paint continuation rows without repeating ❯, got {rows:?}"
+        );
+        app.input_cursor = 0;
+        let top = rendered_rows(&mut app, 24, 12);
+        assert!(
+            top.iter()
+                .any(|r| r.contains("word") && (r.contains('❯') || r.contains("{276F}"))),
+            "caret-at-start must paint the first row with ❯, got {top:?}"
+        );
     }
 
     #[test]

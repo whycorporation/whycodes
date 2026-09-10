@@ -9877,3 +9877,29 @@ async fn run_headless_sidebar_open_then_scripted_turn_drains_events() {
     }
     assert_eq!(exit, TuiExit::Quit);
 }
+
+#[tokio::test]
+async fn handle_slash_custom_command_queues_rendered_template() {
+    let mut h = SlashHarness::new();
+    h.config.commands.insert(
+        "review".into(),
+        whycodes_config::CustomCommandConfig {
+            template: "Review $1 with note: $ARGUMENTS".into(),
+            description: Some("review a file".into()),
+            agent: None,
+            model: None,
+            subtask: None,
+        },
+    );
+    h.run("/review src/lib.rs extra").await;
+    assert_eq!(
+        h.app.pending_prompt.as_deref(),
+        Some("Review src/lib.rs with note: src/lib.rs extra")
+    );
+    assert!(
+        h.app.messages.iter().any(|m| m.role == ChatRole::User
+            && m.content
+                .contains("Review src/lib.rs with note: src/lib.rs extra")),
+        "custom /review must enqueue the rendered template as a user turn"
+    );
+}
