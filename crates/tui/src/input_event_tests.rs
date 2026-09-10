@@ -3648,6 +3648,55 @@ fn modal_copy_fail_session_paste_header_and_chat_wheel() {
 }
 
 #[test]
+fn file_complete_history_and_help_dialog_wheel() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+
+    let mut a = app();
+    a.focus_prompt();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::FileComplete),
+        &k
+    ));
+    assert!(a.file_suggest.active || a.input_buffer.contains('@'));
+
+    let mut a = app();
+    a.file_suggest.active = true;
+    a.file_suggest.token_start = 0;
+    a.file_suggest.matches = vec![
+        whycodes_index::FileMatch {
+            rel: "a.rs".into(),
+            ..Default::default()
+        },
+        whycodes_index::FileMatch {
+            rel: "b.rs".into(),
+            ..Default::default()
+        },
+    ];
+    a.input_buffer = "@x".into();
+    a.input_cursor = 2;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputHistoryNext),
+        &k
+    ));
+    assert_eq!(a.file_suggest.selected, 1);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputHistoryPrev),
+        &k
+    ));
+    assert_eq!(a.file_suggest.selected, 0);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    assert!(a.help_scroll >= 3);
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+}
+
+#[test]
 fn command_ctrl_chord_and_paste_word_moves() {
     use crate::keymap::Action;
     let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
