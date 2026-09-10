@@ -184,6 +184,7 @@ fn pathext() -> Vec<String> {
     }
 }
 
+#[cfg(any(windows, test))]
 fn parse_pathext(value: Option<String>) -> Vec<String> {
     value
         .unwrap_or_else(|| ".EXE;.CMD;.BAT;.COM".into())
