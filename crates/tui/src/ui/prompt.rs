@@ -1150,6 +1150,21 @@ mod overflow_render_tests {
     }
 
     #[test]
+    fn empty_provider_and_model_paint_placeholders() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.agent_name = "build".into();
+        app.provider_name.clear();
+        app.model_name.clear();
+        let rows = rendered_rows(&mut app, 60, 10);
+        assert!(
+            rows.iter().any(|r| r.contains("build")),
+            "agent name must still paint, got {rows:?}"
+        );
+        let short = rendered_rows(&mut app, 20, 5);
+        assert_eq!(short.len(), 5);
+    }
+
+    #[test]
     fn busy_empty_focused_prompt_uses_ellipsis_prefix() {
         let mut app = TuiApp::new(TuiAppConfig::default());
         app.current_agent_state = AgentState::Generating;
