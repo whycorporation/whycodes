@@ -3648,6 +3648,63 @@ fn modal_copy_fail_session_paste_header_and_chat_wheel() {
 }
 
 #[test]
+fn command_ctrl_chord_and_paste_word_moves() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":".into();
+    assert!(handle_event(&mut a, ctrl('q')));
+    assert_eq!(a.command.buffer, ":", "Ctrl+q must not type into command");
+    handle_event(
+        &mut a,
+        Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)),
+    );
+    assert_eq!(a.command.buffer, ":");
+
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    a.input_cursor = token.len();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordLeft),
+        &k
+    ));
+    assert_eq!(
+        a.input_cursor, 0,
+        "word-left must jump to paste token start"
+    );
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordRight),
+        &k
+    ));
+    assert_eq!(a.input_cursor, token.len());
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputLeft),
+        &k
+    ));
+    assert_eq!(a.input_cursor, 0);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputRight),
+        &k
+    ));
+    assert_eq!(a.input_cursor, token.len());
+    a.input_cursor = token.len();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputKillWordBack),
+        &k
+    ));
+    assert!(a.input_buffer.is_empty() || !a.input_buffer.contains('\n'));
+}
+
+#[test]
 fn provider_and_model_dialogs_load_custom_from_isolated_home() {
     let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = tempfile::tempdir().unwrap();
