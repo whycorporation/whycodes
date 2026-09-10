@@ -2283,6 +2283,37 @@ fn handle_event_focus_toggle_and_page_keys() {
 }
 
 #[test]
+fn command_mode_submit_executes_and_unknown_stays() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":help".into();
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Help) | None));
+
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":nope".into();
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert!(a.status_message.contains("Unknown") || a.status_message.contains("nope"));
+}
+
+#[test]
+fn slash_suggest_up_down_steps_when_active() {
+    let mut a = app();
+    a.input_buffer = "/".into();
+    a.input_cursor = 1;
+    a.slash_suggest.refresh(&a.input_buffer);
+    assert!(a.slash_suggest.active);
+    let before = a.slash_suggest.selected;
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Up));
+    assert_eq!(a.slash_suggest.selected, before);
+}
+
+#[test]
 fn handle_paste_ignored_outside_normal_mode() {
     let mut a = app();
     a.mode = AppMode::Help;

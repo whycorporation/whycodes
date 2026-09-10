@@ -1588,3 +1588,32 @@ fn render_session_paints_user_assistant_and_tool_blocks() {
         .collect();
     assert!(text.contains("hello") || text.contains("user"), "{text}");
 }
+
+#[test]
+fn paint_chat_row_fills_and_skips_empty() {
+    let mut buf = Buffer::empty(Rect::new(0, 0, 20, 2));
+    let row = super::ChatRowPaint {
+        x: 0,
+        width: 0,
+        bg: Color::Black,
+        caret_style: Style::default(),
+    };
+    super::paint_chat_row(&mut buf, 0, &row, None, false);
+    let row = super::ChatRowPaint {
+        x: 0,
+        width: 10,
+        bg: Color::Black,
+        caret_style: Style::default().fg(Color::White),
+    };
+    super::paint_chat_row(
+        &mut buf,
+        0,
+        &row,
+        Some(&Line::from(vec![
+            Span::styled("hi", Style::default().bg(Color::Blue)),
+            Span::raw(""),
+        ])),
+        true,
+    );
+    assert_eq!(buf[(0, 0)].symbol(), "▌");
+}

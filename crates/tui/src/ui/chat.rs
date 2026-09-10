@@ -486,7 +486,7 @@ impl Widget for SparseLines {
     }
 }
 
-struct ChatRowPaint {
+pub(crate) struct ChatRowPaint {
     x: u16,
     width: u16,
     bg: Color,
