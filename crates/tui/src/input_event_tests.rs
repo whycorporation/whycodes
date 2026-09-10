@@ -4193,6 +4193,29 @@ models = ["disk-m1"]
 }
 
 #[test]
+fn fill_model_catalog_from_disk_is_a_noop_when_config_load_fails() {
+    let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+    std::fs::write(home.path().join("config.toml"), "not valid toml {{{").unwrap();
+
+    let mut a = app();
+    a.model_selection.models.clear();
+    fill_model_catalog_from_disk(&mut a);
+    assert!(
+        a.model_selection.models.is_empty(),
+        "broken config.toml must leave the catalog empty, got {:?}",
+        a.model_selection.models
+    );
+
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+    }
+}
+
+#[test]
 fn dialog_help_types_then_esc_clears_search_not_dialog() {
     let mut a = app();
     open_dialog(&mut a, DialogKind::Help);

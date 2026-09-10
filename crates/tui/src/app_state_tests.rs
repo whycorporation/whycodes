@@ -468,6 +468,75 @@ fn bg_job_status_flags_and_git_branch_fast_path() {
 }
 
 #[test]
+fn resolve_git_branch_detached_head_returns_short_sha() {
+    let dir = tempfile::tempdir().unwrap();
+    let init = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .status();
+    if init.map(|s| !s.success()).unwrap_or(true) {
+        return;
+    }
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.email", "t@example.com"])
+        .current_dir(dir.path())
+        .status();
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.name", "t"])
+        .current_dir(dir.path())
+        .status();
+    std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+    let _ = std::process::Command::new("git")
+        .args(["add", "a.txt"])
+        .current_dir(dir.path())
+        .status();
+    let commit = std::process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(dir.path())
+        .status();
+    if commit.map(|s| !s.success()).unwrap_or(true) {
+        return;
+    }
+    let sha = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir.path())
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+    let sha = sha.trim();
+    if sha.is_empty() {
+        return;
+    }
+    let _ = std::process::Command::new("git")
+        .args(["checkout", "--detach", sha])
+        .current_dir(dir.path())
+        .status();
+    let got = resolve_git_branch(dir.path());
+    assert!(
+        got.as_deref()
+            .is_some_and(|s| sha.starts_with(s) && !s.is_empty()),
+        "detached HEAD must surface a short SHA, got {got:?} sha={sha}"
+    );
+}
+
+#[test]
+fn scroll_todos_returns_false_when_the_list_cannot_move() {
+    let mut app = app();
+    assert!(!app.scroll_todos(1), "empty list cannot scroll");
+    app.replace_todos(vec![whycodes_core::TodoItem::new(
+        "1",
+        "a",
+        whycodes_core::TodoStatus::Pending,
+    )]);
+    app.todos_viewport_rows = 20;
+    assert!(
+        !app.scroll_todos(-1),
+        "a list that fits the viewport cannot scroll"
+    );
+}
+
+#[test]
 fn catalog_models_merges_config_and_dedups() {
     let mut cfg = whycodes_config::Config::default();
     cfg.providers.insert(
