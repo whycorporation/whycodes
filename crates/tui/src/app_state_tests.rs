@@ -537,6 +537,80 @@ fn scroll_todos_returns_false_when_the_list_cannot_move() {
 }
 
 #[test]
+fn move_selection_is_a_noop_on_an_empty_transcript() {
+    let mut app = app();
+    app.move_selection(1);
+    assert!(app.selected_msg.is_none());
+    app.ensure_selected_visible();
+    assert_eq!(app.scroll_offset, 0);
+}
+
+#[test]
+fn toggle_selected_thinking_on_an_assistant_without_blocks_is_a_noop() {
+    let mut app = app();
+    app.add_message(ChatRole::Assistant, "plain");
+    app.selected_msg = Some(0);
+    app.toggle_selected_thinking();
+    assert!(!app.messages[0].results_expanded);
+}
+
+#[test]
+fn ensure_selected_visible_ignores_an_out_of_range_index() {
+    let mut app = app();
+    app.add_message(ChatRole::User, "hi");
+    app.selected_msg = Some(99);
+    app.ensure_selected_visible();
+    assert_eq!(app.scroll_offset, 0);
+}
+
+#[test]
+fn load_messages_from_session_with_empty_id_skips_todo_lookup() {
+    use whycodes_session::session::Session;
+    let mut app = app();
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.id.clear();
+    session.add_user_message("anon");
+    app.load_messages_from_session(&session);
+    assert_eq!(app.messages.len(), 1);
+    assert!(app.session_id.is_empty());
+}
+
+#[test]
+fn chat_messages_from_session_tool_blocks_skip_non_text() {
+    use whycodes_core::types::{ContentBlock, ImageSource, Message, MessageContent, Role};
+    use whycodes_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.messages.push(
+        Message {
+            role: Role::Tool,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Image {
+                    source: ImageSource::Url {
+                        url: "https://example.com/x.png".into(),
+                    },
+                },
+                ContentBlock::Text {
+                    text: "tool-out".into(),
+                },
+            ]),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }
+        .stamp(),
+    );
+    let msgs = chat_messages_from_session(&session);
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].role, ChatRole::Tool);
+    assert!(
+        msgs[0].content.contains("tool-out"),
+        "image blocks in a tool role must be skipped, got {}",
+        msgs[0].content
+    );
+}
+
+#[test]
 fn catalog_models_merges_config_and_dedups() {
     let mut cfg = whycodes_config::Config::default();
     cfg.providers.insert(
