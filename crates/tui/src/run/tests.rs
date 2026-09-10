@@ -4961,6 +4961,28 @@ fn attach_live_open_error_and_raw_error() {
     .unwrap();
     assert_eq!((tw, th), (80, 24));
     term.restore(false);
+
+    let (term, _, tw, th) = attach_live(
+        color,
+        || Ok(TuiWriter::Buf(Vec::new())),
+        || Ok(()),
+        || Ok((0, 0)),
+    )
+    .unwrap();
+    assert_eq!((tw, th), (0, 0), "0×0 size must still attach with fallback");
+    term.restore(true);
+
+    let err = match attach_live(color, || Ok(TuiWriter::Fail), || Ok(()), || Ok((80, 24))) {
+        Err(e) => e,
+        Ok((term, _, _, _)) => {
+            term.restore(false);
+            panic!("Fail writer must fail enter_raw_and_alt");
+        }
+    };
+    assert!(
+        err.to_string().contains("alternate") || err.to_string().contains("fail"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -6228,6 +6250,45 @@ fn enter_raw_and_alt_ok_and_restore_backend() {
 }
 
 #[test]
+fn enter_raw_and_alt_write_fail_disables_raw() {
+    let mut fail = TuiWriter::Fail;
+    let err = enter_raw_and_alt(&mut fail, || Ok(())).expect_err("alt-screen write must fail");
+    assert!(
+        err.to_string().contains("alternate") || err.to_string().contains("fail"),
+        "{err}"
+    );
+}
+
+#[test]
+fn read_event_batch_poll_err_after_first() {
+    set_crossterm_stub(std::collections::VecDeque::from([press(KeyCode::Char(
+        'a',
+    ))]));
+    set_crossterm_poll_err(true);
+    let err = read_event_batch().expect_err("drain poll err");
+    assert!(
+        err.to_string().contains("poll") || err.to_string().contains("failed"),
+        "{err}"
+    );
+    set_crossterm_poll_err(false);
+    clear_crossterm_stub();
+}
+
+#[test]
+fn panic_restore_falls_back_when_writer_open_fails() {
+    set_open_writer_fail(true);
+    restore_terminal_on_panic();
+    set_open_writer_fail(false);
+}
+
+#[test]
+fn on_terminal_new_failed_and_log_resize_failed_are_safe() {
+    on_terminal_new_failed(&"backend");
+    log_resize_failed("live", "too small");
+    log_resize_failed("headless", "too small");
+}
+
+#[test]
 fn loop_term_headless_and_live_buf_draw() {
     let color = crate::color::ColorMode::Ansi256;
     let mut term = LoopTerm::headless(color).unwrap();
@@ -6253,6 +6314,11 @@ fn loop_term_headless_and_live_buf_draw() {
     let (_area, snapshot) = live.draw_app(&mut app).unwrap();
     assert!(snapshot.is_some());
     live.restore(true);
+
+    let mut tiny = LoopTerm::headless(color).unwrap();
+    tiny.resize(Rect::new(0, 0, 0, 0));
+    let _ = tiny.clear();
+    tiny.restore(false);
 }
 
 #[tokio::test]
@@ -6706,6 +6772,66 @@ async fn run_live_crossterm_read_error_exits() {
     set_headless_live(false);
     set_crossterm_read_err(false);
     clear_crossterm_stub();
+}
+
+#[tokio::test]
+async fn run_headless_draw_fail_exits() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    set_headless_events(Some(std::collections::VecDeque::from([press(
+        KeyCode::Char('x'),
+    )])));
+    set_draw_fail(true);
+    let err = super::run(boot_opts(dir.path(), "sk-test"))
+        .await
+        .expect_err("draw fail should abort the loop");
+    assert!(
+        err.to_string().contains("draw") || err.to_string().contains("failed"),
+        "{err}"
+    );
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    set_draw_fail(false);
+}
+
+#[tokio::test]
+async fn run_headless_clear_fail_still_draws_then_quits() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    set_headless_events(Some(std::collections::VecDeque::from([
+        Event::Paste("paste-echo".into()),
+        ctrl('q'),
+    ])));
+    set_clear_fail(true);
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    set_clear_fail(false);
+    assert_eq!(exit, TuiExit::Quit);
 }
 
 #[tokio::test]

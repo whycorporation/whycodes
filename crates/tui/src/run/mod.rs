@@ -578,6 +578,10 @@ enum TuiWriter {
     Stdout(io::Stdout),
     /// In-memory sink so `LoopTerm::live` can be unit-tested without a TTY.
     Buf(Vec<u8>),
+    /// Always-failing sink so `Terminal::new` / alt-screen `execute!` error
+    /// arms run in tests without a real TTY.
+    #[cfg(test)]
+    Fail,
 }
 
 impl Write for TuiWriter {
@@ -586,6 +590,8 @@ impl Write for TuiWriter {
             Self::Console(f) => f.write(buf),
             Self::Stdout(s) => s.write(buf),
             Self::Buf(b) => b.write(buf),
+            #[cfg(test)]
+            Self::Fail => Err(io::Error::other("tui writer fail")),
         }
     }
 
@@ -594,6 +600,8 @@ impl Write for TuiWriter {
             Self::Console(f) => f.flush(),
             Self::Stdout(s) => s.flush(),
             Self::Buf(b) => b.flush(),
+            #[cfg(test)]
+            Self::Fail => Err(io::Error::other("tui writer fail")),
         }
     }
 }
@@ -611,6 +619,9 @@ thread_local! {
         const { std::cell::RefCell::new(VecDeque::new()) };
     static CROSSTERM_POLL_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static CROSSTERM_READ_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static DRAW_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CLEAR_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static OPEN_WRITER_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static TEST_CATALOG_WINDOW: std::cell::RefCell<Option<(String, String, u32)>> =
         const { std::cell::RefCell::new(None) };
     static TEST_SUGGEST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
@@ -676,6 +687,36 @@ fn set_crossterm_read_err(v: bool) {
 #[cfg(test)]
 fn take_crossterm_read_err() -> bool {
     CROSSTERM_READ_ERR.with(|c| c.replace(false))
+}
+
+#[cfg(test)]
+fn set_draw_fail(v: bool) {
+    DRAW_FAIL.with(|c| c.set(v));
+}
+
+#[cfg(test)]
+fn take_draw_fail() -> bool {
+    DRAW_FAIL.with(|c| c.replace(false))
+}
+
+#[cfg(test)]
+fn set_clear_fail(v: bool) {
+    CLEAR_FAIL.with(|c| c.set(v));
+}
+
+#[cfg(test)]
+fn take_clear_fail() -> bool {
+    CLEAR_FAIL.with(|c| c.replace(false))
+}
+
+#[cfg(test)]
+fn set_open_writer_fail(v: bool) {
+    OPEN_WRITER_FAIL.with(|c| c.set(v));
+}
+
+#[cfg(test)]
+fn take_open_writer_fail() -> bool {
+    OPEN_WRITER_FAIL.with(|c| c.replace(false))
 }
 
 #[cfg(test)]
@@ -766,15 +807,9 @@ enum LoopTerm {
 impl LoopTerm {
     fn live(out: TuiWriter, color_mode: ColorMode) -> anyhow::Result<Self> {
         let backend = QuantizingBackend::new(CrosstermBackend::new(out), color_mode);
-        Ok(Self::Live(Terminal::new(backend).inspect_err(|e| {
-            let _ = disable_raw_mode();
-            whycodes_core::logging::emit(
-                "whycodes_tui",
-                "error",
-                "tui.terminal_new_failed",
-                Some(serde_json::json!({ "error": e.to_string() })),
-            );
-        })?))
+        Ok(Self::Live(
+            Terminal::new(backend).inspect_err(on_terminal_new_failed)?,
+        ))
     }
 
     fn headless(color_mode: ColorMode) -> anyhow::Result<Self> {
@@ -786,18 +821,22 @@ impl LoopTerm {
         match self {
             Self::Live(t) => {
                 if let Err(e) = t.resize(area) {
-                    tracing::debug!(error = %e, "live terminal resize failed");
+                    log_resize_failed("live", e);
                 }
             }
             Self::Headless(t) => {
                 if let Err(e) = t.resize(area) {
-                    tracing::debug!(error = %e, "headless terminal resize failed");
+                    log_resize_failed("headless", e);
                 }
             }
         }
     }
 
     fn clear(&mut self) -> anyhow::Result<()> {
+        #[cfg(test)]
+        if take_clear_fail() {
+            return Err(anyhow::anyhow!("tui clear failed"));
+        }
         match self {
             Self::Live(t) => t.clear().map_err(Into::into),
             Self::Headless(t) => t.clear().map_err(Into::into),
@@ -808,6 +847,10 @@ impl LoopTerm {
         &mut self,
         app: &mut TuiApp,
     ) -> anyhow::Result<(ratatui::layout::Rect, Option<crate::cell_grid::CellGrid>)> {
+        #[cfg(test)]
+        if take_draw_fail() {
+            return Err(anyhow::anyhow!("tui draw failed"));
+        }
         match self {
             Self::Live(t) => draw_into(t, app),
             Self::Headless(t) => draw_into(t, app),
@@ -825,6 +868,20 @@ impl LoopTerm {
             }
         }
     }
+}
+
+fn on_terminal_new_failed(e: &impl std::fmt::Display) {
+    let _ = disable_raw_mode();
+    whycodes_core::logging::emit(
+        "whycodes_tui",
+        "error",
+        "tui.terminal_new_failed",
+        Some(serde_json::json!({ "error": e.to_string() })),
+    );
+}
+
+fn log_resize_failed(kind: &str, e: impl std::fmt::Display) {
+    tracing::debug!(error = %e, "{kind} terminal resize failed");
 }
 
 fn draw_into<B: ratatui::backend::Backend>(
@@ -929,6 +986,11 @@ fn default_agent_info(name: &str) -> whycodes_core::types::AgentInfo {
 
 /// Leave alt-screen / raw mode from the panic hook (and from tests).
 fn restore_terminal_on_panic() {
+    #[cfg(test)]
+    if take_open_writer_fail() {
+        let _ = disable_raw_mode();
+        return;
+    }
     if let Ok(mut out) = open_tui_writer() {
         restore_terminal_on(&mut out);
     } else {
