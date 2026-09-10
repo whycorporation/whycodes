@@ -322,3 +322,21 @@ fn paint_ranges_skips_empty_grid_and_out_of_bounds_rows() {
     };
     assert!(paint_ranges_clipped(&cells, 0, 0, 3, 0, Some(clip)).is_empty());
 }
+
+#[test]
+fn paint_ranges_clipped_skips_inverted_col_range_and_past_height() {
+    let cells = grid_padded(&["abcd", "efgh"], 6);
+    let inverted = ClipRect {
+        x: 5,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    let ranges = paint_ranges_clipped(&cells, 0, 0, 2, 0, Some(inverted));
+    assert!(
+        ranges.is_empty(),
+        "clip to the right of the drag must skip the row, got {ranges:?}"
+    );
+    let past = paint_ranges(&cells, 0, 8, 3, 10);
+    assert!(past.is_empty());
+}

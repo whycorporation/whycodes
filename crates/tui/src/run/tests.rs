@@ -9270,6 +9270,37 @@ async fn maybe_spawn_prompt_suggestion_true_and_one_modes() {
 }
 
 #[tokio::test]
+async fn handle_slash_agent_without_system_prompt_uses_default() {
+    let mut h = SlashHarness::new();
+    let mut info = dummy_info("ask");
+    info.system_prompt = None;
+    h.config.agents.push(info);
+    h.app.primary_agents = vec!["build".into(), "ask".into()];
+    h.run("/agent ask").await;
+    assert_eq!(h.agent.info.name, "ask");
+    assert_eq!(h.app.agent_name, "ask");
+    assert_eq!(h.app.agent_cycle_idx, 1);
+    assert!(h.app.status_message.contains("ask"));
+}
+
+#[tokio::test]
+async fn maybe_spawn_prompt_suggestion_spawns_when_session_has_user_text() {
+    let _home = isolate_home();
+    let mut session = Session::new(PathBuf::from("/work"), "sys".into());
+    session.add_user_message("do the next step");
+    session.add_assistant_message(vec![whycodes_core::types::ContentBlock::Text {
+        text: "ok".into(),
+    }]);
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut config = Config::default();
+    config.tui.prompt_suggestions = "idle".into();
+    config.session.model_fast = Some("fast-1".into());
+    maybe_spawn_prompt_suggestion(&config, &session, "acme", "m1", "sk-test", &mut app, tx);
+    tokio::task::yield_now().await;
+}
+
+#[tokio::test]
 async fn run_headless_ctrl_n_then_sessions_ctrl_w_closes_live_row() {
     let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();

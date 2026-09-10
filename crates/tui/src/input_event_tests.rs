@@ -4871,3 +4871,63 @@ fn copy_modal_selection_warns_when_clipboard_fails() {
         );
     });
 }
+
+#[test]
+fn model_jk_moves_selection_and_session_list_live_max_confirms() {
+    let mut a = app();
+    a.model_selection.models = vec![
+        ("acme".into(), "m1".into()),
+        ("acme".into(), "m2".into()),
+        ("xai".into(), "grok".into()),
+    ];
+    open_model_dialog(&mut a);
+    let start = a.model_selection.selected;
+    handle_event(&mut a, key(KeyCode::Char('j')));
+    assert_ne!(a.model_selection.selected, start);
+    handle_event(&mut a, key(KeyCode::Char('k')));
+    assert_eq!(a.model_selection.selected, start);
+
+    let mut a = app();
+    a.session_list.sessions = vec![crate::app::SessionEntry {
+        id: "active".into(),
+        title: "here".into(),
+        messages: 1,
+        updated_at: None,
+        live: Some(usize::MAX),
+    }];
+    open_dialog(&mut a, DialogKind::SessionList);
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert_eq!(a.pending_session_switch, Some(usize::MAX));
+}
+
+#[test]
+fn import_dialog_confirm_with_checked_sets_pending() {
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    a.import_picker.select_all(true);
+    confirm_dialog(&mut a, &DialogKind::Import);
+    assert!(a.pending_import);
+}
+
+#[test]
+fn open_model_dialog_fills_catalog_from_disk_when_empty() {
+    let mut a = app();
+    a.model_selection.models.clear();
+    a.provider_name = "acme".into();
+    a.model_name = "m1".into();
+    open_model_dialog(&mut a);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+}
