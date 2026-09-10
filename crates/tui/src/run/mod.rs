@@ -1383,95 +1383,18 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 }
 
                 if just_first {
-                    // Paint, then hydrate. Deferred boot work that is not needed
-                    // for the first 80×24 home frame (issue #49).
-                    // Syntax theme was skipped in `TuiApp::new` (syntect cache
-                    // is ~2 ms cold).
-                    let hydrate_before = capture_first_frame_hydrate_chrome(&app);
-                    app.config.theme.apply_syntax_theme();
-                    // Auth plugin dir walk was deferred from `async_main`.
-                    {
-                        let mut dirs = Vec::new();
-                        if let Ok(p) = whycodes_config::Config::default_path()
-                            && let Some(parent) = p.parent()
-                        {
-                            dirs.push(parent.join("plugins"));
-                        }
-                        dirs.push(whycodes_core::project_dir(&project_dir).join("plugins"));
-                        let loaded = whycodes_auth::plugin::load_from_dirs(&dirs);
-                        if loaded > 0 {
-                            tracing::debug!(
-                                count = loaded,
-                                "hydrated auth plugins after first frame"
-                            );
-                        }
-                    }
-                    // Real workspace file index (canonicalize + scan) — empty
-                    // index was used for the first frame so `@` picker does not
-                    // block TTFF.
-                    {
-                        let real = whycodes_index::WorkspaceIndex::start(
-                            whycodes_index::WorkspaceIndex::project_roots(&project_dir),
-                        );
-                        app.set_file_index(real.clone());
-                        rt.agent.set_file_index(real.clone());
-                        file_index = real;
-                    }
-                    // Shell plugins (plugins.toml + plugin.json discovery).
-                    rt.agent.hydrate_plugins(Some(project_dir.as_path()));
-                    // Full system prompt: AGENTS.md + sibling files + memory.
-                    // Boot used only runtime context; hydrate the rest now.
-                    {
-                        let base = rt.agent.system_prompt();
-                        let with_agents =
-                            whycodes_agent::agent::Agent::with_agents_md(&base, &project_dir);
-                        let full = with_project_memory(&with_agents, &project_dir, &config, None);
-                        rt.session.set_system_prompt(&full);
-                    }
-                    // Session picker — home paints with empty list then fills.
-                    if app.session_list.sessions.is_empty() {
-                        let entries = load_session_entries();
-                        if !entries.is_empty() {
-                            app.session_list.sessions = entries;
-                        }
-                    }
-                    // API key was deferred before `whycodes_tui::run` to avoid
-                    // blocking `auth.json` I/O before first paint. Fetch the
-                    // env/config key synchronously now; OAuth is async and
-                    // stays lazy until the first turn (`ensure_api_key`).
-                    if api_key.is_empty() {
-                        let env_var = format!("{}_API_KEY", provider.to_uppercase());
-                        let mut fetched: Option<String> = None;
-                        if let Ok(v) = std::env::var(&env_var)
-                            && !v.is_empty()
-                        {
-                            fetched = Some(v);
-                        }
-                        if fetched.is_none()
-                            && let Some(pc) = config.get_provider(&provider)
-                            && let Some(k) = &pc.api_key
-                            && !k.is_empty()
-                        {
-                            fetched = Some(k.clone());
-                        }
-                        if let Some(k) = fetched {
-                            api_key = k;
-                            app.status_message = format!(
-                                "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
-                                app.agent_name, provider, model
-                            );
-                        }
-                    }
-
-                    // After first paint: MCP connect + code RAG auto-index.
-                    // Both can block; doing them here keeps startup feel snappy.
-                    // Empty `mcp_servers` is a no-op (no stdio). Tests isolate
-                    // `WHYCODES_HOME` so this cannot spawn a user MCP server.
-                    rt.agent.load_mcp(&config).await;
-                    maybe_session_auto_index(&project_dir, &config, &mut app);
-                    refresh_sidebar(&mut app, &config, &file_index);
-                    load_app_todos(&mut app);
-                    settle_first_frame_hydrate(&mut app, &hydrate_before, animate);
+                    hydrate_after_first_frame(
+                        &mut app,
+                        &mut rt,
+                        &mut file_index,
+                        &mut api_key,
+                        &provider,
+                        &model,
+                        &config,
+                        &project_dir,
+                        animate,
+                    )
+                    .await;
                 }
             }
 
@@ -4571,6 +4494,114 @@ fn load_app_todos(app: &mut TuiApp) {
             Some(app.session_id.as_str())
         },
     ));
+}
+
+/// Paint, then hydrate. Deferred boot work the first 80×24 home frame does
+/// not need (issue #49).
+#[allow(clippy::too_many_arguments)]
+async fn hydrate_after_first_frame(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    file_index: &mut Arc<whycodes_index::WorkspaceIndex>,
+    api_key: &mut String,
+    provider: &str,
+    model: &str,
+    config: &Config,
+    project_dir: &std::path::Path,
+    animate: bool,
+) {
+    let hydrate_before = capture_first_frame_hydrate_chrome(app);
+    app.config.theme.apply_syntax_theme();
+    hydrate_auth_plugins(project_dir);
+    let real = start_workspace_file_index(project_dir);
+    app.set_file_index(real.clone());
+    rt.agent.set_file_index(real.clone());
+    *file_index = real;
+    rt.agent.hydrate_plugins(Some(project_dir));
+    hydrate_full_system_prompt(rt, project_dir, config);
+    hydrate_session_picker(app);
+    hydrate_deferred_api_key(api_key, provider, model, config, app);
+    rt.agent.load_mcp(config).await;
+    maybe_session_auto_index(project_dir, config, app);
+    refresh_sidebar(app, config, file_index);
+    load_app_todos(app);
+    settle_first_frame_hydrate(app, &hydrate_before, animate);
+}
+
+fn hydrate_auth_plugins(project_dir: &std::path::Path) -> usize {
+    let mut dirs = Vec::new();
+    if let Ok(p) = whycodes_config::Config::default_path()
+        && let Some(parent) = p.parent()
+    {
+        dirs.push(parent.join("plugins"));
+    }
+    dirs.push(whycodes_core::project_dir(project_dir).join("plugins"));
+    let loaded = whycodes_auth::plugin::load_from_dirs(&dirs);
+    if loaded > 0 {
+        tracing::debug!(count = loaded, "hydrated auth plugins after first frame");
+    }
+    loaded
+}
+
+fn start_workspace_file_index(
+    project_dir: &std::path::Path,
+) -> Arc<whycodes_index::WorkspaceIndex> {
+    whycodes_index::WorkspaceIndex::start(whycodes_index::WorkspaceIndex::project_roots(
+        project_dir,
+    ))
+}
+
+fn hydrate_full_system_prompt(
+    rt: &mut SessionRuntime,
+    project_dir: &std::path::Path,
+    config: &Config,
+) {
+    let base = rt.agent.system_prompt();
+    let with_agents = whycodes_agent::agent::Agent::with_agents_md(&base, project_dir);
+    let full = with_project_memory(&with_agents, project_dir, config, None);
+    rt.session.set_system_prompt(&full);
+}
+
+fn hydrate_session_picker(app: &mut TuiApp) {
+    if app.session_list.sessions.is_empty() {
+        let entries = load_session_entries();
+        if !entries.is_empty() {
+            app.session_list.sessions = entries;
+        }
+    }
+}
+
+fn hydrate_deferred_api_key(
+    api_key: &mut String,
+    provider: &str,
+    model: &str,
+    config: &Config,
+    app: &mut TuiApp,
+) {
+    if !api_key.is_empty() {
+        return;
+    }
+    let env_var = format!("{}_API_KEY", provider.to_uppercase());
+    let mut fetched: Option<String> = None;
+    if let Ok(v) = std::env::var(&env_var)
+        && !v.is_empty()
+    {
+        fetched = Some(v);
+    }
+    if fetched.is_none()
+        && let Some(pc) = config.get_provider(provider)
+        && let Some(k) = &pc.api_key
+        && !k.is_empty()
+    {
+        fetched = Some(k.clone());
+    }
+    if let Some(k) = fetched {
+        *api_key = k;
+        app.status_message = format!(
+            "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
+            app.agent_name, provider, model
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

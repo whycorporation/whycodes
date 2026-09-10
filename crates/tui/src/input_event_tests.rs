@@ -1006,6 +1006,90 @@ fn todo_body_click_focuses_list_and_keys_scroll() {
 }
 
 #[test]
+fn mouse_clicks_todos_header_tasks_sidebar_and_chat_scrollbar() {
+    let mut a = app();
+    overflowing_todos(&mut a);
+    a.todos_collapsed = false;
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 2, 2));
+    assert!(a.todos_collapsed, "todos header click must collapse");
+
+    let mut a = app();
+    a.upsert_subagent(crate::app::SubagentUpdate {
+        id: "kid-header".into(),
+        kind: "explore".into(),
+        description: "d".into(),
+        status: "running".into(),
+        activity: String::new(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    a.tasks_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 1,
+        width: 20,
+        height: 1,
+    }));
+    a.tasks_collapsed = false;
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 2, 1));
+    assert!(a.tasks_collapsed);
+
+    let mut a = app();
+    a.upsert_subagent(crate::app::SubagentUpdate {
+        id: "kid".into(),
+        kind: "explore".into(),
+        description: "d".into(),
+        status: "running".into(),
+        activity: String::new(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    a.tasks_row_hits.push((
+        Rect {
+            x: 0,
+            y: 4,
+            width: 20,
+            height: 1,
+        },
+        "kid".into(),
+    ));
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 2, 4));
+    assert_eq!(a.open_subagent.as_deref(), Some("kid"));
+
+    let mut a = app();
+    a.sidebar.tab_hits[0].set_rect(Some(Rect {
+        x: 0,
+        y: 0,
+        width: 8,
+        height: 1,
+    }));
+    a.sidebar.visible = false;
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 2, 0));
+    assert!(a.sidebar.visible);
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "scroll me");
+    a.chat_scrollbar_hit = Some(Rect {
+        x: 40,
+        y: 1,
+        width: 1,
+        height: 10,
+    });
+    a.chat_scroll_total = 100;
+    a.chat_viewport_rows = 10;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 40, 2),
+    );
+    assert!(a.chat_scrollbar_grab.is_some());
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Drag(MouseButton::Left), 40, 8),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 40, 8));
+    assert!(a.chat_scrollbar_grab.is_none());
+}
+
+#[test]
 fn coalesce_wheels_over_todos_do_not_move_chat() {
     let mut a = app();
     overflowing_todos(&mut a);

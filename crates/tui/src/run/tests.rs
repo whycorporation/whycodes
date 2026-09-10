@@ -2059,6 +2059,86 @@ fn auto_index_zero_chunks_does_not_toast() {
 }
 
 #[tokio::test]
+async fn hydrate_after_first_frame_fills_picker_index_and_key() {
+    let (_lock, home) = isolate_home_fresh();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("lib.rs"), "pub fn x() {}").unwrap();
+    std::fs::write(dir.path().join("AGENTS.md"), "# agents\n").unwrap();
+    let plugins = home.path().join("plugins").join("hydrate-auth");
+    std::fs::create_dir_all(&plugins).unwrap();
+    std::fs::write(
+        plugins.join("plugin.json"),
+        r#"{
+            "kind": "auth",
+            "auth": {
+                "provider": "tui-hydrate-fn",
+                "label": "HydrateFn",
+                "flow": "device-code",
+                "client_id": "abc",
+                "authorize_url": "https://example.com/device/code",
+                "token_url": "https://example.com/token",
+                "scopes": "read"
+            }
+        }"#,
+    )
+    .unwrap();
+    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+    session.add_user_message("hydrate picker");
+    persist_session_best_effort(&session, "hydrate-fn");
+
+    let loaded = hydrate_auth_plugins(dir.path());
+    assert!(loaded > 0, "isolated plugin dir must load");
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.project_dir = dir.path().to_path_buf();
+    app.agent_name = "plan".into();
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "boot".into());
+    let mut file_index = whycodes_index::WorkspaceIndex::start(Vec::new());
+    let mut api_key = String::new();
+    let mut config = Config::default();
+    config.providers.insert(
+        "acme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "acme".into(),
+            api_key: Some("sk-hydrate".into()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec!["m1".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    hydrate_after_first_frame(
+        &mut app,
+        &mut rt,
+        &mut file_index,
+        &mut api_key,
+        "acme",
+        "m1",
+        &config,
+        dir.path(),
+        false,
+    )
+    .await;
+    assert_eq!(api_key, "sk-hydrate");
+    assert!(
+        !app.session_list.sessions.is_empty(),
+        "hydrate must fill session picker from persisted session"
+    );
+    assert!(
+        app.status_message.contains("Tab focus"),
+        "{}",
+        app.status_message
+    );
+    let mut already = String::from("keep");
+    hydrate_deferred_api_key(&mut already, "acme", "m1", &config, &mut app);
+    assert_eq!(already, "keep");
+    let _ = home;
+}
+
+#[tokio::test]
 async fn spawn_model_context_fetch_sends_window_from_live_http() {
     let _home = isolate_home();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
