@@ -11,6 +11,10 @@
   <a href="https://github.com/sponsors/whycorporation"><img src="https://img.shields.io/badge/sponsor-whycorporation-ea4aaa" alt="Sponsor WhyCodes"></a>
 </p>
 
+<p align="center">
+  English · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
 **A fast, provider-independent coding agent for the terminal, written in Rust.**
 
 WhyCodes reads, writes and edits files, runs commands, searches the workspace
