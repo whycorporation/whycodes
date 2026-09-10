@@ -4301,3 +4301,30 @@ fn todo_body_click_without_overflow_does_not_steal_focus() {
     handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 4, 5));
     assert_eq!(a.focus, FocusPane::Prompt);
 }
+
+#[test]
+fn chat_drag_copy_success_toasts_char_count() {
+    crate::clipboard::with_copy_stub(true, || {
+        let mut a = app();
+        a.add_message(ChatRole::User, "copy me");
+        a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![
+            (0..12).map(|_| "x".to_string()).collect(),
+            (0..12).map(|_| "y".to_string()).collect(),
+        ]);
+        handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 1, 0));
+        handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 6, 1));
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 6, 1));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Copied") && t.message.contains("chars")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}

@@ -3273,6 +3273,27 @@ async fn handle_slash_more_aliases_and_connect_with_key() {
     h.api_key.clear();
     h.run("/connect").await;
 
+    h.provider = "no-such-oauth".into();
+    h.app.provider_name = "no-such-oauth".into();
+    h.api_key.clear();
+    h.run("/connect").await;
+    assert!(
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Still no key") || t.message.contains("no API key"))
+            || h.app.status_message.contains("no API key"),
+        "connect without oauth or key must warn, toasts={:?} status={}",
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>(),
+        h.app.status_message
+    );
+
     let prev_ci = std::env::var_os("CI");
     let prev_skip = std::env::var_os("WHYCODES_SKIP_IMPORT");
     unsafe {
