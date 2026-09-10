@@ -722,6 +722,15 @@ fn provider_form_types_and_backspaces() {
     assert_eq!(a.provider_dialog.form_headers, "h");
     handle_event(&mut a, key(KeyCode::Backspace));
     assert!(a.provider_dialog.form_headers.is_empty());
+
+    a.provider_dialog.active_field = 1;
+    a.provider_dialog.form_api_key = "sk".into();
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert_eq!(a.provider_dialog.form_api_key, "s");
+    a.provider_dialog.active_field = 2;
+    a.provider_dialog.form_base_url = "https".into();
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert_eq!(a.provider_dialog.form_base_url, "http");
 }
 
 #[test]
@@ -4104,6 +4113,17 @@ fn confirm_effort_mode_question_and_empty_import() {
     handle_event(&mut a, key(KeyCode::End));
     handle_event(&mut a, key(KeyCode::Char('j')));
     handle_event(&mut a, key(KeyCode::Char('k')));
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_list_total = crate::theme::ThemeName::ALL.len();
+    handle_event(&mut a, key(KeyCode::End));
+    assert_eq!(
+        a.theme_selected,
+        crate::theme::ThemeName::ALL.len().saturating_sub(1)
+    );
+    handle_event(&mut a, key(KeyCode::Home));
+    assert_eq!(a.theme_selected, 0);
 
     let mut a = app();
     open_dialog(&mut a, DialogKind::Help);

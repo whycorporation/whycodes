@@ -1892,6 +1892,13 @@ fn paint_grep_match_and_literal_cover_edges() {
     let re = super::compile_grep_highlighter("foo").expect("re");
     let spans = super::paint_grep_match("xxfooyy", Some(&re), base, hit);
     assert!(spans.len() >= 2);
+    let miss = super::compile_grep_highlighter("zzz").expect("re");
+    let none_hit = super::paint_grep_match("hello", Some(&miss), base, hit);
+    assert_eq!(none_hit.len(), 1);
+    assert_eq!(none_hit[0].content.as_ref(), "hello");
+    let lit_miss = super::paint_grep_literal("hello", "zzz", base, hit);
+    assert_eq!(lit_miss.len(), 1);
+    assert_eq!(lit_miss[0].content.as_ref(), "hello");
     assert!(super::compile_grep_highlighter("").is_none());
     assert!(super::compile_grep_highlighter("   ").is_none());
 }
