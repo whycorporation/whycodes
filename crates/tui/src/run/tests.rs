@@ -9443,3 +9443,34 @@ async fn run_headless_ctrl_n_then_sessions_ctrl_w_closes_live_row() {
     }
     assert_eq!(exit, TuiExit::Quit);
 }
+
+#[test]
+fn apply_turn_event_todowrite_replaces_the_sticky_list() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_turn_event(
+        &mut app,
+        TurnEvent::ToolStart {
+            id: "todo-1".into(),
+            name: "todowrite".into(),
+            input: serde_json::json!({
+                "todos": [{"id": "a", "content": "ship coverage", "status": "pending"}]
+            }),
+        },
+    );
+    assert_eq!(app.todos.len(), 1);
+    assert_eq!(app.todos[0].content, "ship coverage");
+    assert!(app.status_message.contains("tool:"));
+}
+
+#[test]
+fn maybe_offer_update_skips_when_a_dialog_is_already_open() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.available_update = Some(UpdateOffer::SelfInstall("9.9.9".into()));
+    crate::input::open_dialog(&mut app, DialogKind::Help);
+    maybe_offer_update(&mut app);
+    assert!(
+        !app.update_prompted,
+        "an open dialog must block the update prompt"
+    );
+    assert!(matches!(app.dialogs.active(), Some(DialogKind::Help)));
+}

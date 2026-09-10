@@ -5313,3 +5313,55 @@ fn unbracketed_paste_keeps_mouse_move_events() {
         "Moved must survive coalescing, got {events:?}"
     );
 }
+
+#[test]
+fn coalesce_unbracketed_paste_skips_command_mode() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    let mut events = vec![key(KeyCode::Char('a')); 40];
+    let before = events.clone();
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert_eq!(
+        events, before,
+        "command mode must not fold a key flood into Paste"
+    );
+}
+
+#[test]
+fn esc_on_import_settings_confirm_marks_declined() {
+    let mut a = app();
+    a.confirm("Import settings", "Copy?", ConfirmAction::ImportSettings);
+    assert!(matches!(
+        a.dialogs.active(),
+        Some(DialogKind::Confirm {
+            on_confirm: ConfirmAction::ImportSettings,
+            ..
+        })
+    ));
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert!(!a.dialogs.is_open(), "Esc must dismiss the import confirm");
+}
+
+#[test]
+fn open_effort_dialog_toasts_when_the_model_has_no_levels() {
+    let mut a = app();
+    a.provider_name = "acme".into();
+    a.model_name = "echo".into();
+    open_effort_dialog(&mut a);
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("no reasoning-effort")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !a.dialogs.is_open(),
+        "empty effort catalog must not open a picker"
+    );
+}
