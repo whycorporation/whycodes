@@ -1117,6 +1117,39 @@ fn home_recents_and_layout_cache_hits() {
 }
 
 #[test]
+fn message_row_layout_hits_height_then_line_cache() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "hello cache");
+    app.add_message(ChatRole::Assistant, "world cache");
+    let width = 80u16;
+    let (starts, total) = message_row_layout_mut(&mut app, width);
+    assert!(
+        app.messages
+            .iter()
+            .all(|m| m.layout_cache.is_some() && m.line_cache.is_some())
+    );
+
+    let (s_hit, t_hit) = super::message_row_layout(&app, width);
+    assert_eq!(starts, s_hit);
+    assert_eq!(total, t_hit);
+
+    for m in &mut app.messages {
+        m.layout_cache = None;
+    }
+    let (s_line, t_line) = super::message_row_layout(&app, width);
+    assert_eq!(starts, s_line);
+    assert_eq!(total, t_line);
+
+    let (s_mut, t_mut) = message_row_layout_mut(&mut app, width);
+    assert_eq!(starts, s_mut);
+    assert_eq!(total, t_mut);
+    assert!(
+        app.messages.iter().all(|m| m.layout_cache.is_some()),
+        "mut layout must refill height cache from line_cache"
+    );
+}
+
+#[test]
 fn golden_home_and_session_paint_stable_ascii() {
     use crate::app::{ChatRole, SessionEntry, TuiApp};
     use crate::config::TuiAppConfig;

@@ -476,6 +476,54 @@ fn catalog_models_merges_config_and_dedups() {
 }
 
 #[test]
+fn catalog_models_merges_oauth_token_store_suggestions() {
+    let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+
+    let json = r#"{
+        "kind": "auth",
+        "auth": {
+            "provider": "tui-cov-oauth-cat",
+            "label": "CovCat",
+            "flow": "device-code",
+            "client_id": "abc",
+            "authorize_url": "https://example.com/device/code",
+            "token_url": "https://example.com/token",
+            "scopes": "read",
+            "suggested_models": ["oauth-m1"]
+        }
+    }"#;
+    whycodes_auth::plugin::register_from_json(json).expect("register oauth plugin");
+    whycodes_auth::TokenStore::new(dir.path())
+        .set(
+            "tui-cov-oauth-cat",
+            whycodes_auth::ProviderAuth {
+                method: "oauth".into(),
+                token: whycodes_auth::OAuthToken {
+                    access_token: "tok".into(),
+                    refresh_token: None,
+                    expires_at: None,
+                    extra: Default::default(),
+                },
+            },
+        )
+        .expect("write token");
+
+    let cfg = whycodes_config::Config::default();
+    let models = catalog_models(&cfg);
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+    }
+    assert!(
+        models.contains(&("tui-cov-oauth-cat".into(), "oauth-m1".into())),
+        "OAuth store must merge suggested models, got {models:?}"
+    );
+}
+
+#[test]
 fn prompt_paste_image_and_scroll_helpers() {
     let mut state = app();
     assert!(!state.prompt_has_content());
@@ -679,6 +727,71 @@ fn update_chrome_hover_clears_and_sets_hits() {
 }
 
 #[test]
+fn update_chrome_hover_tracks_active_slash_and_file_rows() {
+    use ratatui::layout::Rect;
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.slash_suggest.active = true;
+    app.slash_suggest.matches = vec![0, 1];
+    app.slash_suggest.hovered = None;
+    app.slash_suggest.list_hit = Some(Rect {
+        x: 2,
+        y: 10,
+        width: 20,
+        height: 2,
+    });
+    app.slash_suggest.list_scroll_start = 0;
+    app.file_suggest.active = true;
+    app.file_suggest.matches = vec![
+        whycodes_index::FileMatch {
+            rel: "a.rs".into(),
+            ..Default::default()
+        },
+        whycodes_index::FileMatch {
+            rel: "b.rs".into(),
+            ..Default::default()
+        },
+    ];
+    app.file_suggest.hovered = None;
+    app.file_suggest.list_hit = Some(Rect {
+        x: 2,
+        y: 20,
+        width: 20,
+        height: 2,
+    });
+    app.file_suggest.list_scroll_start = 0;
+
+    app.mouse_pos = Some((5, 10));
+    assert!(app.update_chrome_hover());
+    assert_eq!(app.slash_suggest.hovered, Some(0));
+
+    app.mouse_pos = Some((5, 11));
+    assert!(app.update_chrome_hover());
+    assert_eq!(app.slash_suggest.hovered, Some(1));
+
+    app.mouse_pos = Some((50, 10));
+    assert!(app.update_chrome_hover());
+    assert!(
+        app.slash_suggest.hovered.is_none(),
+        "leaving the slash list must clear hover"
+    );
+
+    app.mouse_pos = Some((5, 20));
+    assert!(app.update_chrome_hover());
+    assert_eq!(app.file_suggest.hovered, Some(0));
+
+    app.mouse_pos = Some((5, 21));
+    assert!(app.update_chrome_hover());
+    assert_eq!(app.file_suggest.hovered, Some(1));
+
+    app.mouse_pos = Some((50, 20));
+    assert!(app.update_chrome_hover());
+    assert!(
+        app.file_suggest.hovered.is_none(),
+        "leaving the file list must clear hover"
+    );
+}
+
+#[test]
 fn submit_input_oauth_code_paths() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -707,6 +820,32 @@ fn sync_tasks_collapse_when_empty() {
     app.tasks_collapsed = true;
     app.toggle_tasks_pane();
     assert!(!app.tasks_collapsed || app.task_count() == 0);
+}
+
+#[test]
+fn toggle_tasks_pane_empty_opens_and_closes_agents_tab() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    assert_eq!(app.task_count(), 0);
+    app.sidebar.visible = false;
+    app.toggle_tasks_pane();
+    assert!(app.sidebar.visible);
+    assert_eq!(app.sidebar.active_tab, SidebarTab::Agents);
+
+    app.toggle_tasks_pane();
+    assert!(
+        !app.sidebar.visible,
+        "second Ctrl+G on an empty list must hide the Agents tab"
+    );
+
+    app.sidebar.visible = true;
+    app.sidebar.active_tab = SidebarTab::Files;
+    app.toggle_tasks_pane();
+    assert!(app.sidebar.visible);
+    assert_eq!(
+        app.sidebar.active_tab,
+        SidebarTab::Agents,
+        "empty list still jumps to Agents when another tab is showing"
+    );
 }
 
 #[test]
@@ -745,6 +884,26 @@ fn slash_suggest_hides_when_prefix_matches_nothing() {
     assert!(!state.active);
     assert!(state.matches.is_empty());
     state.step(1);
+}
+
+#[test]
+fn slash_suggest_resets_selected_when_filter_shrinks() {
+    let mut state = SlashSuggestState::default();
+    state.refresh("/");
+    assert!(state.active);
+    assert!(state.matches.len() > 1);
+    state.selected = state.matches.len() - 1;
+    state.refresh("/help");
+    assert!(state.active);
+    assert_eq!(
+        state.selected, 0,
+        "selected past the new match list must wrap to 0"
+    );
+    assert_eq!(
+        state.current().map(|c| c.name),
+        Some("/help"),
+        "prefix /help must land on the help command"
+    );
 }
 
 #[test]

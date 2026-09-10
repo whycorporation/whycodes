@@ -5119,3 +5119,80 @@ fn apply_modal_scrollbar_help_and_empty_total() {
     let active = a.dialogs.active().cloned();
     apply_modal_scrollbar(&mut a, active.as_ref(), 8, None);
 }
+
+#[test]
+fn toggle_focus_accepts_suggestion_then_slash_then_cycles_panes() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+
+    let mut a = app();
+    a.pending_suggestion = Some("try cargo test".into());
+    a.input_buffer.clear();
+    a.input_cursor = 0;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleFocus),
+        &k
+    ));
+    assert_eq!(a.input_buffer, "try cargo test");
+    assert!(a.pending_suggestion.is_none());
+    assert!(a.status_message.contains("suggestion"));
+
+    let mut a = app();
+    a.input_buffer = "/he".into();
+    a.input_cursor = 3;
+    a.slash_suggest.refresh(&a.input_buffer);
+    assert!(a.slash_suggest.active);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleFocus),
+        &k
+    ));
+    assert_eq!(
+        a.input_buffer, "/help",
+        "Tab on a slash prefix must complete the current match"
+    );
+
+    a.slash_suggest.refresh(&a.input_buffer);
+    assert!(a.slash_suggest.active);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleFocus),
+        &k
+    ));
+    assert_eq!(
+        a.input_buffer, "/help",
+        "Tab when the buffer already matches must leave it"
+    );
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "hi");
+    a.focus = FocusPane::Prompt;
+    a.slash_suggest.active = false;
+    a.pending_suggestion = None;
+    a.input_buffer = "x".into();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleFocus),
+        &k
+    ));
+    assert_ne!(a.focus, FocusPane::Prompt);
+}
+
+#[test]
+fn escape_from_command_mode_returns_to_normal() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = "sidebar".into();
+    a.slash_suggest.active = false;
+    a.file_suggest.active = false;
+    a.open_subagent = None;
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert!(
+        a.command.buffer.is_empty(),
+        "Esc must clear the colon buffer, got {:?}",
+        a.command.buffer
+    );
+}
