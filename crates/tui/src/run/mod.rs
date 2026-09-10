@@ -2497,42 +2497,45 @@ fn live_read_crossterm() -> io::Result<Event> {
     crossterm::event::read()
 }
 
+/// Tests force a zero timeout so an empty stub cannot block on a missing TTY.
+fn poll_timeout(requested: Duration, force_zero: bool) -> Duration {
+    if force_zero {
+        Duration::ZERO
+    } else {
+        requested
+    }
+}
+
 fn poll_crossterm(timeout: Duration) -> io::Result<bool> {
     #[cfg(test)]
-    {
-        let _ = timeout;
-        if take_crossterm_poll_err() {
-            return Err(io::Error::other("crossterm stub poll failed"));
-        }
-        if !crossterm_stub_is_empty() {
-            return Ok(true);
-        }
-        live_poll_crossterm(Duration::ZERO)
+    if take_crossterm_poll_err() {
+        return Err(io::Error::other("crossterm stub poll failed"));
     }
-    #[cfg(not(test))]
-    {
-        live_poll_crossterm(timeout)
+    #[cfg(test)]
+    if !crossterm_stub_is_empty() {
+        return Ok(true);
     }
+    live_poll_crossterm(poll_timeout(timeout, cfg!(test)))
 }
 
 fn read_crossterm() -> io::Result<Event> {
     #[cfg(test)]
+    if take_crossterm_read_err() {
+        return Err(io::Error::other("crossterm stub read failed"));
+    }
+    #[cfg(test)]
+    if let Some(ev) = crossterm_stub_pop() {
+        return Ok(ev);
+    }
+    #[cfg(test)]
     {
-        if take_crossterm_read_err() {
-            return Err(io::Error::other("crossterm stub read failed"));
-        }
-        if let Some(ev) = crossterm_stub_pop() {
-            return Ok(ev);
-        }
-        Err(io::Error::new(
+        return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             "crossterm stub empty",
-        ))
+        ));
     }
-    #[cfg(not(test))]
-    {
-        live_read_crossterm()
-    }
+    #[allow(unreachable_code)]
+    live_read_crossterm()
 }
 
 /// Read the event that woke `poll`, then drain anything already queued.

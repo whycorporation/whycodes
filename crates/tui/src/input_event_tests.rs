@@ -605,7 +605,7 @@ fn command_mode_executes_colon_commands() {
 fn dialog_keys_confirm_cancel_and_list_jumps() {
     let mut a = app();
     a.confirm("Quit", "sure?", ConfirmAction::Quit);
-    handle_event(&mut a, key(KeyCode::Char('y')));
+    assert!(!handle_event(&mut a, key(KeyCode::Char('y'))));
     assert!(!a.running);
 
     let mut a = app();
@@ -1775,7 +1775,7 @@ fn dialog_arrow_keys_step_effort_mode_and_sessions() {
 fn handle_event_quit_confirm_stops_running() {
     let mut a = app();
     a.confirm("Quit", "sure?", ConfirmAction::Quit);
-    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(!handle_event(&mut a, key(KeyCode::Enter)));
     assert!(!a.running);
 }
 

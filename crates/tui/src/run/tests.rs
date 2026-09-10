@@ -6286,6 +6286,14 @@ fn on_terminal_new_failed_and_log_resize_failed_are_safe() {
     on_terminal_new_failed(&"backend");
     log_resize_failed("live", "too small");
     log_resize_failed("headless", "too small");
+    assert_eq!(
+        poll_timeout(Duration::from_millis(40), true),
+        Duration::ZERO
+    );
+    assert_eq!(
+        poll_timeout(Duration::from_millis(40), false),
+        Duration::from_millis(40)
+    );
 }
 
 #[test]
@@ -6804,6 +6812,32 @@ async fn run_headless_draw_fail_exits() {
         None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
     }
     set_draw_fail(false);
+}
+
+#[tokio::test]
+async fn run_headless_quit_confirm_enter_stops_via_handle_event() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    set_headless_events(Some(std::collections::VecDeque::from([
+        ctrl('c'),
+        press(KeyCode::Enter),
+    ])));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
 }
 
 #[tokio::test]

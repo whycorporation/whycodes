@@ -1987,6 +1987,9 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
                 return true;
             }
             confirm_dialog(app, &active);
+            if !app.running {
+                return false;
+            }
         }
         // Up/Down are bound to next/prev field. In a form that means the next
         // input; in a list dialog it means the next row.
