@@ -1825,8 +1825,37 @@ async fn handle_slash_covers_local_commands() {
 
     h.run("/remember").await;
     assert!(h.app.status_message.contains("Usage"));
+    h.config.memory.enabled = true;
     h.run("/remember save this fact").await;
+    assert!(
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Remembered"))
+            || h.app.status_message.contains("Saved memory"),
+        "remember success must toast or status, got toasts={:?} status={}",
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>(),
+        h.app.status_message
+    );
     h.run("/memory").await;
+    assert!(
+        h.app
+            .messages
+            .iter()
+            .any(|m| m.content.contains("Memory enabled=")),
+        "{:?}",
+        h.app
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+    );
 
     h.config.memory.enabled = false;
     {

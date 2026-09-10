@@ -430,6 +430,19 @@ fn file_suggest_keys_accept_step_and_open() {
     assert_eq!(a.input_buffer, "@a.rs ");
     assert!(!a.file_suggest.active);
 
+    let mut a = app();
+    a.file_suggest.active = true;
+    a.file_suggest.token_start = 0;
+    a.file_suggest.matches = vec![whycodes_index::FileMatch {
+        rel: "c.rs".into(),
+        ..Default::default()
+    }];
+    a.input_buffer = "@x".into();
+    a.input_cursor = 2;
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert_eq!(a.input_buffer, "@c.rs ");
+    assert!(!a.file_suggest.active);
+
     a.file_suggest.active = true;
     a.file_suggest.matches.clear();
     handle_event(&mut a, key(KeyCode::Enter));
@@ -2101,6 +2114,22 @@ fn dispatch_resolved_action_covers_unmapped_keymap_arms() {
         Some(Action::SidebarTab6),
         &k
     ));
+
+    let mut a = app();
+    a.sidebar.visible = true;
+    let tab = a.sidebar.active_tab;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarNextTab),
+        &k
+    ));
+    assert_ne!(a.sidebar.active_tab, tab);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarPrevTab),
+        &k
+    ));
+    assert_eq!(a.sidebar.active_tab, tab);
 }
 
 #[test]

@@ -202,6 +202,27 @@ fn clip_excludes_cells_outside_modal() {
     );
     assert!(t.contains("modal body"), "{t:?}");
     assert!(t.contains("second line"), "{t:?}");
+
+    let skip_y = ClipRect {
+        x: 0,
+        y: 5,
+        width: 10,
+        height: 1,
+    };
+    let skipped = text_from_cells_clipped(&cells, 0, 0, 39, 3, skip_y);
+    assert!(
+        skipped.is_empty(),
+        "rows outside clip y must drop: {skipped:?}"
+    );
+
+    let inverted_cols = ClipRect {
+        x: 30,
+        y: 2,
+        width: 2,
+        height: 2,
+    };
+    let _ = text_from_cells_clipped(&cells, 0, 2, 5, 3, inverted_cols);
+    assert!(text_from_cells(&CellGrid::default(), 0, 0, 1, 1).is_empty());
 }
 
 #[test]
