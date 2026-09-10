@@ -4269,6 +4269,30 @@ fn kill_word_forward_expands_overlapping_paste_placeholder() {
 }
 
 #[test]
+fn kill_word_back_from_after_chip_expands_overlap() {
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    a.input_buffer = format!("{token} extra");
+    a.input_cursor = a.input_buffer.len();
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputKillWordBack,
+        &KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+    );
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputKillWordBack,
+        &KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+    );
+    assert!(
+        a.input_buffer.is_empty() || !a.input_buffer.contains('\n'),
+        "second kill-word-back must swallow the overlapping paste chip: {:?}",
+        a.input_buffer
+    );
+}
+
+#[test]
 fn session_paste_from_scrollback_still_lands_on_prompt() {
     let mut a = app();
     a.mode = AppMode::Session;
