@@ -2750,6 +2750,58 @@ async fn spawn_runtime_and_drain_outcomes() {
     drain_background_runtime(&mut rt);
     assert!(!rt.last_error);
     assert_eq!(rt.agent.info.name, "cmp");
+
+    rt.done_tx
+        .send(TurnOutcome::Remote {
+            text: String::new(),
+            error: Some("bg-down".into()),
+            work_ms: 1,
+        })
+        .unwrap();
+    drain_background_runtime(&mut rt);
+    assert!(rt.last_error);
+    assert!(
+        rt.view
+            .messages
+            .iter()
+            .any(|m| m.content.contains("Remote error: bg-down"))
+    );
+
+    rt.done_tx
+        .send(TurnOutcome::Err {
+            error: "cancelled by user".into(),
+            agent: Agent::new(dummy_info("cx")),
+            session: Session::new(PathBuf::from("/work"), "sys".into()),
+            cancelled: true,
+            work_ms: 2,
+        })
+        .unwrap();
+    drain_background_runtime(&mut rt);
+    assert!(!rt.last_error);
+    assert!(
+        rt.view
+            .messages
+            .iter()
+            .any(|m| m.content.contains("cancelled"))
+    );
+
+    rt.done_tx
+        .send(TurnOutcome::Err {
+            error: "boom".into(),
+            agent: Agent::new(dummy_info("ex")),
+            session: Session::new(PathBuf::from("/work"), "sys".into()),
+            cancelled: false,
+            work_ms: 3,
+        })
+        .unwrap();
+    drain_background_runtime(&mut rt);
+    assert!(rt.last_error);
+    assert!(
+        rt.view
+            .messages
+            .iter()
+            .any(|m| m.content.contains("Error:"))
+    );
 }
 
 #[tokio::test]
@@ -3279,6 +3331,34 @@ fn close_session_slot_busy_last_and_parked() {
     close_session_slot(&mut app, &mut rt, &mut runtimes, &mut mru, usize::MAX);
     assert!(runtimes.is_empty());
     assert_eq!(rt.session.title, after_title);
+
+    let mut parked_a = test_runtime();
+    parked_a.session.add_user_message("a");
+    let mut parked_b = test_runtime();
+    parked_b.session.add_user_message("b");
+    let (ptx, prx) = tokio::sync::oneshot::channel();
+    parked_a
+        .pending_perm_queue
+        .push_back(whycodes_agent::PermissionRequest {
+            tool_name: "bash".into(),
+            detail: "ls".into(),
+            reply: ptx,
+        });
+    let (qtx, qrx) = tokio::sync::oneshot::channel();
+    parked_a.pending_question_queue.push_back(QuestionRequest {
+        questions: vec![sample_question()],
+        reply: qtx,
+    });
+    runtimes = vec![parked_a, parked_b];
+    mru = vec![1];
+    close_session_slot(&mut app, &mut rt, &mut runtimes, &mut mru, 0);
+    assert_eq!(runtimes.len(), 1);
+    assert_eq!(mru, vec![0], "higher parked index must shift down");
+    assert_eq!(prx.blocking_recv().ok(), Some(false));
+    assert!(matches!(
+        qrx.blocking_recv().unwrap(),
+        Err(QuestionError::Cancelled)
+    ));
 }
 
 #[test]
