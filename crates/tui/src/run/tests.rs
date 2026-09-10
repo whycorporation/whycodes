@@ -8517,3 +8517,121 @@ async fn run_headless_remote_turn_ok_then_quits() {
     }
     assert_eq!(exit, TuiExit::Quit);
 }
+
+#[test]
+fn record_user_turn_with_valid_png_appends_image_blocks() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let png = dir.path().join("dot.png");
+    // 1x1 transparent PNG.
+    std::fs::write(
+        &png,
+        [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ],
+    )
+    .unwrap();
+    let img = crate::images::load_prompt_image(&png).expect("tiny png loads");
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    let config = Config::default();
+    let expanded = record_user_turn(&mut app, &mut rt, "see this", dir.path(), &config, &[img]);
+    assert_eq!(expanded, "see this");
+    let last = rt.session.messages.last().expect("user turn recorded");
+    match &last.content {
+        whycodes_core::types::MessageContent::Blocks(blocks) => {
+            assert!(
+                blocks
+                    .iter()
+                    .any(|b| matches!(b, whycodes_core::types::ContentBlock::Image { .. })),
+                "valid png must land as an image block, got {blocks:?}"
+            );
+        }
+        other => panic!("expected Blocks with image, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn run_headless_idle_ctrl_tab_page_and_dashboard() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    set_headless_events(Some(std::collections::VecDeque::from([
+        ctrl('n'),
+        Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::Tab,
+            crossterm::event::KeyModifiers::CONTROL,
+        )),
+        Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::PageDown,
+            crossterm::event::KeyModifiers::CONTROL,
+        )),
+        Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::PageUp,
+            crossterm::event::KeyModifiers::CONTROL,
+        )),
+        ctrl('o'),
+        press(KeyCode::Esc),
+        ctrl('q'),
+        press(KeyCode::Enter),
+    ])));
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_busy_enter_toasts_then_esc_cancels() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "HANG");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('h')),
+        press(KeyCode::Enter),
+        press(KeyCode::Enter),
+        press(KeyCode::Esc),
+        ctrl('q'),
+    ])));
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
