@@ -9429,6 +9429,51 @@ async fn handle_slash_login_opens_picker_with_oauth_rows() {
 }
 
 #[tokio::test]
+async fn handle_slash_login_marks_connected_when_token_store_has_auth() {
+    let mut h = SlashHarness::new();
+    let json = r#"{
+        "kind": "auth",
+        "auth": {
+            "provider": "tui-cov-login-conn",
+            "label": "LoginConn",
+            "flow": "device-code",
+            "client_id": "abc",
+            "authorize_url": "https://example.com/device/code",
+            "token_url": "https://example.com/token",
+            "scopes": "read",
+            "suggested_models": ["m1"]
+        }
+    }"#;
+    whycodes_auth::plugin::register_from_json(json).expect("register");
+    let home = std::env::var_os("WHYCODES_HOME").expect("isolate_home");
+    whycodes_auth::TokenStore::new(std::path::Path::new(&home))
+        .set(
+            "tui-cov-login-conn",
+            whycodes_auth::ProviderAuth {
+                method: "oauth".into(),
+                token: whycodes_auth::OAuthToken {
+                    access_token: "tok".into(),
+                    refresh_token: None,
+                    expires_at: None,
+                    extra: Default::default(),
+                },
+            },
+        )
+        .expect("write token");
+    h.run("/login").await;
+    assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Login)));
+    assert!(
+        h.app
+            .login_dialog
+            .rows
+            .iter()
+            .any(|r| r.provider == "tui-cov-login-conn" && r.connected),
+        "stored oauth must show connected, rows={:?}",
+        h.app.login_dialog.rows
+    );
+}
+
+#[tokio::test]
 async fn maybe_spawn_prompt_suggestion_spawns_when_session_has_user_text() {
     let _home = isolate_home();
     let mut session = Session::new(PathBuf::from("/work"), "sys".into());
