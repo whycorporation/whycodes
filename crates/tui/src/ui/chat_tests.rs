@@ -1725,3 +1725,19 @@ fn paint_chat_row_fills_and_skips_empty() {
     );
     assert_eq!(buf[(0, 0)].symbol(), "▌");
 }
+
+#[test]
+fn grep_match_count_and_diff_stat() {
+    assert_eq!(
+        super::grep_match_count("(12 matches in 3 files; pattern `foo`)"),
+        Some(12)
+    );
+    assert_eq!(super::grep_match_count("(1 match)"), Some(1));
+    assert_eq!(
+        super::grep_match_count("src/a.rs:1:hit\nsrc/a.rs:2:hit2"),
+        Some(2)
+    );
+    assert!(super::grep_match_count("no hits here").is_none());
+    let (a, d) = super::diff_stat("--- a\n+++ b\n-old\n+new\n+also\n");
+    assert_eq!((a, d), (2, 1));
+}

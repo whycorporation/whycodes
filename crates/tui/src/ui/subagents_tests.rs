@@ -268,3 +268,64 @@ fn upsert_updates_same_id() {
     assert_eq!(app.running_subagent_count(), 0);
     assert!(app.tasks_collapsed);
 }
+
+#[test]
+fn status_glyph_and_styles_cover_failed_and_unknown() {
+    let palette = crate::theme::ThemeName::DefaultDark.palette();
+    let _ = status_glyph("failed", 0);
+    let _ = status_glyph("killed", 1);
+    let _ = status_glyph("other", 2);
+    let _ = icon_style("failed", &palette);
+    let _ = icon_style("other", &palette);
+    let _ = text_style("failed", &palette);
+    let _ = text_style("other", &palette);
+    assert!(truncate("short", 20).len() <= 20);
+    assert!(truncate("this is a very long description for the title", 10).ends_with('…'));
+}
+
+#[test]
+fn agent_lines_empty_and_with_rows() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    let palette = app.config.palette();
+    let empty = agent_lines(&app, &palette);
+    assert!(
+        empty
+            .iter()
+            .any(|l| l.spans.iter().any(|s| s.content.contains("No tasks")))
+    );
+    app.upsert_subagent(running("task-1", "explore", "scan"));
+    let filled = agent_lines(&app, &palette);
+    assert!(filled.len() >= 2);
+}
+
+#[test]
+fn render_frame_paints_open_subagent_and_skips_missing() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    let palette = app.config.palette();
+    let backend = TestBackend::new(60, 12);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| render_frame(f, f.area(), &app, &palette))
+        .unwrap();
+    app.upsert_subagent(running("kid", "explore", "look"));
+    app.open_subagent = Some("missing".into());
+    terminal
+        .draw(|f| render_frame(f, f.area(), &app, &palette))
+        .unwrap();
+    app.open_subagent = Some("kid".into());
+    app.subagents[0].output = "child output".into();
+    terminal
+        .draw(|f| render_frame(f, f.area(), &app, &palette))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol().to_string())
+        .collect();
+    assert!(
+        text.contains("explore") || text.contains("child") || text.contains("look"),
+        "{text}"
+    );
+}
