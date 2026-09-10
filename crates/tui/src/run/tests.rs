@@ -3907,6 +3907,90 @@ fn reply_permission_allow_deny_and_queue() {
 }
 
 #[test]
+fn apply_permission_overlay_event_allow_and_non_key() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    assert!(!apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Char('y'))
+    ));
+    app.ask_permission("bash", "ls");
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    rt.pending_perm_queue
+        .push_back(whycodes_agent::PermissionRequest {
+            tool_name: "bash".into(),
+            detail: "ls".into(),
+            reply: tx,
+        });
+    assert!(!apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Resize(80, 24)
+    ));
+    let mut release = crossterm::event::KeyEvent::from(KeyCode::Char('y'));
+    release.kind = KeyEventKind::Release;
+    assert!(!apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Key(release)
+    ));
+    assert!(!apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Char('x'))
+    ));
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Char('y'))
+    ));
+    assert_eq!(rx.blocking_recv().ok(), Some(true));
+}
+
+#[test]
+fn apply_question_overlay_event_enter_and_repeat() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    assert!(!apply_question_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Enter)
+    ));
+    app.ask_question(vec![sample_question()]);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    rt.pending_question_queue.push_back(QuestionRequest {
+        questions: vec![sample_question()],
+        reply: tx,
+    });
+    assert!(!apply_question_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Resize(80, 24)
+    ));
+    let mut release = crossterm::event::KeyEvent::from(KeyCode::Enter);
+    release.kind = KeyEventKind::Release;
+    assert!(!apply_question_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Key(release)
+    ));
+    let mut repeat = crossterm::event::KeyEvent::from(KeyCode::Down);
+    repeat.kind = KeyEventKind::Repeat;
+    assert!(apply_question_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Key(repeat)
+    ));
+    assert!(apply_question_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Enter)
+    ));
+    assert!(rx.blocking_recv().is_ok());
+}
+
+#[test]
 fn questionnaire_complete_and_cancel() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut q = std::collections::VecDeque::new();

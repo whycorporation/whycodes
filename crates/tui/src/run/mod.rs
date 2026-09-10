@@ -1903,32 +1903,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 }
 
                 for ev in batch {
-                    // Permission dialog keys handled specially
-                    if matches!(app.dialogs.active(), Some(DialogKind::Permission { .. }))
-                        && let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && let Some(allow) = permission_overlay_reply(key.code)
-                    {
-                        reply_permission(&mut app, &mut rt.pending_perm_queue, allow);
+                    if apply_permission_overlay_event(&mut app, &mut rt, &ev) {
                         continue;
                     }
-
-                    // Questionnaire dialog (Grok-style `question` tool).
-                    // Press *and* Repeat: enhanced keyboard can emit Repeat for held Esc.
-                    if matches!(app.dialogs.active(), Some(DialogKind::Question(_)))
-                        && let Event::Key(key) = &ev
-                        && (key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat)
-                    {
-                        let handled = handle_question_key(
-                            &mut app,
-                            key.code,
-                            &mut rt.pending_question_queue,
-                            &rt.pending_perm_queue,
-                        );
-                        if handled {
-                            app.mark_dirty();
-                            continue;
-                        }
+                    if apply_question_overlay_event(&mut app, &mut rt, &ev) {
+                        continue;
                     }
 
                     // Ctrl+T / Ctrl+N / Ctrl+Page / Ctrl+O / Ctrl+Tab / slash Enter.
@@ -2133,6 +2112,47 @@ fn permission_overlay_reply(code: KeyCode) -> Option<bool> {
         KeyCode::Char('n' | 'N' | 'd' | 'D') | KeyCode::Esc => Some(false),
         _ => None,
     }
+}
+
+/// Permission overlay Y/N/A/D/Enter/Esc. Returns true when the event is consumed.
+fn apply_permission_overlay_event(app: &mut TuiApp, rt: &mut SessionRuntime, ev: &Event) -> bool {
+    if !matches!(app.dialogs.active(), Some(DialogKind::Permission { .. })) {
+        return false;
+    }
+    let Event::Key(key) = ev else {
+        return false;
+    };
+    if key.kind != KeyEventKind::Press {
+        return false;
+    }
+    let Some(allow) = permission_overlay_reply(key.code) else {
+        return false;
+    };
+    reply_permission(app, &mut rt.pending_perm_queue, allow);
+    true
+}
+
+/// Question overlay keys (Press and Repeat). Returns true when consumed.
+fn apply_question_overlay_event(app: &mut TuiApp, rt: &mut SessionRuntime, ev: &Event) -> bool {
+    if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
+        return false;
+    }
+    let Event::Key(key) = ev else {
+        return false;
+    };
+    if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
+        return false;
+    }
+    let handled = handle_question_key(
+        app,
+        key.code,
+        &mut rt.pending_question_queue,
+        &rt.pending_perm_queue,
+    );
+    if handled {
+        app.mark_dirty();
+    }
+    handled
 }
 
 fn live_poll_crossterm(timeout: Duration) -> io::Result<bool> {
