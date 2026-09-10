@@ -3758,6 +3758,20 @@ fn remaining_dispatch_and_dialog_confirm_arms() {
     assert_eq!(a.open_subagent.as_deref(), Some("kid"));
 
     let mut a = app();
+    a.focus = FocusPane::Scrollback;
+    a.selected_msg = None;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::FocusPrompt),
+        &k
+    ));
+    assert_eq!(
+        a.focus,
+        FocusPane::Prompt,
+        "FocusPrompt without a selected subagent must return to the draft"
+    );
+
+    let mut a = app();
     a.mode = AppMode::Help;
     paste_os_clipboard(&mut a);
     assert_eq!(a.mode, AppMode::Help);

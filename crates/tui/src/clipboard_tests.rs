@@ -31,6 +31,15 @@ fn trims_trailing_spaces_per_line() {
 }
 
 #[test]
+fn drops_leading_blank_rows_then_keeps_content() {
+    let cells = grid_padded(&["", "  hi", "  yo", ""], 8);
+    let t = text_from_cells(&cells, 0, 0, 7, 3);
+    assert_eq!(t, "hi\nyo");
+    let only_pad = grid_padded(&["", "", ""], 4);
+    assert!(text_from_cells(&only_pad, 0, 0, 3, 2).is_empty());
+}
+
+#[test]
 fn keeps_internal_spaces() {
     let cells = grid_padded(&["a b c"], 10);
     let t = text_from_cells(&cells, 0, 0, 9, 0);
