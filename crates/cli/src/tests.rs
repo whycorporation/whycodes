@@ -15,6 +15,51 @@ fn lock_env() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Tiny HTTP/1.1 stub: read headers, write `body` with `status`, close.
+async fn serve_http1_loop(
+    listener: tokio::net::TcpListener,
+    n: usize,
+    mut route: impl FnMut(&str) -> (u16, &'static [u8]) + Send + 'static,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for _ in 0..n {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            break;
+        };
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 512];
+        loop {
+            let n = stream.read(&mut tmp).await.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+            if buf.len() > 16 * 1024 {
+                break;
+            }
+        }
+        let req = String::from_utf8_lossy(&buf);
+        let (code, body) = route(&req);
+        let status = if code == 200 {
+            "200 OK"
+        } else if code == 500 {
+            "500 Internal Server Error"
+        } else {
+            "404 Not Found"
+        };
+        let resp = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            std::str::from_utf8(body).unwrap_or("")
+        );
+        let _ = stream.write_all(resp.as_bytes()).await;
+        let _ = stream.shutdown().await;
+    }
+}
+
 /// Clear test-only env vars and REPL queue even if a test panics.
 struct TestLlmEnv;
 
@@ -5114,30 +5159,15 @@ async fn cmd_connect_bails_without_tui_after_health() {
     let _home = IsolatedHome::new();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        for _ in 0..6 {
-            let Ok((mut stream, _)) = listener.accept().await else {
-                break;
-            };
-            let mut buf = vec![0u8; 2048];
-            let n = stream.read(&mut buf).await.unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
-            let body: &[u8] = if req.contains("/api/health") {
-                br#"{"ok":true}"#
-            } else if req.contains("/api/session/new") {
-                br#"{"session_id":"sess-no-tui"}"#
-            } else {
-                br#"{"ok":true}"#
-            };
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                std::str::from_utf8(body).unwrap()
-            );
-            let _ = stream.write_all(resp.as_bytes()).await;
+    let server = tokio::spawn(serve_http1_loop(listener, 6, |req| {
+        if req.contains("/api/health") {
+            (200, br#"{\"ok\":true}"#)
+        } else if req.contains("/api/session/new") {
+            (200, br#"{\"session_id\":\"sess-no-tui\"}"#)
+        } else {
+            (200, br#"{\"ok\":true}"#)
         }
-    });
+    }));
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
     let err = cmd_connect(&cli(None), &format!("127.0.0.1:{}", addr.port()), None).await;
     server.abort();
@@ -6027,28 +6057,13 @@ async fn cmd_connect_create_session_error_after_health() {
     let _home = IsolatedHome::new();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        for _ in 0..6 {
-            let Ok((mut stream, _)) = listener.accept().await else {
-                break;
-            };
-            let mut buf = vec![0u8; 2048];
-            let n = stream.read(&mut buf).await.unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
-            let (status, body): (&str, &[u8]) = if req.contains("/api/health") {
-                ("200 OK", br#"{"ok":true,"project":"p","uptime_secs":1}"#)
-            } else {
-                ("500 Internal Server Error", br#"{"error":"nope"}"#)
-            };
-            let resp = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                std::str::from_utf8(body).unwrap()
-            );
-            let _ = stream.write_all(resp.as_bytes()).await;
+    let server = tokio::spawn(serve_http1_loop(listener, 6, |req| {
+        if req.contains("/api/health") {
+            (200, br#"{\"ok\":true,\"project\":\"p\",\"uptime_secs\":1}"#)
+        } else {
+            (500, br#"{\"error\":\"nope\"}"#)
         }
-    });
+    }));
     unsafe { std::env::set_var("WHYCODES_TEST_TUI", "quit") };
     let err = cmd_connect(&cli(None), &format!("127.0.0.1:{}", addr.port()), None).await;
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
