@@ -6742,3 +6742,109 @@ async fn run_headless_idle_ctrl_t_cycles_agent() {
     }
     assert_eq!(exit, TuiExit::Quit);
 }
+
+#[tokio::test]
+async fn run_headless_permission_allow_with_a() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "SHELL");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("please rm that"));
+    events.push(press(KeyCode::Char('A')));
+    events.push(ctrl('q'));
+    events.push(press(KeyCode::Enter));
+    set_headless_events(Some(events.into()));
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_permission_deny_with_d() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "SHELL");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("please rm that"));
+    events.push(press(KeyCode::Char('d')));
+    events.push(ctrl('q'));
+    events.push(press(KeyCode::Enter));
+    set_headless_events(Some(events.into()));
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_busy_then_models_defers_catalog() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "HANG");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut events = Vec::new();
+    events.push(press(KeyCode::Char('h')));
+    events.push(press(KeyCode::Enter));
+    events.extend(type_line("/models acme/m2"));
+    events.push(ctrl('q'));
+    set_headless_events(Some(events.into()));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_ TEST_LLM") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
