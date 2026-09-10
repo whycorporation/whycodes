@@ -1729,6 +1729,50 @@ fn dialog_arrow_keys_step_effort_mode_and_sessions() {
 }
 
 #[test]
+fn handle_event_quit_confirm_returns_false_when_running_stops() {
+    let mut a = app();
+    a.confirm("Quit", "sure?", ConfirmAction::Quit);
+    assert!(!handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(!a.running);
+}
+
+#[test]
+fn mouse_confirms_import_and_provider_select_rows() {
+    let mut a = app();
+    a.provider_dialog.providers = vec!["acme".into(), "openai".into()];
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::Select;
+    open_dialog(&mut a, DialogKind::Provider);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 6,
+    });
+    a.dialog_list_total = 2;
+    a.dialog_list_visible = 6;
+    a.dialog_list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 8),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 8));
+}
+
+#[test]
+fn focus_gained_is_ignored_keep_running() {
+    let mut a = app();
+    assert!(handle_event(&mut a, Event::FocusGained));
+    assert!(handle_event(&mut a, Event::FocusLost));
+    assert!(a.running);
+}
+
+#[test]
 fn dialog_question_keys_move_without_free_text() {
     let mut a = app();
     a.ask_question(vec![whycodes_tools::question::QuestionSpec {

@@ -4303,8 +4303,11 @@ fn apply_reasoning_effort_unknown_and_unsupported_and_ok() {
 }
 
 #[test]
-fn persist_session_reasoning_effort_is_noop_in_tests() {
+fn persist_session_reasoning_effort_writes_isolated_home() {
+    let (_lock, _dir) = isolate_home_fresh();
     persist_session_reasoning_effort("high").unwrap();
+    let loaded = Config::load().unwrap_or_default();
+    assert_eq!(loaded.session.reasoning_effort.as_deref(), Some("high"));
 }
 
 #[test]
@@ -4329,8 +4332,11 @@ fn apply_approval_mode_raw_unknown_and_ok() {
 }
 
 #[test]
-fn persist_general_approval_mode_is_noop_in_tests() {
-    persist_general_approval_mode(ApprovalMode::Auto).unwrap();
+fn persist_general_approval_mode_writes_isolated_home() {
+    let (_lock, _dir) = isolate_home_fresh();
+    persist_general_approval_mode(ApprovalMode::Manual).unwrap();
+    let loaded = Config::load().unwrap_or_default();
+    assert_eq!(loaded.general.approval_mode, Some(ApprovalMode::Manual));
 }
 
 #[test]

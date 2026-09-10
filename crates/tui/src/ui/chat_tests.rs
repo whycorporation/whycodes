@@ -1590,6 +1590,79 @@ fn render_session_paints_user_assistant_and_tool_blocks() {
 }
 
 #[test]
+fn render_session_paints_subagent_system_tool_and_error() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "prompt");
+    app.add_message(ChatRole::System, "note");
+    app.add_message(ChatRole::Tool, "tool body");
+    app.add_message(ChatRole::Assistant, "");
+    let last = app.messages.len() - 1;
+    app.messages[last].blocks = vec![
+        crate::app::ChatBlock::Subagent {
+            id: "kid".into(),
+            kind: "explore".into(),
+            description: "look around".into(),
+            status: "failed".into(),
+            activity: String::new(),
+            elapsed_ms: 1500,
+        },
+        crate::app::ChatBlock::ToolUse {
+            id: "t-read".into(),
+            name: "read".into(),
+            input: json!({"path": "a.rs"}),
+        },
+    ];
+    app.messages[last].tool_calls = vec![crate::app::ChatToolCall {
+        id: "orphan".into(),
+        name: "repomap".into(),
+        arguments: json!({}),
+        collapsed: false,
+        result: Some("mapped".into()),
+        is_error: false,
+    }];
+    app.messages[last].error = Some("boom".into());
+    app.messages[last].results_expanded = true;
+    let backend = ratatui::backend::TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol().to_string())
+        .collect();
+    assert!(
+        text.contains("note") || text.contains("Error") || text.contains("Subagent"),
+        "{text}"
+    );
+}
+
+#[test]
+fn tool_header_verb_covers_named_and_fallback() {
+    assert_eq!(super::tool_header_verb("read", true), "Reading");
+    assert_eq!(super::tool_header_verb("read", false), "Read");
+    assert_eq!(super::tool_header_verb("run", true), "Running");
+    assert_eq!(super::tool_header_verb("run", false), "Run");
+    assert_eq!(super::tool_header_verb("repomap", true), "Mapping");
+    assert_eq!(super::tool_header_verb("repomap", false), "Mapped");
+    assert_eq!(super::tool_header_verb("list_dir", false), "Listed");
+    assert_eq!(super::tool_header_verb("web_fetch", true), "Fetching");
+    assert_eq!(super::tool_header_verb("web_fetch", false), "Fetched");
+    assert_eq!(super::tool_header_verb("web_search", false), "Searched");
+    assert_eq!(super::tool_header_verb("", false), "Called");
+    assert!(super::tool_header_verb("custom_tool", false).starts_with('C'));
+    assert_eq!(super::verb_kind("read"), Some(super::VerbKind::File));
+    assert_eq!(super::verb_kind("memory"), Some(super::VerbKind::Memory));
+    assert!(super::verb_kind("bash").is_none());
+    assert_eq!(super::VerbKind::WebFetch.verb(true), "Fetching");
+    assert_eq!(super::VerbKind::File.noun(2), "files");
+}
+
+#[test]
 fn paint_chat_row_fills_and_skips_empty() {
     let mut buf = Buffer::empty(Rect::new(0, 0, 20, 2));
     let row = super::ChatRowPaint {

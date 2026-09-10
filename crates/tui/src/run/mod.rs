@@ -1481,12 +1481,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
                     // After first paint: MCP connect + code RAG auto-index.
                     // Both can block; doing them here keeps startup feel snappy.
-                    // Tests skip live MCP/index I/O (stdio servers hang the
-                    // current-thread `#[tokio::test]` runtime).
-                    if !cfg!(test) {
-                        rt.agent.load_mcp(&config).await;
-                        maybe_session_auto_index(&project_dir, &config, &mut app);
-                    }
+                    // Empty `mcp_servers` is a no-op (no stdio). Tests isolate
+                    // `WHYCODES_HOME` so this cannot spawn a user MCP server.
+                    rt.agent.load_mcp(&config).await;
+                    maybe_session_auto_index(&project_dir, &config, &mut app);
                     refresh_sidebar(&mut app, &config, &file_index);
                     load_app_todos(&mut app);
                     settle_first_frame_hydrate(&mut app, &hydrate_before, animate);
@@ -2807,9 +2805,7 @@ async fn spawn_new_session_runtime(
         )
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
     agent.set_approval_mode(config.general.approval_mode.unwrap_or_default());
-    if !cfg!(test) {
-        agent = agent.with_mcp(config).await;
-    }
+    agent = agent.with_mcp(config).await;
 
     let session = Session::new(project_dir.to_path_buf(), system_prompt);
     let history = SessionHistory::new();
@@ -3890,10 +3886,6 @@ fn apply_reasoning_effort(app: &mut TuiApp, agent: &mut Agent, config: &mut Conf
 }
 
 fn persist_session_reasoning_effort(value: &str) -> anyhow::Result<()> {
-    // Tests must not rewrite the developer's user config.toml.
-    if cfg!(test) {
-        return Ok(());
-    }
     let mut disk = Config::load()?;
     disk.session.reasoning_effort = Some(value.to_string());
     disk.save()?;
@@ -3928,9 +3920,6 @@ fn apply_approval_mode(
 }
 
 fn persist_general_approval_mode(mode: ApprovalMode) -> anyhow::Result<()> {
-    if cfg!(test) {
-        return Ok(());
-    }
     let mut disk = Config::load()?;
     disk.general.approval_mode = Some(mode);
     disk.save()?;
