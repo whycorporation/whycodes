@@ -6840,11 +6840,38 @@ async fn run_headless_busy_then_models_defers_catalog() {
     }
     match prev_llm {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
-        None => unsafe { std::env::remove_var("WHYCODES_ TEST_LLM") },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
     }
     match prev_import {
         Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
         None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_headless_import_confirm_applies() {
+    let home = IsolatedImportHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    let mut events = Vec::new();
+    events.extend(type_line("/import"));
+    events.push(press(KeyCode::Enter));
+    events.push(ctrl('q'));
+    events.push(press(KeyCode::Enter));
+    set_headless_events(Some(events.into()));
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.project_dir = home.path().to_path_buf();
+    let exit = super::run(opts).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
     }
     assert_eq!(exit, TuiExit::Quit);
 }
