@@ -5670,3 +5670,23 @@ fn help_search_ignores_control_chars_and_session_mode_unmapped_is_noop() {
         "unmapped Session-mode letters must not type into the prompt"
     );
 }
+
+#[test]
+fn command_mode_types_letters_and_skips_control_chords() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Char('s'))));
+    assert_eq!(a.command.buffer, "s");
+    assert!(handle_event(&mut a, key(KeyCode::Char('i'))));
+    assert_eq!(a.command.buffer, "si");
+    assert!(handle_event(&mut a, ctrl('w')));
+    assert_eq!(
+        a.command.buffer, "si",
+        "Ctrl/Alt chords must not insert a letter into the colon buffer"
+    );
+    let alt = Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT));
+    assert!(handle_event(&mut a, alt));
+    assert_eq!(a.command.buffer, "si");
+}

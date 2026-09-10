@@ -11,6 +11,15 @@ fn slash_command_from_prompt_and_consume() {
     assert!(app.input_buffer.is_empty());
     assert_eq!(app.input_cursor, 0);
     assert!(slash_command_from_prompt(&app).is_none());
+
+    app.input_buffer = "/he".into();
+    app.slash_suggest.refresh(&app.input_buffer);
+    assert!(app.slash_suggest.active);
+    let from_suggest = slash_command_from_prompt(&app).expect("slash suggest current");
+    assert!(
+        from_suggest.starts_with('/'),
+        "active slash suggest must replace the draft with the highlighted command, got {from_suggest}"
+    );
 }
 
 #[test]

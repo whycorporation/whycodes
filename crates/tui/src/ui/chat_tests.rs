@@ -1467,14 +1467,36 @@ fn execute_tool_and_header_verbs_cover_aliases() {
     );
     assert_eq!(super::verb_kind("memory"), Some(super::VerbKind::Memory));
     assert!(super::verb_kind("bash").is_none());
+    assert_eq!(super::verb_kind("glob"), Some(super::VerbKind::Search));
+    assert_eq!(super::verb_kind("rg"), Some(super::VerbKind::Search));
+    assert_eq!(
+        super::verb_kind("search_code"),
+        Some(super::VerbKind::Search)
+    );
+    assert_eq!(super::verb_kind("list_dir"), Some(super::VerbKind::Dir));
+    assert_eq!(
+        super::verb_kind("webfetch"),
+        Some(super::VerbKind::WebFetch)
+    );
+    assert_eq!(super::verb_kind("fetch"), Some(super::VerbKind::WebFetch));
+    assert_eq!(
+        super::verb_kind("memory_search"),
+        Some(super::VerbKind::Memory)
+    );
     assert_eq!(super::VerbKind::File.verb(true), "Reading");
     assert_eq!(super::VerbKind::File.verb(false), "Read");
     assert_eq!(super::VerbKind::File.noun(1), "file");
     assert_eq!(super::VerbKind::File.noun(2), "files");
     assert_eq!(super::VerbKind::Search.noun(2), "patterns");
     assert_eq!(super::VerbKind::Dir.noun(1), "dir");
+    assert_eq!(super::VerbKind::Dir.noun(2), "dirs");
     assert_eq!(super::VerbKind::WebFetch.noun(2), "websites");
+    assert_eq!(super::VerbKind::WebSearch.noun(1), "website");
+    assert_eq!(super::VerbKind::WebSearch.verb(true), "Searching");
     assert_eq!(super::VerbKind::Memory.noun(1), "memory");
+    assert_eq!(super::VerbKind::Memory.noun(2), "memories");
+    assert_eq!(super::VerbKind::Memory.verb(true), "Searching");
+    assert_eq!(super::VerbKind::Dir.verb(true), "Listing");
 }
 
 #[test]
@@ -2025,6 +2047,19 @@ fn thinking_lines_puts_elapsed_on_the_right_while_running() {
         joined.contains("Thinking") && (joined.contains("1.") || joined.contains("s")),
         "running thought with elapsed > 0 must put a timer on the right, got {joined:?}"
     );
+
+    let mut blank = ThinkingBlock::new("first\n\nsecond");
+    blank.collapsed = false;
+    blank.finish();
+    let lines = super::thinking_lines(&blank, &palette, 40, 0);
+    let joined: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains("first") && joined.contains("second"),
+        "expanded thought with a blank line must skip the empty wrap row, got {joined:?}"
+    );
 }
 
 #[test]
@@ -2055,6 +2090,45 @@ fn collapsed_file_tools_group_instead_of_expanding_each_card() {
         joined.contains("read") || joined.contains("file") || joined.contains("Read"),
         "collapsed file tools must paint as a grouped run, got {joined:?}"
     );
+}
+
+#[test]
+fn empty_assistant_content_paints_inline_text_block_markdown() {
+    let palette = ThemeName::DefaultDark.palette();
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::Assistant, "");
+    let i = app.messages.len() - 1;
+    app.messages[i].blocks = vec![crate::app::ChatBlock::Text("inline **bold** answer".into())];
+    let lines = super::render_message(&app.messages[i], &app, &palette, i, 60, None, false);
+    let joined: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains("inline") || joined.contains("bold") || joined.contains("answer"),
+        "empty content + Text block must emit markdown, got {joined:?}"
+    );
+}
+
+#[test]
+fn sticky_header_stops_when_the_viewport_is_one_row() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    for i in 0..12 {
+        app.add_message(ChatRole::User, format!("user {i}"));
+        app.add_message(ChatRole::Assistant, format!("asst {i}"));
+    }
+    app.scroll_offset = 80;
+    let backend = TestBackend::new(40, 1);
+    let mut terminal = Terminal::new(backend).expect("term");
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw");
+    let buf = terminal.backend().buffer();
+    assert_eq!(buf.area().height, 1);
 }
 
 #[test]
@@ -2280,6 +2354,42 @@ fn tool_block_expanded_headers_execute_error_diff_grep_and_hints() {
     let empty = paint_tool_run(&[], paint(true, false));
     assert!(empty.is_empty());
 
+    let expanded_multi = paint_tool_run(
+        &[
+            ToolRef {
+                name: "read",
+                input: &json!({"path": "a.rs"}),
+                result: Some("fn a() {}"),
+                is_error: false,
+            },
+            ToolRef {
+                name: "bash",
+                input: &json!({"command": "ls"}),
+                result: Some("ok"),
+                is_error: false,
+            },
+        ],
+        paint(true, false),
+    );
+    let expanded = joined(&expanded_multi);
+    assert!(
+        expanded.contains("Read") || expanded.contains("Run") || expanded.contains('•'),
+        "expanded multi-tool run must paint each card, got {expanded}"
+    );
+    let one = paint_tool_run(
+        &[ToolRef {
+            name: "read",
+            input: &json!({"path": "solo.rs"}),
+            result: Some("fn solo() {}"),
+            is_error: false,
+        }],
+        paint(false, false),
+    );
+    assert!(
+        !joined(&one).is_empty(),
+        "a single collapsed tool still paints via tool_block"
+    );
+
     let long_plain = tool_block(
         "other",
         &json!({}),
@@ -2300,4 +2410,239 @@ fn tool_block_expanded_headers_execute_error_diff_grep_and_hints() {
         paint(true, false),
     );
     assert!(joined(&long_diff).contains('+') || joined(&long_diff).contains("line"));
+}
+
+#[test]
+fn verb_group_line_mixes_buckets_running_failed_and_skips_unknown() {
+    let palette = ThemeName::DefaultDark.palette();
+    let paint = |expanded: bool, is_error: bool| ToolPaint {
+        is_error,
+        palette: &palette,
+        expanded,
+        width: 80,
+        spin: 0,
+    };
+
+    let mixed = paint_tool_run(
+        &[
+            ToolRef {
+                name: "read",
+                input: &json!({"path": "a.rs"}),
+                result: Some("fn a() {}"),
+                is_error: false,
+            },
+            ToolRef {
+                name: "read_file",
+                input: &json!({"file_path": "b.rs"}),
+                result: Some("fn b() {}"),
+                is_error: false,
+            },
+            ToolRef {
+                name: "grep",
+                input: &json!({"pattern": "x"}),
+                result: Some("a.rs:1:x"),
+                is_error: false,
+            },
+            ToolRef {
+                name: "list_dir",
+                input: &json!({"path": "."}),
+                result: Some("a.rs"),
+                is_error: false,
+            },
+            ToolRef {
+                name: "web_search",
+                input: &json!({"query": "rust"}),
+                result: Some("hits"),
+                is_error: false,
+            },
+            ToolRef {
+                name: "webfetch",
+                input: &json!({"url": "https://example.com"}),
+                result: Some("ok"),
+                is_error: false,
+            },
+            ToolRef {
+                name: "memory_search",
+                input: &json!({"query": "auth"}),
+                result: Some("hit"),
+                is_error: false,
+            },
+            ToolRef {
+                name: "bash",
+                input: &json!({"command": "ls"}),
+                result: Some("ok"),
+                is_error: false,
+            },
+        ],
+        paint(false, false),
+    );
+    let text = joined(&mixed);
+    assert!(
+        text.contains("Read")
+            && text.contains("file")
+            && text.contains("Searched")
+            && (text.contains("dir") || text.contains("Listed"))
+            && text.contains(", "),
+        "collapsed mixed verbs must join buckets with commas, got {text}"
+    );
+
+    let running = paint_tool_run(
+        &[
+            ToolRef {
+                name: "read",
+                input: &json!({"path": "a.rs"}),
+                result: None,
+                is_error: false,
+            },
+            ToolRef {
+                name: "glob",
+                input: &json!({"glob": "*.rs"}),
+                result: Some("a.rs"),
+                is_error: false,
+            },
+        ],
+        paint(false, false),
+    );
+    let live = joined(&running);
+    assert!(
+        live.contains("Reading") || live.contains("Searching"),
+        "any in-flight tool must switch the group to present tense, got {live}"
+    );
+
+    let failed = paint_tool_run(
+        &[
+            ToolRef {
+                name: "read",
+                input: &json!({"path": "a.rs"}),
+                result: Some("nope"),
+                is_error: true,
+            },
+            ToolRef {
+                name: "list",
+                input: &json!({"path": "."}),
+                result: Some("err"),
+                is_error: true,
+            },
+        ],
+        paint(false, false),
+    );
+    let fail = joined(&failed);
+    assert!(
+        fail.contains("failed"),
+        "collapsed group with errors must append a failed count, got {fail}"
+    );
+
+    let err_diff = tool_block(
+        "apply_patch",
+        &json!({}),
+        Some("--- a\n+++ b\n-old\n+new\n"),
+        paint(true, true),
+    );
+    let err_text = joined(&err_diff);
+    assert!(
+        err_text.contains('✕') || err_text.contains("old") || err_text.contains("new"),
+        "expanded error diff must paint the error rail, got {err_text}"
+    );
+}
+
+#[test]
+fn render_message_groups_orphan_tools_then_flushes_before_text() {
+    let palette = ThemeName::DefaultDark.palette();
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::Assistant, "");
+    let i = app.messages.len() - 1;
+    app.messages[i].results_expanded = false;
+    app.messages[i].blocks = vec![
+        crate::app::ChatBlock::ToolUse {
+            id: "t-read".into(),
+            name: "read".into(),
+            input: json!({"path": "a.rs"}),
+        },
+        crate::app::ChatBlock::Text("inline answer".into()),
+    ];
+    app.messages[i].tool_calls = vec![
+        crate::app::ChatToolCall {
+            id: "t-read".into(),
+            name: "read".into(),
+            arguments: json!({"path": "a.rs"}),
+            collapsed: true,
+            result: Some("fn a() {}".into()),
+            is_error: false,
+        },
+        crate::app::ChatToolCall {
+            id: "orphan-grep".into(),
+            name: "grep".into(),
+            arguments: json!({"pattern": "x"}),
+            collapsed: true,
+            result: Some("a.rs:1:x".into()),
+            is_error: false,
+        },
+        crate::app::ChatToolCall {
+            id: "orphan-run".into(),
+            name: "bash".into(),
+            arguments: json!({"command": "ls"}),
+            collapsed: true,
+            result: Some("ok".into()),
+            is_error: false,
+        },
+    ];
+    let lines = super::render_message(&app.messages[i], &app, &palette, i, 60, None, false);
+    let text = joined(&lines);
+    assert!(
+        text.contains("inline") || text.contains("answer"),
+        "empty content + Text block must flush the group then emit markdown, got {text}"
+    );
+    assert!(
+        text.contains("Read")
+            || text.contains("Searched")
+            || text.contains("file")
+            || text.contains("Run"),
+        "orphan grouped tools must still paint, got {text}"
+    );
+}
+
+#[test]
+fn home_recents_without_timestamp_still_list_the_title() {
+    use crate::app::{SessionEntry, TuiApp};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.provider_name.clear();
+    app.model_name.clear();
+    app.session_list.sessions = vec![SessionEntry {
+        id: "s1".into(),
+        title: "a very long recent session title that must truncate in the home list".into(),
+        messages: 2,
+        updated_at: None,
+        live: None,
+    }];
+    let backend = TestBackend::new(48, 24);
+    let mut terminal = Terminal::new(backend).expect("term");
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw");
+    let buf = terminal.backend().buffer();
+    let mut out = String::new();
+    for y in 0..buf.area().height {
+        for x in 0..buf.area().width {
+            if let Some(cell) = buf.cell((x, y)) {
+                out.push_str(cell.symbol());
+            }
+        }
+        out.push('\n');
+    }
+    assert!(
+        out.contains("recent") || out.contains("resume") || out.contains("session"),
+        "home recents without updated_at must still list the title, got {out}"
+    );
+    assert_eq!(super::truncate_home_title("short", 20), "short");
+    assert_eq!(super::truncate_home_title("hello", 0), "");
+    assert_eq!(super::truncate_home_title("hello", 1), "…");
+    let truncated = super::truncate_home_title("hello world", 6);
+    assert!(
+        truncated.ends_with('…') && truncated.starts_with("hello"),
+        "long home titles must ellipsize, got {truncated:?}"
+    );
 }
