@@ -4648,13 +4648,19 @@ fn session_list_ctrl_w_on_persisted_row_toasts() {
         a.toasts
             .visible()
             .iter()
-            .any(|t| t.message.contains("persisted") || t.message.contains("history")),
+            .any(|t| t.message.contains("Only live sessions")
+                || t.message.contains("persisted")
+                || t.message.contains("history")),
         "{:?}",
         a.toasts
             .visible()
             .iter()
             .map(|t| t.message.as_str())
             .collect::<Vec<_>>()
+    );
+    assert!(
+        matches!(a.dialogs.active(), Some(DialogKind::SessionList)),
+        "persisted Ctrl+W must not dismiss the picker"
     );
 }
 
@@ -4926,6 +4932,17 @@ fn model_jk_moves_selection_and_session_list_live_max_confirms() {
     open_dialog(&mut a, DialogKind::SessionList);
     handle_event(&mut a, key(KeyCode::Enter));
     assert_eq!(a.pending_session_switch, Some(usize::MAX));
+}
+
+#[test]
+fn provider_add_custom_backspace_on_unused_field_is_a_noop() {
+    let mut a = app();
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::AddCustom;
+    a.provider_dialog.active_field = 4;
+    a.provider_dialog.form_name = "keep".into();
+    open_dialog(&mut a, DialogKind::Provider);
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert_eq!(a.provider_dialog.form_name, "keep");
 }
 
 #[test]
