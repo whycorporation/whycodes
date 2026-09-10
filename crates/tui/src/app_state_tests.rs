@@ -1122,3 +1122,54 @@ fn focus_todos_is_a_noop_when_the_list_cannot_scroll() {
     app.focus_todos();
     assert_eq!(app.focus, crate::app::FocusPane::Prompt);
 }
+
+#[test]
+fn insert_paste_aligns_cursor_off_a_char_boundary() {
+    let mut app = app();
+    app.input_buffer = "éx".into();
+    app.input_cursor = 1;
+    assert!(
+        !app.input_buffer.is_char_boundary(1),
+        "cursor sits inside the UTF-8 é"
+    );
+    app.insert_paste_text("z");
+    assert!(
+        app.input_buffer.starts_with('z') || app.input_buffer.contains('z'),
+        "paste must land on a char boundary, got {:?}",
+        app.input_buffer
+    );
+    assert!(app.input_buffer.is_char_boundary(app.input_cursor));
+}
+
+#[test]
+fn toggle_selected_thinking_expands_a_user_prompt() {
+    let mut app = app();
+    app.add_message(ChatRole::User, "long user");
+    app.selected_msg = Some(0);
+    assert!(!app.messages[0].results_expanded);
+    app.toggle_selected_thinking();
+    assert!(app.messages[0].results_expanded);
+    app.toggle_selected_thinking();
+    assert!(!app.messages[0].results_expanded);
+}
+
+#[test]
+fn copy_selected_message_ignores_an_out_of_range_index() {
+    let mut app = app();
+    app.add_message(ChatRole::User, "hi");
+    app.selected_msg = Some(99);
+    assert!(!app.copy_selected_message());
+}
+
+#[test]
+fn question_move_cursor_clears_free_text_focus_on_a_real_option() {
+    let mut st = crate::app::QuestionDialogState::new(vec![question("Pick", &["A", "B"], false)]);
+    st.cursor = st.option_count() - 1;
+    st.free_text_focus = true;
+    st.move_cursor(-1);
+    assert!(!st.is_other_index(st.cursor));
+    assert!(
+        !st.free_text_focus,
+        "leaving Other must drop free-text focus"
+    );
+}
