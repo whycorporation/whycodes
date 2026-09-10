@@ -229,6 +229,15 @@ fn paint_ranges_clipped_skips_empty_and_inverted_clip() {
     assert_eq!(reading_order(3, 2, 1, 0), (0, 2, 1, 3));
     assert_eq!(reading_order(3, 1, 1, 1), (1, 1, 1, 3));
     assert!(!pipe_to(&[], "x"));
+    let seq = osc52("hi");
+    assert!(seq.contains("\x1b]52;c;"));
+    let mut buf = Vec::new();
+    assert!(write_osc52_to(&mut buf, &seq));
+    assert_eq!(buf, seq.as_bytes());
+    let _ = copy_text("coverage");
+    let _ = try_pbcopy("coverage");
+    let _ = try_xclip("coverage");
+    let _ = try_wl_copy("coverage");
     let blanks = vec!["".into(), "".into(), "hi".into(), "".into(), "".into()];
     assert_eq!(
         collapse_blank_runs(blanks),

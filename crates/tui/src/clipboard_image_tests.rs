@@ -169,3 +169,40 @@ fn sniff_covers_remaining_headers() {
         Some("image/jpeg")
     );
 }
+
+#[test]
+fn bytes_to_prompt_covers_empty_invalid_and_errors() {
+    assert!(matches!(
+        bytes_to_prompt(Ok(Vec::new())).unwrap(),
+        PromptClipboard::Empty
+    ));
+    assert!(matches!(
+        bytes_to_prompt(Ok(b"not-an-image".to_vec())).unwrap(),
+        PromptClipboard::Empty
+    ));
+    assert!(matches!(
+        bytes_to_prompt(Err(RunErr::NotFound)).unwrap(),
+        PromptClipboard::Empty
+    ));
+    assert!(
+        bytes_to_prompt(Err(RunErr::TooLarge))
+            .unwrap_err()
+            .contains("too large")
+    );
+    assert!(
+        bytes_to_prompt(Err(RunErr::Io("disk".into())))
+            .unwrap_err()
+            .contains("disk")
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn command_stdout_echo_and_missing_bin() {
+    let out = command_stdout("cmd", &["/C", "echo hi"], TIMEOUT).expect("echo");
+    assert!(!out.is_empty());
+    match command_stdout("whycodes-no-such-clipboard-bin", &[], TIMEOUT) {
+        Err(RunErr::NotFound) => {}
+        other => panic!("expected NotFound, got {other:?}"),
+    }
+}

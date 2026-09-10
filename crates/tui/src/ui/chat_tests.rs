@@ -1082,6 +1082,20 @@ fn home_recents_and_layout_cache_hits() {
         home.contains("recent") || home.contains("resume") || home.contains("session"),
         "{home:?}"
     );
+    let snapshot: String = home
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c.is_ascii_whitespace() {
+                c
+            } else {
+                '.'
+            }
+        })
+        .collect();
+    assert!(
+        snapshot.contains("recent") || snapshot.contains("resume") || snapshot.contains("session"),
+        "golden-ish home snapshot lost recents:\n{snapshot}"
+    );
 
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.add_message(ChatRole::User, "hello cache");
@@ -1097,8 +1111,65 @@ fn home_recents_and_layout_cache_hits() {
     let _ = super::session_line_count_mut(&mut app, width);
     let session = paint_chat(&mut app, 80, 16);
     assert!(
-        session.contains("hello") || session.contains("world") || session.contains('\u{276F}'),
+        session.contains("hello") || session.contains("world") || session.contains("{276F}"),
         "{session:?}"
+    );
+}
+
+#[test]
+fn golden_home_and_session_paint_stable_ascii() {
+    use crate::app::{ChatRole, SessionEntry, TuiApp};
+    use crate::config::TuiAppConfig;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn paint(app: &mut TuiApp, w: u16, h: u16) -> String {
+        let backend = TestBackend::new(w, h);
+        let mut terminal = Terminal::new(backend).expect("term");
+        let palette = app.config.palette();
+        terminal
+            .draw(|f| super::render(f, f.area(), app, &palette))
+            .expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let area = buf.area();
+        let mut out = String::new();
+        for y in area.y..area.y.saturating_add(area.height) {
+            for x in area.x..area.x.saturating_add(area.width) {
+                if let Some(cell) = buf.cell((x, y)) {
+                    let s = cell.symbol();
+                    if s.chars().all(|c| c.is_ascii_graphic() || c == ' ') {
+                        out.push_str(s);
+                    } else {
+                        out.push('.');
+                    }
+                }
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    let mut home = TuiApp::new(TuiAppConfig::default());
+    home.session_list.sessions = vec![SessionEntry {
+        id: "s1".into(),
+        title: "golden recent".into(),
+        messages: 1,
+        updated_at: None,
+        live: None,
+    }];
+    let home_txt = paint(&mut home, 60, 18);
+    assert!(
+        home_txt.contains("golden") || home_txt.contains("recent") || home_txt.contains("resume"),
+        "{home_txt}"
+    );
+
+    let mut session = TuiApp::new(TuiAppConfig::default());
+    session.add_message(ChatRole::User, "ping");
+    session.add_message(ChatRole::Assistant, "pong");
+    let session_txt = paint(&mut session, 60, 18);
+    assert!(
+        session_txt.contains("ping") || session_txt.contains("pong"),
+        "{session_txt}"
     );
 }
 

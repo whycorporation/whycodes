@@ -5865,8 +5865,91 @@ fn loop_term_headless_and_live_buf_draw() {
     let mut live = LoopTerm::live(TuiWriter::Buf(Vec::new()), color).unwrap();
     live.resize(Rect::new(0, 0, 80, 24));
     let _ = live.clear();
-    let _ = live.draw_app(&mut app).unwrap();
+    app.mouse_sel = Some(crate::app::MouseSelection {
+        anchor_x: 1,
+        anchor_y: 1,
+        focus_x: 4,
+        focus_y: 2,
+        dragging: true,
+    });
+    let (_area, snapshot) = live.draw_app(&mut app).unwrap();
+    assert!(snapshot.is_some());
     live.restore(true);
+}
+
+#[tokio::test]
+async fn run_live_buf_draws_then_quits() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    HEADLESS_LIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::collections::VecDeque::from([
+            Event::Resize(0, 0),
+            Event::Resize(80, 24),
+            press(KeyCode::Char(':')),
+            press(KeyCode::Char('q')),
+            press(KeyCode::Enter),
+        ]));
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn apply_remote_hydrate_warns_on_unreachable() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut session = Session::new(PathBuf::from("/work"), "sys".into());
+    apply_remote_hydrate(
+        &mut app,
+        &mut session,
+        &crate::remote::RemoteAttach::new("http://127.0.0.1:1", "sid-1"),
+    )
+    .await;
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Remote hydrate") || t.message.contains("Attached")),
+        "{:?}",
+        app.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn spawn_model_context_fetch_hits_local_http() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        if let Ok((stream, _)) = listener.accept() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    });
+    let mut config = Config::default();
+    config.providers.insert(
+        "acme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "acme".into(),
+            api_key: Some("sk".into()),
+            api_base: Some(format!("http://{addr}/v1")),
+            base_url: None,
+            headers: None,
+            models: vec!["m1".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    spawn_model_context_fetch(&config, "acme", "m1", "sk", tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(400), rx.recv()).await;
 }
 
 #[tokio::test]

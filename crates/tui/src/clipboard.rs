@@ -23,7 +23,7 @@ use crate::cell_grid::CellGrid;
 /// Copy `text` to the clipboard. Returns true if at least one path succeeded.
 pub fn copy_text(text: &str) -> bool {
     let osc = osc52(text);
-    let mut ok = write_osc52(&osc);
+    let mut ok = write_osc52_to(&mut io::stdout().lock(), &osc);
     ok |= try_wl_copy(text);
     ok |= try_xclip(text);
     ok |= try_pbcopy(text);
@@ -36,8 +36,7 @@ fn osc52(text: &str) -> String {
     format!("\x1b]52;c;{b64}\x07\x1b]52;p;{b64}\x07")
 }
 
-fn write_osc52(seq: &str) -> bool {
-    let mut out = io::stdout().lock();
+fn write_osc52_to(out: &mut impl Write, seq: &str) -> bool {
     out.write_all(seq.as_bytes()).is_ok() && out.flush().is_ok()
 }
 

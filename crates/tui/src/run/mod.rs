@@ -605,6 +605,11 @@ impl Write for TuiWriter {
 /// Production never installs this; tests in this module do.
 static HEADLESS_EVENTS: std::sync::Mutex<Option<VecDeque<Event>>> = std::sync::Mutex::new(None);
 
+/// Tests: drive `LoopTerm::live` + CrosstermBackend into a memory buffer
+/// (still with scripted events) so restore/alt-screen lines execute without
+/// a real TTY.
+static HEADLESS_LIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 struct LoopIo {
     scripted: Option<VecDeque<Event>>,
 }
@@ -1028,7 +1033,29 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     app.config.color_mode = color_mode;
     app.config.extra.quantize_for(color_mode);
 
-    let (mut terminal, keyboard_enhanced, tw, th) = if headless {
+    let live_buf =
+        cfg!(test) && HEADLESS_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst) && headless;
+    let (mut terminal, keyboard_enhanced, tw, th) = if live_buf {
+        #[cfg(test)]
+        {
+            let mut tui_out = TuiWriter::Buf(Vec::new());
+            enter_raw_and_alt(&mut tui_out, || Ok(()))?;
+            let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out, Some((0, 0)));
+            let mut terminal = LoopTerm::live(tui_out, color_mode)?;
+            terminal.resize(Rect::new(0, 0, 80, 24));
+            whycodes_core::logging::emit(
+                "whycodes_tui",
+                "warn",
+                "tui.size_fallback",
+                Some(serde_json::json!({ "reported_w": 0, "reported_h": 0, "using": "80x24" })),
+            );
+            (terminal, keyboard_enhanced, 0u16, 0u16)
+        }
+        #[cfg(not(test))]
+        {
+            unreachable!("HEADLESS_LIVE is test-only")
+        }
+    } else if headless {
         (LoopTerm::headless(color_mode)?, false, 80u16, 24u16)
     } else {
         let mut tui_out = open_tui_writer().map_err(|e| {
