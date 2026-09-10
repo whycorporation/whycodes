@@ -4923,6 +4923,67 @@ fn force_stop_requires_busy_cancel_and_timeout_or_pending_signal() {
 }
 
 #[test]
+fn maybe_force_stop_in_loop_noop_then_stops_when_expired() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let idx = whycodes_index::WorkspaceIndex::start(Vec::new());
+    let config = Config::default();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut cancel_at = None;
+    maybe_force_stop_in_loop(&mut app, &mut rt, &mut cancel_at, &config, dir.path(), &idx);
+    assert!(!rt.agent_busy);
+
+    rt.agent_busy = true;
+    cancel_at = Instant::now().checked_sub(CANCEL_FORCE_AFTER + Duration::from_millis(1));
+    app.pending_cancel = true;
+    maybe_force_stop_in_loop(&mut app, &mut rt, &mut cancel_at, &config, dir.path(), &idx);
+    assert!(!rt.agent_busy);
+    assert!(!app.pending_cancel);
+    assert!(cancel_at.is_none());
+}
+
+#[tokio::test]
+async fn spawn_remote_turn_arms_generating_and_delivers_error() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    let mut cancel_at = None;
+    spawn_remote_turn(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        crate::remote::RemoteAttach::new("http://127.0.0.1:1", "sid-remote"),
+        "hi remote",
+        dir.path(),
+    );
+    assert!(rt.agent_busy);
+    assert_eq!(app.current_agent_state, AgentState::Generating);
+    assert!(app.status_message.contains("remote"));
+    let outcome = tokio::time::timeout(Duration::from_secs(3), rt.done_rx.recv()).await;
+    match outcome {
+        Ok(Some(TurnOutcome::Remote {
+            error: Some(err), ..
+        })) => {
+            assert!(!err.is_empty(), "remote error text must be set");
+        }
+        Ok(Some(TurnOutcome::Remote { error: None, .. })) => {
+            panic!("unreachable remote must not succeed");
+        }
+        Ok(Some(_)) => panic!("expected TurnOutcome::Remote error"),
+        Ok(None) => panic!("remote done channel closed"),
+        Err(_) => {
+            if let Some(join) = rt.turn_join.take() {
+                join.abort();
+            }
+            panic!("remote spawn timed out waiting for error outcome");
+        }
+    }
+}
+
+#[test]
 fn auto_prompts_are_fifo_and_do_not_replace_pending_work() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.pending_auto_prompts

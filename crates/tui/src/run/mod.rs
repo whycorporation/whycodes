@@ -1441,17 +1441,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             // Cooperative cancel covers stream/tools via select!. This is the
             // hard backstop for spawn_blocking shells / wedged HTTP that never
             // yield: abort the join handle and restore rt.agent/rt.session.
-            if should_force_stop(rt.agent_busy, cancel_requested_at, app.pending_cancel) {
-                app.pending_cancel = false;
-                force_stop_turn(
-                    &mut app,
-                    &mut rt,
-                    &mut cancel_requested_at,
-                    &config,
-                    &project_dir,
-                    &file_index,
-                );
-            }
+            maybe_force_stop_in_loop(
+                &mut app,
+                &mut rt,
+                &mut cancel_requested_at,
+                &config,
+                &project_dir,
+                &file_index,
+            );
 
             // ── Turn finished ─────────────────────────────────────────
             if let Ok(outcome) = rt.done_rx.try_recv()
@@ -1642,40 +1639,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
                 if let Some(ref rem) = remote {
                     drop(submit_images);
-                    let expanded = expand_at_files(&prompt, &project_dir);
-                    rt.session.add_user_message(&expanded);
-                    let flag =
-                        arm_generating(&mut app, &mut rt, &mut cancel_requested_at, "remote…");
-                    let rem = rem.clone();
-                    let event_tx2 = rt.event_tx.clone();
-                    let done_tx2 = rt.done_tx.clone();
-                    rt.turn_join = Some(tokio::spawn(async move {
-                        let t0 = std::time::Instant::now();
-                        let result =
-                            crate::remote::stream_chat(&rem, &expanded, event_tx2, Some(flag))
-                                .await;
-                        let work_ms = t0.elapsed().as_millis();
-                        match result {
-                            Ok(text) => {
-                                if let Err(e) = done_tx2.send(TurnOutcome::Remote {
-                                    text,
-                                    error: None,
-                                    work_ms,
-                                }) {
-                                    tracing::debug!(error = %e, "remote turn done dropped");
-                                }
-                            }
-                            Err(e) => {
-                                if let Err(send_err) = done_tx2.send(TurnOutcome::Remote {
-                                    text: String::new(),
-                                    error: Some(e.to_string()),
-                                    work_ms,
-                                }) {
-                                    tracing::debug!(error = %send_err, "remote turn err dropped");
-                                }
-                            }
-                        }
-                    }));
+                    spawn_remote_turn(
+                        &mut app,
+                        &mut rt,
+                        &mut cancel_requested_at,
+                        rem.clone(),
+                        &prompt,
+                        &project_dir,
+                    );
                     continue;
                 }
 
@@ -4143,6 +4114,71 @@ fn should_force_stop(
         && cancel_requested_at
             .map(|since| since.elapsed() >= CANCEL_FORCE_AFTER || pending_cancel)
             .unwrap_or(false)
+}
+
+/// In-loop hard stop: abort a wedged turn after [`CANCEL_FORCE_AFTER`] or a
+/// second `[stop]` while already cancelling.
+fn maybe_force_stop_in_loop(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    config: &Config,
+    project_dir: &std::path::Path,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
+) {
+    if !should_force_stop(rt.agent_busy, *cancel_requested_at, app.pending_cancel) {
+        return;
+    }
+    app.pending_cancel = false;
+    force_stop_turn(
+        app,
+        rt,
+        cancel_requested_at,
+        config,
+        project_dir,
+        file_index,
+    );
+}
+
+/// Remote `whycodes serve` turn: stream over HTTP, deliver [`TurnOutcome::Remote`].
+fn spawn_remote_turn(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    rem: crate::remote::RemoteAttach,
+    prompt: &str,
+    project_dir: &std::path::Path,
+) {
+    let expanded = expand_at_files(prompt, project_dir);
+    rt.session.add_user_message(&expanded);
+    let flag = arm_generating(app, rt, cancel_requested_at, "remote…");
+    let event_tx2 = rt.event_tx.clone();
+    let done_tx2 = rt.done_tx.clone();
+    rt.turn_join = Some(tokio::spawn(async move {
+        let t0 = Instant::now();
+        let result = crate::remote::stream_chat(&rem, &expanded, event_tx2, Some(flag)).await;
+        let work_ms = t0.elapsed().as_millis();
+        match result {
+            Ok(text) => {
+                if let Err(e) = done_tx2.send(TurnOutcome::Remote {
+                    text,
+                    error: None,
+                    work_ms,
+                }) {
+                    tracing::debug!(error = %e, "remote turn done dropped");
+                }
+            }
+            Err(e) => {
+                if let Err(send_err) = done_tx2.send(TurnOutcome::Remote {
+                    text: String::new(),
+                    error: Some(e.to_string()),
+                    work_ms,
+                }) {
+                    tracing::debug!(error = %send_err, "remote turn err dropped");
+                }
+            }
+        }
+    }));
 }
 
 fn maybe_open_queued_dialog(app: &mut TuiApp, rt: &SessionRuntime) {

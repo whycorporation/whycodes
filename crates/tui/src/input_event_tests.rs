@@ -4659,3 +4659,89 @@ fn model_picker_left_right_fold_group_at_cursor() {
     handle_event(&mut a, key(KeyCode::Right));
     assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
 }
+
+#[test]
+fn dialog_home_end_jump_theme_and_sessions_mouse_confirm() {
+    let mut a = app();
+    a.theme_selected = 2;
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_list_total = crate::theme::ThemeName::ALL.len();
+    handle_event(&mut a, key(KeyCode::Home));
+    assert_eq!(a.theme_selected, 0);
+    handle_event(&mut a, key(KeyCode::End));
+    assert_eq!(a.theme_selected, crate::theme::ThemeName::ALL.len() - 1);
+
+    let mut a = app();
+    a.sessions_rows = vec![
+        crate::app::SessionDashboardRow {
+            parked_idx: None,
+            title: "current".into(),
+            glyph: "·".into(),
+            state_label: "idle".into(),
+            preview: String::new(),
+            unread: false,
+        },
+        crate::app::SessionDashboardRow {
+            parked_idx: Some(0),
+            title: "parked".into(),
+            glyph: "·".into(),
+            state_label: "idle".into(),
+            preview: String::new(),
+            unread: false,
+        },
+    ];
+    open_dialog(&mut a, DialogKind::Sessions);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 4,
+    });
+    a.dialog_list_total = 2;
+    a.dialog_list_visible = 4;
+    a.dialog_list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 9),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 9));
+    assert_eq!(a.pending_session_switch, Some(0));
+}
+
+#[test]
+fn copy_modal_selection_warns_when_clipboard_fails() {
+    crate::clipboard::with_copy_stub(false, || {
+        let mut a = app();
+        open_dialog(&mut a, DialogKind::Theme);
+        a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![
+            (0..20).map(|_| "x".to_string()).collect(),
+            (0..20).map(|_| "y".to_string()).collect(),
+        ]);
+        a.mouse_sel = Some(crate::app::MouseSelection {
+            anchor_x: 1,
+            anchor_y: 0,
+            focus_x: 8,
+            focus_y: 1,
+            dragging: true,
+        });
+        copy_modal_selection(&mut a, 8, 1);
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clipboard") || t.message.contains("Copied")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
