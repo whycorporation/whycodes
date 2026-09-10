@@ -1662,6 +1662,41 @@ mod overflow_render_tests {
     }
 
     #[test]
+    fn command_mode_input_row_count_uses_the_command_buffer() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.mode = AppMode::Command;
+        app.input_buffer = "ignored".into();
+        app.command.buffer.clear();
+        assert_eq!(input_row_count(&app, 80), 1);
+        app.command.buffer = "word ".repeat(40);
+        assert!(
+            input_row_count(&app, 24) > 1,
+            "a long :command draft must wrap"
+        );
+        assert!(prompt_height(&app, 24) > prompt_height(&TuiApp::new(TuiAppConfig::default()), 24));
+    }
+
+    #[test]
+    fn single_long_image_label_truncates_instead_of_summary() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.pending_images.push(crate::images::PromptImage {
+            path: "very-long-screenshot-name-that-will-not-fit.png".into(),
+            label: "very-long-screenshot-name-that-will-not-fit.png".into(),
+            media_type: "image/png".into(),
+        });
+        let rows = rendered_rows(&mut app, 28, 9);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("very-long") || r.contains("screenshot") || r.contains('…')),
+            "a single long chip must truncate the label, not switch to N images, got {rows:?}"
+        );
+        assert!(
+            rows.iter().all(|r| !r.contains("images")),
+            "n==1 must not use the multi-image summary, got {rows:?}"
+        );
+    }
+
+    #[test]
     fn hard_wrap_rows_never_exceed_text_width() {
         let area_w = 50u16;
         let text_w = area_w.saturating_sub(CHROME_H).max(1);
