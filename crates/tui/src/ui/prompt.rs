@@ -1146,6 +1146,44 @@ mod overflow_render_tests {
         );
         assert!(empty_prompt_hint(false, false, false, AppMode::Normal, true).is_none());
         assert!(empty_prompt_hint(true, true, false, AppMode::Normal, true).is_none());
+        assert!(empty_prompt_hint(true, false, true, AppMode::Normal, true).is_none());
+    }
+
+    #[test]
+    fn busy_empty_focused_prompt_uses_ellipsis_prefix() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.current_agent_state = AgentState::Generating;
+        app.input_buffer.clear();
+        app.focus = crate::app::FocusPane::Prompt;
+        let rows = rendered_rows(&mut app, 60, 8);
+        assert!(
+            rows.iter().any(|r| r.contains('…') || r.contains("...")),
+            "busy empty prompt must show the ellipsis prefix, got {rows:?}"
+        );
+    }
+
+    #[test]
+    fn slash_command_prompt_paints_the_token() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.input_buffer = "/help me".into();
+        app.input_cursor = app.input_buffer.len();
+        let rows = rendered_rows(&mut app, 60, 8);
+        assert!(
+            rows.iter().any(|r| r.contains("/help")),
+            "slash command must paint the token, got {rows:?}"
+        );
+    }
+
+    #[test]
+    fn wrapped_prompt_keeps_caret_on_last_rows() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.input_buffer = "word ".repeat(80);
+        app.input_cursor = app.input_buffer.len();
+        let rows = rendered_rows(&mut app, 24, 12);
+        assert!(
+            rows.iter().any(|r| r.contains("word")),
+            "long wrap must still paint prompt text, got {rows:?}"
+        );
     }
 
     #[test]

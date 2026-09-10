@@ -5466,3 +5466,65 @@ fn open_effort_dialog_toasts_when_the_model_has_no_levels() {
         "empty effort catalog must not open a picker"
     );
 }
+
+#[test]
+fn handle_event_focus_lost_and_right_click_keep_running() {
+    let mut a = app();
+    assert!(handle_event(&mut a, Event::FocusLost));
+    assert!(handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Right), 4, 4)
+    ));
+    assert!(handle_event(
+        &mut a,
+        mouse(MouseEventKind::Up(MouseButton::Right), 4, 4)
+    ));
+    assert!(a.running);
+}
+
+#[test]
+fn word_right_without_paste_chip_advances_by_word() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+    let mut a = app();
+    a.input_buffer = "alpha beta".into();
+    a.input_cursor = 0;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordRight),
+        &k
+    ));
+    assert!(
+        a.input_cursor > 0,
+        "word-right from start must skip the first word, cursor={}",
+        a.input_cursor
+    );
+    let after_first = a.input_cursor;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordRight),
+        &k
+    ));
+    assert!(a.input_cursor >= after_first);
+}
+
+#[test]
+fn confirm_clear_session_wipes_transcript() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "keep?");
+    a.confirm("Clear", "wipe?", ConfirmAction::ClearSession);
+    let dlg = a.dialogs.active().cloned().expect("confirm");
+    confirm_dialog(&mut a, &dlg);
+    assert!(a.messages.is_empty());
+    assert!(a.status_message.contains("cleared"));
+}
+
+#[test]
+fn help_dialog_q_closes_when_not_searching() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    a.help_searching = false;
+    a.help_query.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+    assert_eq!(a.mode, AppMode::Normal);
+}

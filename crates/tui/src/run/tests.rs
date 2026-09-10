@@ -9675,3 +9675,99 @@ async fn run_live_buf_mouse_select_then_key_clears_screen_cells() {
     clear_crossterm_stub();
     assert_eq!(exit, TuiExit::Quit);
 }
+
+#[test]
+fn apply_draw_snapshot_stores_then_clears_when_nothing_is_selected() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let grid = crate::cell_grid::CellGrid::from_rows(vec![vec!["a".into(), "b".into()]]);
+    apply_draw_snapshot(&mut app, Some(grid.clone()));
+    assert!(!app.screen_cells.is_empty());
+    apply_draw_snapshot(&mut app, None);
+    assert!(
+        app.screen_cells.is_empty(),
+        "dropping the snapshot must clear leftover mouse-select cells"
+    );
+    apply_draw_snapshot(&mut app, Some(grid));
+    assert!(!app.screen_cells.is_empty());
+}
+
+#[test]
+fn after_draw_frame_clears_dirty_unless_animating_or_full_clear_owed() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.needs_redraw = true;
+    app.pending_full_clears = 0;
+    assert!(!after_draw_frame(&mut app, None, false, None));
+    assert!(!app.needs_redraw);
+
+    app.pending_full_clears = 1;
+    assert!(!after_draw_frame(&mut app, None, false, None));
+    assert!(
+        app.needs_redraw,
+        "a owed full-clear must keep the loop dirty"
+    );
+
+    app.pending_full_clears = 0;
+    assert!(!after_draw_frame(&mut app, None, true, None));
+    assert!(app.needs_redraw, "animation must keep the loop dirty");
+    assert!(!bench_should_break(None));
+}
+
+#[test]
+fn after_turn_events_drain_refreshes_visible_sidebar() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.sidebar.visible = true;
+    let idx = Arc::new(whycodes_index::WorkspaceIndex::start(Vec::new()));
+    let config = Config::default();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    assert!(!after_turn_events_drain(&mut app, &mut rx, &config, &idx));
+    tx.send(TurnEvent::TextDelta("stream".into())).unwrap();
+    assert!(after_turn_events_drain(&mut app, &mut rx, &config, &idx));
+    assert!(app.needs_redraw);
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.content.contains("stream") || m.role == ChatRole::Assistant)
+    );
+
+    app.sidebar.visible = false;
+    tx.send(TurnEvent::Status("idle-ok".into())).unwrap();
+    assert!(after_turn_events_drain(&mut app, &mut rx, &config, &idx));
+    assert_eq!(app.status_message, "idle-ok");
+}
+
+#[tokio::test]
+async fn run_headless_sidebar_open_then_scripted_turn_drains_events() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("lib.rs"), "fn x() {}").unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "stream-ok");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line(":sidebar"));
+    events.extend(type_line("hi"));
+    events.push(ctrl('q'));
+    events.push(press(KeyCode::Enter));
+    set_headless_events(Some(events.into()));
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}

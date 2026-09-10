@@ -1365,20 +1365,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 }
                 // Cell snapshot is only for mouse text selection → clipboard.
                 // Skip the ~4k String allocs/frame when nothing is selected.
-                if let Some(cells) = snapshot {
-                    app.screen_cells = cells;
-                } else if !app.screen_cells.is_empty() {
-                    app.screen_cells.clear();
-                }
-                // Grok: never malloc_trim inside the paint; drain after flush.
-                crate::heap::run_deferred_release();
-                // Stay dirty while animation is live or a follow-up full
-                // clear is still owed (paste echo can land after this frame).
-                app.needs_redraw = animate || app.pending_full_clears > 0;
-
-                if let Some(ref bench) = bench
-                    && crate::bench::should_stop(bench)
-                {
+                if after_draw_frame(&mut app, snapshot, animate, bench.as_ref()) {
                     break;
                 }
 
@@ -1398,19 +1385,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 }
             }
 
-            if let Some(ref bench) = bench
-                && crate::bench::should_stop(bench)
-            {
+            if bench_should_break(bench.as_ref()) {
                 break;
             }
 
             // ── Stream events from rt.agent (coalesce text/thinking deltas) ──
-            if drain_turn_events(&mut app, &mut rt.event_rx) {
-                if app.sidebar.visible {
-                    refresh_sidebar(&mut app, &config, &file_index);
-                }
-                app.mark_dirty();
-            }
+            after_turn_events_drain(&mut app, &mut rt.event_rx, &config, &file_index);
 
             if should_tick_spinner(&app, rt.agent_busy) {
                 tick_spinner(&mut app, &mut spinner_frame);
@@ -4678,6 +4658,59 @@ pub(super) fn settle_first_frame_hydrate(
     if !animate {
         app.needs_redraw = false;
         app.pending_full_clears = 0;
+    }
+}
+
+/// Store the mouse-selection cell snapshot, or drop it when nothing is selected.
+fn apply_draw_snapshot(app: &mut TuiApp, snapshot: Option<crate::cell_grid::CellGrid>) {
+    if let Some(cells) = snapshot {
+        app.screen_cells = cells;
+    } else if !app.screen_cells.is_empty() {
+        app.screen_cells.clear();
+    }
+}
+
+/// True once a `WHYCODES_BENCH` run has drawn its first frame and outstayed its duration.
+fn bench_should_break(bench: Option<&crate::bench::BenchConfig>) -> bool {
+    matches!(bench, Some(b) if crate::bench::should_stop(b))
+}
+
+/// Snapshot + deferred heap trim + dirty flag. Returns true when a bench run should exit.
+fn after_draw_frame(
+    app: &mut TuiApp,
+    snapshot: Option<crate::cell_grid::CellGrid>,
+    animate: bool,
+    bench: Option<&crate::bench::BenchConfig>,
+) -> bool {
+    apply_draw_snapshot(app, snapshot);
+    crate::heap::run_deferred_release();
+    app.needs_redraw = animate || app.pending_full_clears > 0;
+    bench_should_break(bench)
+}
+
+fn refresh_sidebar_if_visible(
+    app: &mut TuiApp,
+    config: &whycodes_config::Config,
+    file_index: &std::sync::Arc<whycodes_index::WorkspaceIndex>,
+) {
+    if app.sidebar.visible {
+        refresh_sidebar(app, config, file_index);
+    }
+}
+
+/// Drain agent stream events; refresh the sidebar only when it is on screen.
+fn after_turn_events_drain(
+    app: &mut TuiApp,
+    event_rx: &mut mpsc::UnboundedReceiver<TurnEvent>,
+    config: &whycodes_config::Config,
+    file_index: &std::sync::Arc<whycodes_index::WorkspaceIndex>,
+) -> bool {
+    if drain_turn_events(app, event_rx) {
+        refresh_sidebar_if_visible(app, config, file_index);
+        app.mark_dirty();
+        true
+    } else {
+        false
     }
 }
 
