@@ -1682,6 +1682,28 @@ fn mouse_drag_without_down_and_plain_click() {
 }
 
 #[test]
+fn mouse_drag_copy_fail_toasts_no_clipboard() {
+    crate::clipboard::with_copy_stub(false, || {
+        let mut a = app();
+        a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![
+            (0..8).map(|_| "x".to_string()).collect(),
+            (0..8).map(|_| "y".to_string()).collect(),
+        ]);
+        handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 1, 0));
+        handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 6, 1));
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 6, 1));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clipboard")),
+            "{:?}",
+            a.toasts.visible()
+        );
+    });
+}
+
+#[test]
 fn move_in_dialog_to_clamps_each_kind() {
     let mut a = app();
     open_provider_dialog(&mut a);

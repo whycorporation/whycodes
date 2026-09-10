@@ -2416,6 +2416,34 @@ async fn switch_to_agent_picker_unknown_and_rebuild() {
     assert_eq!(agent.info.name, "plan");
     assert!(agent.session_claims().is_some());
     assert!(session.system_prompt.contains("sys") || !session.system_prompt.is_empty());
+
+    switch_to_agent(
+        &mut app,
+        &mut agent,
+        &mut session,
+        &config,
+        dir.path(),
+        {
+            let (p, _) = ChannelPermissionPrompter::new();
+            Arc::new(p)
+        },
+        {
+            let (q, _) = ChannelQuestionPrompter::new(None);
+            Arc::new(q)
+        },
+        &event_tx,
+        "plan",
+        false,
+    )
+    .await;
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message == "Agent → plan"),
+        "{:?}",
+        app.toasts.visible()
+    );
     assert!(
         app.toasts
             .visible()
