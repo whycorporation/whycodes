@@ -2135,6 +2135,9 @@ async fn hydrate_after_first_frame_fills_picker_index_and_key() {
     let mut already = String::from("keep");
     hydrate_deferred_api_key(&mut already, "acme", "m1", &config, &mut app);
     assert_eq!(already, "keep");
+    let before_n = app.session_list.sessions.len();
+    hydrate_session_picker(&mut app);
+    assert_eq!(app.session_list.sessions.len(), before_n);
     let _ = home;
 }
 

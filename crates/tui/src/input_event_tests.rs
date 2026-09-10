@@ -1646,6 +1646,7 @@ fn chat_scrollbar_offset_snaps_and_noops() {
     assert_eq!(a.scroll_offset, 0, "bottom of track → newest");
     apply_chat_scrollbar_offset(&mut a, 0, None);
     apply_chat_scrollbar_offset(&mut a, 50, Some(1));
+    apply_chat_scrollbar_offset(&mut a, 5, Some(2));
     let grab = chat_scrollbar_grab_at(
         &a,
         3,
@@ -1657,6 +1658,17 @@ fn chat_scrollbar_offset_snaps_and_noops() {
         },
     );
     let _ = grab;
+    let grab_mid = chat_scrollbar_grab_at(
+        &a,
+        6,
+        Rect {
+            x: 40,
+            y: 1,
+            width: 1,
+            height: 10,
+        },
+    );
+    assert!(grab_mid < 10);
 }
 
 #[test]
