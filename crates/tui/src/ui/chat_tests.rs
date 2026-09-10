@@ -119,6 +119,50 @@ fn tool_result_diff_paints_add_remove_colours() {
     // Visible wash background on add/remove rows.
     assert!(add.style.bg.is_some());
     assert!(rem.style.bg.is_some());
+
+    let numbered = tool_result(
+        "  12|-old\n  13|+new\n",
+        false,
+        &palette,
+        true,
+        ToolOutHint::Diff,
+        80,
+    );
+    let numbered_text = joined(&numbered);
+    assert!(
+        numbered_text.contains("12") && numbered_text.contains('|'),
+        "numbered edit preview must keep the line-no gutter, got {numbered_text}"
+    );
+
+    let hunk_meta = tool_result(
+        "diff --git a/x b/x\n@@ -1 +1 @@\nEdited src/main.rs\nWrote src/lib.rs\n… truncated\n(empty file)\n context\n",
+        false,
+        &palette,
+        true,
+        ToolOutHint::Diff,
+        80,
+    );
+    let hunk_text = joined(&hunk_meta);
+    assert!(
+        hunk_text.contains("diff --git")
+            && hunk_text.contains("@@")
+            && hunk_text.contains("Edited")
+            && hunk_text.contains("Wrote"),
+        "hunk/meta/context rows must paint, got {hunk_text}"
+    );
+    let err_diff = tool_result(
+        "--- a\n+++ b\n-old\n+new\n",
+        true,
+        &palette,
+        true,
+        ToolOutHint::Diff,
+        80,
+    );
+    let err_text = joined(&err_diff);
+    assert!(
+        err_text.contains("old") || err_text.contains("new"),
+        "error diffs still paint the body, got {err_text}"
+    );
     // Full line body stays green/red (not syntax-overwritten).
     let add_body = lines
         .iter()
@@ -1663,7 +1707,27 @@ fn tool_result_auto_picks_grep_code_and_plain() {
         ToolOutHint::Code(Some("rust".into())),
         20,
     );
-    assert!(!read.is_empty());
+    let read_text = joined(&read);
+    assert!(
+        !read_text.contains("crates/tui/src/ui/chat.rs"),
+        "path-only # banner must drop because the header already shows the path, got {read_text}"
+    );
+    assert!(
+        read_text.contains("lines") || read_text.contains("fn main"),
+        "range meta and numbered code must stay, got {read_text}"
+    );
+    let unnumbered = tool_result(
+        "fn main() {\n    println!(\"hi\");\n}",
+        false,
+        &palette,
+        true,
+        ToolOutHint::Code(Some("rust".into())),
+        40,
+    );
+    assert!(
+        !joined(&unnumbered).is_empty(),
+        "code without a read gutter still highlights"
+    );
     let long_body = format!("{}\n{}", "x".repeat(200), vec!["line"; 20].join("\n"));
     let long_plain = tool_result(&long_body, false, &palette, false, ToolOutHint::Auto, 12);
     assert!(!long_plain.is_empty());
