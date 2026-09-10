@@ -1495,26 +1495,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
             // ── Apply agent picker selection ──────────────────────────
             if let Some(name) = app.pending_agent.take() {
-                if rt.agent_busy {
-                    app.toasts.push(
-                        crate::toast::ToastKind::Warning,
-                        "Can't switch agent while a turn is running",
-                    );
-                } else {
-                    switch_to_agent(
-                        &mut app,
-                        &mut rt.agent,
-                        &mut rt.session,
-                        &config,
-                        &project_dir,
-                        Arc::clone(&rt.perm_prompter),
-                        Arc::clone(&rt.question_prompter),
-                        &rt.event_tx,
-                        &name,
-                        false,
-                    )
-                    .await;
-                }
+                apply_pending_agent(&mut app, &mut rt, &config, &project_dir, &name).await;
             }
 
             // ── Apply model picker selection ──────────────────────────
@@ -2382,6 +2363,36 @@ fn print_session_summary(summary: &str) {
     let mut err = io::stderr();
     let _ = writeln!(err, "{summary}");
     let _ = err.flush();
+}
+
+/// Agent picker selection: refuse while a turn is in flight, otherwise switch.
+async fn apply_pending_agent(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    config: &Config,
+    project_dir: &std::path::Path,
+    name: &str,
+) {
+    if rt.agent_busy {
+        app.toasts.push(
+            crate::toast::ToastKind::Warning,
+            "Can't switch agent while a turn is running",
+        );
+        return;
+    }
+    switch_to_agent(
+        app,
+        &mut rt.agent,
+        &mut rt.session,
+        config,
+        project_dir,
+        Arc::clone(&rt.perm_prompter),
+        Arc::clone(&rt.question_prompter),
+        &rt.event_tx,
+        name,
+        false,
+    )
+    .await;
 }
 
 /// Arm cooperative cancel: set the flag, unblock permission/question waits,

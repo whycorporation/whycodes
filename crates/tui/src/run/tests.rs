@@ -1434,6 +1434,34 @@ fn apply_pending_cancel_begins_then_force_stops() {
 }
 
 #[tokio::test]
+async fn apply_pending_agent_warns_when_busy_then_switches_when_idle() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.primary_agents = vec!["build".into(), "plan".into()];
+    let mut rt = test_runtime();
+    rt.agent_busy = true;
+    apply_pending_agent(&mut app, &mut rt, &Config::default(), dir.path(), "plan").await;
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Can't switch agent")),
+        "{:?}",
+        app.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(rt.agent.info.name, "build");
+
+    rt.agent_busy = false;
+    apply_pending_agent(&mut app, &mut rt, &Config::default(), dir.path(), "plan").await;
+    assert_eq!(rt.agent.info.name, "plan");
+}
+
+#[tokio::test]
 async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
     let _home = isolate_home();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
