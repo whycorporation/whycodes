@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> · 简体中文
+  <a href="README.md">English</a> · 简体中文 · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a>
 </p>
 
 **面向终端的快速、与供应商无关的编程智能体，使用 Rust 编写。**
