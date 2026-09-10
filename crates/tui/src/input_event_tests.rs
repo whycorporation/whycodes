@@ -883,6 +883,31 @@ fn modal_mouse_scrolls_and_closes() {
 }
 
 #[test]
+fn modal_mouse_click_outside_clears_selection() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.mouse_sel = Some(crate::app::MouseSelection {
+        anchor_x: 12,
+        anchor_y: 6,
+        focus_x: 14,
+        focus_y: 7,
+        dragging: true,
+    });
+    assert!(handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 1, 1)
+    ));
+    assert!(a.mouse_sel.is_none());
+    assert!(a.dialogs.is_open());
+}
+
+#[test]
 fn help_overlay_search_then_esc_clears_then_closes() {
     let mut a = app();
     a.mode = AppMode::Help;

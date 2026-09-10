@@ -1167,6 +1167,16 @@ fn refresh_sidebar_and_dashboard() {
     refresh_sidebar(&mut app, &config, &idx);
     load_app_todos(&mut app);
     assert!(app.todos.iter().any(|t| t.content == "do it"));
+    assert!(
+        app.sidebar.file_tree.iter().any(|p| p.ends_with('/')),
+        "directories must be tagged with a trailing slash: {:?}",
+        app.sidebar.file_tree
+    );
+    assert!(
+        app.sidebar.mcp_status.iter().any(|s| s.contains("demo")),
+        "{:?}",
+        app.sidebar.mcp_status
+    );
     assert!(app.sidebar.mcp_status.iter().any(|s| s.contains("demo")));
 
     let rt = test_runtime();
