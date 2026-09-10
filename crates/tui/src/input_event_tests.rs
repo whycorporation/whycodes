@@ -4501,6 +4501,21 @@ fn kill_word_forward_expands_overlapping_paste_placeholder() {
         "kill-word-forward must swallow the paste chip: {:?}",
         a.input_buffer
     );
+
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    a.input_buffer = format!("keep {token}");
+    a.input_cursor = 5; // start of the chip
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputDelete,
+        &KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+    );
+    assert_eq!(
+        a.input_buffer, "keep ",
+        "Delete at a chip start must remove the whole placeholder"
+    );
 }
 
 #[test]

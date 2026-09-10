@@ -2147,6 +2147,9 @@ async fn handle_slash_covers_local_commands() {
     h.run("/continue").await;
     assert_eq!(h.app.pending_session_id.as_deref(), Some(RESUME_LATEST));
     h.app.pending_session_id = None;
+    h.run("/continue leftover-id").await;
+    assert_eq!(h.app.pending_session_id.as_deref(), Some("leftover-id"));
+    h.app.pending_session_id = None;
     h.run("/resume").await;
     assert!(matches!(
         h.app.dialogs.active(),
