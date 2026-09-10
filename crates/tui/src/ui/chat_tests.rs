@@ -1,7 +1,7 @@
 use super::{
-    SparseLines, ToolOutHint, ToolPaint, ToolRef, ellipsize_bytes, hard_truncate_line,
-    message_row_layout_mut, paint_tool_run, parse_grep_hit, prettify_tool_result, split_read_line,
-    tool_block, tool_display_name, tool_out_hint, tool_result, tool_summary, visible_message_range,
+    ToolOutHint, ToolPaint, ToolRef, ellipsize_bytes, hard_truncate_line, message_row_layout_mut,
+    paint_tool_run, parse_grep_hit, prettify_tool_result, split_read_line, tool_block,
+    tool_display_name, tool_out_hint, tool_result, tool_summary, visible_message_range,
 };
 use crate::app::{ChatRole, TuiApp};
 use crate::config::TuiAppConfig;
@@ -12,6 +12,34 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use serde_json::json;
+
+/// Paint chat lines, filling every row so previous-frame glyphs cannot linger.
+///
+/// History: a pure sparse writer (only non-empty spans) left ghost cells after
+/// scroll. Production paint now writes rows directly; this widget remains for
+/// unit tests that stamp a buffer without a full session.
+struct SparseLines {
+    lines: Vec<Line<'static>>,
+    bg: ratatui::style::Color,
+}
+
+impl Widget for SparseLines {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let row = super::ChatRowPaint {
+            x: area.x,
+            width: area.width,
+            bg: self.bg,
+            caret_style: Style::default(),
+        };
+        for r in 0..area.height {
+            let line = self.lines.get(r as usize);
+            super::paint_chat_row(buf, area.y + r, &row, line, false);
+        }
+    }
+}
 
 #[test]
 fn prettify_minified_json_becomes_multiline() {

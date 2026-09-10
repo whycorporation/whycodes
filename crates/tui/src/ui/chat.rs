@@ -7,8 +7,6 @@ use crate::theme::ThemePalette;
 use crate::tokens::{HOME_LOGO_MARK, layout};
 use crate::ui::scrollbar::{SCROLLBAR_GAP, SCROLLBAR_GUTTER, ScrollbarColors, paint_scrollbar};
 use crate::widgets::wrap::wrap_text;
-#[cfg(test)]
-use ratatui::widgets::Widget;
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -463,36 +461,6 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     // overlayed bar. Keep the published width in sync with `content_width`.
     if needs_bar {
         app.chat_content_width = content_width;
-    }
-}
-
-/// Paint chat lines, filling every row so previous-frame glyphs cannot linger.
-///
-/// History: a pure sparse writer (only non-empty spans) left ghost cells after
-/// scroll. Production paint now writes rows directly; this widget remains for
-/// unit tests that stamp a buffer without a full session.
-#[cfg(test)]
-struct SparseLines {
-    lines: Vec<Line<'static>>,
-    bg: ratatui::style::Color,
-}
-
-#[cfg(test)]
-impl Widget for SparseLines {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-        let row = ChatRowPaint {
-            x: area.x,
-            width: area.width,
-            bg: self.bg,
-            caret_style: Style::default(),
-        };
-        for r in 0..area.height {
-            let line = self.lines.get(r as usize);
-            paint_chat_row(buf, area.y + r, &row, line, false);
-        }
     }
 }
 
