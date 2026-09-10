@@ -195,3 +195,27 @@ fn truncate_pick_hint_and_cursor_helpers() {
     assert_eq!(buf[(0, 1)].symbol(), "╭");
     assert_eq!(buf[(0, 2)].symbol(), "╰");
 }
+
+#[test]
+fn clamp_rows_to_width_keeps_empty_and_cuts_overwide() {
+    let buf = "abcdefghij";
+    let empty = crate::widgets::wrap::WrappedRow {
+        byte_range: (4, 4),
+        width: 0,
+    };
+    let kept = clamp_rows_to_width(buf, vec![empty], 8);
+    assert_eq!(kept[0].byte_range, (4, 4));
+
+    let wide = crate::widgets::wrap::WrappedRow {
+        byte_range: (0, buf.len()),
+        width: 10,
+    };
+    let cut = clamp_rows_to_width(buf, vec![wide], 4);
+    assert_eq!(cut[0].byte_range.0, 0);
+    assert!(
+        cut[0].byte_range.1 < buf.len(),
+        "over-wide wrap must cut before the end, got {:?}",
+        cut[0].byte_range
+    );
+    assert!(cut[0].width as usize <= 4);
+}

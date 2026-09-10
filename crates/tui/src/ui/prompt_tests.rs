@@ -38,6 +38,22 @@ fn command_mode_renders_command_buffer_with_colon_prefix() {
 }
 
 #[test]
+fn trailing_newline_paints_a_blank_continuation_row() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.input_buffer = "hello\n".into();
+    app.input_cursor = app.input_buffer.len();
+    let rows = rendered_rows(&mut app, 40, 10);
+    assert!(
+        rows.iter().any(|r| r.contains("hello")),
+        "trailing newline must still paint the typed line, got {rows:?}"
+    );
+    assert!(
+        input_row_count(&app, 40) >= 2,
+        "a trailing newline must reserve a blank wrap row"
+    );
+}
+
+#[test]
 fn home_prompt_centers_and_narrow_drops_chips() {
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.agent_name = "build".into();
