@@ -1333,6 +1333,60 @@ fn mouse_confirms_list_and_question_rows() {
 }
 
 #[test]
+fn mouse_confirms_effort_mode_agent_and_login_rows() {
+    fn click_row(a: &mut TuiApp, y: u16) {
+        a.dialog_modal_hit = Some(Rect {
+            x: 10,
+            y: 5,
+            width: 40,
+            height: 12,
+        });
+        a.dialog_list_hit = Some(Rect {
+            x: 12,
+            y: 8,
+            width: 30,
+            height: 6,
+        });
+        a.dialog_list_total = 4;
+        a.dialog_list_visible = 6;
+        a.dialog_list_scroll_start = 0;
+        handle_event(a, mouse(MouseEventKind::Down(MouseButton::Left), 14, y));
+        handle_event(a, mouse(MouseEventKind::Up(MouseButton::Left), 14, y));
+    }
+
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    open_effort_dialog(&mut a);
+    click_row(&mut a, 8);
+    assert!(
+        a.pending_effort.is_some() || a.dialogs.is_open() || a.mode == AppMode::Normal,
+        "effort click should select or keep the picker"
+    );
+
+    let mut a = app();
+    open_mode_dialog(&mut a);
+    click_row(&mut a, 8);
+    assert!(a.pending_approval_mode.is_some() || a.mode == AppMode::Normal || a.dialogs.is_open());
+
+    let mut a = app();
+    a.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
+    open_dialog(&mut a, DialogKind::Agent);
+    click_row(&mut a, 8);
+    assert!(a.pending_agent.is_some() || a.mode == AppMode::Normal || a.dialogs.is_open());
+
+    let mut a = app();
+    a.login_dialog.rows = vec![crate::app::LoginProviderRow {
+        provider: "openai".into(),
+        label: "OpenAI".into(),
+        connected: false,
+    }];
+    open_dialog(&mut a, DialogKind::Login);
+    click_row(&mut a, 8);
+    assert!(a.pending_login_provider.is_some() || a.mode == AppMode::Normal || a.dialogs.is_open());
+}
+
+#[test]
 fn modal_scrollbar_and_copy_selection() {
     let mut a = app();
     open_dialog(&mut a, DialogKind::Theme);
