@@ -1563,11 +1563,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             }
 
             // Deferred / idle catalog: never race the first (or any) user turn.
-            if catalog_fetch_pending
-                && !rt.agent_busy
-                && app.pending_prompt.is_none()
-                && !missing_key
-            {
+            if should_spawn_idle_catalog(
+                catalog_fetch_pending,
+                rt.agent_busy,
+                app.pending_prompt.is_some(),
+                missing_key,
+            ) {
                 catalog_fetch_pending = false;
                 spawn_model_context_fetch(&config, &provider, &model, &api_key, catalog_tx.clone());
             }
@@ -2356,6 +2357,16 @@ fn print_session_summary(summary: &str) {
     let mut err = io::stderr();
     let _ = writeln!(err, "{summary}");
     let _ = err.flush();
+}
+
+/// Idle catalog: only after a deferred fetch, with no in-flight turn or prompt.
+fn should_spawn_idle_catalog(
+    catalog_fetch_pending: bool,
+    agent_busy: bool,
+    pending_prompt: bool,
+    missing_key: bool,
+) -> bool {
+    catalog_fetch_pending && !agent_busy && !pending_prompt && !missing_key
 }
 
 /// Queue a catalog fetch when a turn is in flight; otherwise spawn it now.

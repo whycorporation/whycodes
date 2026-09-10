@@ -1473,6 +1473,15 @@ fn defer_or_spawn_catalog_queues_when_busy_and_clears_when_idle() {
     assert!(!pending, "idle must spawn immediately and clear the flag");
 }
 
+#[test]
+fn should_spawn_idle_catalog_requires_pending_and_quiet_session() {
+    assert!(should_spawn_idle_catalog(true, false, false, false));
+    assert!(!should_spawn_idle_catalog(false, false, false, false));
+    assert!(!should_spawn_idle_catalog(true, true, false, false));
+    assert!(!should_spawn_idle_catalog(true, false, true, false));
+    assert!(!should_spawn_idle_catalog(true, false, false, true));
+}
+
 #[tokio::test]
 async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
     let _home = isolate_home();
