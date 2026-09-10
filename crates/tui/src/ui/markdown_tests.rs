@@ -343,4 +343,15 @@ fn wrap_list_item_and_tabbed_diff_and_open_fence() {
         joined.contains("fn main") || joined.contains("let x"),
         "{joined}"
     );
+
+    let empty_item = rendered("- ");
+    assert!(
+        empty_item.iter().any(|l| l.contains('•')),
+        "an empty list marker still paints the bullet, got {empty_item:?}"
+    );
+    let empty_table = super::render_table(&[], &[], &[], &palette(), Some(40));
+    assert!(
+        empty_table.is_empty(),
+        "a table with no headers must paint nothing"
+    );
 }

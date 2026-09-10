@@ -38,6 +38,32 @@ fn recovered_frame_paints_the_banner() {
     });
     assert!(text.contains("rendering error recovered"), "{text:?}");
     assert!(text.contains("boom"), "{text:?}");
+
+    let owned: Box<dyn std::any::Any + Send> = Box::new("owned boom".to_string());
+    let (_, owned_text) = paint(40, 4, |f| {
+        paint_recovered_frame(f, owned.as_ref());
+    });
+    assert!(
+        owned_text.contains("owned boom"),
+        "String panic payloads must paint, got {owned_text:?}"
+    );
+
+    let unknown: Box<dyn std::any::Any + Send> = Box::new(42u32);
+    let (_, unknown_text) = paint(40, 4, |f| {
+        paint_recovered_frame(f, unknown.as_ref());
+    });
+    assert!(
+        unknown_text.contains("unknown panic") || unknown_text.contains("recovered"),
+        "non-string payloads fall back to unknown panic, got {unknown_text:?}"
+    );
+
+    let (_, empty) = paint(0, 0, |f| {
+        paint_recovered_frame(f, payload.as_ref());
+    });
+    assert!(
+        empty.trim().is_empty(),
+        "a 0×0 recovered frame must skip paint, got {empty:?}"
+    );
 }
 
 #[test]
