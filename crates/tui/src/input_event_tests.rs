@@ -3514,6 +3514,16 @@ fn dialog_help_and_alert_click_and_arrows() {
 }
 
 #[test]
+fn move_in_dialog_status_and_workspace_are_noops() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Status);
+    move_in_dialog(&mut a, &DialogKind::Status, 1);
+    open_dialog(&mut a, DialogKind::Workspace);
+    move_in_dialog(&mut a, &DialogKind::Workspace, -1);
+    assert!(a.dialogs.is_open());
+}
+
+#[test]
 fn remaining_dispatch_and_dialog_confirm_arms() {
     use crate::keymap::Action;
     let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
