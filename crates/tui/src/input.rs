@@ -204,7 +204,10 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
 
     // Resolve and dispatch (focus-aware).
     let action = crate::keymap::Keymap::new().resolve(ctx, app.focus, &key);
+    dispatch_resolved_action(app, action, &key)
+}
 
+fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyEvent) -> bool {
     match action {
         Some(Action::Quit) => {
             if app.mode != AppMode::Command && app.mode != AppMode::Dialog {
@@ -509,7 +512,7 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             ) {
                 app.focus = FocusPane::Prompt;
             }
-            handle_input_action(app, action, &key);
+            handle_input_action(app, action, key);
             true
         }
         None => {
@@ -517,7 +520,7 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             // while scrollback is focused auto-focuses the prompt.
             // Stale key_context (still Normal) still has to close help on `q`.
             if app.mode == AppMode::Help
-                && !handle_help_type(app, &key)
+                && !handle_help_type(app, key)
                 && matches!(key.code, KeyCode::Char('q'))
             {
                 app.mode = AppMode::Normal;

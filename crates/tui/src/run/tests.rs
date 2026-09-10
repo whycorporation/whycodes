@@ -1637,6 +1637,40 @@ async fn handle_slash_covers_local_commands() {
             .iter()
             .any(|t| t.message.contains("No background"))
     );
+    let _ = h.agent.background_registry().start_shell(
+        "cmd /C echo bg-job",
+        h.session.project_path.clone(),
+        whycodes_core::SandboxSettings::default(),
+        Some("echo bg".into()),
+    );
+    h.run("/bg").await;
+    assert!(
+        h.app
+            .messages
+            .iter()
+            .any(|m| m.content.contains("Background jobs"))
+            || h.app
+                .toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("No background")),
+        "listed jobs or still empty: {:?}",
+        h.app
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+    );
+    if let Some(id) = h
+        .agent
+        .background_registry()
+        .list()
+        .into_iter()
+        .next()
+        .map(|j| j.id)
+    {
+        h.run(&format!("/bg kill {id}")).await;
+    }
     h.run("/bg kill missing").await;
     h.run("/bg whatever").await;
     assert!(h.app.status_message.contains("Usage"));

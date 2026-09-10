@@ -1780,6 +1780,53 @@ fn handle_event_quit_confirm_stops_running() {
 }
 
 #[test]
+fn dispatch_resolved_action_covers_unmapped_keymap_arms() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "hi");
+    a.focus = FocusPane::Prompt;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::FocusScrollback),
+        &k
+    ));
+    assert_eq!(a.focus, FocusPane::Scrollback);
+
+    let mut a = app();
+    a.upsert_subagent(crate::app::SubagentUpdate {
+        id: "kid".into(),
+        kind: "explore".into(),
+        description: "d".into(),
+        status: "running".into(),
+        activity: String::new(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    a.selected_msg = None;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::OpenSubagent),
+        &k
+    ));
+    assert_eq!(a.open_subagent.as_deref(), Some("kid"));
+    a.open_subagent = Some("kid".into());
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert!(a.open_subagent.is_none());
+
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Normal;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SubmitInput),
+        &k
+    ));
+    assert_eq!(a.mode, AppMode::Help);
+}
+
+#[test]
 fn mouse_confirms_import_and_provider_select_rows() {
     let mut a = app();
     a.provider_dialog.providers = vec!["acme".into(), "openai".into()];
