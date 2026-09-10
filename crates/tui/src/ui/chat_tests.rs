@@ -2590,6 +2590,80 @@ fn empty_assistant_content_paints_inline_text_block_markdown() {
 }
 
 #[test]
+fn live_generating_paint_concatenates_growing_markdown() {
+    use crate::app::AgentState;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "ask");
+    app.add_message(ChatRole::Assistant, "growing **live** answer");
+    app.current_agent_state = AgentState::Generating;
+    app.focus = crate::app::FocusPane::Scrollback;
+    app.selected_msg = Some(app.messages.len() - 1);
+    let backend = TestBackend::new(60, 16);
+    let mut terminal = Terminal::new(backend).expect("term");
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw");
+    assert!(
+        app.messages
+            .last()
+            .and_then(|m| m.stream_md.as_ref())
+            .is_some(),
+        "a live assistant must seed IncrementalMarkdown on paint"
+    );
+    let buf = terminal.backend().buffer();
+    let mut out = String::new();
+    for y in 0..buf.area().height {
+        for x in 0..buf.area().width {
+            if let Some(cell) = buf.cell((x, y)) {
+                out.push_str(cell.symbol());
+            }
+        }
+    }
+    assert!(
+        out.contains("growing") || out.contains("live") || out.contains("answer"),
+        "live concat paint must show the growing answer, got {out:?}"
+    );
+}
+
+#[test]
+fn sticky_header_selected_user_paints_the_band() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    for i in 0..12 {
+        app.add_message(ChatRole::User, format!("user prompt {i}"));
+        app.add_message(ChatRole::Assistant, format!("assistant reply {i}"));
+    }
+    app.scroll_offset = 80;
+    app.focus = crate::app::FocusPane::Scrollback;
+    app.selected_msg = Some(0);
+    let backend = TestBackend::new(40, 8);
+    let mut terminal = Terminal::new(backend).expect("term");
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw");
+    let buf = terminal.backend().buffer();
+    let mut top = String::new();
+    for y in 0..2u16 {
+        for x in 0..buf.area().width {
+            if let Some(cell) = buf.cell((x, y)) {
+                top.push_str(cell.symbol());
+            }
+        }
+    }
+    assert!(
+        top.contains('❯') || top.contains("user") || top.contains("prompt"),
+        "selected sticky header must pin a user band, got {top:?}"
+    );
+}
+
+#[test]
 fn sticky_header_stops_when_the_viewport_is_one_row() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

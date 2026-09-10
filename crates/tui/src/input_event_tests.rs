@@ -434,6 +434,26 @@ fn file_suggest_keys_accept_step_and_open() {
     a.file_suggest.active = true;
     a.file_suggest.token_start = 0;
     a.file_suggest.matches = vec![whycodes_index::FileMatch {
+        rel: "src".into(),
+        is_dir: true,
+        ..Default::default()
+    }];
+    a.input_buffer = "@x".into();
+    a.input_cursor = 2;
+    handle_event(&mut a, key(KeyCode::Tab));
+    assert_eq!(
+        a.input_buffer, "@src/",
+        "Tab on a directory match must drill down, not close"
+    );
+    assert!(
+        a.file_suggest.active,
+        "directory accept keeps the @file picker open"
+    );
+
+    let mut a = app();
+    a.file_suggest.active = true;
+    a.file_suggest.token_start = 0;
+    a.file_suggest.matches = vec![whycodes_index::FileMatch {
         rel: "c.rs".into(),
         ..Default::default()
     }];
@@ -2568,6 +2588,32 @@ fn direct_input_actions_handle_invalid_utf8_cursor_and_history_edges() {
         &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
     );
     assert_eq!(a.input_history_idx, 2, "history does not overflow");
+
+    a.input_history_idx = 0;
+    a.pending_pastes.push(crate::paste::PastedBlock {
+        id: 1,
+        content: "old".into(),
+    });
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputHistoryNext,
+        &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+    );
+    assert_eq!(a.input_buffer, "second");
+    assert!(
+        a.pending_pastes.is_empty(),
+        "history next must drop live paste chips"
+    );
+    a.input_history_idx = 1;
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputHistoryNext,
+        &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+    );
+    assert!(
+        a.input_buffer.is_empty(),
+        "history next past the last entry clears the draft"
+    );
 }
 
 fn model_catalog(a: &mut TuiApp) {
@@ -4333,6 +4379,28 @@ fn command_ctrl_chord_and_paste_word_moves() {
         &k
     ));
     assert_eq!(a.input_cursor, token.len());
+    a.input_cursor = 1; // inside the chip, not at either end
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordRight),
+        &k
+    ));
+    assert_eq!(
+        a.input_cursor,
+        token.len(),
+        "word-right from inside a chip must jump to the end"
+    );
+    a.input_cursor = 1;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputRight),
+        &k
+    ));
+    assert_eq!(
+        a.input_cursor,
+        token.len(),
+        "right from inside a chip must jump to the end"
+    );
     a.input_cursor = token.len();
     assert!(dispatch_resolved_action(
         &mut a,

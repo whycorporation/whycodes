@@ -93,6 +93,20 @@ fn home_prompt_centers_and_narrow_drops_chips() {
 }
 
 #[test]
+fn busy_empty_prompt_paints_ellipsis_prefix() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(crate::app::ChatRole::User, "hi");
+    app.current_agent_state = crate::app::AgentState::Generating;
+    app.input_buffer.clear();
+    app.focus = crate::app::FocusPane::Prompt;
+    let rows = rendered_rows(&mut app, 40, 8);
+    assert!(
+        rows.iter().any(|r| r.contains('…') || r.contains("...")),
+        "busy empty focused prompt must paint the ellipsis prefix, got {rows:?}"
+    );
+}
+
+#[test]
 fn empty_provider_and_model_paint_placeholders() {
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.agent_name = "build".into();
