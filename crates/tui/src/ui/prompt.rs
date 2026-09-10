@@ -25,6 +25,26 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use whycodes_core::types::ApprovalMode;
 
+/// Placeholder when the prompt is empty and unfocused (Grok: focused empty
+/// keeps a bare caret). Command mode is usually focused, but the arm stays
+/// so a future unfocused command prompt still paints a hint.
+fn empty_prompt_hint(
+    buf_empty: bool,
+    prompt_focused: bool,
+    has_images: bool,
+    mode: AppMode,
+    messages_empty: bool,
+) -> Option<&'static str> {
+    if !buf_empty || prompt_focused || has_images {
+        return None;
+    }
+    match mode {
+        AppMode::Command => Some("command…"),
+        _ if messages_empty => Some("Ask anything…  (drop images)"),
+        _ => Some("Tab/Space → prompt · j/k select"),
+    }
+}
+
 /// The input block grows from a single line up to this many visual rows.
 pub const MAX_INPUT_ROWS: u16 = 8;
 /// Gap reserved for the hint row on the home screen (kept even when hidden,
@@ -247,17 +267,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
         _ if busy && app.input_buffer.is_empty() && prompt_focused => "… ",
         _ => "❯ ",
     };
-    let empty_hint: Option<&str> =
-        if !buf.is_empty() || prompt_focused || !app.pending_images.is_empty() {
-            None
-        } else {
-            match app.mode {
-                AppMode::Command => Some("command…"),
-                _ if app.messages.is_empty() => Some("Ask anything…  (drop images)"),
-                // Scrollback owns focus — nudge how to get back.
-                _ => Some("Tab/Space → prompt · j/k select"),
-            }
-        };
+    let empty_hint = empty_prompt_hint(
+        buf.is_empty(),
+        prompt_focused,
+        !app.pending_images.is_empty(),
+        app.mode,
+        app.messages.is_empty(),
+    );
 
     let text_area = chunks[3];
     let mut lines: Vec<Line> = Vec::with_capacity(input_rows as usize);
@@ -1108,8 +1124,28 @@ mod overflow_render_tests {
         assert!(rows.iter().any(|r| r.contains("build") || r.contains("╭")));
         let tiny = rendered_rows(&mut app, 5, 4);
         assert_eq!(tiny.len(), 4);
+        app.focus = crate::app::FocusPane::Scrollback;
+        let home = rendered_rows(&mut app, 60, 8);
+        assert!(
+            home.iter()
+                .any(|r| r.contains("Ask anything") || r.contains("drop images")),
+            "unfocused empty home prompt must show the ask hint, got {home:?}"
+        );
         app.add_message(crate::app::ChatRole::User, "hi");
-        let _ = rendered_rows(&mut app, 40, 8);
+        app.focus = crate::app::FocusPane::Scrollback;
+        let scrolled = rendered_rows(&mut app, 60, 8);
+        assert!(
+            scrolled
+                .iter()
+                .any(|r| r.contains("Tab") || r.contains("j/k") || r.contains("prompt")),
+            "scrollback-owned empty prompt must nudge focus, got {scrolled:?}"
+        );
+        assert_eq!(
+            empty_prompt_hint(true, false, false, AppMode::Command, true),
+            Some("command…")
+        );
+        assert!(empty_prompt_hint(false, false, false, AppMode::Normal, true).is_none());
+        assert!(empty_prompt_hint(true, true, false, AppMode::Normal, true).is_none());
     }
 
     #[test]

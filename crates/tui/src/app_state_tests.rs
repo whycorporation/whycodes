@@ -708,3 +708,66 @@ fn sync_tasks_collapse_when_empty() {
     app.toggle_tasks_pane();
     assert!(!app.tasks_collapsed || app.task_count() == 0);
 }
+
+#[test]
+fn thinking_header_shows_elapsed_and_push_capped_splits_utf8() {
+    let mut tb = crate::app::ThinkingBlock::new("plan");
+    tb.started_at = Instant::now()
+        .checked_sub(std::time::Duration::from_millis(1400))
+        .expect("elapsed");
+    let label = tb.header_label();
+    assert!(
+        label.contains("Thinking") && label.contains('·'),
+        "running thinking with elapsed must include the time, got {label}"
+    );
+
+    let mut cap = crate::app::ThinkingBlock::new("x".repeat(crate::app::THINKING_MAX_CHARS - 1));
+    cap.push_delta("é overflow");
+    assert!(cap.text.ends_with('…') || cap.text.len() <= crate::app::THINKING_MAX_CHARS + 3);
+}
+
+#[test]
+fn upsert_bg_job_retains_last_sixteen() {
+    let mut app = app();
+    for i in 0..20 {
+        app.upsert_bg_job(format!("job-{i}"), "running", format!("work {i}"));
+    }
+    assert_eq!(app.bg_jobs.len(), 16);
+    assert_eq!(app.bg_jobs[0].id, "job-4");
+    app.upsert_bg_job("job-19", "done", "finished");
+    assert_eq!(app.bg_jobs.last().map(|j| j.status.as_str()), Some("done"));
+}
+
+#[test]
+fn slash_suggest_hides_when_prefix_matches_nothing() {
+    let mut state = SlashSuggestState::default();
+    state.refresh("/zzzz-no-such-command");
+    assert!(!state.active);
+    assert!(state.matches.is_empty());
+    state.step(1);
+}
+
+#[test]
+fn question_confirm_other_requires_text_then_accepts_free_text() {
+    let mut st =
+        crate::app::QuestionDialogState::new(vec![whycodes_tools::question::QuestionSpec {
+            prompt: "Go?".into(),
+            options: vec![whycodes_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: true,
+            important: false,
+        }]);
+    st.cursor = st.option_count() - 1;
+    assert!(st.is_other_index(st.cursor));
+    assert!(
+        st.confirm_current().is_none(),
+        "empty Other must not finish"
+    );
+    st.free_text = "typed".into();
+    st.free_text_focus = true;
+    let answers = st.confirm_current().expect("free text Other is valid");
+    assert_eq!(answers[0].free_text.as_deref(), Some("typed"));
+}
