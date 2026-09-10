@@ -1688,6 +1688,47 @@ fn move_in_dialog_to_clamps_each_kind() {
 }
 
 #[test]
+fn dialog_arrow_keys_step_effort_mode_and_sessions() {
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    open_effort_dialog(&mut a);
+    let start = a.effort_picker_selected;
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Up));
+    assert_eq!(a.effort_picker_selected, start);
+
+    let mut a = app();
+    open_mode_dialog(&mut a);
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Up));
+    assert_eq!(a.approval_picker_selected, 0);
+
+    let mut a = app();
+    a.sessions_rows = vec![
+        crate::app::SessionDashboardRow {
+            parked_idx: None,
+            title: "cur".into(),
+            glyph: "·".into(),
+            state_label: "idle".into(),
+            preview: String::new(),
+            unread: false,
+        },
+        crate::app::SessionDashboardRow {
+            parked_idx: Some(0),
+            title: "bg".into(),
+            glyph: "·".into(),
+            state_label: "idle".into(),
+            preview: String::new(),
+            unread: false,
+        },
+    ];
+    open_dialog(&mut a, DialogKind::Sessions);
+    handle_event(&mut a, key(KeyCode::Down));
+    assert_eq!(a.sessions_cursor, 1);
+}
+
+#[test]
 fn dialog_question_keys_move_without_free_text() {
     let mut a = app();
     a.ask_question(vec![whycodes_tools::question::QuestionSpec {

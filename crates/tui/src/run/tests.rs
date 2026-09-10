@@ -5299,18 +5299,17 @@ async fn run_headless_draws_then_quits() {
     let dir = tempfile::tempdir().unwrap();
     let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            Event::Resize(0, 24),
-            Event::Resize(90, 30),
-            Event::Mouse(crossterm::event::MouseEvent {
-                kind: MouseEventKind::Moved,
-                column: 1,
-                row: 1,
-                modifiers: crossterm::event::KeyModifiers::NONE,
-            }),
-            Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('x'))),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        Event::Resize(0, 24),
+        Event::Resize(90, 30),
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 1,
+            row: 1,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }),
+        Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('x'))),
+    ])));
     let opts = boot_opts(dir.path(), "sk-test");
     let exit = super::run(opts).await.unwrap();
     match prev_stub {
@@ -5326,8 +5325,7 @@ async fn run_headless_empty_queue_quits_after_first_frame() {
     let dir = tempfile::tempdir().unwrap();
     let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::new());
+    set_headless_events(Some(std::collections::VecDeque::new()));
     let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5346,12 +5344,11 @@ async fn run_headless_scripted_turn_then_quit() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_TEST_LLM", "scripted-ok");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Char('h')),
-            press(KeyCode::Char('i')),
-            press(KeyCode::Enter),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('h')),
+        press(KeyCode::Char('i')),
+        press(KeyCode::Enter),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5374,11 +5371,10 @@ async fn run_headless_scripted_fail_turn() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_TEST_LLM", "FAIL");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Char('x')),
-            press(KeyCode::Enter),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('x')),
+        press(KeyCode::Enter),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5401,8 +5397,7 @@ async fn run_headless_initial_prompt_scripted_turn() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_TEST_LLM", "boot-ok");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::new());
+    set_headless_events(Some(std::collections::VecDeque::new()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.initial_prompt = Some("hello from boot".into());
     let exit = super::run(opts).await.unwrap();
@@ -5427,13 +5422,12 @@ async fn run_headless_hang_then_esc_cancel() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_TEST_LLM", "HANG");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Char('h')),
-            press(KeyCode::Enter),
-            press(KeyCode::Esc),
-            press(KeyCode::Esc),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('h')),
+        press(KeyCode::Enter),
+        press(KeyCode::Esc),
+        press(KeyCode::Esc),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5456,22 +5450,21 @@ async fn run_headless_compact_after_turn() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_TEST_LLM", "compact-ok");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Char('a')),
-            press(KeyCode::Enter),
-            press(KeyCode::Char('/')),
-            press(KeyCode::Char('c')),
-            press(KeyCode::Char('o')),
-            press(KeyCode::Char('m')),
-            press(KeyCode::Char('p')),
-            press(KeyCode::Char('a')),
-            press(KeyCode::Char('c')),
-            press(KeyCode::Char('t')),
-            press(KeyCode::Char(' ')),
-            press(KeyCode::Char('n')),
-            press(KeyCode::Enter),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('a')),
+        press(KeyCode::Enter),
+        press(KeyCode::Char('/')),
+        press(KeyCode::Char('c')),
+        press(KeyCode::Char('o')),
+        press(KeyCode::Char('m')),
+        press(KeyCode::Char('p')),
+        press(KeyCode::Char('a')),
+        press(KeyCode::Char('c')),
+        press(KeyCode::Char('t')),
+        press(KeyCode::Char(' ')),
+        press(KeyCode::Char('n')),
+        press(KeyCode::Enter),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5505,7 +5498,7 @@ async fn run_headless_picker_dialogs_confirm_and_ctrl_q() {
     events.push(press(KeyCode::Esc));
     events.push(ctrl('q'));
     events.push(press(KeyCode::Enter));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    set_headless_events(Some(events.into()));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5560,7 +5553,7 @@ async fn run_headless_slash_models_effort_mode_and_connect() {
     events.extend(type_line("/import"));
     events.push(press(KeyCode::Esc));
     events.extend(type_line(":q"));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    set_headless_events(Some(events.into()));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5608,7 +5601,7 @@ async fn run_headless_loop_slash_and_ctrl_n() {
         crossterm::event::KeyModifiers::CONTROL,
     )));
     events.extend(type_line(":q"));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    set_headless_events(Some(events.into()));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5642,7 +5635,7 @@ async fn run_headless_shell_permission_allow() {
     events.extend(type_line("please rm that"));
     events.push(press(KeyCode::Char('y')));
     events.extend(type_line(":q"));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
     let exit = super::run(opts).await.unwrap();
@@ -5671,7 +5664,7 @@ async fn run_headless_shell_permission_deny() {
     events.extend(type_line("please rm that"));
     events.push(press(KeyCode::Char('n')));
     events.extend(type_line(":q"));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
     let exit = super::run(opts).await.unwrap();
@@ -5696,16 +5689,15 @@ async fn run_headless_hang_ctrl_c_and_enter() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_TEST_LLM", "HANG");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Char('h')),
-            press(KeyCode::Enter),
-            press(KeyCode::Char('x')),
-            press(KeyCode::Enter),
-            ctrl('c'),
-            ctrl('c'),
-            ctrl('q'),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('h')),
+        press(KeyCode::Enter),
+        press(KeyCode::Char('x')),
+        press(KeyCode::Enter),
+        ctrl('c'),
+        ctrl('c'),
+        ctrl('q'),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5732,7 +5724,7 @@ async fn run_headless_question_tool_enter() {
     events.extend(type_line("please ask"));
     events.push(press(KeyCode::Enter));
     events.extend(type_line(":q"));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
     let exit = super::run(opts).await.unwrap();
@@ -5757,9 +5749,9 @@ async fn run_headless_hydrates_api_key_from_env() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("ACME_API_KEY", "sk-from-env");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(
-        std::collections::VecDeque::from([press(KeyCode::Char('x'))]),
-    );
+    set_headless_events(Some(std::collections::VecDeque::from([press(
+        KeyCode::Char('x'),
+    )])));
     let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5781,13 +5773,12 @@ async fn run_headless_update_offer_self_install_then_quit() {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     tx.send(UpdateOffer::SelfInstall("9.9.9".into())).unwrap();
     drop(tx);
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Esc),
-            press(KeyCode::Char(':')),
-            press(KeyCode::Char('q')),
-            press(KeyCode::Enter),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Esc),
+        press(KeyCode::Char(':')),
+        press(KeyCode::Char('q')),
+        press(KeyCode::Enter),
+    ])));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.update_rx = Some(rx);
     let exit = super::run(opts).await.unwrap();
@@ -5806,13 +5797,12 @@ async fn run_headless_update_offer_homebrew() {
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     tx.send(UpdateOffer::Homebrew("9.9.9".into())).unwrap();
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Enter),
-            press(KeyCode::Char(':')),
-            press(KeyCode::Char('q')),
-            press(KeyCode::Enter),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Enter),
+        press(KeyCode::Char(':')),
+        press(KeyCode::Char('q')),
+        press(KeyCode::Enter),
+    ])));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.update_rx = Some(rx);
     let exit = super::run(opts).await.unwrap();
@@ -5833,24 +5823,23 @@ async fn run_headless_mouse_stop_while_hanging() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_TEST_LLM", "HANG");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Char('h')),
-            press(KeyCode::Enter),
-            Event::Mouse(crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
-                column: 78,
-                row: 0,
-                modifiers: crossterm::event::KeyModifiers::NONE,
-            }),
-            Event::Mouse(crossterm::event::MouseEvent {
-                kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
-                column: 78,
-                row: 0,
-                modifiers: crossterm::event::KeyModifiers::NONE,
-            }),
-            ctrl('q'),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('h')),
+        press(KeyCode::Enter),
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 78,
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }),
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 78,
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }),
+        ctrl('q'),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5876,7 +5865,7 @@ async fn run_headless_missing_api_key_warns_then_quits() {
     let mut events = Vec::new();
     events.extend(type_line("hello without key"));
     events.extend(type_line(":q"));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "");
     opts.config.providers.insert(
         "acme".into(),
@@ -5912,7 +5901,7 @@ async fn run_headless_remote_turn_errors_then_quits() {
     let mut events = Vec::new();
     events.extend(type_line("hi remote"));
     events.extend(type_line(":q"));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    set_headless_events(Some(events.into()));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.remote = Some(crate::remote::RemoteAttach::new(
         "http://127.0.0.1:1",
@@ -5928,10 +5917,10 @@ async fn run_headless_remote_turn_errors_then_quits() {
 
 #[test]
 fn read_event_batch_from_crossterm_stub() {
-    *CROSSTERM_STUB.lock().unwrap_or_else(|e| e.into_inner()) = std::collections::VecDeque::from([
+    set_crossterm_stub(std::collections::VecDeque::from([
         Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('a'))),
         Event::Resize(40, 12),
-    ]);
+    ]));
     let batch = super::read_event_batch().unwrap();
     assert_eq!(batch.len(), 2);
 }
@@ -5942,15 +5931,12 @@ async fn run_headless_catalog_suggest_and_auth_note() {
     let dir = tempfile::tempdir().unwrap();
     let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
-    *TEST_CATALOG_WINDOW
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = Some(("acme".into(), "m1".into(), 128_000));
-    *TEST_SUGGEST.lock().unwrap_or_else(|e| e.into_inner()) = Some("try cargo test".into());
-    *TEST_AUTH_EVENT.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(AuthFlowEvent::Note("signing in…".into()));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(
-        std::collections::VecDeque::from([press(KeyCode::Char('x'))]),
-    );
+    set_test_catalog_window(Some(("acme".into(), "m1".into(), 128_000)));
+    set_test_suggest(Some("try cargo test".into()));
+    set_test_auth_event(Some(AuthFlowEvent::Note("signing in…".into())));
+    set_headless_events(Some(std::collections::VecDeque::from([press(
+        KeyCode::Char('x'),
+    )])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -5969,19 +5955,18 @@ async fn run_headless_slash_help_then_quit_command() {
     let dir = tempfile::tempdir().unwrap();
     let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Char('/')),
-            press(KeyCode::Char('h')),
-            press(KeyCode::Char('e')),
-            press(KeyCode::Char('l')),
-            press(KeyCode::Char('p')),
-            press(KeyCode::Enter),
-            press(KeyCode::Esc),
-            press(KeyCode::Char(':')),
-            press(KeyCode::Char('q')),
-            press(KeyCode::Enter),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('/')),
+        press(KeyCode::Char('h')),
+        press(KeyCode::Char('e')),
+        press(KeyCode::Char('l')),
+        press(KeyCode::Char('p')),
+        press(KeyCode::Enter),
+        press(KeyCode::Esc),
+        press(KeyCode::Char(':')),
+        press(KeyCode::Char('q')),
+        press(KeyCode::Enter),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -6003,9 +5988,9 @@ async fn run_headless_bench_stops_after_first_frame() {
         std::env::set_var("WHYCODES_BENCH", &out);
         std::env::set_var("WHYCODES_BENCH_DURATION_MS", "0");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(
-        std::collections::VecDeque::from([press(KeyCode::Char('a'))]),
-    );
+    set_headless_events(Some(std::collections::VecDeque::from([press(
+        KeyCode::Char('a'),
+    )])));
     let exit = super::run(boot_opts(dir.path(), "")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -6024,11 +6009,10 @@ async fn run_headless_bench_stops_after_first_frame() {
 
 #[test]
 fn loop_io_scripted_poll_and_read_batch() {
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Char('a')),
-            press(KeyCode::Enter),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('a')),
+        press(KeyCode::Enter),
+    ])));
     let mut io = LoopIo::take_from_thread();
     assert!(io.is_headless());
     assert!(io.peek().is_some());
@@ -6084,15 +6068,14 @@ async fn run_live_buf_draws_then_quits() {
     let dir = tempfile::tempdir().unwrap();
     let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
-    HEADLESS_LIVE.store(true, std::sync::atomic::Ordering::SeqCst);
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            Event::Resize(0, 0),
-            Event::Resize(80, 24),
-            press(KeyCode::Char(':')),
-            press(KeyCode::Char('q')),
-            press(KeyCode::Enter),
-        ]));
+    set_headless_live(true);
+    set_headless_events(Some(std::collections::VecDeque::from([
+        Event::Resize(0, 0),
+        Event::Resize(80, 24),
+        press(KeyCode::Char(':')),
+        press(KeyCode::Char('q')),
+        press(KeyCode::Enter),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -6165,18 +6148,17 @@ async fn run_headless_ctrl_keys_and_paste() {
             crossterm::event::KeyModifiers::CONTROL,
         ))
     };
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            Event::Paste("hello paste".into()),
-            ctrl('t'),
-            ctrl('n'),
-            ctrl('s'),
-            press(KeyCode::Esc),
-            press(KeyCode::Tab),
-            press(KeyCode::Char(':')),
-            press(KeyCode::Char('q')),
-            press(KeyCode::Enter),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        Event::Paste("hello paste".into()),
+        ctrl('t'),
+        ctrl('n'),
+        ctrl('s'),
+        press(KeyCode::Esc),
+        press(KeyCode::Tab),
+        press(KeyCode::Char(':')),
+        press(KeyCode::Char('q')),
+        press(KeyCode::Enter),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -6195,12 +6177,9 @@ async fn run_live_crossterm_stub_first_frame_then_idle_quit() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    HEADLESS_LIVE.store(true, std::sync::atomic::Ordering::SeqCst);
-    CROSSTERM_STUB
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
+    set_headless_events(None);
+    set_headless_live(true);
+    clear_crossterm_stub();
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -6210,7 +6189,7 @@ async fn run_live_crossterm_stub_first_frame_then_idle_quit() {
         Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
         None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
     }
-    HEADLESS_LIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    set_headless_live(false);
     assert_eq!(exit, TuiExit::Quit);
 }
 
@@ -6224,14 +6203,14 @@ async fn run_live_crossterm_stub_keys_slash_and_quit() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    HEADLESS_LIVE.store(true, std::sync::atomic::Ordering::SeqCst);
-    *CROSSTERM_STUB.lock().unwrap_or_else(|e| e.into_inner()) = std::collections::VecDeque::from([
+    set_headless_events(None);
+    set_headless_live(true);
+    set_crossterm_stub(std::collections::VecDeque::from([
         Event::Resize(80, 24),
         Event::Paste("from clip".into()),
         ctrl('q'),
         press(KeyCode::Enter),
-    ]);
+    ]));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -6241,11 +6220,8 @@ async fn run_live_crossterm_stub_keys_slash_and_quit() {
         Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
         None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
     }
-    HEADLESS_LIVE.store(false, std::sync::atomic::Ordering::SeqCst);
-    CROSSTERM_STUB
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
+    set_headless_live(false);
+    clear_crossterm_stub();
     assert_eq!(exit, TuiExit::Quit);
 }
 
@@ -6262,8 +6238,9 @@ async fn run_headless_confirms_self_install_upgrade() {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     tx.send(UpdateOffer::SelfInstall("9.9.9".into())).unwrap();
     drop(tx);
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([press(KeyCode::Enter)]));
+    set_headless_events(Some(std::collections::VecDeque::from([press(
+        KeyCode::Enter,
+    )])));
     let mut opts = boot_opts(dir.path(), "sk-test");
     opts.update_rx = Some(rx);
     let exit = super::run(opts).await.unwrap();
@@ -6292,7 +6269,7 @@ async fn run_headless_compact_after_scripted_turn() {
     events.extend(type_line("please summarize"));
     events.extend(type_line("/compact keep names"));
     events.extend(type_line(":q"));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    set_headless_events(Some(events.into()));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -6315,26 +6292,25 @@ async fn run_headless_idle_ctrl_n_cycle_dashboard_and_mru() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            ctrl('n'),
-            Event::Key(crossterm::event::KeyEvent::new(
-                KeyCode::PageDown,
-                crossterm::event::KeyModifiers::CONTROL,
-            )),
-            Event::Key(crossterm::event::KeyEvent::new(
-                KeyCode::PageUp,
-                crossterm::event::KeyModifiers::CONTROL,
-            )),
-            ctrl('o'),
-            press(KeyCode::Enter),
-            Event::Key(crossterm::event::KeyEvent::new(
-                KeyCode::Tab,
-                crossterm::event::KeyModifiers::CONTROL,
-            )),
-            ctrl('q'),
-            press(KeyCode::Enter),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        ctrl('n'),
+        Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::PageDown,
+            crossterm::event::KeyModifiers::CONTROL,
+        )),
+        Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::PageUp,
+            crossterm::event::KeyModifiers::CONTROL,
+        )),
+        ctrl('o'),
+        press(KeyCode::Enter),
+        Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::Tab,
+            crossterm::event::KeyModifiers::CONTROL,
+        )),
+        ctrl('q'),
+        press(KeyCode::Enter),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -6384,7 +6360,7 @@ async fn run_headless_applies_model_effort_mode_from_pickers() {
     events.push(press(KeyCode::Enter));
     events.push(ctrl('q'));
     events.push(press(KeyCode::Enter));
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events.into());
+    set_headless_events(Some(events.into()));
     let exit = super::run(opts).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -6409,15 +6385,14 @@ async fn run_headless_busy_esc_enter_then_force_quit() {
         std::env::set_var("WHYCODES_TEST_LLM", "HANG");
         std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::collections::VecDeque::from([
-            press(KeyCode::Char('h')),
-            press(KeyCode::Enter),
-            press(KeyCode::Enter),
-            press(KeyCode::Esc),
-            press(KeyCode::Esc),
-            ctrl('q'),
-        ]));
+    set_headless_events(Some(std::collections::VecDeque::from([
+        press(KeyCode::Char('h')),
+        press(KeyCode::Enter),
+        press(KeyCode::Enter),
+        press(KeyCode::Esc),
+        press(KeyCode::Esc),
+        ctrl('q'),
+    ])));
     let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
@@ -6444,13 +6419,10 @@ async fn run_live_crossterm_poll_error_exits() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    HEADLESS_LIVE.store(true, std::sync::atomic::Ordering::SeqCst);
-    CROSSTERM_POLL_ERR.store(true, std::sync::atomic::Ordering::SeqCst);
-    CROSSTERM_STUB
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
+    set_headless_events(None);
+    set_headless_live(true);
+    set_crossterm_poll_err(true);
+    clear_crossterm_stub();
     let err = super::run(boot_opts(dir.path(), "sk-test"))
         .await
         .expect_err("poll error should fail the loop");
@@ -6466,8 +6438,8 @@ async fn run_live_crossterm_poll_error_exits() {
         Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
         None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
     }
-    HEADLESS_LIVE.store(false, std::sync::atomic::Ordering::SeqCst);
-    CROSSTERM_POLL_ERR.store(false, std::sync::atomic::Ordering::SeqCst);
+    set_headless_live(false);
+    set_crossterm_poll_err(false);
 }
 
 #[tokio::test]
@@ -6480,11 +6452,12 @@ async fn run_live_crossterm_read_error_exits() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
     }
-    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    HEADLESS_LIVE.store(true, std::sync::atomic::Ordering::SeqCst);
-    CROSSTERM_READ_ERR.store(true, std::sync::atomic::Ordering::SeqCst);
-    *CROSSTERM_STUB.lock().unwrap_or_else(|e| e.into_inner()) =
-        std::collections::VecDeque::from([press(KeyCode::Char('x'))]);
+    set_headless_events(None);
+    set_headless_live(true);
+    set_crossterm_read_err(true);
+    set_crossterm_stub(std::collections::VecDeque::from([press(KeyCode::Char(
+        'x',
+    ))]));
     let err = super::run(boot_opts(dir.path(), "sk-test"))
         .await
         .expect_err("read error should fail the loop");
@@ -6500,10 +6473,7 @@ async fn run_live_crossterm_read_error_exits() {
         Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
         None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
     }
-    HEADLESS_LIVE.store(false, std::sync::atomic::Ordering::SeqCst);
-    CROSSTERM_READ_ERR.store(false, std::sync::atomic::Ordering::SeqCst);
-    CROSSTERM_STUB
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
+    set_headless_live(false);
+    set_crossterm_read_err(false);
+    clear_crossterm_stub();
 }

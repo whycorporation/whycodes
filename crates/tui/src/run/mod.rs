@@ -598,14 +598,115 @@ impl Write for TuiWriter {
     }
 }
 
-/// When set, `run` uses a TestBackend and these events instead of a real TTY.
-/// Production never installs this; tests in this module do.
-static HEADLESS_EVENTS: std::sync::Mutex<Option<VecDeque<Event>>> = std::sync::Mutex::new(None);
+// When set, `run` uses a TestBackend and these events instead of a real TTY.
+// Production never installs this; tests in this module do.
+// Thread-local so parallel `cargo test` / llvm-cov cannot leak a live stub
+// into an unrelated test (that hung the suite on empty `CROSSTERM_STUB`).
+#[cfg(test)]
+thread_local! {
+    static HEADLESS_EVENTS: std::cell::RefCell<Option<VecDeque<Event>>> =
+        const { std::cell::RefCell::new(None) };
+    static HEADLESS_LIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CROSSTERM_STUB: std::cell::RefCell<VecDeque<Event>> =
+        const { std::cell::RefCell::new(VecDeque::new()) };
+    static CROSSTERM_POLL_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CROSSTERM_READ_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static TEST_CATALOG_WINDOW: std::cell::RefCell<Option<(String, String, u32)>> =
+        const { std::cell::RefCell::new(None) };
+    static TEST_SUGGEST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static TEST_AUTH_EVENT: std::cell::RefCell<Option<AuthFlowEvent>> =
+        const { std::cell::RefCell::new(None) };
+}
 
-/// Tests: drive `LoopTerm::live` + CrosstermBackend into a memory buffer
-/// (still with scripted events) so restore/alt-screen lines execute without
-/// a real TTY.
-static HEADLESS_LIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+fn set_headless_events(events: Option<VecDeque<Event>>) {
+    HEADLESS_EVENTS.with(|c| *c.borrow_mut() = events);
+}
+
+#[cfg(test)]
+fn take_headless_events() -> Option<VecDeque<Event>> {
+    HEADLESS_EVENTS.with(|c| c.borrow_mut().take())
+}
+
+#[cfg(test)]
+fn set_headless_live(v: bool) {
+    HEADLESS_LIVE.with(|c| c.set(v));
+}
+
+#[cfg(test)]
+fn take_headless_live() -> bool {
+    HEADLESS_LIVE.with(|c| c.replace(false))
+}
+
+#[cfg(test)]
+fn set_crossterm_stub(events: VecDeque<Event>) {
+    CROSSTERM_STUB.with(|c| *c.borrow_mut() = events);
+}
+
+#[cfg(test)]
+fn clear_crossterm_stub() {
+    CROSSTERM_STUB.with(|c| c.borrow_mut().clear());
+}
+
+#[cfg(test)]
+fn crossterm_stub_is_empty() -> bool {
+    CROSSTERM_STUB.with(|c| c.borrow().is_empty())
+}
+
+#[cfg(test)]
+fn crossterm_stub_pop() -> Option<Event> {
+    CROSSTERM_STUB.with(|c| c.borrow_mut().pop_front())
+}
+
+#[cfg(test)]
+fn set_crossterm_poll_err(v: bool) {
+    CROSSTERM_POLL_ERR.with(|c| c.set(v));
+}
+
+#[cfg(test)]
+fn take_crossterm_poll_err() -> bool {
+    CROSSTERM_POLL_ERR.with(|c| c.replace(false))
+}
+
+#[cfg(test)]
+fn set_crossterm_read_err(v: bool) {
+    CROSSTERM_READ_ERR.with(|c| c.set(v));
+}
+
+#[cfg(test)]
+fn take_crossterm_read_err() -> bool {
+    CROSSTERM_READ_ERR.with(|c| c.replace(false))
+}
+
+#[cfg(test)]
+fn set_test_catalog_window(v: Option<(String, String, u32)>) {
+    TEST_CATALOG_WINDOW.with(|c| *c.borrow_mut() = v);
+}
+
+#[cfg(test)]
+fn take_test_catalog_window() -> Option<(String, String, u32)> {
+    TEST_CATALOG_WINDOW.with(|c| c.borrow_mut().take())
+}
+
+#[cfg(test)]
+fn set_test_suggest(v: Option<String>) {
+    TEST_SUGGEST.with(|c| *c.borrow_mut() = v);
+}
+
+#[cfg(test)]
+fn take_test_suggest() -> Option<String> {
+    TEST_SUGGEST.with(|c| c.borrow_mut().take())
+}
+
+#[cfg(test)]
+fn set_test_auth_event(v: Option<AuthFlowEvent>) {
+    TEST_AUTH_EVENT.with(|c| *c.borrow_mut() = v);
+}
+
+#[cfg(test)]
+fn take_test_auth_event() -> Option<AuthFlowEvent> {
+    TEST_AUTH_EVENT.with(|c| c.borrow_mut().take())
+}
 
 struct LoopIo {
     scripted: Option<VecDeque<Event>>,
@@ -613,11 +714,16 @@ struct LoopIo {
 
 impl LoopIo {
     fn take_from_thread() -> Self {
-        let scripted = HEADLESS_EVENTS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        Self { scripted }
+        #[cfg(test)]
+        {
+            Self {
+                scripted: take_headless_events(),
+            }
+        }
+        #[cfg(not(test))]
+        {
+            Self { scripted: None }
+        }
     }
 
     fn is_headless(&self) -> bool {
@@ -1067,7 +1173,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // Tests may set this without scripted `HEADLESS_EVENTS` so the production
     // `!headless` arms (panic restore, first-frame hydrate, crossterm poll)
     // still run into a memory buffer instead of a real TTY.
-    let live_buf = HEADLESS_LIVE.swap(false, std::sync::atomic::Ordering::SeqCst);
+    #[cfg(test)]
+    let live_buf = take_headless_live();
+    #[cfg(not(test))]
+    let live_buf = false;
     let (mut terminal, keyboard_enhanced, tw, th) = if live_buf {
         attach_live(
             color_mode,
@@ -1115,25 +1224,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<AuthFlowEvent>();
     #[cfg(test)]
     {
-        if let Some(win) = TEST_CATALOG_WINDOW
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
+        if let Some(win) = take_test_catalog_window() {
             let _ = catalog_tx.send(win);
         }
-        if let Some(s) = TEST_SUGGEST
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
+        if let Some(s) = take_test_suggest() {
             let _ = suggest_tx.send(s);
         }
-        if let Some(ev) = TEST_AUTH_EVENT
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
+        if let Some(ev) = take_test_auth_event() {
             let _ = auth_tx.send(ev);
         }
     }
@@ -1886,12 +1983,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             if !headless {
                 if rt.agent_busy || rt.turn_join.is_some() {
                     tokio::task::yield_now().await;
-                } else if !has_ev
-                    && CROSSTERM_STUB
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .is_empty()
-                {
+                } else if !has_ev && crossterm_stub_is_empty() {
                     app.running = false;
                 }
             }
@@ -2331,13 +2423,10 @@ fn poll_crossterm(timeout: Duration) -> io::Result<bool> {
     #[cfg(test)]
     {
         let _ = timeout;
-        if CROSSTERM_POLL_ERR.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        if take_crossterm_poll_err() {
             return Err(io::Error::other("crossterm stub poll failed"));
         }
-        return Ok(!CROSSTERM_STUB
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty());
+        Ok(!crossterm_stub_is_empty())
     }
     #[cfg(not(test))]
     {
@@ -2348,14 +2437,11 @@ fn poll_crossterm(timeout: Duration) -> io::Result<bool> {
 fn read_crossterm() -> io::Result<Event> {
     #[cfg(test)]
     {
-        if CROSSTERM_READ_ERR.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        if take_crossterm_read_err() {
             return Err(io::Error::other("crossterm stub read failed"));
         }
-        return CROSSTERM_STUB
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .pop_front()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "crossterm stub empty"));
+        crossterm_stub_pop()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "crossterm stub empty"))
     }
     #[cfg(not(test))]
     {
@@ -2376,22 +2462,6 @@ fn read_event_batch() -> io::Result<Vec<Event>> {
     }
     Ok(batch)
 }
-
-#[cfg(test)]
-static CROSSTERM_STUB: std::sync::Mutex<VecDeque<Event>> = std::sync::Mutex::new(VecDeque::new());
-#[cfg(test)]
-static CROSSTERM_POLL_ERR: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-static CROSSTERM_READ_ERR: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-static TEST_CATALOG_WINDOW: std::sync::Mutex<Option<(String, String, u32)>> =
-    std::sync::Mutex::new(None);
-#[cfg(test)]
-static TEST_SUGGEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-#[cfg(test)]
-static TEST_AUTH_EVENT: std::sync::Mutex<Option<AuthFlowEvent>> = std::sync::Mutex::new(None);
 
 /// Mouse motion is tracked for hover; it must not by itself schedule a
 /// full chat paint (handle_mouse marks dirty only when chrome hover changes).
