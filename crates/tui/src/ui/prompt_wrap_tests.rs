@@ -165,6 +165,12 @@ fn truncate_pick_hint_and_cursor_helpers() {
     let (row, col) = cursor_row_col(&rows, "hello world", 0);
     assert_eq!(row, 0);
     assert_eq!(col, 0);
+    let (row, col) = cursor_row_col(&rows, "hello world", 3);
+    assert_eq!(row, 0);
+    assert!(
+        col > 0,
+        "a cursor inside the first wrap row must have a column"
+    );
 
     let mut app = crate::app::TuiApp::new(crate::config::TuiAppConfig::default());
     assert_eq!(attach_row_count(&app), 0);
@@ -218,4 +224,11 @@ fn clamp_rows_to_width_keeps_empty_and_cuts_overwide() {
         cut[0].byte_range
     );
     assert!(cut[0].width as usize <= 4);
+
+    let past_end = crate::widgets::wrap::WrappedRow {
+        byte_range: (0, buf.len() + 4),
+        width: 10,
+    };
+    let kept_past = clamp_rows_to_width(buf, vec![past_end], 8);
+    assert_eq!(kept_past[0].byte_range.1, buf.len() + 4);
 }
