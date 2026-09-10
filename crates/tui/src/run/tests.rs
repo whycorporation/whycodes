@@ -1516,6 +1516,24 @@ fn headless_and_live_buf_quit_when_idle_and_empty() {
     assert!(!live_buf_should_quit(false, false));
 }
 
+#[test]
+fn toast_wait_for_turn_pushes_info_toast() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    toast_wait_for_turn(&mut app);
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Wait for turn") && t.message.contains("Esc")),
+        "{:?}",
+        app.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
 #[tokio::test]
 async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
     let _home = isolate_home();

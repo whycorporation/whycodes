@@ -2137,10 +2137,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                                 continue;
                             }
                             KeyCode::Enter => {
-                                app.toasts.push(
-                                    crate::toast::ToastKind::Info,
-                                    "Wait for turn or Esc to cancel",
-                                );
+                                toast_wait_for_turn(&mut app);
                                 continue;
                             }
                             _ => {
@@ -2351,6 +2348,13 @@ fn print_session_summary(summary: &str) {
     let mut err = io::stderr();
     let _ = writeln!(err, "{summary}");
     let _ = err.flush();
+}
+
+fn toast_wait_for_turn(app: &mut TuiApp) {
+    app.toasts.push(
+        crate::toast::ToastKind::Info,
+        "Wait for turn or Esc to cancel",
+    );
 }
 
 fn dialog_overlay_owns_keys(active: Option<&DialogKind>) -> bool {
