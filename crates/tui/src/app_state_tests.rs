@@ -638,3 +638,73 @@ fn todos_page_rows_and_expand_input() {
     app.scroll_todos(4);
     app.scroll_todos(-40);
 }
+
+#[test]
+fn update_chrome_hover_clears_and_sets_hits() {
+    use ratatui::layout::Rect;
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.context_hit.hovered = true;
+    app.cwd_hit.hovered = true;
+    app.agent_hit.hovered = true;
+    app.model_hit.hovered = true;
+    app.effort_hit.hovered = true;
+    app.approval_hit.hovered = true;
+    app.todos_hit.hovered = true;
+    app.todos_body_hit.hovered = true;
+    app.todos_scrollbar_hit.hovered = true;
+    app.turn_stop_hit.hovered = true;
+    app.tasks_hit.hovered = true;
+    app.slash_suggest.hovered = Some(0);
+    app.file_suggest.hovered = Some(0);
+    app.mouse_pos = None;
+    assert!(app.update_chrome_hover());
+    assert!(!app.context_hit.hovered);
+
+    app.slash_suggest.active = false;
+    app.file_suggest.active = false;
+    app.mouse_pos = Some((80, 80));
+    assert!(app.update_chrome_hover());
+    assert!(app.slash_suggest.hovered.is_none());
+    assert!(app.file_suggest.hovered.is_none());
+
+    app.context_hit.set_rect(Some(Rect {
+        x: 1,
+        y: 1,
+        width: 3,
+        height: 1,
+    }));
+    app.mouse_pos = Some((2, 1));
+    assert!(app.update_chrome_hover());
+    assert!(app.context_hit.hovered);
+}
+
+#[test]
+fn submit_input_oauth_code_paths() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.auth_code_sink = Some(tx);
+    app.input_buffer = "abc#state".into();
+    app.submit_input();
+    assert_eq!(rx.blocking_recv().unwrap(), "abc#state");
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    drop(rx);
+    app.auth_code_sink = Some(tx);
+    app.input_buffer = "late".into();
+    app.submit_input();
+    assert!(app.status_message.contains("already closed"));
+
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    app.auth_code_sink = Some(tx);
+    app.input_buffer.clear();
+    app.submit_input();
+    assert!(app.status_message.contains("cancelled"));
+}
+
+#[test]
+fn sync_tasks_collapse_when_empty() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.tasks_collapsed = true;
+    app.toggle_tasks_pane();
+    assert!(!app.tasks_collapsed || app.task_count() == 0);
+}

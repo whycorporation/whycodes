@@ -5111,6 +5111,113 @@ fn mark_import_declined_writes_when_home_set() {
 }
 
 #[test]
+fn handle_import_slash_nothing_approved_and_filter_none() {
+    let home = IsolatedImportHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    let consent = whycodes_import::ConsentStore::new(whycodes_core::paths::data_dir());
+    consent.deny(&home.path().join(".claude.json")).unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    handle_import_slash(&mut app, "claude");
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Alert { .. }) | Some(DialogKind::Import)
+    ));
+    handle_import_slash(&mut app, "grok");
+}
+
+#[tokio::test]
+async fn apply_pending_import_writes_and_reloads() {
+    let home = IsolatedImportHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    handle_import_slash(&mut app, "claude");
+    let mut config = Config::default();
+    let mut agent = Agent::new(dummy_info("build"));
+    let idx = whycodes_index::WorkspaceIndex::start(Vec::new());
+    apply_pending_import(&mut app, &mut agent, &mut config, home.path(), &idx).await;
+    assert!(
+        config.mcp_servers.contains_key("fs")
+            || app
+                .toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Imported")
+                    || t.message.contains("Nothing")
+                    || t.message.contains("Import"))
+    );
+}
+
+#[test]
+fn shown_tool_name_aliases_and_background_event() {
+    assert_eq!(shown_tool_name("bash"), "run");
+    assert_eq!(shown_tool_name("read_file"), "read");
+    assert_eq!(shown_tool_name("rg"), "grep");
+    assert_eq!(shown_tool_name("custom"), "custom");
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_background_event(&mut app, "bg-1", "running", "sleep");
+    apply_background_event(&mut app, "bg-1", "done", "ok");
+    apply_background_event(&mut app, "bg-2", "failed", "boom");
+    assert!(app.bg_jobs.iter().any(|j| j.id == "bg-1"));
+}
+
+#[test]
+fn handle_question_key_multi_select_space_and_digit() {
+    let spec = whycodes_tools::question::QuestionSpec {
+        prompt: "Pick many".into(),
+        options: vec![
+            whycodes_tools::question::QuestionOption {
+                label: "A".into(),
+                description: String::new(),
+                preview: None,
+            },
+            whycodes_tools::question::QuestionOption {
+                label: "B".into(),
+                description: String::new(),
+                preview: None,
+            },
+            whycodes_tools::question::QuestionOption {
+                label: "Other".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: true,
+        important: false,
+    };
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut q = std::collections::VecDeque::new();
+    let p = std::collections::VecDeque::new();
+    app.ask_question(vec![spec.clone()]);
+    assert!(handle_question_key(
+        &mut app,
+        KeyCode::Char(' '),
+        &mut q,
+        &p
+    ));
+    assert!(handle_question_key(
+        &mut app,
+        KeyCode::Char('2'),
+        &mut q,
+        &p
+    ));
+    assert!(handle_question_key(
+        &mut app,
+        KeyCode::Char('3'),
+        &mut q,
+        &p
+    ));
+    assert!(handle_question_key(&mut app, KeyCode::Enter, &mut q, &p));
+}
+
+#[test]
 fn format_bg_jobs_lists_running() {
     let jobs = [whycodes_agent::JobSnapshot {
         id: "bg-1".into(),

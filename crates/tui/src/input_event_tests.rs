@@ -2243,3 +2243,41 @@ fn handle_paste_ignored_outside_normal_mode() {
             || a.focus == FocusPane::Prompt
     );
 }
+
+#[test]
+fn ctrl_v_clipboard_error_empty_and_command_mode() {
+    crate::clipboard_image::with_stub(Err("no clip".into()), || {
+        let mut a = app();
+        assert!(handle_event(&mut a, ctrl('v')));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clip"))
+        );
+    });
+    crate::clipboard_image::with_stub(Ok(crate::clipboard_image::PromptClipboard::Empty), || {
+        let mut a = app();
+        assert!(handle_event(&mut a, ctrl('v')));
+        assert!(a.pending_images.is_empty());
+    });
+    crate::clipboard_image::with_stub(
+        Ok(crate::clipboard_image::PromptClipboard::Text("hi".into())),
+        || {
+            let mut a = app();
+            a.mode = AppMode::Command;
+            assert!(handle_event(&mut a, ctrl('v')));
+            assert!(a.input_buffer.is_empty());
+        },
+    );
+}
+
+#[test]
+fn sidebar_and_tasks_hotkeys() {
+    let mut a = app();
+    assert!(handle_event(&mut a, ctrl('b')));
+    assert!(handle_event(&mut a, ctrl('b')));
+    assert!(handle_event(&mut a, ctrl('g')));
+    assert!(handle_event(&mut a, ctrl('.')));
+    assert!(handle_event(&mut a, ctrl(',')));
+}
