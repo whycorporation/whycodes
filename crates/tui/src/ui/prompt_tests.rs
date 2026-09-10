@@ -74,6 +74,13 @@ fn home_prompt_centers_and_narrow_drops_chips() {
             .any(|r| r.contains("Ask anything") || r.contains("drop images")),
         "unfocused empty home prompt must show the ask hint, got {home:?}"
     );
+    let tall_home = rendered_rows(&mut app, 60, 16);
+    assert!(
+        HINTS
+            .iter()
+            .any(|h| tall_home.iter().any(|r| r.contains(h))),
+        "idle empty home must paint a rotating HINTS row, got {tall_home:?}"
+    );
     app.add_message(crate::app::ChatRole::User, "hi");
     app.focus = crate::app::FocusPane::Scrollback;
     let scrolled = rendered_rows(&mut app, 60, 8);
