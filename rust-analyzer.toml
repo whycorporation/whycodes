@@ -1,0 +1,5 @@
+# rust-analyzer reads rustfmt.toml next to Cargo.toml automatically.
+# Use Clippy as the on-save check so the workspace lint table applies
+# locally, not only under CI `-D warnings`.
+[check]
+command = "clippy"

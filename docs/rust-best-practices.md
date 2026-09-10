@@ -36,6 +36,10 @@ Bunlar bilinçli ve korunmalı:
 - **Crate katmanları** (`docs/architecture.md`) + `scripts/dependency_boundaries.json`.
 - **Panic / swallowed-error ratchet.** Çoğu crate panic bütçesi 0.
 - **Clippy `-D warnings`**, `cargo fmt`, `cargo-audit` ignore listesi tarihli.
+  Formatter ve Clippy artık sadece CI’de değil: `rustfmt.toml` +
+  `[workspace.lints.clippy]` (`correctness` / `suspicious` deny). Lisans/kaynak
+  kapısı `deny.toml` (`cargo deny check licenses sources`); advisory ignore’lar
+  `.cargo/audit.toml`’da kalır.
 - `tools/src/blocking.rs`: senkron FS/`Command` işini Tokio worker’dan ayırma.
 - `LlmRequest.messages: Arc<[Message]>` + `messages_mut()` COW — clone maliyetine dair yorum doğru.
 - `logging.rs` mutex poison’ı `expect` yerine `io::Error`’a çeviriyor.

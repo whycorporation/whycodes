@@ -39,6 +39,12 @@ Whenever you edit Rust source, `Cargo.toml`, or anything that affects compilatio
    cargo clippy -p whycodes-<crate> --all-targets -- -D warnings
    ```
 
+   Formatter/clippy policy lives in-tree: `rustfmt.toml` +
+   `[workspace.lints.clippy]` (`correctness` / `suspicious` deny). CI
+   `clippy -- -D warnings` is unchanged. License/source gate is
+   `cargo deny check licenses sources` (`deny.toml`); advisories stay on
+   `cargo audit`.
+
    A `let _ = send(...)`, `Err(_) =>`, `return x.ok();`, or a new `whycodes-*` Cargo.toml line will fail CI even when the crate compiles. Handle the error (name it / log it) or register the edge in `scripts/dependency_boundaries.json` in the **same** commit. Details: [`docs/knowhow.md`](docs/knowhow.md) rule 8.
 
 ### Why

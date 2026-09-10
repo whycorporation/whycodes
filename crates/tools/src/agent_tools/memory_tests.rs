@@ -1,46 +1,59 @@
 use super::*;
 use crate::tool::ToolContext;
 
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 struct IsolatedHome {
     _guard: std::sync::MutexGuard<'static, ()>,
     dir: tempfile::TempDir,
     prev: Option<std::ffi::OsString>,
     prev_no_memory: Option<std::ffi::OsString>,
+    prev_git_dir: Option<std::ffi::OsString>,
+    prev_git_work_tree: Option<std::ffi::OsString>,
+}
+
+fn restore_os(key: &str, prev: Option<&std::ffi::OsString>) {
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
 }
 
 impl IsolatedHome {
     fn new() -> Self {
-        let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let prev = std::env::var_os("WHYCODES_HOME");
         let prev_no_memory = std::env::var_os("WHYCODES_NO_MEMORY");
+        let prev_git_dir = std::env::var_os("GIT_DIR");
+        let prev_git_work_tree = std::env::var_os("GIT_WORK_TREE");
         unsafe {
             std::env::set_var("WHYCODES_HOME", dir.path());
             std::env::remove_var("WHYCODES_NO_MEMORY");
+            // A runner-set GIT_DIR would make `git rev-parse --show-toplevel`
+            // from this tempdir return the checkout, so every isolated test
+            // would share one project_key (and a leaked HOME would write into
+            // the runner's real memory DB).
+            std::env::remove_var("GIT_DIR");
+            std::env::remove_var("GIT_WORK_TREE");
         }
         Self {
             _guard: guard,
             dir,
             prev,
             prev_no_memory,
+            prev_git_dir,
+            prev_git_work_tree,
         }
     }
 }
 
 impl Drop for IsolatedHome {
     fn drop(&mut self) {
-        unsafe {
-            match &self.prev {
-                Some(v) => std::env::set_var("WHYCODES_HOME", v),
-                None => std::env::remove_var("WHYCODES_HOME"),
-            }
-            match &self.prev_no_memory {
-                Some(v) => std::env::set_var("WHYCODES_NO_MEMORY", v),
-                None => std::env::remove_var("WHYCODES_NO_MEMORY"),
-            }
-        }
+        restore_os("WHYCODES_HOME", self.prev.as_ref());
+        restore_os("WHYCODES_NO_MEMORY", self.prev_no_memory.as_ref());
+        restore_os("GIT_DIR", self.prev_git_dir.as_ref());
+        restore_os("GIT_WORK_TREE", self.prev_git_work_tree.as_ref());
     }
 }
 

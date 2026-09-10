@@ -144,6 +144,23 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-10 — `IsolatedHome` restore asserted after dropping `ENV_LOCK`
+
+**Symptom:** CI `Test (linux)` failed
+`http_tests::isolated_home_restores_previous_env`
+(`crates/server/src/http_tests.rs`) with
+`left: Some("/tmp/.tmp…")` / `right: Some("/tmp/whycodes-prev-home")`.
+
+**Root cause:** The test `drop(home)` then reads `WHYCODES_HOME`. Drop
+restores the sentinel *and* releases `ENV_LOCK`. A sibling IsolatedHome
+can then overwrite the env before the assertion.
+
+**Fix:** Call `restore_env()` while the guard is still held, assert,
+then `set_prev(None)` so Drop does not leak the sentinel.
+
+**Prevention:** Never sample process env after releasing a lock that
+serializes that env. Assert under the same guard that wrote it.
+
 ### 2026-09-10 — Fake LSP extras modes raced `initialized` into Broken pipe
 
 **Symptom:** CI `Test (linux)` failed after ~4m at
@@ -165,6 +182,27 @@ paths.
 **Prevention:** Fake servers that the client still talks to after
 `initialize` must not close stdin/stdout until that notification is
 read (or the test is specifically asserting Broken pipe).
+
+### 2026-09-07 — Chat scroll paint panics (`index outside of buffer`)
+
+**Symptom:** Wheel / trackpad scroll in a session paints the recovered
+overlay (`rendering error recovered`) instead of moving the transcript.
+Issue #72.
+
+**Root cause:** `Buffer::set_stringn` panics on coordinates outside the
+buffer. Chat layout can under-count a closed bubble (`layout_cache`
+stale vs real `line_cache` / re-render). The next scroll frame then
+paints extra rows and `y` walks off the chat rect into the prompt or
+past `area.bottom()`.
+
+**Fix:** Prefer `line_cache.len()` over a conflicting `layout_cache`.
+Cap each message slice to its laid-out slot. Clip `paint_chat_row` /
+`paint_concat_slices` to `buf.area()`. Refresh a mismatched height on
+paint so the next frame is consistent.
+
+**Prevention:** Never call `set_stringn` without a buffer-bounds check.
+Do not trust `layout_cache` when `line_cache` is present. Regression:
+`stale_layout_cache_scroll_paint_does_not_panic`.
 
 ### 2026-09-07 — Serve takeover test spawned a just-written `.sh` (ETXTBSY / noexec)
 

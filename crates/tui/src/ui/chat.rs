@@ -54,18 +54,18 @@ pub fn message_row_layout(app: &TuiApp, width: u16) -> (Vec<usize>, usize) {
         // Key is (width, closed) — not global `is_busy()`. A new turn must
         // not evict every finished bubble's height (that froze scroll).
         let closed = message_is_closed(app, i);
-        if let Some((w, c, h)) = msg.layout_cache
-            && w == width
-            && c == closed
-        {
-            total += h;
-            continue;
-        }
         if let Some((w, c, ref lines)) = msg.line_cache
             && w == width
             && c == closed
         {
             total += lines.len();
+            continue;
+        }
+        if let Some((w, c, h)) = msg.layout_cache
+            && w == width
+            && c == closed
+        {
+            total += h;
             continue;
         }
         total += render_message(msg, app, &palette, i, width, None, false).len();
@@ -81,17 +81,19 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
     for i in 0..n {
         starts.push(total);
         let closed = message_is_closed(app, i);
-        let h = if let Some((w, c, h)) = app.messages[i].layout_cache
-            && w == width
-            && c == closed
-        {
-            h
-        } else if let Some((w, c, ref lines)) = app.messages[i].line_cache
+        let h = if let Some((w, c, ref lines)) = app.messages[i].line_cache
             && w == width
             && c == closed
         {
             let h = lines.len();
-            app.messages[i].layout_cache = Some((width, closed, h));
+            if app.messages[i].layout_cache != Some((width, closed, h)) {
+                app.messages[i].layout_cache = Some((width, closed, h));
+            }
+            h
+        } else if let Some((w, c, h)) = app.messages[i].layout_cache
+            && w == width
+            && c == closed
+        {
             h
         } else if !closed {
             // Live bubble: prefix (thinking/tools) is small; markdown lives in
@@ -331,8 +333,13 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         let selected =
             app.selected_msg == Some(i) && app.focus == crate::app::FocusPane::Scrollback;
         let closed = message_is_closed(app, i);
+        // Cap to the laid-out slot. A stale `layout_cache` can under-count
+        // height; re-render then paints extra rows and `set_stringn` panics
+        // once `y` walks off the chat rect (issue #72, recovered overlay).
+        let msg_end = starts.get(i + 1).copied().unwrap_or(total);
+        let laid_out_h = msg_end.saturating_sub(msg_start);
         let slice_from = view_start.saturating_sub(msg_start);
-        let slice_to_excl = view_end.saturating_sub(msg_start);
+        let slice_to_excl = view_end.saturating_sub(msg_start).min(laid_out_h);
 
         // Cheap Arc clone so we can paint by reference without holding
         // `app.messages` borrowed across a possible cache fill.
@@ -348,6 +355,9 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
             });
 
         if let Some(ref lines) = cached {
+            if lines.len() != laid_out_h {
+                app.messages[i].layout_cache = Some((content_width, closed, lines.len()));
+            }
             y = paint_message_slice(
                 buf,
                 y,
@@ -396,8 +406,10 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     }
 
     // If layout undershot (stale height), blank any leftover rows so scroll
-    // cannot leave ghost glyphs from the previous frame.
-    let end_y = area.y.saturating_add(area.height);
+    // cannot leave ghost glyphs from the previous frame. Stay inside the
+    // chat rect — extra rows from a stale cache must not walk into the
+    // prompt or off the buffer (`set_stringn` panics there).
+    let end_y = area.y.saturating_add(area.height).min(buf.area().bottom());
     while y < end_y {
         paint_chat_row(buf, y, &row, None, false);
         y = y.saturating_add(1);
@@ -511,7 +523,11 @@ fn paint_concat_slices(
     } else {
         None
     };
+    let clip_y = buf.area().bottom();
     for abs in from..to {
+        if y >= clip_y {
+            break;
+        }
         let line = if abs < a.len() {
             &a[abs]
         } else {
@@ -536,8 +552,19 @@ fn paint_chat_row(
     if row.width == 0 {
         return;
     }
-    let x0 = row.x;
-    let end = x0.saturating_add(row.width);
+    let area = buf.area();
+    // `set_stringn` panics on coordinates outside the buffer (issue #72).
+    if y < area.y || y >= area.bottom() {
+        return;
+    }
+    let x0 = row.x.max(area.x);
+    let end = x0
+        .saturating_add(row.width)
+        .min(area.right())
+        .min(row.x.saturating_add(row.width));
+    if x0 >= end {
+        return;
+    }
     let clear = Style::default().fg(row.bg).bg(row.bg);
     let mut x = x0;
     let mut band_bg: Option<Color> = None;

@@ -123,8 +123,10 @@ async fn execute_reads_window_with_header() {
         .await;
     assert!(!result.is_error);
     assert!(result.content.contains("# lines 2–3 of 3"));
-    assert!(result.content.contains("2|two"));
-    assert!(result.content.contains("3|three"));
+    assert!(result.content.contains("2 "));
+    assert!(result.content.contains("|two"));
+    assert!(result.content.contains("3 "));
+    assert!(result.content.contains("|three"));
 }
 
 #[tokio::test]

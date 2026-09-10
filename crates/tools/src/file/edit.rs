@@ -24,9 +24,10 @@ impl Tool for EditTool {
     }
 
     fn description(&self) -> &str {
-        "Make targeted edits to a file by finding and replacing exact text. \
-         If the exact `old_string` is missing, a unique whitespace-tolerant \
-         match (indent / extra spaces only — not typos) is applied."
+        "Make targeted edits to a file. Prefer `from`/`to`/`insert_after` \
+         content tags from `read`/`grep` (`N tag|text`). `old_string` is \
+         the fallback: exact match, then unique whitespace-tolerant match \
+         (indent / extra spaces only — not typos)."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -39,18 +40,30 @@ impl Tool for EditTool {
                 },
                 "old_string": {
                     "type": "string",
-                    "description": "The exact text to find"
+                    "description": "Exact text to find. Required unless from/to/insert_after is set."
                 },
                 "new_string": {
                     "type": "string",
-                    "description": "The replacement text"
+                    "description": "The replacement or inserted text"
+                },
+                "from": {
+                    "type": "string",
+                    "description": "Content tag of the first line to replace (inclusive)"
+                },
+                "to": {
+                    "type": "string",
+                    "description": "Content tag of the last line to replace (inclusive). Omit for a single line."
+                },
+                "insert_after": {
+                    "type": "string",
+                    "description": "Content tag after which to insert new_string (no deletion)"
                 },
                 "replace_all": {
                     "type": "boolean",
-                    "description": "Replace all occurrences (default: false)"
+                    "description": "Replace all occurrences of old_string (default: false)"
                 }
             },
-            "required": ["path", "old_string", "new_string"]
+            "required": ["path", "new_string"]
         })
     }
 
@@ -64,6 +77,9 @@ impl Tool for EditTool {
             let old_string = args["old_string"].as_str().unwrap_or("").to_string();
             let new_string = args["new_string"].as_str().unwrap_or("").to_string();
             let replace_all = args["replace_all"].as_bool().unwrap_or(false);
+            let from = args["from"].as_str().map(str::to_string);
+            let to = args["to"].as_str().map(str::to_string);
+            let insert_after = args["insert_after"].as_str().map(str::to_string);
 
             let full_path = if std::path::Path::new(&path_str).is_absolute() {
                 path_str
@@ -84,7 +100,16 @@ impl Tool for EditTool {
 
             let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
             crate::blocking::tool(move || {
-                Self::run(full_path, shown, old_string, new_string, replace_all)
+                Self::run(
+                    full_path,
+                    shown,
+                    old_string,
+                    new_string,
+                    replace_all,
+                    from,
+                    to,
+                    insert_after,
+                )
             })
             .await
         })
@@ -92,46 +117,73 @@ impl Tool for EditTool {
 }
 
 impl EditTool {
+    #[allow(clippy::too_many_arguments)]
     fn run(
         full_path: String,
         shown: String,
         old_string: String,
         new_string: String,
         replace_all: bool,
+        from: Option<String>,
+        to: Option<String>,
+        insert_after: Option<String>,
     ) -> ToolResult {
         match std::fs::read_to_string(&full_path) {
-            Ok(original) => match locate_spans(&original, &old_string, replace_all) {
-                Locate::None => ToolResult {
-                    tool_call_id: String::new(),
-                    content: "Could not find the specified text in the file.".to_string(),
-                    is_error: true,
-                },
-                Locate::Ambiguous(count) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!(
-                        "Found {count} occurrences of the search text. Use replace_all=true or provide a more specific match."
-                    ),
-                    is_error: true,
-                },
-                Locate::Hits(spans) => {
-                    let matched = original[spans[0].0..spans[0].1].to_string();
-                    let count = spans.len();
-                    let modified = apply_spans(&original, &spans, &new_string);
-                    let start = first_line_number(&original, &matched);
-                    write_edit_result(
-                        crate::file::atomic::write_atomic(
-                            std::path::Path::new(&full_path),
-                            &modified,
-                        )
-                        .map_err(|e| e.to_string()),
-                        &shown,
-                        &matched,
+            Ok(original) => {
+                let tagged = from.is_some() || insert_after.is_some();
+                if tagged {
+                    match apply_tagged(
+                        &original,
+                        from.as_deref(),
+                        to.as_deref(),
+                        insert_after.as_deref(),
                         &new_string,
-                        count,
-                        start,
-                    )
+                    ) {
+                        Ok((matched, modified, start)) => write_edit(
+                            &full_path,
+                            &shown,
+                            &matched,
+                            &new_string,
+                            1,
+                            start,
+                            &modified,
+                        ),
+                        Err(msg) => ToolResult {
+                            tool_call_id: String::new(),
+                            content: msg,
+                            is_error: true,
+                        },
+                    }
+                } else {
+                    match locate_spans(&original, &old_string, replace_all) {
+                        Locate::None => ToolResult {
+                            tool_call_id: String::new(),
+                            content: miss_with_snippet(&original, &old_string),
+                            is_error: true,
+                        },
+                        Locate::Ambiguous(count) => ToolResult {
+                            tool_call_id: String::new(),
+                            content: ambiguous_with_tags(&original, &old_string, count),
+                            is_error: true,
+                        },
+                        Locate::Hits(spans) => {
+                            let matched = original[spans[0].0..spans[0].1].to_string();
+                            let count = spans.len();
+                            let modified = apply_spans(&original, &spans, &new_string);
+                            let start = first_line_number(&original, &matched);
+                            write_edit(
+                                &full_path,
+                                &shown,
+                                &matched,
+                                &new_string,
+                                count,
+                                start,
+                                &modified,
+                            )
+                        }
+                    }
                 }
-            },
+            }
             Err(e) => ToolResult {
                 tool_call_id: String::new(),
                 content: format!("Error reading file: {e}"),
@@ -139,6 +191,26 @@ impl EditTool {
             },
         }
     }
+}
+
+fn write_edit(
+    full_path: &str,
+    shown: &str,
+    matched: &str,
+    new_string: &str,
+    count: usize,
+    start: Option<usize>,
+    modified: &str,
+) -> ToolResult {
+    write_edit_result(
+        crate::file::atomic::write_atomic(std::path::Path::new(full_path), modified)
+            .map_err(|e| e.to_string()),
+        shown,
+        matched,
+        new_string,
+        count,
+        start,
+    )
 }
 
 fn write_edit_result(
@@ -165,6 +237,126 @@ fn write_edit_error(e: &str) -> ToolResult {
         content: format!("Error writing file: {e}"),
         is_error: true,
     }
+}
+
+fn apply_tagged(
+    original: &str,
+    from: Option<&str>,
+    to: Option<&str>,
+    insert_after: Option<&str>,
+    new_string: &str,
+) -> Result<(String, String, Option<usize>), String> {
+    use crate::file::line_tag::{
+        MIN_LEN, TagHit, find_tag, line_offsets, line_text, nearby_snippet, tag_of,
+    };
+
+    if from.is_some() && insert_after.is_some() {
+        return Err("Use either from/to or insert_after, not both.".into());
+    }
+    let offs = line_offsets(original);
+    if offs.is_empty() {
+        return Err("File is empty — tags cannot be resolved.".into());
+    }
+
+    let resolve = |tag: &str, label: &str| -> Result<usize, String> {
+        match find_tag(original, &offs, tag) {
+            TagHit::Unique(i) => Ok(i),
+            TagHit::Missing => Err(format!(
+                "Content tag `{tag}` ({label}) was not found. File may have changed.\n{}",
+                nearby_snippet(original, &offs, 0, 4)
+            )),
+            TagHit::Ambiguous(hits) => {
+                let mut msg = format!(
+                    "Content tag `{tag}` ({label}) matches {} lines. Use a longer tag from the last `read`.\n",
+                    hits.len()
+                );
+                for i in hits.iter().take(8) {
+                    let text = line_text(original, offs[*i]);
+                    let t = tag_of(text, MIN_LEN.max(tag.len()));
+                    msg.push_str(&crate::file::line_tag::format_read_line(i + 1, &t, text));
+                    msg.push('\n');
+                }
+                Err(msg)
+            }
+        }
+    };
+
+    if let Some(after) = insert_after {
+        let i = resolve(after, "insert_after")?;
+        let insert_at = offs[i].line_end;
+        let mut insert = new_string.to_string();
+        if !insert.is_empty() && !insert.ends_with('\n') {
+            insert.push('\n');
+        }
+        if !insert.is_empty() && insert_at > 0 && !original[..insert_at].ends_with('\n') {
+            insert.insert(0, '\n');
+        }
+        let mut modified = String::with_capacity(original.len() + insert.len());
+        modified.push_str(&original[..insert_at]);
+        modified.push_str(&insert);
+        modified.push_str(&original[insert_at..]);
+        return Ok((String::new(), modified, Some(i + 2)));
+    }
+
+    let from_tag =
+        from.ok_or_else(|| "from is required when insert_after is not set.".to_string())?;
+    let start_i = resolve(from_tag, "from")?;
+    let end_i = if let Some(to_tag) = to {
+        let j = resolve(to_tag, "to")?;
+        if j < start_i {
+            return Err("`to` must not precede `from`.".into());
+        }
+        j
+    } else {
+        start_i
+    };
+    let byte_start = offs[start_i].start;
+    let byte_end = offs[end_i].line_end;
+    let matched = original[byte_start..byte_end].to_string();
+    let modified = apply_spans(original, &[(byte_start, byte_end)], new_string);
+    Ok((matched, modified, Some(start_i + 1)))
+}
+
+fn miss_with_snippet(original: &str, old: &str) -> String {
+    use crate::file::line_tag::{line_offsets, nearby_snippet};
+    let offs = line_offsets(original);
+    let mut center = 0usize;
+    if let Some(tok) = old.split_whitespace().next()
+        && let Some(pos) = original.find(tok)
+    {
+        center = original[..pos].bytes().filter(|&b| b == b'\n').count();
+    }
+    format!(
+        "Could not find the specified text in the file.\nNearby lines:\n{}",
+        nearby_snippet(original, &offs, center, 3)
+    )
+}
+
+fn ambiguous_with_tags(original: &str, old: &str, count: usize) -> String {
+    use crate::file::line_tag::{MIN_LEN, format_read_line, line_offsets, line_text, tag_of};
+    let offs = line_offsets(original);
+    let mut msg = format!(
+        "Found {count} occurrences of the search text. Use replace_all=true, a more specific match, or a content tag.\n"
+    );
+    let mut shown = 0usize;
+    let mut from = 0usize;
+    while shown < 6 && from < original.len() {
+        if let Some(rel) = original[from..].find(old) {
+            let abs = from + rel;
+            let line_i = original[..abs].bytes().filter(|&b| b == b'\n').count();
+            if line_i < offs.len() {
+                let text = line_text(original, offs[line_i]);
+                let tag = tag_of(text, MIN_LEN);
+                msg.push_str(&format_read_line(line_i + 1, &tag, text));
+                msg.push('\n');
+                shown += 1;
+            }
+            from = abs + old.len().max(1);
+        } else {
+            break;
+        }
+    }
+    msg
 }
 
 enum Locate {

@@ -447,7 +447,9 @@ async fn execute_unknown_in_isolated_executor_lists_registered() {
 #[test]
 fn register_config_plugins_project_toml() {
     // Isolate global config so the developer machine's plugins.toml cannot leak in.
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
     unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
     let dir = tempfile::tempdir().unwrap();
     let why = dir.path().join(".whycodes");
@@ -475,18 +477,30 @@ description = "Has no command"
     assert_eq!(shout.unwrap().description(), "Shouts back");
     // Empty-command plugins are skipped.
     assert!(ex.get("plugin_empty-cmd").is_none());
-    unsafe { std::env::remove_var("WHYCODES_HOME") };
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var("WHYCODES_HOME", v),
+            None => std::env::remove_var("WHYCODES_HOME"),
+        }
+    }
 }
 
 #[test]
 fn register_config_plugins_skips_without_project_dir() {
     // No project dir: falls back to isolated (empty) global config only.
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
     unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
     let mut ex = ToolExecutor::new();
     let n = ex.register_config_plugins(None);
     assert_eq!(n, 0);
-    unsafe { std::env::remove_var("WHYCODES_HOME") };
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var("WHYCODES_HOME", v),
+            None => std::env::remove_var("WHYCODES_HOME"),
+        }
+    }
 }
 
 #[test]
@@ -494,6 +508,7 @@ fn register_config_plugins_invalid_toml_and_empty_json_name() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = tempfile::tempdir().unwrap();
     std::fs::write(home.path().join("plugins.toml"), "[[plugins]]\nname = [").unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
     unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
 
     let dir = tempfile::tempdir().unwrap();
@@ -509,5 +524,10 @@ fn register_config_plugins_invalid_toml_and_empty_json_name() {
     let _ = ex.register_config_plugins(Some(dir.path()));
     let n = ex.register_config_plugins(None);
     assert_eq!(n, 0);
-    unsafe { std::env::remove_var("WHYCODES_HOME") };
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var("WHYCODES_HOME", v),
+            None => std::env::remove_var("WHYCODES_HOME"),
+        }
+    }
 }

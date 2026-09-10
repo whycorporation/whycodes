@@ -123,7 +123,9 @@ jobs:
           '
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-audit
+          tool: cargo-audit,cargo-deny
+      - name: cargo deny (licenses + sources)
+        run: cargo deny check licenses sources
       - name: cargo audit
         run: cargo audit --deny warnings
       - name: TypeScript SDK — build and test
