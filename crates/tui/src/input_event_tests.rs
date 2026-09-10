@@ -5322,6 +5322,59 @@ fn mouse_theme_row_confirms_and_chat_scrollbar_mid_track() {
     a.chat_viewport_rows = 10;
     apply_chat_scrollbar_offset(&mut a, 6, Some(0));
     assert!(a.scroll_offset > 0 || a.auto_scroll);
+}
+
+#[test]
+fn mouse_confirms_login_effort_mode_and_agent_rows() {
+    let mut a = app();
+    a.login_dialog.rows = vec![crate::app::LoginProviderRow {
+        provider: "acme".into(),
+        label: "Acme".into(),
+        connected: false,
+    }];
+    open_dialog(&mut a, DialogKind::Login);
+    click_list_row(&mut a, 8, 1);
+    assert!(
+        a.pending_login_provider.as_deref() == Some("acme")
+            || a.mode == AppMode::Normal
+            || matches!(a.dialogs.active(), Some(DialogKind::Login)),
+        "login row click confirms or keeps the picker, got {:?}",
+        a.pending_login_provider
+    );
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Effort);
+    click_list_row(&mut a, 8, 4);
+    assert!(
+        a.pending_effort.is_some()
+            || a.mode == AppMode::Normal
+            || matches!(a.dialogs.active(), Some(DialogKind::Effort)),
+        "effort row click confirms or keeps the picker"
+    );
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::ApprovalMode);
+    click_list_row(&mut a, 8, 3);
+    assert!(
+        a.pending_approval_mode.is_some()
+            || a.mode == AppMode::Normal
+            || matches!(a.dialogs.active(), Some(DialogKind::ApprovalMode)),
+        "approval-mode row click confirms or keeps the picker"
+    );
+
+    let mut a = app();
+    a.primary_agents = vec!["build".into(), "plan".into()];
+    a.agent_name = "build".into();
+    open_dialog(&mut a, DialogKind::Agent);
+    click_list_row(&mut a, 8, 2);
+    assert!(
+        a.pending_agent.as_deref() == Some("build")
+            || a.pending_agent.as_deref() == Some("plan")
+            || a.mode == AppMode::Normal
+            || matches!(a.dialogs.active(), Some(DialogKind::Agent)),
+        "agent row click confirms or keeps the picker, got {:?}",
+        a.pending_agent
+    );
     let grab = chat_scrollbar_grab_at(
         &a,
         20,
