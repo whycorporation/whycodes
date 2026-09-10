@@ -1706,6 +1706,19 @@ fn chat_scrollbar_offset_snaps_and_noops() {
         },
     );
     let _ = grab;
+    a.chat_scroll_total = 0;
+    a.chat_viewport_rows = 10;
+    let grab_empty = chat_scrollbar_grab_at(
+        &a,
+        3,
+        Rect {
+            x: 40,
+            y: 1,
+            width: 1,
+            height: 10,
+        },
+    );
+    assert_eq!(grab_empty, 0, "no overflow → no thumb, grab is 0");
     let grab_mid = chat_scrollbar_grab_at(
         &a,
         6,
@@ -4285,6 +4298,17 @@ fn mouse_confirms_model_row_and_header_toggle() {
         click_list_row(&mut a, 9, n);
         assert!(a.pending_model.is_some() || a.mode == AppMode::Normal);
     }
+
+    let mut a = app();
+    a.model_selection.models.clear();
+    open_dialog(&mut a, DialogKind::Model);
+    a.model_selection.selected = 0;
+    click_list_row(&mut a, 8, 1);
+    assert!(
+        a.pending_model.is_none(),
+        "empty catalog row click must not pick a model"
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
 }
 
 #[test]
