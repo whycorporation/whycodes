@@ -170,6 +170,18 @@ for coding agents working in this repo. By participating you agree to the
 Please report vulnerabilities through [SECURITY.md](SECURITY.md), not public
 issues.
 
+## Star History
+
+<p align="center">
+  <a href="https://www.star-history.com/?repos=whycorporation%2Fwhycodes&type=date&legend=top-left">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=whycorporation/whycodes&type=date&theme=dark&legend=top-left" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=whycorporation/whycodes&type=date&legend=top-left" />
+      <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=whycorporation/whycodes&type=date&legend=top-left" />
+    </picture>
+  </a>
+</p>
+
 ## License
 
 [MIT](LICENSE) · [why.codes](https://why.codes)
