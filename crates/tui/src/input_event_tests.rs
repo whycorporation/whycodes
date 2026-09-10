@@ -5239,3 +5239,60 @@ fn help_mode_q_closes_when_search_does_not_consume_it() {
         "unmapped q in help (stale Normal context) must close the overlay"
     );
 }
+
+#[test]
+fn backspace_on_empty_prompt_peels_the_last_staged_image() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
+    let mut a = app();
+    a.pending_images.push(crate::images::PromptImage {
+        path: "a.png".into(),
+        label: "a.png".into(),
+        media_type: "image/png".into(),
+    });
+    a.pending_images.push(crate::images::PromptImage {
+        path: "b.png".into(),
+        label: "b.png".into(),
+        media_type: "image/png".into(),
+    });
+    a.input_buffer.clear();
+    a.input_cursor = 0;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputBackspace),
+        &k
+    ));
+    assert_eq!(a.pending_images.len(), 1);
+    assert_eq!(a.pending_images[0].label, "a.png");
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Removed") && t.message.contains("b.png")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn unbracketed_paste_keeps_mouse_move_events() {
+    let a = app();
+    let long = "word ".repeat(40);
+    let mut events: Vec<Event> = long.chars().map(|c| key(KeyCode::Char(c))).collect();
+    events.push(mouse(MouseEventKind::Moved, 3, 3));
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert!(
+        events.iter().any(|e| matches!(e, Event::Paste(_))),
+        "long key flood must fold into Paste"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Mouse(m) if matches!(m.kind, MouseEventKind::Moved))),
+        "Moved must survive coalescing, got {events:?}"
+    );
+}

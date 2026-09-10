@@ -868,6 +868,35 @@ fn toggle_tasks_pane_empty_opens_and_closes_agents_tab() {
 }
 
 #[test]
+fn sync_tasks_collapse_clears_hits_when_the_list_becomes_empty() {
+    use ratatui::layout::Rect;
+    let mut app = app();
+    app.upsert_bg_job("j", "done", "finished");
+    app.tasks_collapsed = true;
+    app.tasks_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 0,
+        width: 8,
+        height: 1,
+    }));
+    app.tasks_row_hits.push((
+        Rect {
+            x: 0,
+            y: 1,
+            width: 8,
+            height: 1,
+        },
+        "j".into(),
+    ));
+    app.bg_jobs.clear();
+    app.subagents.clear();
+    app.sync_tasks_collapse(true);
+    assert!(!app.tasks_collapsed);
+    assert!(app.tasks_hit.rect.is_none());
+    assert!(app.tasks_row_hits.is_empty());
+}
+
+#[test]
 fn thinking_header_shows_elapsed_and_push_capped_splits_utf8() {
     let mut tb = crate::app::ThinkingBlock::new("plan");
     tb.started_at = Instant::now()

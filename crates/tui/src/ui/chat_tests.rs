@@ -1150,6 +1150,43 @@ fn message_row_layout_hits_height_then_line_cache() {
 }
 
 #[test]
+fn session_paint_fills_closed_line_cache_on_first_draw() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "hello first paint");
+    app.add_message(ChatRole::Assistant, "world first paint");
+    assert!(app.messages.iter().all(|m| m.line_cache.is_none()));
+
+    let backend = TestBackend::new(60, 16);
+    let mut terminal = Terminal::new(backend).expect("term");
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw");
+    assert!(
+        app.messages
+            .iter()
+            .all(|m| m.line_cache.is_some() && m.layout_cache.is_some()),
+        "closed bubbles must cache lines on the first session paint"
+    );
+    let buf = terminal.backend().buffer().clone();
+    let mut out = String::new();
+    for y in 0..buf.area().height {
+        for x in 0..buf.area().width {
+            if let Some(cell) = buf.cell((x, y)) {
+                out.push_str(cell.symbol());
+            }
+        }
+    }
+    assert!(
+        out.contains("hello") || out.contains("world"),
+        "first paint must show the transcript, got {out:?}"
+    );
+}
+
+#[test]
 fn golden_home_and_session_paint_stable_ascii() {
     use crate::app::{ChatRole, SessionEntry, TuiApp};
     use crate::config::TuiAppConfig;
