@@ -1631,27 +1631,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
             // Mouse `[stop]` on the turn strip (or other UI) → cancel.
             // Second click while already cancelling → immediate force-stop.
-            if rt.agent_busy && app.pending_cancel {
-                app.pending_cancel = false;
-                if cancel_requested_at.is_some() {
-                    force_stop_turn(
-                        &mut app,
-                        &mut rt,
-                        &mut cancel_requested_at,
-                        &config,
-                        &project_dir,
-                        &file_index,
-                    );
-                } else {
-                    begin_cancel(
-                        &mut app,
-                        &rt.cancel_flag,
-                        &mut cancel_requested_at,
-                        &mut rt.pending_question_queue,
-                        &mut rt.pending_perm_queue,
-                    );
-                }
-            }
+            apply_pending_cancel(
+                &mut app,
+                &mut rt,
+                &mut cancel_requested_at,
+                &config,
+                &project_dir,
+                &file_index,
+            );
 
             // Drain scheduled /loop prompts when idle (no pending manual submit).
             queue_auto_prompt_if_idle(&mut app, rt.agent_busy);
@@ -2405,6 +2392,40 @@ fn print_session_summary(summary: &str) {
 
 /// Arm cooperative cancel: set the flag, unblock permission/question waits,
 /// and start the force-stop timer.
+/// Mouse `[stop]` / UI cancel: first click begins cooperative cancel, a
+/// second click while already cancelling force-stops the turn.
+fn apply_pending_cancel(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    config: &Config,
+    project_dir: &std::path::Path,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
+) {
+    if !rt.agent_busy || !app.pending_cancel {
+        return;
+    }
+    app.pending_cancel = false;
+    if cancel_requested_at.is_some() {
+        force_stop_turn(
+            app,
+            rt,
+            cancel_requested_at,
+            config,
+            project_dir,
+            file_index,
+        );
+    } else {
+        begin_cancel(
+            app,
+            &rt.cancel_flag,
+            cancel_requested_at,
+            &mut rt.pending_question_queue,
+            &mut rt.pending_perm_queue,
+        );
+    }
+}
+
 fn begin_cancel(
     app: &mut TuiApp,
     cancel_flag: &Option<CancelFlag>,

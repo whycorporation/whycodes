@@ -1379,6 +1379,50 @@ fn force_stop_keeps_agent_on_remote_outcome() {
     );
 }
 
+#[test]
+fn apply_pending_cancel_begins_then_force_stops() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let idx = whycodes_index::WorkspaceIndex::start(Vec::new());
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut cancel_at = None;
+    apply_pending_cancel(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &Config::default(),
+        dir.path(),
+        &idx,
+    );
+    assert!(cancel_at.is_none(), "idle must be a no-op");
+
+    rt.agent_busy = true;
+    app.pending_cancel = true;
+    apply_pending_cancel(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &Config::default(),
+        dir.path(),
+        &idx,
+    );
+    assert!(cancel_at.is_some());
+    assert!(!app.pending_cancel);
+    assert!(app.status_message.contains("Cancell"));
+
+    app.pending_cancel = true;
+    apply_pending_cancel(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &Config::default(),
+        dir.path(),
+        &idx,
+    );
+    assert!(!rt.agent_busy, "second stop must force-stop");
+}
+
 #[tokio::test]
 async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
     let _home = isolate_home();

@@ -3341,6 +3341,45 @@ fn help_scrollbar_copy_without_modal_and_empty_metrics() {
     );
     assert_eq!(grab, 0, "no thumb when total <= visible");
 
+    let mut a = app();
+    a.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
+    open_dialog(&mut a, DialogKind::Agent);
+    a.dialog_scrollbar_hit = Some(Rect {
+        x: 49,
+        y: 6,
+        width: 1,
+        height: 10,
+    });
+    a.dialog_list_total = 3;
+    a.dialog_list_visible = 2;
+    apply_modal_scrollbar(&mut a, Some(&DialogKind::Agent), 12, Some(1));
+    assert_eq!(a.agent_picker_selected, 2);
+
+    a.dialog_list_total = 20;
+    a.dialog_list_visible = 6;
+    a.dialog_list_scroll_start = 4;
+    let grab_on_thumb = scrollbar_grab_at(
+        &a,
+        8,
+        Rect {
+            x: 49,
+            y: 6,
+            width: 1,
+            height: 10,
+        },
+    );
+    let grab_off_thumb = scrollbar_grab_at(
+        &a,
+        14,
+        Rect {
+            x: 49,
+            y: 6,
+            width: 1,
+            height: 10,
+        },
+    );
+    assert!(grab_off_thumb > 0 || grab_on_thumb < 10);
+
     copy_modal_selection(&mut a, 18, 7);
 
     let mut a = app();
