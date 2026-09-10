@@ -655,6 +655,25 @@ fn copy_selected_message_covers_blocks_and_empty() {
     let mut empty = TuiApp::from_config(TuiAppConfig::default());
     empty.add_message(ChatRole::Assistant, "   ");
     assert!(!empty.copy_selected_message());
+
+    crate::clipboard::with_copy_stub(false, || {
+        let mut fail = app();
+        fail.add_message(ChatRole::User, "copy me");
+        fail.selected_msg = Some(0);
+        assert!(!fail.copy_selected_message());
+        assert!(
+            fail.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clipboard")),
+            "{:?}",
+            fail.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
 }
 
 #[test]
@@ -929,4 +948,79 @@ fn question_confirm_other_requires_text_then_accepts_free_text() {
     st.free_text_focus = true;
     let answers = st.confirm_current().expect("free text Other is valid");
     assert_eq!(answers[0].free_text.as_deref(), Some("typed"));
+}
+
+#[test]
+fn question_multi_accepts_free_text_when_nothing_is_checked() {
+    let mut st =
+        crate::app::QuestionDialogState::new(vec![whycodes_tools::question::QuestionSpec {
+            prompt: "Pick?".into(),
+            options: vec![whycodes_tools::question::QuestionOption {
+                label: "A".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: true,
+            important: false,
+        }]);
+    st.cursor = 0;
+    st.free_text_focus = false;
+    st.free_text = "only this".into();
+    let answers = st
+        .confirm_current()
+        .expect("unchecked multi + free text must still finish");
+    assert!(answers[0].selected.is_empty());
+    assert_eq!(answers[0].free_text.as_deref(), Some("only this"));
+}
+
+#[test]
+fn save_view_copies_transcript_and_draft() {
+    let mut app = app();
+    app.add_message(ChatRole::User, "hello");
+    app.session_title = "t".into();
+    app.status_message = "ok".into();
+    app.input_buffer = "draft".into();
+    app.input_cursor = 5;
+    app.scroll_offset = 2;
+    app.auto_scroll = false;
+    app.selected_msg = Some(0);
+    let mut snap = crate::session_runtime::ViewSnapshot::default();
+    app.save_view(&mut snap);
+    assert_eq!(snap.messages.len(), 1);
+    assert_eq!(snap.session_title, "t");
+    assert_eq!(snap.status_message, "ok");
+    assert_eq!(snap.input_buffer, "draft");
+    assert_eq!(snap.input_cursor, 5);
+    assert_eq!(snap.scroll_offset, 2);
+    assert!(!snap.auto_scroll);
+    assert_eq!(snap.selected_msg, Some(0));
+}
+
+#[test]
+fn thinking_push_capped_truncates_on_a_char_boundary() {
+    let mut tb = crate::app::ThinkingBlock::new("x".repeat(crate::app::THINKING_MAX_CHARS - 3));
+    tb.push_delta("hello");
+    assert!(tb.text.ends_with('…'));
+    assert!(tb.text.contains("hel") || tb.text.len() <= crate::app::THINKING_MAX_CHARS + 3);
+}
+
+#[test]
+fn dialog_list_index_past_total_is_none() {
+    use ratatui::layout::Rect;
+    let mut app = app();
+    app.dialog_list_hit = Some(Rect {
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 4,
+    });
+    app.dialog_list_scroll_start = 0;
+    app.dialog_list_total = 2;
+    assert_eq!(app.dialog_list_index_at(1, 0), Some(0));
+    assert_eq!(app.dialog_list_index_at(1, 1), Some(1));
+    assert_eq!(
+        app.dialog_list_index_at(1, 3),
+        None,
+        "row past the item count must miss"
+    );
 }

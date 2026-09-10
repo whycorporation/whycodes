@@ -5224,3 +5224,18 @@ fn escape_from_command_mode_returns_to_normal() {
         a.command.buffer
     );
 }
+
+#[test]
+fn help_mode_q_closes_when_search_does_not_consume_it() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Normal;
+    a.help_searching = false;
+    a.help_query.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+    assert_eq!(
+        a.mode,
+        AppMode::Normal,
+        "unmapped q in help (stale Normal context) must close the overlay"
+    );
+}
