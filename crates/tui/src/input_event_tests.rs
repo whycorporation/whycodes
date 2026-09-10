@@ -1117,6 +1117,43 @@ fn mouse_clicks_todos_header_tasks_sidebar_and_chat_scrollbar() {
     assert_eq!(a.open_subagent.as_deref(), Some("kid"));
 
     let mut a = app();
+    a.todos = vec![whycodes_core::TodoItem::new(
+        "1",
+        "a",
+        whycodes_core::TodoStatus::Pending,
+    )];
+    a.todos_collapsed = false;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(crate::keymap::Action::ToggleTodosPanel),
+        &KeyEvent::new(KeyCode::Null, KeyModifiers::NONE),
+    ));
+    assert!(a.todos_collapsed);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(crate::keymap::Action::ToggleTasksPane),
+        &KeyEvent::new(KeyCode::Null, KeyModifiers::NONE),
+    ));
+    a.add_message(ChatRole::Assistant, "think");
+    let i = a.messages.len() - 1;
+    a.messages[i].blocks = vec![crate::app::ChatBlock::Thinking(
+        crate::app::ThinkingBlock::finished("reason"),
+    )];
+    a.selected_msg = Some(i);
+    a.focus = FocusPane::Scrollback;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(crate::keymap::Action::ToggleThinking),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(crate::keymap::Action::ToggleToolResult),
+        &k
+    ));
+
+    let mut a = app();
     a.sidebar.tab_hits[0].set_rect(Some(Rect {
         x: 0,
         y: 0,
