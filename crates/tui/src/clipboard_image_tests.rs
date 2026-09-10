@@ -249,6 +249,11 @@ fn prune_old_clipboard_images_removes_stale_and_skips_dirs() {
         Ok(std::fs::metadata(&fresh).unwrap()),
         std::time::UNIX_EPOCH,
     );
+    prune_clipboard_path(
+        &nested,
+        Ok(std::fs::metadata(&nested).unwrap()),
+        std::time::UNIX_EPOCH,
+    );
 }
 
 #[test]
