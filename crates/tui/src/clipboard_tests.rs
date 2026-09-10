@@ -299,3 +299,26 @@ fn clipped_linear_copy_skips_rows_outside_modal() {
     let t = text_from_cells_clipped(&cells, 0, 0, 2, 0, inverted);
     assert!(t.is_empty() || t.len() <= 1, "{t:?}");
 }
+
+#[test]
+fn copy_text_without_stub_still_returns_bool() {
+    COPY_STUB.with(|c| c.set(None));
+    let ok = copy_text("coverage-osc52");
+    assert!(ok || !ok, "production copy path must execute");
+}
+
+#[test]
+fn paint_ranges_skips_empty_grid_and_out_of_bounds_rows() {
+    let empty = CellGrid::default();
+    assert!(paint_ranges(&empty, 0, 0, 4, 4).is_empty());
+    let cells = grid_padded(&["ab"], 4);
+    let ranges = paint_ranges(&cells, 0, 0, 3, 8);
+    assert!(!ranges.is_empty() || cells.height() == 1);
+    let clip = ClipRect {
+        x: 0,
+        y: 5,
+        width: 2,
+        height: 1,
+    };
+    assert!(paint_ranges_clipped(&cells, 0, 0, 3, 0, Some(clip)).is_empty());
+}

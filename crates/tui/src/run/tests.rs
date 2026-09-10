@@ -8635,3 +8635,357 @@ async fn run_headless_busy_enter_toasts_then_esc_cancels() {
     }
     assert_eq!(exit, TuiExit::Quit);
 }
+
+#[tokio::test]
+async fn apply_idle_loop_key_covers_session_and_slash_arms() {
+    let _home = isolate_home();
+    let (dir, idx) = temp_index();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.primary_agents = vec!["build".into(), "plan".into()];
+    app.agent_name = "build".into();
+    app.input_buffer = "/help".into();
+    app.input_cursor = 5;
+    let mut rt = test_runtime();
+    let mut runtimes = Vec::new();
+    let mut mru = Vec::new();
+    let mut config = Config::default();
+    let mut provider = "acme".into();
+    let mut model = "m1".into();
+    let mut api_key = "sk-test".into();
+    let (auth_tx, _auth_rx) = mpsc::unbounded_channel();
+    let claims = whycodes_core::FileClaimRegistry::new();
+
+    assert!(
+        apply_idle_loop_key(
+            IdleLoopKey::SlashEnter,
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut mru,
+            &mut config,
+            dir.path(),
+            &idx,
+            &claims,
+            &mut provider,
+            &mut model,
+            &mut api_key,
+            &auth_tx,
+        )
+        .await
+    );
+    assert_eq!(app.mode, AppMode::Help);
+    assert!(app.input_buffer.is_empty());
+
+    app.mode = AppMode::Normal;
+    app.input_buffer = "not a slash".into();
+    assert!(
+        !apply_idle_loop_key(
+            IdleLoopKey::SlashEnter,
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut mru,
+            &mut config,
+            dir.path(),
+            &idx,
+            &claims,
+            &mut provider,
+            &mut model,
+            &mut api_key,
+            &auth_tx,
+        )
+        .await,
+        "plain Enter must fall through to submit"
+    );
+
+    apply_idle_loop_key(
+        IdleLoopKey::SessionLimit,
+        &mut app,
+        &mut rt,
+        &mut runtimes,
+        &mut mru,
+        &mut config,
+        dir.path(),
+        &idx,
+        &claims,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+        &auth_tx,
+    )
+    .await;
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Session limit")),
+        "{:?}",
+        app.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    apply_idle_loop_key(
+        IdleLoopKey::NewSession,
+        &mut app,
+        &mut rt,
+        &mut runtimes,
+        &mut mru,
+        &mut config,
+        dir.path(),
+        &idx,
+        &claims,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+        &auth_tx,
+    )
+    .await;
+    assert_eq!(runtimes.len(), 1);
+    assert_eq!(mru.len(), 1);
+
+    apply_idle_loop_key(
+        IdleLoopKey::CycleSession { next: true },
+        &mut app,
+        &mut rt,
+        &mut runtimes,
+        &mut mru,
+        &mut config,
+        dir.path(),
+        &idx,
+        &claims,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+        &auth_tx,
+    )
+    .await;
+    apply_idle_loop_key(
+        IdleLoopKey::CycleSession { next: false },
+        &mut app,
+        &mut rt,
+        &mut runtimes,
+        &mut mru,
+        &mut config,
+        dir.path(),
+        &idx,
+        &claims,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+        &auth_tx,
+    )
+    .await;
+    apply_idle_loop_key(
+        IdleLoopKey::Dashboard,
+        &mut app,
+        &mut rt,
+        &mut runtimes,
+        &mut mru,
+        &mut config,
+        dir.path(),
+        &idx,
+        &claims,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+        &auth_tx,
+    )
+    .await;
+    assert!(matches!(app.dialogs.active(), Some(DialogKind::Sessions)));
+    app.dialogs.clear();
+    app.mode = AppMode::Normal;
+
+    apply_idle_loop_key(
+        IdleLoopKey::MruSwitch,
+        &mut app,
+        &mut rt,
+        &mut runtimes,
+        &mut mru,
+        &mut config,
+        dir.path(),
+        &idx,
+        &claims,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+        &auth_tx,
+    )
+    .await;
+
+    apply_idle_loop_key(
+        IdleLoopKey::CycleAgent,
+        &mut app,
+        &mut rt,
+        &mut runtimes,
+        &mut mru,
+        &mut config,
+        dir.path(),
+        &idx,
+        &claims,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+        &auth_tx,
+    )
+    .await;
+    assert_eq!(app.agent_cycle_idx, 1);
+}
+
+#[test]
+fn apply_busy_key_covers_cancel_quit_ctrl_c_wait_and_passthrough() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let idx = whycodes_index::WorkspaceIndex::start(Vec::new());
+    let config = Config::default();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.agent_busy = true;
+    let mut cancel_at = None;
+
+    apply_busy_key(
+        BusyKey::Esc,
+        &press(KeyCode::Esc),
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &config,
+        dir.path(),
+        &idx,
+    );
+    assert!(cancel_at.is_some());
+    assert!(app.status_message.contains("Cancell"));
+
+    apply_busy_key(
+        BusyKey::Esc,
+        &press(KeyCode::Esc),
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &config,
+        dir.path(),
+        &idx,
+    );
+    assert!(!rt.agent_busy);
+    assert!(cancel_at.is_none());
+
+    rt.agent_busy = true;
+    apply_busy_key(
+        BusyKey::Quit,
+        &ctrl('q'),
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &config,
+        dir.path(),
+        &idx,
+    );
+    assert!(!app.running);
+    assert!(!rt.agent_busy);
+
+    app.running = true;
+    rt.agent_busy = true;
+    app.input_buffer = "draft".into();
+    apply_busy_key(
+        BusyKey::CtrlC,
+        &ctrl('c'),
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &config,
+        dir.path(),
+        &idx,
+    );
+    assert!(app.input_buffer.is_empty());
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Draft cleared")),
+        "{:?}",
+        app.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    apply_busy_key(
+        BusyKey::CtrlC,
+        &ctrl('c'),
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &config,
+        dir.path(),
+        &idx,
+    );
+    assert!(cancel_at.is_some());
+
+    apply_busy_key(
+        BusyKey::CtrlC,
+        &ctrl('c'),
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &config,
+        dir.path(),
+        &idx,
+    );
+    assert!(!rt.agent_busy);
+
+    rt.agent_busy = true;
+    apply_busy_key(
+        BusyKey::WaitEnter,
+        &press(KeyCode::Enter),
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &config,
+        dir.path(),
+        &idx,
+    );
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Wait for turn")),
+        "{:?}",
+        app.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    apply_busy_key(
+        BusyKey::PassThrough,
+        &press(KeyCode::Char('x')),
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &config,
+        dir.path(),
+        &idx,
+    );
+    assert!(app.input_buffer.contains('x'));
+}
+
+#[tokio::test]
+async fn maybe_spawn_prompt_suggestion_true_and_one_modes() {
+    let _home = isolate_home();
+    let mut session = Session::new(PathBuf::from("/work"), "sys".into());
+    session.add_user_message("next step please");
+    session.add_assistant_message(vec![whycodes_core::types::ContentBlock::Text {
+        text: "sure".into(),
+    }]);
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut config = Config::default();
+    config.tui.prompt_suggestions = "true".into();
+    maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "key", &mut app, tx.clone());
+    config.tui.prompt_suggestions = "1".into();
+    maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "key", &mut app, tx);
+}

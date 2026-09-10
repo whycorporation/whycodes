@@ -1940,88 +1940,24 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                             !runtimes.is_empty(),
                             runtimes.len() + 1 >= MAX_LIVE_SESSIONS,
                         )
+                        && apply_idle_loop_key(
+                            action,
+                            &mut app,
+                            &mut rt,
+                            &mut runtimes,
+                            &mut mru,
+                            &mut config,
+                            &project_dir,
+                            &file_index,
+                            &session_claims,
+                            &mut provider,
+                            &mut model,
+                            &mut api_key,
+                            &auth_tx,
+                        )
+                        .await
                     {
-                        match action {
-                            IdleLoopKey::CycleAgent => {
-                                cycle_agent(
-                                    &mut app,
-                                    &mut rt.agent,
-                                    &mut rt.session,
-                                    &config,
-                                    &project_dir,
-                                    Arc::clone(&rt.perm_prompter),
-                                    Arc::clone(&rt.question_prompter),
-                                    &rt.event_tx,
-                                )
-                                .await;
-                                continue;
-                            }
-                            IdleLoopKey::NewSession => {
-                                let fresh = spawn_new_session_runtime(
-                                    &app.agent_name,
-                                    &config,
-                                    &project_dir,
-                                    &file_index,
-                                    session_claims.clone(),
-                                )
-                                .await;
-                                adopt_fresh_runtime(
-                                    &mut app,
-                                    &mut rt,
-                                    &mut runtimes,
-                                    &mut mru,
-                                    fresh,
-                                );
-                                continue;
-                            }
-                            IdleLoopKey::SessionLimit => {
-                                warn_session_limit(&mut app);
-                                continue;
-                            }
-                            IdleLoopKey::CycleSession { next } => {
-                                cycle_live_session(
-                                    &mut app,
-                                    &mut rt,
-                                    &mut runtimes,
-                                    &mut mru,
-                                    next,
-                                );
-                                continue;
-                            }
-                            IdleLoopKey::Dashboard => {
-                                open_sessions_dashboard(&mut app, &rt, &runtimes);
-                                continue;
-                            }
-                            IdleLoopKey::MruSwitch => {
-                                switch_mru_session(&mut app, &mut rt, &mut runtimes, &mut mru);
-                                continue;
-                            }
-                            IdleLoopKey::SlashEnter => {
-                                if let Some(text) = slash_command_from_prompt(&app) {
-                                    consume_slash_draft(&mut app);
-                                    handle_slash(
-                                        &text,
-                                        &mut SlashContext {
-                                            app: &mut app,
-                                            session: &mut rt.session,
-                                            history: &mut rt.history,
-                                            agent: &mut rt.agent,
-                                            config: &mut config,
-                                            project_dir: &project_dir,
-                                            provider: &mut provider,
-                                            model: &mut model,
-                                            api_key: &mut api_key,
-                                            perm_prompter: Arc::clone(&rt.perm_prompter),
-                                            question_prompter: Arc::clone(&rt.question_prompter),
-                                            auth_tx: auth_tx.clone(),
-                                            pending_compact: &mut rt.pending_compact,
-                                        },
-                                    )
-                                    .await;
-                                    continue;
-                                }
-                            }
-                        }
+                        continue;
                     }
 
                     // While busy: Esc cancels (draft preserved — Grok). Typing, scroll,
@@ -2033,76 +1969,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         && let Event::Key(key) = &ev
                         && key.kind == KeyEventKind::Press
                     {
-                        match busy_key_action(key) {
-                            BusyKey::Esc => {
-                                // First Esc: cooperative cancel. Second: force-stop now.
-                                if cancel_requested_at.is_some() {
-                                    force_stop_turn(
-                                        &mut app,
-                                        &mut rt,
-                                        &mut cancel_requested_at,
-                                        &config,
-                                        &project_dir,
-                                        &file_index,
-                                    );
-                                } else {
-                                    begin_cancel(
-                                        &mut app,
-                                        &rt.cancel_flag,
-                                        &mut cancel_requested_at,
-                                        &mut rt.pending_question_queue,
-                                        &mut rt.pending_perm_queue,
-                                    );
-                                }
-                                app.esc_armed_at = None;
-                                continue;
-                            }
-                            BusyKey::Quit => {
-                                // Quit: always force-stop so we never hang on exit.
-                                if rt.agent_busy {
-                                    force_stop_turn(
-                                        &mut app,
-                                        &mut rt,
-                                        &mut cancel_requested_at,
-                                        &config,
-                                        &project_dir,
-                                        &file_index,
-                                    );
-                                }
-                                app.running = false;
-                                continue;
-                            }
-                            BusyKey::CtrlC => {
-                                match busy_ctrl_c(&mut app, cancel_requested_at) {
-                                    BusyCtrlC::ClearedDraft => {}
-                                    BusyCtrlC::BeginCancel => begin_cancel(
-                                        &mut app,
-                                        &rt.cancel_flag,
-                                        &mut cancel_requested_at,
-                                        &mut rt.pending_question_queue,
-                                        &mut rt.pending_perm_queue,
-                                    ),
-                                    BusyCtrlC::ForceStop => force_stop_turn(
-                                        &mut app,
-                                        &mut rt,
-                                        &mut cancel_requested_at,
-                                        &config,
-                                        &project_dir,
-                                        &file_index,
-                                    ),
-                                }
-                                continue;
-                            }
-                            BusyKey::WaitEnter => {
-                                toast_wait_for_turn(&mut app);
-                                continue;
-                            }
-                            BusyKey::PassThrough => {
-                                // Typing, scroll, focus toggle — all allowed mid-turn.
-                                let _ = input::handle_event(&mut app, ev);
-                                continue;
-                            }
-                        }
+                        apply_busy_key(
+                            busy_key_action(key),
+                            &ev,
+                            &mut app,
+                            &mut rt,
+                            &mut cancel_requested_at,
+                            &config,
+                            &project_dir,
+                            &file_index,
+                        );
+                        continue;
                     }
 
                     if !input::handle_event(&mut app, ev) {
@@ -2375,6 +2252,173 @@ fn busy_key_action(key: &crossterm::event::KeyEvent) -> BusyKey {
         }
         KeyCode::Enter => BusyKey::WaitEnter,
         _ => BusyKey::PassThrough,
+    }
+}
+
+/// Idle Ctrl+T/N/Page/O/Tab and slash-Enter. Returns true when the event is consumed.
+#[allow(clippy::too_many_arguments)]
+async fn apply_idle_loop_key(
+    action: IdleLoopKey,
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    runtimes: &mut Vec<SessionRuntime>,
+    mru: &mut Vec<usize>,
+    config: &mut Config,
+    project_dir: &std::path::Path,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
+    session_claims: &whycodes_core::FileClaimRegistry,
+    provider: &mut String,
+    model: &mut String,
+    api_key: &mut String,
+    auth_tx: &mpsc::UnboundedSender<AuthFlowEvent>,
+) -> bool {
+    match action {
+        IdleLoopKey::CycleAgent => {
+            cycle_agent(
+                app,
+                &mut rt.agent,
+                &mut rt.session,
+                config,
+                project_dir,
+                Arc::clone(&rt.perm_prompter),
+                Arc::clone(&rt.question_prompter),
+                &rt.event_tx,
+            )
+            .await;
+            true
+        }
+        IdleLoopKey::NewSession => {
+            let fresh = spawn_new_session_runtime(
+                &app.agent_name,
+                config,
+                project_dir,
+                file_index,
+                session_claims.clone(),
+            )
+            .await;
+            adopt_fresh_runtime(app, rt, runtimes, mru, fresh);
+            true
+        }
+        IdleLoopKey::SessionLimit => {
+            warn_session_limit(app);
+            true
+        }
+        IdleLoopKey::CycleSession { next } => {
+            cycle_live_session(app, rt, runtimes, mru, next);
+            true
+        }
+        IdleLoopKey::Dashboard => {
+            open_sessions_dashboard(app, rt, runtimes);
+            true
+        }
+        IdleLoopKey::MruSwitch => {
+            switch_mru_session(app, rt, runtimes, mru);
+            true
+        }
+        IdleLoopKey::SlashEnter => {
+            if let Some(text) = slash_command_from_prompt(app) {
+                consume_slash_draft(app);
+                handle_slash(
+                    &text,
+                    &mut SlashContext {
+                        app,
+                        session: &mut rt.session,
+                        history: &mut rt.history,
+                        agent: &mut rt.agent,
+                        config,
+                        project_dir,
+                        provider,
+                        model,
+                        api_key,
+                        perm_prompter: Arc::clone(&rt.perm_prompter),
+                        question_prompter: Arc::clone(&rt.question_prompter),
+                        auth_tx: auth_tx.clone(),
+                        pending_compact: &mut rt.pending_compact,
+                    },
+                )
+                .await;
+                true
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// Busy Esc / Ctrl+Q / Ctrl+C / Enter / passthrough. Always consumes the key.
+#[allow(clippy::too_many_arguments)]
+fn apply_busy_key(
+    action: BusyKey,
+    ev: &Event,
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    config: &Config,
+    project_dir: &std::path::Path,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
+) {
+    match action {
+        BusyKey::Esc => {
+            // First Esc: cooperative cancel. Second: force-stop now.
+            if cancel_requested_at.is_some() {
+                force_stop_turn(
+                    app,
+                    rt,
+                    cancel_requested_at,
+                    config,
+                    project_dir,
+                    file_index,
+                );
+            } else {
+                begin_cancel(
+                    app,
+                    &rt.cancel_flag,
+                    cancel_requested_at,
+                    &mut rt.pending_question_queue,
+                    &mut rt.pending_perm_queue,
+                );
+            }
+            app.esc_armed_at = None;
+        }
+        BusyKey::Quit => {
+            // Quit: always force-stop so we never hang on exit.
+            if rt.agent_busy {
+                force_stop_turn(
+                    app,
+                    rt,
+                    cancel_requested_at,
+                    config,
+                    project_dir,
+                    file_index,
+                );
+            }
+            app.running = false;
+        }
+        BusyKey::CtrlC => match busy_ctrl_c(app, *cancel_requested_at) {
+            BusyCtrlC::ClearedDraft => {}
+            BusyCtrlC::BeginCancel => begin_cancel(
+                app,
+                &rt.cancel_flag,
+                cancel_requested_at,
+                &mut rt.pending_question_queue,
+                &mut rt.pending_perm_queue,
+            ),
+            BusyCtrlC::ForceStop => force_stop_turn(
+                app,
+                rt,
+                cancel_requested_at,
+                config,
+                project_dir,
+                file_index,
+            ),
+        },
+        BusyKey::WaitEnter => {
+            toast_wait_for_turn(app);
+        }
+        BusyKey::PassThrough => {
+            // Typing, scroll, focus toggle — all allowed mid-turn.
+            let _ = input::handle_event(app, ev.clone());
+        }
     }
 }
 

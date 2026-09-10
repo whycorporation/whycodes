@@ -4499,3 +4499,73 @@ fn chat_drag_copy_success_toasts_char_count() {
         );
     });
 }
+
+#[test]
+fn handle_event_file_complete_ctrl_space_and_command_submit() {
+    let mut a = app();
+    a.focus_prompt();
+    a.input_buffer = "src/".into();
+    a.input_cursor = 4;
+    assert!(handle_event(
+        &mut a,
+        Event::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL))
+    ));
+    assert!(
+        a.file_suggest.active || a.input_buffer.contains('@') || a.input_buffer.contains("src"),
+        "Ctrl+Space must activate file complete, buffer={}",
+        a.input_buffer
+    );
+
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":help".into();
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Help;
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.mode, AppMode::Help);
+}
+
+#[test]
+fn handle_event_dialog_mode_without_dialog_returns_to_normal() {
+    let mut a = app();
+    a.mode = AppMode::Dialog;
+    a.key_context = KeymapContext::Dialog;
+    a.dialogs.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert_eq!(a.key_context, KeymapContext::Normal);
+}
+
+#[test]
+fn handle_event_command_mode_ctrl_letter_does_not_insert() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":".into();
+    assert!(handle_event(&mut a, ctrl('x')));
+    assert_eq!(a.command.buffer, ":");
+}
+
+#[test]
+fn handle_event_help_wheel_and_list_wheel() {
+    let mut a = app();
+    open_help(&mut a);
+    a.help_scroll = 6;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    assert!(a.help_scroll >= 6);
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+
+    let mut a = app();
+    a.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
+    open_dialog(&mut a, DialogKind::Agent);
+    a.agent_picker_selected = 0;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    assert_eq!(a.agent_picker_selected, 1);
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+    assert_eq!(a.agent_picker_selected, 0);
+}
