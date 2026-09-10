@@ -2427,6 +2427,21 @@ async fn hydrate_after_first_frame_fills_picker_index_and_key() {
     let before_n = app.session_list.sessions.len();
     hydrate_session_picker(&mut app);
     assert_eq!(app.session_list.sessions.len(), before_n);
+
+    let prev_env = std::env::var_os("ACME_API_KEY");
+    unsafe { std::env::set_var("ACME_API_KEY", "sk-from-env") };
+    let mut from_env = String::new();
+    let empty_cfg = Config::default();
+    hydrate_deferred_api_key(&mut from_env, "acme", "m1", &empty_cfg, &mut app);
+    match prev_env {
+        Some(v) => unsafe { std::env::set_var("ACME_API_KEY", v) },
+        None => unsafe { std::env::remove_var("ACME_API_KEY") },
+    }
+    assert_eq!(from_env, "sk-from-env");
+    assert!(app.status_message.contains("acme"));
+
+    let mut empty_picker = TuiApp::from_config(TuiAppConfig::default());
+    hydrate_session_picker(&mut empty_picker);
     let _ = home;
 }
 
