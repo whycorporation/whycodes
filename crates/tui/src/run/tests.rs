@@ -9284,6 +9284,13 @@ async fn handle_slash_agent_without_system_prompt_uses_default() {
 }
 
 #[tokio::test]
+async fn handle_slash_login_opens_picker_with_oauth_rows() {
+    let mut h = SlashHarness::new();
+    h.run("/login").await;
+    assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Login)));
+}
+
+#[tokio::test]
 async fn maybe_spawn_prompt_suggestion_spawns_when_session_has_user_text() {
     let _home = isolate_home();
     let mut session = Session::new(PathBuf::from("/work"), "sys".into());

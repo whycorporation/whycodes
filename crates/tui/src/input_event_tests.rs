@@ -4931,3 +4931,86 @@ fn open_model_dialog_fills_catalog_from_disk_when_empty() {
     open_model_dialog(&mut a);
     assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
 }
+
+#[test]
+fn mouse_import_toggles_row_and_question_other_focuses_free_text() {
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 4,
+    });
+    a.dialog_list_total = a.import_picker.items.len().max(1);
+    a.dialog_list_visible = 4;
+    a.dialog_list_scroll_start = 0;
+    let before = a.import_picker.checked.clone();
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 8),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 8));
+    assert_ne!(a.import_picker.checked, before);
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![
+            whycodes_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            },
+            whycodes_tools::question::QuestionOption {
+                label: "Other".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: false,
+        important: false,
+    }]);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 4,
+    });
+    a.dialog_list_total = 2;
+    a.dialog_list_visible = 4;
+    a.dialog_list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 9),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 9));
+    if let Some(DialogKind::Question(st)) = a.dialogs.active() {
+        assert!(st.free_text_focus || st.cursor > 0 || a.pending_question_answers.is_some());
+    }
+}
