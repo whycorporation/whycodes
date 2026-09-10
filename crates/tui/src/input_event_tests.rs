@@ -6019,6 +6019,24 @@ fn help_search_ignores_control_chars_and_session_mode_unmapped_is_noop() {
 }
 
 #[test]
+fn help_esc_clears_search_then_closes() {
+    let mut a = app();
+    open_help(&mut a);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.help_searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('f'))));
+    assert_eq!(a.help_query, "f");
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert!(
+        !a.help_searching && a.help_query.is_empty(),
+        "first Esc must drop the help search, not the overlay"
+    );
+    assert_eq!(a.mode, AppMode::Help);
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert_eq!(a.mode, AppMode::Normal);
+}
+
+#[test]
 fn command_mode_types_letters_and_skips_control_chords() {
     let mut a = app();
     a.mode = AppMode::Command;

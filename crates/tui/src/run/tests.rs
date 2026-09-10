@@ -6513,6 +6513,14 @@ fn enable_keyboard_enhancement_skips_bench() {
         Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
         None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
     }
+
+    let mut out = Vec::new();
+    assert!(
+        !enable_keyboard_enhancement(&mut out, Some((0, 0))),
+        "0×0 PTY must skip the kitty CSI query"
+    );
+    let mut out = Vec::new();
+    assert!(!enable_keyboard_enhancement(&mut out, None));
 }
 
 #[test]
