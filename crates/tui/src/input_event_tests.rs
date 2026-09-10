@@ -3646,3 +3646,46 @@ fn modal_copy_fail_session_paste_header_and_chat_wheel() {
     handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
     handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
 }
+
+#[test]
+fn provider_and_model_dialogs_load_custom_from_isolated_home() {
+    let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+    std::fs::write(
+        home.path().join("config.toml"),
+        r#"
+schema_version = 1
+[providers.acme-disk]
+name = "acme-disk"
+models = ["disk-m1"]
+"#,
+    )
+    .unwrap();
+
+    let mut a = app();
+    open_provider_dialog(&mut a);
+    assert!(
+        a.provider_dialog.providers.iter().any(|p| p == "acme-disk"),
+        "{:?}",
+        a.provider_dialog.providers
+    );
+
+    let mut a = app();
+    a.model_selection.models.clear();
+    fill_model_catalog_from_disk(&mut a);
+    assert!(
+        a.model_selection
+            .models
+            .iter()
+            .any(|(p, m)| p == "acme-disk" && m == "disk-m1"),
+        "{:?}",
+        a.model_selection.models
+    );
+
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+    }
+}

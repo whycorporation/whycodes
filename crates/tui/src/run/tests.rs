@@ -2266,6 +2266,23 @@ fn rebuild_agent_resolves_pending_name() {
     );
     assert_eq!(agent.info.name, "build");
 
+    let claims = whycodes_core::FileClaimRegistry::new();
+    agent = agent.with_session_claims(claims.clone());
+    let (perm, _) = ChannelPermissionPrompter::new();
+    let (question, _) = ChannelQuestionPrompter::new(None);
+    rebuild_agent_after_force_stop(
+        &mut agent,
+        &mut session,
+        &config,
+        dir.path(),
+        "custom-rebuild",
+        event_tx.clone(),
+        Arc::new(perm),
+        Arc::new(question),
+        &idx,
+    );
+    assert_eq!(agent.info.name, "custom-rebuild");
+
     let config = Config {
         default_agent: "plan".into(),
         ..Config::default()
