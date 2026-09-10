@@ -3105,6 +3105,61 @@ fn cwd_click_copies_or_warns() {
 }
 
 #[test]
+fn cwd_click_copy_success_toasts_path() {
+    crate::clipboard::with_copy_stub(true, || {
+        let mut a = app();
+        a.project_dir = std::path::PathBuf::from("/work/proj");
+        a.cwd_hit.set_rect(Some(Rect {
+            x: 2,
+            y: 1,
+            width: 10,
+            height: 1,
+        }));
+        handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 4, 1));
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 4, 1));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Copied path")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
+fn chat_drag_empty_cells_clears_selection_without_toast() {
+    crate::clipboard::with_copy_stub(true, || {
+        let mut a = app();
+        a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![
+            (0..8).map(|_| " ".to_string()).collect(),
+            (0..8).map(|_| " ".to_string()).collect(),
+        ]);
+        handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 1, 0));
+        handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 6, 1));
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 6, 1));
+        assert!(a.mouse_sel.is_none());
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .all(|t| !t.message.contains("Copied")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
 fn colon_sidebar_and_clear_commands() {
     let mut a = app();
     a.mode = AppMode::Command;
