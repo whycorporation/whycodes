@@ -1563,6 +1563,82 @@ fn busy_key_action_maps_esc_quit_ctrl_c_enter_and_passthrough() {
     );
 }
 
+#[test]
+fn idle_loop_key_action_maps_session_chords_and_skips_busy() {
+    use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
+    let ctrl_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL);
+    assert_eq!(
+        idle_loop_key_action(&ctrl_t, AppMode::Normal, false, false, false),
+        Some(IdleLoopKey::CycleAgent)
+    );
+    assert_eq!(
+        idle_loop_key_action(&ctrl_t, AppMode::Normal, true, false, false),
+        None,
+        "Ctrl+T while busy must not steal the key"
+    );
+    assert_eq!(
+        idle_loop_key_action(&ctrl_t, AppMode::Dialog, false, false, false),
+        None
+    );
+
+    let ctrl_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
+    assert_eq!(
+        idle_loop_key_action(&ctrl_n, AppMode::Normal, false, false, false),
+        Some(IdleLoopKey::NewSession)
+    );
+    assert_eq!(
+        idle_loop_key_action(&ctrl_n, AppMode::Normal, false, true, true),
+        Some(IdleLoopKey::SessionLimit)
+    );
+
+    let pgdn = KeyEvent::new(KeyCode::PageDown, KeyModifiers::CONTROL);
+    let pgup = KeyEvent::new(KeyCode::PageUp, KeyModifiers::CONTROL);
+    assert_eq!(
+        idle_loop_key_action(&pgdn, AppMode::Normal, false, true, false),
+        Some(IdleLoopKey::CycleSession { next: true })
+    );
+    assert_eq!(
+        idle_loop_key_action(&pgup, AppMode::Normal, false, true, false),
+        Some(IdleLoopKey::CycleSession { next: false })
+    );
+    assert_eq!(
+        idle_loop_key_action(&pgdn, AppMode::Normal, false, false, false),
+        None,
+        "no parked sessions → leave PageDown for chat scroll"
+    );
+
+    let ctrl_o = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert_eq!(
+        idle_loop_key_action(&ctrl_o, AppMode::Normal, false, false, false),
+        Some(IdleLoopKey::Dashboard)
+    );
+    let ctrl_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL);
+    assert_eq!(
+        idle_loop_key_action(&ctrl_tab, AppMode::Normal, false, true, false),
+        Some(IdleLoopKey::MruSwitch)
+    );
+    assert_eq!(
+        idle_loop_key_action(&ctrl_tab, AppMode::Normal, false, false, false),
+        None
+    );
+
+    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(
+        idle_loop_key_action(&enter, AppMode::Normal, false, false, false),
+        Some(IdleLoopKey::SlashEnter)
+    );
+    assert_eq!(
+        idle_loop_key_action(&enter, AppMode::Normal, true, false, false),
+        None
+    );
+    let mut release = enter;
+    release.kind = KeyEventKind::Release;
+    assert_eq!(
+        idle_loop_key_action(&release, AppMode::Normal, false, false, false),
+        None
+    );
+}
+
 #[tokio::test]
 async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
     let _home = isolate_home();

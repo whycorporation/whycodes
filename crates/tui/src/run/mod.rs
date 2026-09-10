@@ -1931,132 +1931,97 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         }
                     }
 
-                    // Ctrl+T: cycle agents (when idle). Tab is focus toggle (Grok).
+                    // Ctrl+T / Ctrl+N / Ctrl+Page / Ctrl+O / Ctrl+Tab / slash Enter.
                     if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Char('t')
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && app.mode == AppMode::Normal
-                        && !rt.agent_busy
-                    {
-                        cycle_agent(
-                            &mut app,
-                            &mut rt.agent,
-                            &mut rt.session,
-                            &config,
-                            &project_dir,
-                            Arc::clone(&rt.perm_prompter),
-                            Arc::clone(&rt.question_prompter),
-                            &rt.event_tx,
+                        && let Some(action) = idle_loop_key_action(
+                            key,
+                            app.mode,
+                            rt.agent_busy,
+                            !runtimes.is_empty(),
+                            runtimes.len() + 1 >= MAX_LIVE_SESSIONS,
                         )
-                        .await;
-                        continue;
-                    }
-
-                    // ── S2: multi-session keys ────────────────────────────
-                    // Ctrl+N: park the active session and open a fresh one.
-                    if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Char('n')
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && app.mode == AppMode::Normal
                     {
-                        if runtimes.len() + 1 >= MAX_LIVE_SESSIONS {
-                            warn_session_limit(&mut app);
-                            continue;
+                        match action {
+                            IdleLoopKey::CycleAgent => {
+                                cycle_agent(
+                                    &mut app,
+                                    &mut rt.agent,
+                                    &mut rt.session,
+                                    &config,
+                                    &project_dir,
+                                    Arc::clone(&rt.perm_prompter),
+                                    Arc::clone(&rt.question_prompter),
+                                    &rt.event_tx,
+                                )
+                                .await;
+                                continue;
+                            }
+                            IdleLoopKey::NewSession => {
+                                let fresh = spawn_new_session_runtime(
+                                    &app.agent_name,
+                                    &config,
+                                    &project_dir,
+                                    &file_index,
+                                    session_claims.clone(),
+                                )
+                                .await;
+                                adopt_fresh_runtime(
+                                    &mut app,
+                                    &mut rt,
+                                    &mut runtimes,
+                                    &mut mru,
+                                    fresh,
+                                );
+                                continue;
+                            }
+                            IdleLoopKey::SessionLimit => {
+                                warn_session_limit(&mut app);
+                                continue;
+                            }
+                            IdleLoopKey::CycleSession { next } => {
+                                cycle_live_session(
+                                    &mut app,
+                                    &mut rt,
+                                    &mut runtimes,
+                                    &mut mru,
+                                    next,
+                                );
+                                continue;
+                            }
+                            IdleLoopKey::Dashboard => {
+                                open_sessions_dashboard(&mut app, &rt, &runtimes);
+                                continue;
+                            }
+                            IdleLoopKey::MruSwitch => {
+                                switch_mru_session(&mut app, &mut rt, &mut runtimes, &mut mru);
+                                continue;
+                            }
+                            IdleLoopKey::SlashEnter => {
+                                if let Some(text) = slash_command_from_prompt(&app) {
+                                    consume_slash_draft(&mut app);
+                                    handle_slash(
+                                        &text,
+                                        &mut SlashContext {
+                                            app: &mut app,
+                                            session: &mut rt.session,
+                                            history: &mut rt.history,
+                                            agent: &mut rt.agent,
+                                            config: &mut config,
+                                            project_dir: &project_dir,
+                                            provider: &mut provider,
+                                            model: &mut model,
+                                            api_key: &mut api_key,
+                                            perm_prompter: Arc::clone(&rt.perm_prompter),
+                                            question_prompter: Arc::clone(&rt.question_prompter),
+                                            auth_tx: auth_tx.clone(),
+                                            pending_compact: &mut rt.pending_compact,
+                                        },
+                                    )
+                                    .await;
+                                    continue;
+                                }
+                            }
                         }
-                        let fresh = spawn_new_session_runtime(
-                            &app.agent_name,
-                            &config,
-                            &project_dir,
-                            &file_index,
-                            session_claims.clone(),
-                        )
-                        .await;
-                        adopt_fresh_runtime(&mut app, &mut rt, &mut runtimes, &mut mru, fresh);
-                        continue;
-                    }
-
-                    // Ctrl+PageDown/PageUp: cycle sessions in creation order.
-                    if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && matches!(key.code, KeyCode::PageDown | KeyCode::PageUp)
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && app.mode == AppMode::Normal
-                        && !runtimes.is_empty()
-                    {
-                        cycle_live_session(
-                            &mut app,
-                            &mut rt,
-                            &mut runtimes,
-                            &mut mru,
-                            key.code == KeyCode::PageDown,
-                        );
-                        continue;
-                    }
-
-                    // Ctrl+O: live-session dashboard (grouped, peek, attach).
-                    if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Char('o')
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && app.mode == AppMode::Normal
-                    {
-                        open_sessions_dashboard(&mut app, &rt, &runtimes);
-                        continue;
-                    }
-
-                    // Ctrl+Tab: MRU switch to the most recently parked session.
-                    if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Tab
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && app.mode == AppMode::Normal
-                        && !runtimes.is_empty()
-                    {
-                        switch_mru_session(&mut app, &mut rt, &mut runtimes, &mut mru);
-                        continue;
-                    }
-
-                    // Slash commands on Enter
-                    if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Enter
-                        && app.mode == AppMode::Normal
-                        && !rt.agent_busy
-                        && let Some(text) = slash_command_from_prompt(&app)
-                    {
-                        consume_slash_draft(&mut app);
-                        handle_slash(
-                            &text,
-                            &mut SlashContext {
-                                app: &mut app,
-                                session: &mut rt.session,
-                                history: &mut rt.history,
-                                agent: &mut rt.agent,
-                                config: &mut config,
-                                project_dir: &project_dir,
-                                provider: &mut provider,
-                                model: &mut model,
-                                api_key: &mut api_key,
-                                perm_prompter: Arc::clone(&rt.perm_prompter),
-                                question_prompter: Arc::clone(&rt.question_prompter),
-                                auth_tx: auth_tx.clone(),
-                                pending_compact: &mut rt.pending_compact,
-                            },
-                        )
-                        .await;
-                        continue;
                     }
 
                     // While busy: Esc cancels (draft preserved — Grok). Typing, scroll,
@@ -2340,6 +2305,46 @@ fn print_session_summary(summary: &str) {
     let mut err = io::stderr();
     let _ = writeln!(err, "{summary}");
     let _ = err.flush();
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdleLoopKey {
+    CycleAgent,
+    NewSession,
+    SessionLimit,
+    CycleSession { next: bool },
+    Dashboard,
+    MruSwitch,
+    SlashEnter,
+}
+
+fn idle_loop_key_action(
+    key: &crossterm::event::KeyEvent,
+    mode: AppMode,
+    agent_busy: bool,
+    has_parked: bool,
+    at_session_limit: bool,
+) -> Option<IdleLoopKey> {
+    if key.kind != KeyEventKind::Press || mode != AppMode::Normal {
+        return None;
+    }
+    let ctrl = key
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('t') if ctrl && !agent_busy => Some(IdleLoopKey::CycleAgent),
+        KeyCode::Char('n') if ctrl => Some(if at_session_limit {
+            IdleLoopKey::SessionLimit
+        } else {
+            IdleLoopKey::NewSession
+        }),
+        KeyCode::PageDown if ctrl && has_parked => Some(IdleLoopKey::CycleSession { next: true }),
+        KeyCode::PageUp if ctrl && has_parked => Some(IdleLoopKey::CycleSession { next: false }),
+        KeyCode::Char('o') if ctrl => Some(IdleLoopKey::Dashboard),
+        KeyCode::Tab if ctrl && has_parked => Some(IdleLoopKey::MruSwitch),
+        KeyCode::Enter if !agent_busy => Some(IdleLoopKey::SlashEnter),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
