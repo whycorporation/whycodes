@@ -5014,3 +5014,15 @@ fn mouse_import_toggles_row_and_question_other_focuses_free_text() {
         assert!(st.free_text_focus || st.cursor > 0 || a.pending_question_answers.is_some());
     }
 }
+
+#[test]
+fn help_overlay_without_dialog_wheel_scrolls_cheatsheet() {
+    let mut a = app();
+    open_help(&mut a);
+    assert!(a.dialogs.active().is_none());
+    a.help_scroll = 0;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    assert!(a.help_scroll >= 3);
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+    assert_eq!(a.help_scroll, 0);
+}

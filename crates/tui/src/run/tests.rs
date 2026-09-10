@@ -5295,6 +5295,20 @@ async fn run_returns_upgrade_when_test_tui_env_upgrade() {
 }
 
 #[test]
+fn inject_test_llm_fail_and_hang_register_scripted_steps() {
+    let prev = std::env::var_os("WHYCODES_TEST_LLM");
+    let mut agent = Agent::new(dummy_info("build"));
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "FAIL") };
+    inject_test_llm(&mut agent, "acme");
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "HANG") };
+    inject_test_llm(&mut agent, "acme");
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+}
+
+#[test]
 fn apply_compact_view_sets_status_and_idle() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.current_agent_state = AgentState::Generating;
