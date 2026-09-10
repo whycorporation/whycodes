@@ -1729,10 +1729,10 @@ fn dialog_arrow_keys_step_effort_mode_and_sessions() {
 }
 
 #[test]
-fn handle_event_quit_confirm_returns_false_when_running_stops() {
+fn handle_event_quit_confirm_stops_running() {
     let mut a = app();
     a.confirm("Quit", "sure?", ConfirmAction::Quit);
-    assert!(!handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
     assert!(!a.running);
 }
 

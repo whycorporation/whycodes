@@ -18,7 +18,7 @@ use std::time::Instant;
 /// Process a single crossterm event and update application state.
 /// Returns `false` when the app should exit.
 pub fn handle_event(app: &mut TuiApp, event: Event) -> bool {
-    let keep = match event {
+    match event {
         Event::Key(key) => handle_key(app, key),
         Event::Mouse(mouse) => handle_mouse(app, mouse),
         Event::Paste(data) => {
@@ -32,9 +32,7 @@ pub fn handle_event(app: &mut TuiApp, event: Event) -> bool {
             true
         }
         _ => true,
-    };
-    // Confirm-quit / upgrade set `running = false`; stop the loop immediately.
-    keep && app.running
+    }
 }
 
 /// Ctrl+V: OS clipboard bitmap (screenshot / browser copy). Text stays on
