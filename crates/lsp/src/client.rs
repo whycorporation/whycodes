@@ -404,6 +404,13 @@ diag = {
     "message": "boom",
     "source": "fake",
 }
+# Modes that emit extra stdout after initialize. Stay alive until the
+# client sends `initialized`; exiting earlier races into Broken pipe on Linux.
+extras = {
+    "diag_notify", "bad_json", "response_notify", "empty_line",
+    "other_notify", "diag_no_params", "bg_noise", "unparsed_diag",
+    "partial_line", "trunc_body", "trunc_sep", "bg_bad_len",
+}
 
 while True:
     msg = read_msg()
@@ -432,11 +439,6 @@ while True:
             import time
             time.sleep(2)
         write_msg({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {}}})
-        extras = {
-            "diag_notify", "bad_json", "response_notify", "empty_line",
-            "other_notify", "diag_no_params", "bg_noise", "unparsed_diag",
-            "partial_line", "trunc_body", "trunc_sep", "bg_bad_len",
-        }
         if mode == "diag_notify":
             write_msg({
                 "jsonrpc": "2.0",
@@ -487,13 +489,13 @@ while True:
         if mode == "trunc_sep":
             sys.stdout.buffer.write(b"Content-Length: 2\r\n")
             sys.stdout.buffer.flush()
-        if mode in extras:
-            break
         continue
     if method == "initialized" or method == "textDocument/didOpen":
         if method == "initialized" and mode == "init_then_eof":
             break
         if method == "textDocument/didOpen" and mode == "fail_after_open":
+            break
+        if method == "initialized" and mode in extras:
             break
         continue
     if mid is None:

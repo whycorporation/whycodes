@@ -49,14 +49,19 @@ impl IsolatedHome {
     pub(crate) fn set_prev(&mut self, prev: Option<std::ffi::OsString>) {
         self.prev = prev;
     }
-}
 
-impl Drop for IsolatedHome {
-    fn drop(&mut self) {
+    /// Restore `WHYCODES_HOME` while still holding `ENV_LOCK`.
+    pub(crate) fn restore_env(&self) {
         match &self.prev {
             Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
             None => unsafe { std::env::remove_var("WHYCODES_HOME") },
         }
+    }
+}
+
+impl Drop for IsolatedHome {
+    fn drop(&mut self) {
+        self.restore_env();
     }
 }
 
@@ -802,13 +807,14 @@ fn isolated_home_restores_previous_env() {
     let sentinel = std::ffi::OsString::from("/tmp/whycodes-prev-home");
     let mut home = IsolatedHome::new();
     home.set_prev(Some(sentinel.clone()));
-    drop(home);
+    home.restore_env();
     assert_eq!(
         std::env::var_os("WHYCODES_HOME").as_deref(),
         Some(sentinel.as_os_str())
     );
-    // Do not leak the sentinel into later tests.
+    // Drop must not leak the sentinel once the lock is released.
     unsafe { std::env::remove_var("WHYCODES_HOME") };
+    home.set_prev(None);
 }
 
 #[test]
