@@ -1840,6 +1840,39 @@ fn user_prompt_empty_body_and_image_placeholder_skip() {
 }
 
 #[test]
+fn last_scrolled_past_user_and_empty_sticky_header() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "");
+    app.add_message(ChatRole::Assistant, "reply");
+    app.add_message(ChatRole::User, "later prompt");
+    let starts = vec![0, 4, 10, 16];
+    assert_eq!(super::last_scrolled_past_user(&app, &starts, 0), None);
+    assert_eq!(
+        super::last_scrolled_past_user(&app, &starts, 5),
+        Some(0),
+        "first user bubble sits above a mid-transcript viewport"
+    );
+    assert_eq!(
+        super::last_scrolled_past_user(&app, &starts, 12),
+        Some(2),
+        "walks back to the latest user prompt above the viewport"
+    );
+
+    let palette = ThemeName::DefaultDark.palette();
+    let empty = super::sticky_user_lines(&app.messages[0], &palette, 40, false);
+    assert_eq!(empty.len(), 2, "sticky header is pad + one ❯ line");
+    let selected = super::sticky_user_lines(&app.messages[2], &palette, 20, true);
+    let joined: String = selected
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains("later") || joined.contains("prompt") || joined.contains('❯'),
+        "{joined:?}"
+    );
+}
+
+#[test]
 fn paint_chat_row_fills_and_skips_empty() {
     let mut buf = Buffer::empty(Rect::new(0, 0, 20, 2));
     let row = super::ChatRowPaint {
