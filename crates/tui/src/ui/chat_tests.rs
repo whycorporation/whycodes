@@ -2468,6 +2468,60 @@ fn tool_block_expanded_headers_execute_error_diff_grep_and_hints() {
     let header = joined(&grep1);
     assert!(header.contains("match"), "{header}");
 
+    let rg = tool_block(
+        "rg",
+        &json!({"pattern": "x"}),
+        Some("(3 matches)"),
+        paint(true, false),
+    );
+    let header = joined(&rg);
+    assert!(
+        header.contains("3") && header.contains("matches"),
+        "rg alias must paint the match chip, got {header}"
+    );
+
+    let add_only = tool_block(
+        "apply_patch",
+        &json!({}),
+        Some("--- a\n+++ b\n+only-add\n"),
+        paint(true, false),
+    );
+    let header = joined(&add_only)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        header.contains('+') && !header.contains('−'),
+        "add-only diff header must paint +N without a delete chip, got {header}"
+    );
+    let del_only = tool_block(
+        "apply_patch",
+        &json!({}),
+        Some("--- a\n+++ b\n-only-del\n"),
+        paint(true, false),
+    );
+    let header = joined(&del_only)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        header.contains('−') && !header.contains('+'),
+        "delete-only diff header must paint −N without an add chip, got {header}"
+    );
+
+    let rail = super::accent_line(
+        vec![Span::raw("thinking")],
+        true,
+        Style::default().fg(Color::Cyan),
+    );
+    let rail_text: String = rail.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        rail_text.contains('┃') && rail_text.contains("thinking"),
+        "show_rail must prefix the accent column, got {rail_text:?}"
+    );
+
     let read = tool_block(
         "read",
         &json!({"path": "src/lib.rs"}),
