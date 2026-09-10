@@ -5528,3 +5528,21 @@ fn help_dialog_q_closes_when_not_searching() {
     assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
     assert_eq!(a.mode, AppMode::Normal);
 }
+
+#[test]
+fn confirm_dialog_help_status_and_workspace_are_dismiss_only() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    confirm_dialog(&mut a, &DialogKind::Help);
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Status);
+    confirm_dialog(&mut a, &DialogKind::Status);
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Workspace);
+    confirm_dialog(&mut a, &DialogKind::Workspace);
+    assert_eq!(a.mode, AppMode::Normal);
+}

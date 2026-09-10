@@ -1802,6 +1802,44 @@ fn render_user_bubble_with_image_labels_and_running_subagent() {
 }
 
 #[test]
+fn user_prompt_empty_body_and_image_placeholder_skip() {
+    let palette = ThemeName::DefaultDark.palette();
+    let empty = super::user_prompt_lines("", &[], None, &palette, 40, false, true);
+    assert!(
+        !empty.is_empty(),
+        "empty user bubble still paints band pad + caret row"
+    );
+
+    let blank_lines = super::user_prompt_lines("\n\nhello", &[], None, &palette, 40, true, true);
+    assert!(
+        blank_lines.len() >= 4,
+        "hard newlines must stay as extra rows"
+    );
+
+    let skip = super::user_prompt_lines(
+        "[Image: shot.png]",
+        &["shot.png".into()],
+        Some("12:00"),
+        &palette,
+        40,
+        false,
+        true,
+    );
+    let joined: String = skip
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        !joined.contains("[Image:"),
+        "chip already shows the file; synthetic placeholder must not repeat: {joined:?}"
+    );
+    assert!(
+        joined.contains("shot") || joined.contains("png"),
+        "{joined:?}"
+    );
+}
+
+#[test]
 fn paint_chat_row_fills_and_skips_empty() {
     let mut buf = Buffer::empty(Rect::new(0, 0, 20, 2));
     let row = super::ChatRowPaint {
