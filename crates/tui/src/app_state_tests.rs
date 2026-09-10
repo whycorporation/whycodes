@@ -448,6 +448,17 @@ fn bg_job_status_flags_and_git_branch_fast_path() {
         Some("worktree")
     );
 
+    let rel = tempfile::tempdir().unwrap();
+    let gitdir_rel = rel.path().join("actual-git");
+    std::fs::create_dir_all(&gitdir_rel).unwrap();
+    std::fs::write(gitdir_rel.join("HEAD"), "ref: refs/heads/relwt\n").unwrap();
+    std::fs::write(rel.path().join(".git"), "gitdir: actual-git\n").unwrap();
+    assert_eq!(
+        resolve_git_branch_fast(rel.path()).as_deref(),
+        Some("relwt"),
+        "relative gitdir: must join against the worktree root"
+    );
+
     let missing = git_output_timeout(
         &mut std::process::Command::new("whycodes-no-such-git-bin"),
         std::time::Duration::from_millis(50),
@@ -1171,5 +1182,78 @@ fn question_move_cursor_clears_free_text_focus_on_a_real_option() {
     assert!(
         !st.free_text_focus,
         "leaving Other must drop free-text focus"
+    );
+}
+
+#[test]
+fn replace_todos_empty_clears_hits_and_leaves_todos_focus() {
+    use ratatui::layout::Rect;
+    let mut app = app();
+    app.replace_todos(vec![whycodes_core::TodoItem::new(
+        "1",
+        "a",
+        whycodes_core::TodoStatus::Pending,
+    )]);
+    app.focus = crate::app::FocusPane::Todos;
+    app.todos_scroll = 2;
+    app.todos_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 0,
+        width: 8,
+        height: 1,
+    }));
+    app.replace_todos(Vec::new());
+    assert!(!app.todos_collapsed);
+    assert_eq!(app.todos_scroll, 0);
+    assert!(app.todos_hit.rect.is_none());
+    assert_eq!(app.focus, crate::app::FocusPane::Prompt);
+}
+
+#[test]
+fn append_to_last_starts_an_assistant_after_a_user_turn() {
+    let mut app = app();
+    app.add_message(ChatRole::User, "hi");
+    app.append_to_last("reply");
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.messages[1].role, ChatRole::Assistant);
+    assert_eq!(app.messages[1].content, "reply");
+}
+
+#[test]
+fn select_current_falls_back_to_the_provider_header() {
+    let mut s = catalog();
+    s.prepare_for_open("openai", "missing-model");
+    assert!(
+        matches!(
+            s.selected_row(),
+            Some(ModelPickerRow::Header { provider, .. }) if provider == "openai"
+        ),
+        "unknown model under a known provider must land on the header, got {:?}",
+        s.selected_row()
+    );
+}
+
+#[test]
+fn submit_input_with_two_images_and_no_text_labels_them() {
+    let mut app = app();
+    app.pending_images.push(crate::images::PromptImage {
+        path: "a.png".into(),
+        label: "a.png".into(),
+        media_type: "image/png".into(),
+    });
+    app.pending_images.push(crate::images::PromptImage {
+        path: "b.png".into(),
+        label: "b.png".into(),
+        media_type: "image/png".into(),
+    });
+    app.input_buffer.clear();
+    app.submit_input();
+    assert_eq!(app.messages.len(), 1);
+    assert!(
+        app.messages[0].content.contains("Images")
+            && app.messages[0].content.contains("a.png")
+            && app.messages[0].content.contains("b.png"),
+        "{}",
+        app.messages[0].content
     );
 }
