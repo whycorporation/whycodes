@@ -5865,6 +5865,29 @@ fn read_event_batch_from_crossterm_stub() {
     assert_eq!(batch.len(), 2);
 }
 
+#[tokio::test]
+async fn run_headless_catalog_suggest_and_auth_note() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    *TEST_CATALOG_WINDOW
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(("acme".into(), "m1".into(), 128_000));
+    *TEST_SUGGEST.lock().unwrap_or_else(|e| e.into_inner()) = Some("try cargo test".into());
+    *TEST_AUTH_EVENT.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(AuthFlowEvent::Note("signing in…".into()));
+    *HEADLESS_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(
+        std::collections::VecDeque::from([press(KeyCode::Char('x'))]),
+    );
+    let exit = super::run(boot_opts(dir.path(), "sk-test")).await.unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
 fn press(code: KeyCode) -> Event {
     Event::Key(crossterm::event::KeyEvent::from(code))
 }

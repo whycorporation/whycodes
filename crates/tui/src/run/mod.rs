@@ -1116,6 +1116,30 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let (suggest_tx, mut suggest_rx) = mpsc::unbounded_channel::<String>();
     // In-TUI OAuth login (`/connect`): flow progress → event loop.
     let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<AuthFlowEvent>();
+    #[cfg(test)]
+    {
+        if let Some(win) = TEST_CATALOG_WINDOW
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            let _ = catalog_tx.send(win);
+        }
+        if let Some(s) = TEST_SUGGEST
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            let _ = suggest_tx.send(s);
+        }
+        if let Some(ev) = TEST_AUTH_EVENT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            let _ = auth_tx.send(ev);
+        }
+    }
 
     // Background jobs / schedule enqueue use the same long-lived event channel.
     agent.wire_event_sink(event_tx.clone());
@@ -2337,6 +2361,13 @@ fn read_event_batch() -> io::Result<Vec<Event>> {
 
 #[cfg(test)]
 static CROSSTERM_STUB: std::sync::Mutex<VecDeque<Event>> = std::sync::Mutex::new(VecDeque::new());
+#[cfg(test)]
+static TEST_CATALOG_WINDOW: std::sync::Mutex<Option<(String, String, u32)>> =
+    std::sync::Mutex::new(None);
+#[cfg(test)]
+static TEST_SUGGEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+#[cfg(test)]
+static TEST_AUTH_EVENT: std::sync::Mutex<Option<AuthFlowEvent>> = std::sync::Mutex::new(None);
 
 /// Mouse motion is tracked for hover; it must not by itself schedule a
 /// full chat paint (handle_mouse marks dirty only when chrome hover changes).
