@@ -1695,6 +1695,20 @@ fn callout_kind_classifies_system_notices() {
     assert_eq!(CalloutKind::Warning.label(), "Setup");
     assert_eq!(CalloutKind::Success.label(), "Ready");
     assert_eq!(CalloutKind::Info.label(), "Note");
+    let wrapped = super::system_callout(
+        "error: boom\n\nthen a fairly long extra line that should wrap under the title\n\n",
+        &p,
+        24,
+    );
+    let wrapped_text: String = wrapped
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        wrapped_text.contains("boom") && wrapped_text.contains("extra"),
+        "system callout must keep the title and wrap body lines, got {wrapped_text:?}"
+    );
+    assert!(super::system_callout("\n\n", &p, 40).is_empty());
 }
 
 #[test]
@@ -1864,6 +1878,19 @@ fn tool_result_auto_picks_grep_code_and_plain() {
     assert!(
         over_text.contains('…'),
         "collapsed over-budget numbered code must ellipsize, got {over_text}"
+    );
+    let plain_code = tool_result(
+        "plain rust without a gutter",
+        false,
+        &palette,
+        true,
+        ToolOutHint::Code(None),
+        40,
+    );
+    let plain_text = joined(&plain_code);
+    assert!(
+        plain_text.contains("plain rust"),
+        "Code(None) without numbered rows must fall back to plain paint, got {plain_text}"
     );
     let long_body = format!("{}\n{}", "x".repeat(200), vec!["line"; 20].join("\n"));
     let long_plain = tool_result(&long_body, false, &palette, false, ToolOutHint::Auto, 12);
@@ -2040,6 +2067,24 @@ fn render_session_paints_subagent_system_tool_and_error() {
     }];
     app.messages[last].error = Some("boom".into());
     app.messages[last].results_expanded = true;
+    let failed = super::render_message(
+        &app.messages[last],
+        &app,
+        &app.config.palette(),
+        last,
+        80,
+        None,
+        false,
+    );
+    let failed_text: String = failed
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        failed_text.contains("failed")
+            && (failed_text.contains("1.5") || failed_text.contains("s")),
+        "a failed subagent with elapsed_ms must paint status and duration, got {failed_text:?}"
+    );
     let backend = ratatui::backend::TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let palette = app.config.palette();
@@ -2319,6 +2364,17 @@ fn user_prompt_slash_token_and_long_first_line_wrap() {
         cont_text.contains("hi") && cont_text.contains("word"),
         "a short first line then a long wrap must paint both, got {cont_text:?}"
     );
+
+    let newlines_only =
+        super::user_prompt_lines("\n\n", &[], Some("1:00"), &palette, 24, true, true);
+    let nl_text: String = newlines_only
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        !newlines_only.is_empty(),
+        "a prompt of only newlines still paints the caret row, got {nl_text:?}"
+    );
 }
 
 #[test]
@@ -2451,6 +2507,18 @@ fn thinking_lines_puts_elapsed_on_the_right_while_running() {
     assert!(
         joined.contains("first") && joined.contains("second"),
         "expanded thought with a blank line must skip the empty wrap row, got {joined:?}"
+    );
+
+    let mut done = ThinkingBlock::finished("hidden body");
+    done.collapsed = true;
+    let lines = super::thinking_lines(&done, &palette, 40, 0);
+    let joined: String = lines
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        joined.contains("Thought") && !joined.contains("hidden body"),
+        "finished collapsed thought is header-only, got {joined:?}"
     );
 }
 
