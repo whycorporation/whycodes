@@ -4856,6 +4856,21 @@ fn cycle_live_session_noop_when_empty() {
 #[test]
 fn tui_available_does_not_panic() {
     let _ = tui_available();
+    let _ = open_tui_writer();
+    let _ = open_controlling_console();
+    assert!(
+        console_open_result(
+            Err(std::io::Error::other("no console")),
+            "open console failed",
+        )
+        .is_none()
+    );
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let path = tmp.path().to_path_buf();
+    drop(tmp);
+    let _ = console_open_result(std::fs::File::open(&path), "open tmp");
+    let mut sink = Vec::new();
+    restore_terminal_on(&mut sink);
 }
 
 #[test]
