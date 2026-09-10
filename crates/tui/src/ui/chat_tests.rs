@@ -2061,6 +2061,37 @@ fn user_prompt_slash_token_and_long_first_line_wrap() {
         joined.contains("word"),
         "a long first line must wrap onto continuation rows, got {joined:?}"
     );
+
+    let many = (0..8)
+        .map(|i| format!("line-{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let folded = super::user_prompt_lines(&many, &[], None, &palette, 40, false, false);
+    let folded_text: String = folded
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        folded_text.contains('…') || folded_text.contains("{2026}"),
+        "a collapsed multi-line user prompt must ellipsize, got {folded_text:?}"
+    );
+    let images = super::user_prompt_lines(
+        "[Images: a.png, b.png]",
+        &["a.png".into(), "b.png".into()],
+        None,
+        &palette,
+        40,
+        false,
+        true,
+    );
+    let img: String = images
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        !img.contains("[Images:"),
+        "multi-image placeholder must not repeat when chips exist, got {img:?}"
+    );
 }
 
 #[test]
