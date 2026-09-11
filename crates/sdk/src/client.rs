@@ -108,13 +108,22 @@ impl WhyCodesClient {
     pub async fn launch(opts: LaunchOptions) -> Result<Self, SdkError> {
         let prepared = prepare_launch(&opts)?;
         let mut cmd = launch_command(&prepared, &opts);
-        let child = cmd.spawn().map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             SdkError::with_source(
                 ErrorCode::ServeNotFound,
                 &format!("could not execute {}: {e}", prepared.binary.display()),
                 e,
             )
         })?;
+        // Some Linux hosts spawn a missing absolute path as Ok; the child
+        // then exits 127 immediately. Treat that as ServeNotFound, not a
+        // daemon that started and crashed.
+        if poll_child_exit(Some(&mut child)).is_some() && !prepared.binary.is_file() {
+            return Err(SdkError::new(
+                ErrorCode::ServeNotFound,
+                &format!("could not execute {}: not found", prepared.binary.display()),
+            ));
+        }
         let port = prepared.port;
         let held_home = prepared.held_home;
 
@@ -737,17 +746,6 @@ fn process_exe() -> std::io::Result<PathBuf> {
 
 fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf, SdkError> {
     if let Some(p) = explicit {
-        // A path with a directory that is not a file must not reach
-        // `Command::spawn`: on some Linux hosts spawn reports Ok and the
-        // child exits 127, which launch_poll maps to StartupFailed.
-        // Bare names (`whycodes`) still go to spawn so PATH lookup works.
-        let has_dir = p.is_absolute() || p.components().count() > 1;
-        if has_dir && !p.is_file() {
-            return Err(SdkError::new(
-                ErrorCode::ServeNotFound,
-                &format!("could not execute {}: not found", p.display()),
-            ));
-        }
         return Ok(p.to_path_buf());
     }
     if let Ok(p) = std::env::var("WHYCODES")
