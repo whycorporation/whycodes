@@ -23,6 +23,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   CARGO_NET_RETRY: 2
+  # Three Linux jobs share one 4-vCPU host. One rustc per job keeps the
+  # pool from thrashing; wall-clock is then coverage, not a 12-minute kill.
+  CARGO_BUILD_JOBS: 1
 
 # One pipeline per PR / branch. A new push cancels the previous run so the
 # runner pool is not stuck on stale jobs.
@@ -140,7 +143,7 @@ jobs:
   test:
     name: Test (linux)
     runs-on: self-hosted
-    timeout-minutes: 12
+    timeout-minutes: 25
     # Independent of coverage/build so a runner pool can run them together.
     needs: lint
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -159,7 +162,7 @@ jobs:
   coverage:
     name: Coverage (line floor)
     runs-on: self-hosted
-    timeout-minutes: 15
+    timeout-minutes: 30
     needs: lint
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
@@ -186,7 +189,7 @@ jobs:
   build:
     name: Build (linux)
     runs-on: self-hosted
-    timeout-minutes: 12
+    timeout-minutes: 20
     needs: lint
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
