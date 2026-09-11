@@ -611,6 +611,15 @@ before `TuiApp` / `Config` on **Linux, macOS, and Windows**. Production
 Re-measure Windows `--idle-ms 0`: **53.1 ms** median (min 45.9).
 Linux PTY ~12 ms and macOS remain host-console limited; same code path.
 
+Harness splash is now a single CSI burst (no ratatui `Terminal`):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **0.1 ms** in-proc | 0.0/s | spawn-to-exit **14.3 ms** |
+
+That spawn-to-exit matches `--version` on this box. Interactive `run()`
+still attaches crossterm after the splash and hydrates Agent/SQLite.
+
 
 ## Hot paths
 

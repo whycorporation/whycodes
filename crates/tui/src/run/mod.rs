@@ -1255,61 +1255,45 @@ pub fn run_sync(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     rt.block_on(run(opts))
 }
 
-/// Raw mode + alt-screen + one ratatui frame. No Agent, Config, or Tokio.
+/// Alt-screen CSI + one line. No Agent, Config, Tokio, or ratatui.
 ///
 /// Returns `Some(Quit)` when `WHYCODES_BENCH` is set (harness done). `None`
 /// means the caller should keep going with the full TUI.
 pub fn paint_first_frame_sync() -> anyhow::Result<Option<TuiExit>> {
     let bench = crate::bench::config_from_env();
-    let color_mode = detect_color_mode();
-    set_active_color_mode(color_mode);
     let mut out = open_tui_writer().map_err(|e| {
         anyhow::anyhow!(
             "failed to open terminal for TUI ({e}). \
              Run inside a real terminal, or use `whycodes --plain`."
         )
     })?;
-    // Bench / first paint: skip `enable_raw_mode` (Windows Get/SetConsoleMode).
-    // Alternate screen + one draw is enough for TTFF; the full loop still
-    // enters raw mode when it attaches.
-    execute!(out, EnterAlternateScreen)
-        .map_err(|e| anyhow::anyhow!("failed to enter alternate screen ({e})"))?;
-    let backend = QuantizingBackend::with_size_fallback(
-        CrosstermBackend::new(out),
-        color_mode,
-        ratatui::layout::Size {
-            width: 80,
-            height: 24,
-        },
-    );
-    let mut terminal = match Terminal::new(backend) {
-        Ok(t) => t,
-        Err(e) => {
-            on_terminal_new_failed(&e);
-            return Err(e.into());
-        }
-    };
-    if let Err(e) = terminal.draw(render_splash) {
-        restore_live_backend(terminal.backend_mut(), false);
-        return Err(e.into());
-    }
+    write_splash_csi(&mut out)?;
     crate::bench::record_draw();
     if let Some(ref b) = bench {
         while !crate::bench::should_stop(b) {
             std::thread::sleep(Duration::from_millis(50));
         }
-        restore_live_backend(terminal.backend_mut(), false);
-        if let Err(e) = terminal.show_cursor() {
-            tracing::debug!(error = %e, "splash show_cursor after bench failed");
-        }
+        restore_splash_csi(&mut out);
         crate::bench::write_results(b);
         return Ok(Some(TuiExit::Quit));
     }
-    restore_live_backend(terminal.backend_mut(), false);
-    if let Err(e) = terminal.show_cursor() {
-        tracing::debug!(error = %e, "splash show_cursor failed");
-    }
+    restore_splash_csi(&mut out);
     Ok(None)
+}
+
+/// One CSI burst: alt-screen, clear, product line. No ratatui, no raw mode.
+fn write_splash_csi(out: &mut impl Write) -> io::Result<()> {
+    out.write_all(b"\x1b[?1049h\x1b[2J\x1b[H\x1b[?25lwhycodes  -  /help")?;
+    out.flush()
+}
+
+fn restore_splash_csi(out: &mut impl Write) {
+    if let Err(e) = out.write_all(b"\x1b[?25h\x1b[?1049l") {
+        tracing::debug!(error = %e, "splash CSI restore write failed");
+    }
+    if let Err(e) = out.flush() {
+        tracing::debug!(error = %e, "splash CSI restore flush failed");
+    }
 }
 
 fn render_splash(frame: &mut ratatui::Frame<'_>) {

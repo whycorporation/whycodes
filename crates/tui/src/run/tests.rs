@@ -7771,6 +7771,18 @@ fn render_splash_paints_home_label() {
 }
 
 #[test]
+fn write_splash_csi_emits_alt_screen_and_label() {
+    let mut out = Vec::new();
+    write_splash_csi(&mut out).unwrap();
+    let s = String::from_utf8_lossy(&out);
+    assert!(s.contains("\x1b[?1049h"), "alt-screen");
+    assert!(s.contains("whycodes"), "{s:?}");
+    restore_splash_csi(&mut out);
+    let s = String::from_utf8_lossy(&out);
+    assert!(s.contains("\x1b[?1049l"), "leave alt-screen");
+}
+
+#[test]
 fn enter_raw_and_alt_ok_and_restore_backend() {
     let mut out = Vec::new();
     enter_raw_and_alt(&mut out, || Ok(())).unwrap();

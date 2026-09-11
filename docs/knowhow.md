@@ -2316,3 +2316,5 @@ Same day follow-up: `whycodes run -d <dir>` skips clap + the multi-thread Tokio 
 Harness path then dropped Config/TuiApp/Tokio entirely (`paint_first_frame_sync`): alt-screen + one splash frame. 56 → **52 ms**. Remainder is `CreateProcess` + console inherit (~`--version` 14 ms + conhost). Do not restore+reattach around splash on the interactive path (flicker).
 
 Interactive `run()` on **Linux, macOS, and Windows** now attaches and paints the splash **before** `TuiApp` / `Config`. Production `run -d` uses a 2-worker Tokio pool in the CLI (`event::poll` otherwise starves turns on all three OS). `record_draw` must run after `config_from_env` or `WHYCODES_BENCH` hangs (`should_stop` waits forever on a zero first-frame counter).
+
+Harness TTFF then dropped ratatui entirely: `write_splash_csi` is `SM?1049` + clear + one ASCII line. In-proc **0.1 ms**, spawn-to-exit **14.3 ms** (same band as `--version`). Do not put a `Terminal::new` / `QuantizingBackend` on that path.
