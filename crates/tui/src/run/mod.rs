@@ -642,10 +642,13 @@ struct LoopIo {
 impl LoopIo {
     fn from_inject(inject: &mut LoopInject) -> Self {
         let scripted = inject.scripted_events.take();
+        let crossterm = std::mem::take(&mut inject.crossterm_events);
         Self {
-            force_zero_poll: inject.live_buf || scripted.is_some(),
+            // Stub / live-buf / scripted runs never have a TTY. After the
+            // injected queue drains, skip OS poll (ENOENT/EAGAIN on CI).
+            force_zero_poll: inject.live_buf || scripted.is_some() || !crossterm.is_empty(),
             scripted,
-            crossterm: std::mem::take(&mut inject.crossterm_events),
+            crossterm,
             poll_err: inject.poll_err,
             read_err: inject.read_err,
         }

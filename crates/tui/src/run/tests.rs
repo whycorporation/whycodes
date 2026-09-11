@@ -7600,6 +7600,10 @@ fn read_event_batch_from_crossterm_stub() {
     let mut io = LoopIo::from_inject(&mut inject);
     let batch = io.read_event_batch().unwrap();
     assert_eq!(batch.len(), 2);
+    assert!(
+        !io.poll(Duration::ZERO).unwrap(),
+        "drained stub must not fall through to OS crossterm poll"
+    );
 }
 
 #[tokio::test]
