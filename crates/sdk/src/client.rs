@@ -115,14 +115,11 @@ impl WhyCodesClient {
                 e,
             )
         })?;
-        // Some Linux hosts spawn a missing absolute path as Ok; the child
-        // then exits 127 immediately. Treat that as ServeNotFound, not a
-        // daemon that started and crashed.
-        if poll_child_exit(Some(&mut child)).is_some() && !prepared.binary.is_file() {
-            return Err(SdkError::new(
-                ErrorCode::ServeNotFound,
-                &format!("could not execute {}: not found", prepared.binary.display()),
-            ));
+        if let Some(err) = missing_spawned_binary(
+            poll_child_exit(Some(&mut child)).is_some(),
+            &prepared.binary,
+        ) {
+            return Err(err);
         }
         let port = prepared.port;
         let held_home = prepared.held_home;
@@ -819,6 +816,19 @@ struct PreparedLaunch {
     binary: PathBuf,
     home_env: Option<PathBuf>,
     held_home: Option<tempfile::TempDir>,
+}
+
+/// Some Linux hosts spawn a missing absolute path as Ok; the child then
+/// exits 127 immediately. Treat that as ServeNotFound, not a crash.
+fn missing_spawned_binary(child_exited: bool, binary: &Path) -> Option<SdkError> {
+    if child_exited && !binary.is_file() {
+        Some(SdkError::new(
+            ErrorCode::ServeNotFound,
+            &format!("could not execute {}: not found", binary.display()),
+        ))
+    } else {
+        None
+    }
 }
 
 fn poll_child_exit(child: Option<&mut Child>) -> Option<String> {

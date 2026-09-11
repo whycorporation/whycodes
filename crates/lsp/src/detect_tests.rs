@@ -223,3 +223,20 @@ fn resolve_command_rejects_directories_and_non_executables() {
         assert!(resolve_command(dir.path(), "noexec.bin").is_some());
     }
 }
+
+#[test]
+fn lookup_in_dir_with_exts_finds_pathext_and_skips_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("tool.CMD");
+    fs::write(&exe, b"echo").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let found =
+        lookup_in_dir_with_exts(dir.path(), "tool", &[".EXE".into(), ".CMD".into()]).unwrap();
+    assert_eq!(found.file_name().unwrap(), "tool.CMD");
+    assert!(lookup_in_dir_with_exts(dir.path(), "tool", &[".BAT".into()]).is_none());
+    assert!(lookup_in_dir_with_exts(dir.path(), "missing", &[".CMD".into()]).is_none());
+}

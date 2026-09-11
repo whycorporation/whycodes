@@ -128,11 +128,15 @@ fn local_bin_dirs(cwd: &Path) -> Vec<PathBuf> {
 }
 
 fn lookup_in_dir(dir: &Path, command: &str) -> Option<PathBuf> {
+    lookup_in_dir_with_exts(dir, command, &pathext())
+}
+
+fn lookup_in_dir_with_exts(dir: &Path, command: &str, exts: &[String]) -> Option<PathBuf> {
     let direct = dir.join(command);
     if is_executable(&direct) {
         return Some(direct);
     }
-    for ext in pathext() {
+    for ext in exts {
         let candidate = dir.join(format!("{command}{ext}"));
         if is_executable(&candidate) {
             return Some(candidate);

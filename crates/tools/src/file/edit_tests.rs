@@ -276,6 +276,24 @@ async fn execute_tagged_error_paths() {
         .await;
     assert!(empty.is_error, "{}", empty.content);
     assert!(empty.content.contains("empty"), "{}", empty.content);
+
+    std::fs::write(&path, "fn run() {}\n").unwrap();
+    let missing_tag = EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "from": "zz",
+                "new_string": "x"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(missing_tag.is_error, "{}", missing_tag.content);
+    assert!(
+        missing_tag.content.contains("not found") || missing_tag.content.contains("Nearby"),
+        "{}",
+        missing_tag.content
+    );
 }
 
 #[tokio::test]

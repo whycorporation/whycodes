@@ -499,6 +499,13 @@ fn launch_poll_covers_timeout_exit_version_retry_and_ready() {
     assert_eq!(empty.message, "exited.");
 
     assert!(poll_child_exit(None).is_none());
+
+    assert!(missing_spawned_binary(false, Path::new("/no/such/whycodes")).is_none());
+    let present = tempfile::NamedTempFile::new().unwrap();
+    assert!(missing_spawned_binary(true, present.path()).is_none());
+    let err = missing_spawned_binary(true, Path::new("/no/such/whycodes-binary")).unwrap();
+    assert_eq!(err.code, ErrorCode::ServeNotFound);
+    assert!(err.message.contains("not found"), "{err:?}");
 }
 
 #[tokio::test]
