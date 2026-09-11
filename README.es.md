@@ -143,21 +143,23 @@ herramientas y configuración — está en **[docs/guide.md](docs/guide.md)**.
 
 ## Rendimiento
 
-TUI en reposo, Linux x86_64, 2026-09-02 (método y máquina en
-[docs/benchmarks.md](docs/benchmarks.md)):
+Última medición, Windows AMD64, 2026-09-11 (Ryzen 7 3800X). Linux
+2026-09-02 sigue siendo la última instantánea PTY / PSS — no comparar el
+primer fotograma de Windows con los ~12 ms del PTY en Linux. Método y
+máquinas en [docs/benchmarks.md](docs/benchmarks.md):
 
-| Métrica | Resultado |
-|---|---|
-| 1 sesión PSS | **10.5 MB** |
-| 10 sesiones PSS | **32.0 MB** (~2.4 MB cada extra) |
-| `--version` | **1.4 ms** |
-| Primer fotograma (harness, in-proc) | **12 ms** |
-| Redibujos en reposo (harness, 3 s) | **0.3 /s** |
+| Métrica | Windows 2026-09-11 | Linux 2026-09-02 |
+|---|---|---|
+| 1 sesión PSS | — (solo `/proc`) | **10.5 MB** |
+| 10 sesiones PSS | — | **32.0 MB** (~2.4 MB cada extra) |
+| `--version` | **13.8 ms** | **1.4 ms** |
+| Primer fotograma (harness, in-proc) | **131 ms** (consola heredada) | **12 ms** (PTY 80×24) |
+| Redibujos en reposo (harness, 3 s) | **0.6 /s** | **0.3 /s** |
 
-La TUI pinta solo cuando algo cambia. El reposo de 3 s de este harness es
-**0.3 redibujos/s** (igual que `ea098af` / `50e05d8`; las puertas idle-zero
-no restauraron un cero duro); el objetivo del producto sigue siendo
-**0 redibujos/s**, no una carrera de fotogramas por segundo.
+La TUI pinta solo cuando algo cambia. El reposo de 3 s de este harness en
+Windows es **0.6 redibujos/s** (Linux 2026-09-02 era 0.3/s); el objetivo
+del producto sigue siendo **0 redibujos/s**, no una carrera de fotogramas
+por segundo.
 
 La cobertura de líneas del workspace es **85.58%** (Linux x86_64,
 2026-08-21). CI falla por debajo del 82%, con doce crates fundacionales
