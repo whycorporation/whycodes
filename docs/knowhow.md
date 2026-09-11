@@ -2320,3 +2320,19 @@ Interactive `run()` on **Linux, macOS, and Windows** now attaches and paints the
 Harness TTFF then dropped ratatui entirely: `write_splash_csi` is `SM?1049` + clear + one ASCII line. In-proc **0.1 ms**, spawn-to-exit **14.3 ms** (same band as `--version`). Do not put a `Terminal::new` / `QuantizingBackend` on that path.
 
 `--version` on Windows is `GetCommandLineW` + `WriteFile` of a `concat!` line — no clap, Tokio, `args_os`, or `println!`. Re-measure stayed **~14 ms**. Further cuts need a smaller PE / less CRT, not more Rust in `main`.
+
+## SDK launch: missing binary classified as StartupFailed under parallel tests
+
+**Date:** 2026-09-12 · **Area:** `crates/sdk/src/client.rs`
+
+**Symptom:** CI `Test (linux)` failed `client::tests::launch_missing_binary_is_serve_not_found`: `left: StartupFailed, right: ServeNotFound`. Isolated re-run is green. Coverage job still passed (it skips several launch tests).
+
+**JSONL / crash:** none.
+
+**Root cause:** `launch_injected_tempdir_failure_is_startup_failed` set process-wide `WHYCODES_TEST_TEMPDIR_FAIL` and dropped `env_lock` before the async `launch` body. A sibling `launch` then hit `create_temp_home` (isolation home) *before* the missing-binary check, so a dead path became `StartupFailed`.
+
+**Fix:** Classify `missing_spawned_binary` before `prepare_launch`. Inject the tempdir failure with a thread-local guard (`TestTempdirFailGuard`), not an env var. Home-create tests write a dummy file so the missing-binary path does not fire first.
+
+**Prevention:** Do not inject launch failures through process env while other `#[tokio::test]` launch tests run. Keep the missing-binary check ahead of temp-home allocation.
+
+Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs already have no edge between them; a single runner still serializes them. Extra self-hosted runners with separate `_work` dirs run them together.

@@ -21,7 +21,7 @@ REPORT_JSON=/tmp/cov.json scripts/coverage.sh
 ```
 
 CI sets `COVERAGE_FEATURES=whycodes-storage/bundled` because the self-hosted
-runner has no `libsqlite3-dev`. Locally, omit it if system sqlite is
+runners have no `libsqlite3-dev`. Locally, omit it if system sqlite is
 installed (`pkg-config sqlite3`).
 
 - `--ignore-filename-regex '/usr/src/|/rustc-'` drops rustc sysroot files that

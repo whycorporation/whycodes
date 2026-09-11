@@ -50,7 +50,7 @@ default group. License/source policy is `deny.toml`; advisory ignores stay in
 
 Dev builds use system SQLite (`pkg-config sqlite3`). CI and release enable
 `whycodes-storage/bundled` / `whycodes-cli/bundled-sqlite` so the self-hosted
-runner and shipped binaries do not need `libsqlite3-dev`. Locally, omit the
+runners and shipped binaries do not need `libsqlite3-dev`. Locally, omit the
 feature if `sqlite3` is already installed.
 
 If you changed `crates/protocol/src/sdk.rs` or the TypeScript client, also
@@ -77,11 +77,12 @@ Things to know about CI:
 - Internal crate edges are allowlisted in
   `scripts/dependency_boundaries.json`. Adding an edge is a deliberate
   architectural decision — see [docs/architecture.md](docs/architecture.md).
-- Linux CI runs on a **self-hosted** runner, so pull requests from forks are
-  skipped there on purpose (untrusted workflow + checkout on that machine).
-  Open the PR anyway; a maintainer will run the suite from a same-repo
-  branch. A new push to the same PR or to `main` cancels the previous CI run
-  so the single runner is not stuck on stale jobs.
+- Linux CI runs on a **self-hosted** runner pool, so pull requests from forks
+  are skipped there on purpose (untrusted workflow + checkout on those
+  machines). Open the PR anyway; a maintainer will run the suite from a
+  same-repo branch. A new push to the same PR or to `main` cancels the
+  previous CI run so the pool is not stuck on stale jobs. After lint, Test /
+  Coverage / Build run in parallel across whatever runners are online.
 
 ## Conventions
 
