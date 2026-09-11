@@ -2298,3 +2298,15 @@ Two silent-failure traps when onboarding a fresh Google token via
    it is Google's own explanation for the 403.
 
 Debugged 2026-08-24 after real-world 403 → "did not yield a project id" reports.
+
+## Windows first-frame: empty dir `git` spawn + Agent before paint
+
+**Date:** 2026-09-11 · **Area:** `crates/tui/src/run/mod.rs`, `crates/tui/src/app.rs`
+
+**Symptom:** Windows in-proc first frame was **131 ms** vs the 2026-07-31 **4.74 ms** baseline. `--version` on the same box is 13.8 ms (process-start floor). Linux PTY stayed ~12 ms.
+
+**Cause:** `record_draw` still waited on Agent/`ToolExecutor` (~40 tools), `SessionRuntime` SQLite, `maybe_offer_import` (`$HOME` scan), `load_command_files`, and `refresh_git_branch` falling back to `git rev-parse` when `.git` is missing. The harness uses an empty temp dir — Windows `CreateProcess` for a failing `git` is tens of ms. `tui_available()` also opened `CONOUT$` even when stdout was already a TTY.
+
+**Fix:** chrome → attach → first `draw`/`record_draw` → then runtime + hydrate. `--idle-ms 0` exits after the first paint and never builds Agent. Skip `git` spawn unless `.git` exists; skip import scan when `WHYCODES_BENCH` is set; defer command markdown until hydrate on the TUI path.
+
+**Prevention:** do not put I/O that an empty project does not need (git spawn, tool registry, session DB, home scan) before `record_draw`. Re-measure with `python scripts/bench_first_frame.py --runs 12 --idle-ms 0`.

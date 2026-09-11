@@ -565,6 +565,22 @@ on an inherited console; do not quote it against the Linux ~12 ms PTY
 figure. Idle redraws stay near zero (0.6/s over 3 s). The product claim
 remains “paint only when something changed.”
 
+### Re-measure, 2026-09-11 (Windows AMD64, issue #85)
+
+Same machine as the morning row (Ryzen 7 3800X). Chrome → attach → first
+`draw` / `record_draw` → then Agent / SQLite / `git` spawn / import scan.
+`--idle-ms 0` exits before ToolExecutor. Empty dirs no longer spawn `git`.
+`WHYCODES_BENCH` skips JSONL logging and uses a current-thread runtime.
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **86.2 ms** median | 0.0/s | was 131.4 ms same day |
+| Harness `--idle-ms 3000` (10 runs) | **87.3 ms** median | **0.0/s** | was 0.6/s |
+
+Spawn-to-exit at `--idle-ms 0` is **103.6 ms** (min 102.0, max 108.5).
+Remainder vs Linux ~12 ms is Windows console inherit (no stdlib ConPTY)
+plus clap + process start (~14 ms `--version` floor).
+
 
 ## Hot paths
 

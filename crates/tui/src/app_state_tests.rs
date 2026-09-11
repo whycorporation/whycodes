@@ -416,6 +416,14 @@ fn bg_job_status_flags_and_git_branch_fast_path() {
 
     let dir = tempfile::tempdir().unwrap();
     assert!(resolve_git_branch_fast(dir.path()).is_none());
+    assert!(
+        resolve_git_branch(dir.path()).is_none(),
+        "no .git must not spawn git (Windows first-frame harness)"
+    );
+    let mut chrome = TuiApp::from_config(TuiAppConfig::default());
+    chrome.project_dir = dir.path().to_path_buf();
+    chrome.refresh_git_branch_fast();
+    assert!(chrome.git_branch.is_none());
 
     let git = dir.path().join(".git");
     std::fs::create_dir_all(&git).unwrap();

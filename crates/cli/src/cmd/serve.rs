@@ -76,6 +76,10 @@ pub(crate) async fn cmd_connect(
         config,
         resume_session_id: None,
         remote: Some(whycodes_tui::RemoteAttach::new(base, session_id)),
+        defer_config_load: false,
+        provider_from_cli: true,
+        model_from_cli: true,
+        agent_from_cli: true,
         update_rx: None,
         inject: Default::default(),
     })

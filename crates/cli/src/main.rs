@@ -117,6 +117,14 @@ where
 /// force-cancels (2026-09-01).
 fn runtime_for(cli: &Cli) -> std::io::Result<tokio::runtime::Runtime> {
     if command_needs_multi_thread(cli) {
+        // First-frame harness never runs a turn. A current-thread runtime
+        // skips worker spawn (~Windows CreateThread tax) and is enough for
+        // chrome → draw → exit (`WHYCODES_BENCH_DURATION_MS=0`).
+        if std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty()) {
+            return tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+        }
         let mut builder = tokio::runtime::Builder::new_multi_thread();
         builder.enable_all();
         // Generate / Serve keep the default nproc pool; interactive TUI
@@ -186,7 +194,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // Grok-style logging: always-on JSONL under data_dir/logs/, optional file,
     // panic → data_dir/crash/. TUI keeps stderr quiet so the alternate screen
     // is not corrupted (use --debug or WHYCODES_LOG_FILE to capture human logs).
-    init_logging(&cli);
+    // First-frame harness (`WHYCODES_BENCH`) skips disk logging so AppData
+    // mkdir + JSONL open is not on the TTFF clock (issue #85).
+    let bench = std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty());
+    if !bench {
+        init_logging(&cli);
+    }
     if !is_tui_invoke(&cli) {
         load_auth_plugins(&cli);
     }

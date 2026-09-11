@@ -1834,6 +1834,10 @@ fn run_options_and_turn_outcome_exist() {
         config: Config::default(),
         resume_session_id: Some(RESUME_LATEST.into()),
         remote: None,
+        defer_config_load: false,
+        provider_from_cli: true,
+        model_from_cli: true,
+        agent_from_cli: true,
         update_rx: None,
         inject: Default::default(),
     };
@@ -2417,7 +2421,7 @@ async fn hydrate_after_first_frame_fills_picker_index_and_key() {
         &mut api_key,
         "acme",
         "m1",
-        &config,
+        &mut config,
         dir.path(),
         false,
     )
@@ -4703,6 +4707,10 @@ fn boot_opts(dir: &std::path::Path, key: &str) -> TuiRunOptions {
         config: Config::default(),
         resume_session_id: None,
         remote: None,
+        defer_config_load: false,
+        provider_from_cli: true,
+        model_from_cli: true,
+        agent_from_cli: true,
         update_rx: None,
         inject: Default::default(),
     }
@@ -5464,6 +5472,10 @@ async fn run_returns_quit_when_test_tui_env_set() {
         config: Config::default(),
         resume_session_id: None,
         remote: None,
+        defer_config_load: false,
+        provider_from_cli: true,
+        model_from_cli: true,
+        agent_from_cli: true,
         update_rx: None,
         inject: Default::default(),
     };
@@ -5492,6 +5504,10 @@ async fn run_returns_upgrade_when_test_tui_env_upgrade() {
         config: Config::default(),
         resume_session_id: None,
         remote: None,
+        defer_config_load: false,
+        provider_from_cli: true,
+        model_from_cli: true,
+        agent_from_cli: true,
         update_rx: None,
         inject: Default::default(),
     };
@@ -7690,6 +7706,21 @@ async fn run_headless_bench_stops_after_first_frame() {
         None => unsafe { std::env::remove_var("WHYCODES_BENCH_DURATION_MS") },
     }
     assert_eq!(exit, TuiExit::Quit);
+}
+
+#[test]
+fn maybe_offer_import_skips_when_bench_env_set() {
+    let _home = IsolatedImportHome::new();
+    let prev = std::env::var_os("WHYCODES_BENCH");
+    unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_offer_import(&mut app);
+    assert!(!app.import_prompted);
+    assert!(!app.dialogs.is_open());
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
+    }
 }
 
 #[test]

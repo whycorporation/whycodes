@@ -153,11 +153,11 @@ máquinas en [docs/benchmarks.md](docs/benchmarks.md):
 | 1 sesión PSS | — (solo `/proc`) | **10.5 MB** |
 | 10 sesiones PSS | — | **32.0 MB** (~2.4 MB cada extra) |
 | `--version` | **13.8 ms** | **1.4 ms** |
-| Primer fotograma (harness, in-proc) | **131 ms** (consola heredada) | **12 ms** (PTY 80×24) |
-| Redibujos en reposo (harness, 3 s) | **0.6 /s** | **0.3 /s** |
+| Primer fotograma (harness, in-proc) | **86 ms** (consola heredada) | **12 ms** (PTY 80×24) |
+| Redibujos en reposo (harness, 3 s) | **0.0 /s** | **0.3 /s** |
 
 La TUI pinta solo cuando algo cambia. El reposo de 3 s de este harness en
-Windows es **0.6 redibujos/s** (Linux 2026-09-02 era 0.3/s); el objetivo
+Windows es **0.0 redibujos/s** (Linux 2026-09-02 era 0.3/s); el objetivo
 del producto sigue siendo **0 redibujos/s**, no una carrera de fotogramas
 por segundo.
 

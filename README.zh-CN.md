@@ -138,10 +138,10 @@ whycodes -P openai -m gpt-4o generate "Refactor this module"
 | 1 个会话 PSS | —（仅 `/proc`） | **10.5 MB** |
 | 10 个会话 PSS | — | **32.0 MB**（每多一个约 2.4 MB） |
 | `--version` | **13.8 ms** | **1.4 ms** |
-| 首帧（harness，进程内） | **131 ms**（继承控制台） | **12 ms**（80×24 PTY） |
-| 空闲重绘（harness，3 s） | **0.6 /s** | **0.3 /s** |
+| 首帧（harness，进程内） | **86 ms**（继承控制台） | **12 ms**（80×24 PTY） |
+| 空闲重绘（harness，3 s） | **0.0 /s** | **0.3 /s** |
 
-TUI 仅在有变化时绘制。本次 Windows 3 秒 harness 空闲为 **0.6 次重绘/秒**
+TUI 仅在有变化时绘制。本次 Windows 3 秒 harness 空闲为 **0.0 次重绘/秒**
 （Linux 2026-09-02 为 0.3/s）；产品目标仍是 **0 次重绘/秒**，而不是帧率竞赛。
 
 工作区行覆盖率为 **85.58%**（Linux x86_64，2026-08-21）。CI 在低于 82%
