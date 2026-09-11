@@ -3079,6 +3079,8 @@ async fn spawn_runtime_and_drain_outcomes() {
         dir.path(),
         &idx,
         whycodes_core::FileClaimRegistry::new(),
+        "xai",
+        "grok-4.6",
     )
     .await;
     assert_eq!(rt.agent.info.name, "no-such-agent");
@@ -4200,8 +4202,10 @@ async fn apply_auth_flow_note_code_and_results() {
     let mut provider = "anthropic".to_string();
     let mut model = "claude-sonnet-5".to_string();
     let config = Config::default();
+    let mut rt = test_runtime();
     apply_auth_flow_event(
         &mut app,
+        &mut rt,
         AuthFlowEvent::Note("Visit https://x\nthen paste".into()),
         &mut provider,
         &mut model,
@@ -4214,6 +4218,7 @@ async fn apply_auth_flow_note_code_and_results() {
     let (tx, _rx) = tokio::sync::oneshot::channel();
     apply_auth_flow_event(
         &mut app,
+        &mut rt,
         AuthFlowEvent::NeedCode(tx),
         &mut provider,
         &mut model,
@@ -4226,6 +4231,7 @@ async fn apply_auth_flow_note_code_and_results() {
 
     apply_auth_flow_event(
         &mut app,
+        &mut rt,
         AuthFlowEvent::Done {
             provider: "anthropic".into(),
             result: Err("nope".into()),
@@ -4240,6 +4246,7 @@ async fn apply_auth_flow_note_code_and_results() {
 
     apply_auth_flow_event(
         &mut app,
+        &mut rt,
         AuthFlowEvent::Done {
             provider: "openai".into(),
             result: Ok("ok".into()),
@@ -4263,6 +4270,7 @@ async fn apply_auth_flow_note_code_and_results() {
 
     apply_auth_flow_event(
         &mut app,
+        &mut rt,
         AuthFlowEvent::Done {
             provider: "openai".into(),
             result: Ok("already".into()),
@@ -4303,6 +4311,7 @@ async fn apply_auth_flow_note_code_and_results() {
     });
     apply_auth_flow_event(
         &mut app,
+        &mut rt,
         AuthFlowEvent::Done {
             provider: "tui-oauth-switch-demo".into(),
             result: Ok("ok".into()),
@@ -4318,6 +4327,7 @@ async fn apply_auth_flow_note_code_and_results() {
 
     apply_auth_flow_event(
         &mut app,
+        &mut rt,
         AuthFlowEvent::Done {
             provider: "tui-oauth-switch-demo".into(),
             result: Ok("ok".into()),

@@ -204,6 +204,52 @@ fn system_prompt_for_known_and_unknown_agents() {
 }
 
 #[test]
+fn prompt_overlays_append_provider_then_model() {
+    let mut overlays = whycodes_config::SystemPromptOverlays::default();
+    overlays.providers.insert("xai".into(), "be terse".into());
+    overlays
+        .models
+        .insert("xai/grok-4.6".into(), "use tools".into());
+    let out = Agent::with_prompt_overlays("base", &overlays, "XAI", "grok-4.6");
+    assert!(out.starts_with("base"), "{out}");
+    assert!(out.contains("# Provider instructions (xai)"), "{out}");
+    assert!(out.contains("be terse"), "{out}");
+    assert!(out.contains("# Model instructions (grok-4.6)"), "{out}");
+    assert!(out.contains("use tools"), "{out}");
+    assert_eq!(
+        Agent::with_prompt_overlays("base", &overlays, "", ""),
+        "base"
+    );
+}
+
+#[test]
+fn system_prompt_includes_route_overlays() {
+    let mut agent = Agent::new(whycodes_core::types::AgentInfo {
+        name: "build".into(),
+        description: String::new(),
+        mode: whycodes_core::types::AgentMode::Primary,
+        permission: whycodes_core::types::PermissionSet::default(),
+        model: None,
+        system_prompt: Some("role".into()),
+        temperature: None,
+        top_p: None,
+    });
+    let mut cfg = whycodes_config::Config::default();
+    cfg.system_prompt_overlays
+        .providers
+        .insert("xai".into(), "xai extra".into());
+    agent.apply_config(&cfg);
+    agent.set_route("xai", "grok-4.6");
+    let prompt = agent.system_prompt();
+    assert!(prompt.contains("role"), "{prompt}");
+    assert!(prompt.contains("xai extra"), "{prompt}");
+    assert!(prompt.contains("Today's date:"), "{prompt}");
+    let routed = agent.system_prompt_for_route("xai", "grok-4.6");
+    assert!(routed.contains("xai extra"), "{routed}");
+    assert!(!routed.contains("Today's date:"), "{routed}");
+}
+
+#[test]
 fn runtime_context_is_idempotent_and_append_only() {
     let base = "You are an agent.";
     let once = Agent::with_runtime_context(base);

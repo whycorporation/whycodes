@@ -372,6 +372,19 @@ impl Config {
 
         merged.notify = self.notify.merge_with(&other.notify);
 
+        for (k, v) in &other.system_prompt_overlays.providers {
+            merged
+                .system_prompt_overlays
+                .providers
+                .insert(k.clone(), v.clone());
+        }
+        for (k, v) in &other.system_prompt_overlays.models {
+            merged
+                .system_prompt_overlays
+                .models
+                .insert(k.clone(), v.clone());
+        }
+
         merged
     }
 

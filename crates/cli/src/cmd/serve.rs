@@ -105,7 +105,8 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
     println!("{}", serve_start_line(port));
     println!("  project: {}", project_dir.display());
 
-    let config = Config::load()?;
+    let mut config = Config::load()?;
+    config.load_command_files(&project_dir);
     let agent_info = config
         .default_agent()
         .cloned()
@@ -142,7 +143,7 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
         None
     };
     question_prompter.notify = Some(whycodes_agent::notify::handle_from_config(&config.notify));
-    let agent = Agent::new(agent_info)
+    let mut agent = Agent::new(agent_info)
         .with_config(&config)
         .with_permission_prompter(Arc::new(whycodes_server::perm::ServePrompter {
             hub: Arc::clone(&perm),
@@ -152,6 +153,8 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
         .with_plugins(Some(&project_dir))
         .with_mcp(&config)
         .await;
+    let (provider, model) = whycodes_server::routes::default_provider_model(&config);
+    agent.set_route(&provider, &model);
 
     let state = whycodes_server::AppState {
         agent: Arc::new(agent),

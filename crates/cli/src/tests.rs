@@ -1264,10 +1264,11 @@ fn print_slash_help_and_switch_agent() {
     print_slash_help();
     let config = Config::default();
     let dir = tempfile::tempdir().unwrap();
-    let (name, _agent, prompt) = switch_agent("build", &config, dir.path()).unwrap();
+    let (name, _agent, prompt) =
+        switch_agent("build", &config, dir.path(), "xai", "grok-4.6").unwrap();
     assert_eq!(name, "build");
     assert!(!prompt.is_empty());
-    assert!(switch_agent("nope", &config, dir.path()).is_err());
+    assert!(switch_agent("nope", &config, dir.path(), "xai", "grok-4.6").is_err());
 }
 
 #[test]

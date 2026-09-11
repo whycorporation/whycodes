@@ -116,6 +116,10 @@ pub struct Config {
     /// Discord / Telegram session notifications (off by default).
     #[serde(default)]
     pub notify: NotifyConfig,
+
+    /// Extra system-prompt text loaded from `prompts/*.md` (not stored in TOML).
+    #[serde(default, skip)]
+    pub system_prompt_overlays: SystemPromptOverlays,
 }
 
 /// Process-local background shell jobs and schedule/loop knobs.
@@ -761,7 +765,102 @@ impl Default for Config {
             swarm: SwarmConfig::default(),
             automation: AutomationConfig::default(),
             notify: NotifyConfig::default(),
+            system_prompt_overlays: SystemPromptOverlays::default(),
         }
+    }
+}
+
+/// Provider / model system-prompt extras loaded from markdown files.
+///
+/// File layout (global `prompts/` next to `config.toml`, project
+/// `.whycodes/prompts/` — project keys overwrite):
+///
+/// - `prompts/<provider>.md` — every model on that provider
+/// - `prompts/<provider>/<model>.md` — that provider+model
+/// - `prompts/models/<model>.md` — that model id on any provider
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SystemPromptOverlays {
+    /// Keyed by lowercase provider id (`xai`).
+    pub providers: HashMap<String, String>,
+    /// Keyed by lowercase `provider/model` or bare `model`.
+    pub models: HashMap<String, String>,
+}
+
+impl SystemPromptOverlays {
+    pub fn is_empty(&self) -> bool {
+        self.providers.is_empty() && self.models.is_empty()
+    }
+
+    /// Provider body (if any) then the most specific model body.
+    ///
+    /// Model match order: `provider/model`, then bare `model`.
+    pub fn sections(&self, provider: &str, model: &str) -> Vec<(String, String)> {
+        let p = overlay_key(provider);
+        let m = overlay_key(model);
+        let mut out = Vec::new();
+        if !p.is_empty()
+            && let Some(body) = self.providers.get(&p)
+        {
+            out.push((format!("Provider instructions ({p})"), body.clone()));
+        }
+        if !m.is_empty() {
+            let body = if p.is_empty() {
+                self.models.get(&m)
+            } else {
+                self.models
+                    .get(&format!("{p}/{m}"))
+                    .or_else(|| self.models.get(&m))
+            };
+            if let Some(body) = body {
+                out.push((format!("Model instructions ({m})"), body.clone()));
+            }
+        }
+        out
+    }
+}
+
+pub(crate) fn overlay_key(raw: &str) -> String {
+    raw.trim().to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+
+    #[test]
+    fn overlay_key_trims_and_lowercases() {
+        assert_eq!(overlay_key("  XAI "), "xai");
+        assert_eq!(overlay_key(""), "");
+    }
+
+    #[test]
+    fn sections_provider_then_specific_model() {
+        let mut o = SystemPromptOverlays::default();
+        o.providers.insert("xai".into(), "prov".into());
+        o.models.insert("xai/grok-4.6".into(), "specific".into());
+        o.models.insert("grok-4.6".into(), "generic".into());
+        let s = o.sections("XAI", "grok-4.6");
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].0, "Provider instructions (xai)");
+        assert_eq!(s[0].1, "prov");
+        assert_eq!(s[1].0, "Model instructions (grok-4.6)");
+        assert_eq!(s[1].1, "specific");
+    }
+
+    #[test]
+    fn sections_bare_model_when_no_provider_or_specific() {
+        let mut o = SystemPromptOverlays::default();
+        o.models.insert("grok-4.6".into(), "generic".into());
+        let s = o.sections("xai", "grok-4.6");
+        assert_eq!(
+            s,
+            vec![("Model instructions (grok-4.6)".into(), "generic".into())]
+        );
+        let only_model = o.sections("", "grok-4.6");
+        assert_eq!(only_model.len(), 1);
+        assert!(o.sections("xai", "missing").is_empty());
+        assert!(o.sections("", "").is_empty());
+        assert!(SystemPromptOverlays::default().is_empty());
     }
 }
 

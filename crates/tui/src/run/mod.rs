@@ -593,14 +593,9 @@ async fn prepare_tui_runtime(opts: &TuiRunOptions, app: &mut TuiApp) -> TuiRunti
         .cloned()
         .unwrap_or_else(|| default_agent_info(&opts.agent_name));
 
-    let base = agent_info
-        .system_prompt
-        .clone()
-        .unwrap_or_else(|| Agent::system_prompt_for(&opts.agent_name));
     // Deferred: AGENTS.md + memory + plugins each touch disk/SQLite. Home has
     // no fenced code and needs no tool plugins, so the first frame uses a
     // minimal prompt; the full prompt is hydrated after paint.
-    let system_prompt = Agent::with_runtime_context(&base);
 
     let (perm_prompter, perm_rx) = ChannelPermissionPrompter::new();
     let perm_prompter =
@@ -629,8 +624,10 @@ async fn prepare_tui_runtime(opts: &TuiRunOptions, app: &mut TuiApp) -> TuiRunti
             Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
         )
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
+    agent.set_route(&opts.provider, &opts.model);
     agent.set_approval_mode(app.approval_mode);
     inject_test_llm(&mut agent, &opts.provider);
+    let system_prompt = agent.system_prompt();
 
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
@@ -1704,6 +1701,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             while let Ok(ev) = auth_rx.try_recv() {
                 apply_auth_flow_event(
                     &mut app,
+                    &mut rt,
                     ev,
                     &mut provider,
                     &mut model,
@@ -2339,6 +2337,8 @@ async fn apply_idle_loop_key(
                 project_dir,
                 file_index,
                 session_claims.clone(),
+                provider,
+                model,
             )
             .await;
             adopt_fresh_runtime(app, rt, runtimes, mru, fresh);
@@ -2771,24 +2771,18 @@ fn rebuild_agent_after_force_stop(
                 temperature: None,
                 top_p: None,
             });
-    let base = info
-        .system_prompt
-        .clone()
-        .unwrap_or_else(|| Agent::system_prompt_for(&info.name));
-    let prompt = with_project_memory(
-        &Agent::with_agents_md(&base, project_dir),
-        project_dir,
-        config,
-        None,
-    );
     let bg = agent.background_registry().clone();
     let claims = agent.session_claims();
+    let (route_provider, route_model) = agent.route();
+    let route_provider = route_provider.to_string();
+    let route_model = route_model.to_string();
     let mut next = Agent::new(info)
         .with_config(config)
         .with_background_registry(bg)
         .with_file_index(file_index.clone())
         .with_permission_prompter(perm_prompter as Arc<dyn whycodes_agent::PermissionPrompter>)
         .with_question_prompter(question_prompter as Arc<dyn QuestionPrompter>);
+    next.set_route(&route_provider, &route_model);
     if let Some(c) = claims {
         next = next.with_session_claims(c);
     }
@@ -2796,6 +2790,15 @@ fn rebuild_agent_after_force_stop(
     agent.wire_event_sink(event_tx);
     // Keep existing system prompt on session if any; else set rebuilt one.
     if session.system_prompt.is_empty() {
+        let prompt = with_project_memory(
+            &Agent::with_agents_md(
+                &agent.system_prompt_for_route(&route_provider, &route_model),
+                project_dir,
+            ),
+            project_dir,
+            config,
+            None,
+        );
         session.set_system_prompt(&prompt);
     }
 }
@@ -2833,12 +2836,15 @@ fn format_turn_done_status(
 /// Build a fresh runtime for a new empty session (Ctrl+N). Owns its
 /// prompter pair and channels; the agent shares no state with any other
 /// runtime except the process-wide background registry pattern.
+#[allow(clippy::too_many_arguments)]
 async fn spawn_new_session_runtime(
     agent_name: &str,
     config: &Config,
     project_dir: &std::path::Path,
     file_index: &Arc<whycodes_index::WorkspaceIndex>,
     session_claims: whycodes_core::FileClaimRegistry,
+    provider: &str,
+    model: &str,
 ) -> SessionRuntime {
     let agent_info =
         config
@@ -2859,17 +2865,6 @@ async fn spawn_new_session_runtime(
                 temperature: None,
                 top_p: None,
             });
-    let base = agent_info
-        .system_prompt
-        .clone()
-        .unwrap_or_else(|| Agent::system_prompt_for(agent_name));
-    let system_prompt = with_project_memory(
-        &Agent::with_agents_md(&base, project_dir),
-        project_dir,
-        config,
-        None,
-    );
-
     let (perm_prompter, perm_rx) = ChannelPermissionPrompter::new();
     let perm_prompter =
         perm_prompter.with_notify(whycodes_agent::notify::handle_from_config(&config.notify));
@@ -2894,8 +2889,15 @@ async fn spawn_new_session_runtime(
             Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
         )
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
+    agent.set_route(provider, model);
     agent.set_approval_mode(config.general.approval_mode.unwrap_or_default());
     agent = agent.with_mcp(config).await;
+    let system_prompt = with_project_memory(
+        &Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project_dir),
+        project_dir,
+        config,
+        None,
+    );
 
     let session = Session::new(project_dir.to_path_buf(), system_prompt);
     let history = SessionHistory::new();
@@ -3527,8 +3529,9 @@ fn resume_or_switch_session(
             let n = loaded.messages.len();
             rt.history = SessionHistory::new();
             rt.session = loaded;
+            let (p, m) = rt.agent.route();
             rt.session.system_prompt = with_project_memory(
-                &Agent::with_agents_md(&rt.agent.system_prompt(), project_dir),
+                &Agent::with_agents_md(&rt.agent.system_prompt_for_route(p, m), project_dir),
                 project_dir,
                 config,
                 None,
@@ -3659,6 +3662,8 @@ async fn apply_pending_picker_choices(
 ) {
     if let Some((p, m)) = app.pending_model.take() {
         apply_model_choice(app, provider, model, api_key, p, m, config);
+        rt.agent.set_route(provider, model);
+        refresh_session_memory(&mut rt.session, &rt.agent, &app.project_dir, config, None);
         fill_oauth_credential(api_key, provider).await;
         defer_or_spawn_catalog(
             rt.agent_busy,
@@ -3744,6 +3749,7 @@ fn apply_catalog_window(
 
 async fn apply_auth_flow_event(
     app: &mut TuiApp,
+    rt: &mut SessionRuntime,
     ev: AuthFlowEvent,
     provider: &mut String,
     model: &mut String,
@@ -3774,6 +3780,14 @@ async fn apply_auth_flow_event(
                         .find(|name| !name.is_empty())
                         .unwrap_or_else(|| model.clone());
                     apply_model_choice(app, provider, model, api_key, p.clone(), m, config);
+                    rt.agent.set_route(provider, model);
+                    refresh_session_memory(
+                        &mut rt.session,
+                        &rt.agent,
+                        &app.project_dir,
+                        config,
+                        None,
+                    );
                 }
                 if let Ok(dir) = Config::data_dir()
                     && let Some(tok) = whycodes_auth::providers::access_token(&p, &dir).await
@@ -5004,7 +5018,7 @@ async fn hydrate_after_first_frame(
     rt.agent.set_file_index(real.clone());
     *file_index = real;
     rt.agent.hydrate_plugins(Some(project_dir));
-    hydrate_full_system_prompt(rt, project_dir, config);
+    hydrate_full_system_prompt(rt, project_dir, config, provider, model);
     hydrate_session_picker(app);
     hydrate_deferred_api_key(api_key, provider, model, config, app);
     rt.agent.load_mcp(config).await;
@@ -5041,9 +5055,16 @@ fn hydrate_full_system_prompt(
     rt: &mut SessionRuntime,
     project_dir: &std::path::Path,
     config: &Config,
+    provider: &str,
+    model: &str,
 ) {
-    let base = rt.agent.system_prompt();
-    let with_agents = whycodes_agent::agent::Agent::with_agents_md(&base, project_dir);
+    rt.agent
+        .set_system_prompt_overlays(config.system_prompt_overlays.clone());
+    rt.agent.set_route(provider, model);
+    let with_agents = whycodes_agent::agent::Agent::with_agents_md(
+        &rt.agent.system_prompt_for_route(provider, model),
+        project_dir,
+    );
     let full = with_project_memory(&with_agents, project_dir, config, None);
     rt.session.set_system_prompt(&full);
 }
@@ -5149,16 +5170,9 @@ async fn switch_to_agent(
     };
     app.toasts.push(crate::toast::ToastKind::Info, toast);
     if let Some(info) = config.get_agent(name).cloned() {
-        let base = info
-            .system_prompt
-            .clone()
-            .unwrap_or_else(|| Agent::system_prompt_for(name));
-        let prompt = with_project_memory(
-            &Agent::with_agents_md(&base, project_dir),
-            project_dir,
-            config,
-            None,
-        );
+        let (route_provider, route_model) = agent.route();
+        let route_provider = route_provider.to_string();
+        let route_model = route_model.to_string();
         let bg = agent.background_registry().clone();
         let claims = agent.session_claims();
         let mut next = Agent::new(info)
@@ -5168,11 +5182,21 @@ async fn switch_to_agent(
                 Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
             )
             .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
+        next.set_route(&route_provider, &route_model);
         if let Some(c) = claims {
             next = next.with_session_claims(c);
         }
         *agent = next;
         agent.wire_event_sink(event_tx.clone());
+        let prompt = with_project_memory(
+            &Agent::with_agents_md(
+                &agent.system_prompt_for_route(&route_provider, &route_model),
+                project_dir,
+            ),
+            project_dir,
+            config,
+            None,
+        );
         session.set_system_prompt(&prompt);
     }
 }

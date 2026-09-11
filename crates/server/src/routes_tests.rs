@@ -407,7 +407,7 @@ async fn load_or_get_session_returns_none_when_db_unavailable() {
 #[test]
 fn system_prompt_includes_runtime_context() {
     let state = crate::http_tests::test_state();
-    let prompt = system_prompt_for(&state.agent, &state.project_dir);
+    let prompt = system_prompt_for(&state.agent, &state.project_dir, "xai", "grok-4.6");
     assert!(prompt.contains("Today's date:"), "{prompt}");
 }
 

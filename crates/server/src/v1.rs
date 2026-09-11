@@ -101,7 +101,8 @@ pub async fn create_session(
         .project
         .map(PathBuf::from)
         .unwrap_or_else(|| state.project_dir.clone());
-    let prompt = system_prompt_for(&state.agent, &project);
+    let (provider, model) = default_provider_model(&state.config);
+    let prompt = system_prompt_for(&state.agent, &project, &provider, &model);
     let session = whycodes_session::session::Session::new(project, prompt);
     let persist = req.persist.unwrap_or(true);
     if persist {
@@ -372,11 +373,21 @@ pub async fn set_model(
     Path(id): Path<String>,
     Json(req): Json<SetModelRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    load_or_get_session(&state, &id)
+    let handle = load_or_get_session(&state, &id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
     if req.provider.trim().is_empty() || req.model.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
+    }
+    {
+        let mut session = handle.lock().await;
+        let prompt = system_prompt_for(
+            &state.agent,
+            &session.project_path,
+            &req.provider,
+            &req.model,
+        );
+        session.set_system_prompt(&prompt);
     }
     if let Ok(mut map) = state.session_route.lock() {
         map.insert(id, (req.provider, req.model));

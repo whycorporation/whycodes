@@ -259,7 +259,8 @@ pub(super) fn refresh_session_memory(
     config: &Config,
     query: Option<&str>,
 ) {
-    let base = Agent::with_agents_md(&agent.system_prompt(), project_dir);
+    let (provider, model) = agent.route();
+    let base = Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project_dir);
     session.set_system_prompt(&with_project_memory(&base, project_dir, config, query));
 }
 

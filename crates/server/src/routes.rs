@@ -86,11 +86,13 @@ fn find_share_file_in(dirs: &[PathBuf], id: &str, ext: &str) -> Option<PathBuf> 
     None
 }
 
-pub(crate) fn system_prompt_for(agent: &Agent, project: &std::path::Path) -> String {
-    Agent::with_agents_md(
-        &Agent::with_runtime_context(&agent.system_prompt()),
-        project,
-    )
+pub(crate) fn system_prompt_for(
+    agent: &Agent,
+    project: &std::path::Path,
+    provider: &str,
+    model: &str,
+) -> String {
+    Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project)
 }
 
 /// Env → config api_key → OAuth store (mirrors CLI `get_api_key`).
@@ -122,7 +124,7 @@ pub(crate) async fn resolve_api_key(
     None
 }
 
-pub(crate) fn default_provider_model(config: &whycodes_config::Config) -> (String, String) {
+pub fn default_provider_model(config: &whycodes_config::Config) -> (String, String) {
     if let Some(dm) = &config.default_model {
         return (dm.provider_id.clone(), dm.model_id.clone());
     }
@@ -275,7 +277,8 @@ pub async fn create_session(
         .project
         .map(PathBuf::from)
         .unwrap_or_else(|| state.project_dir.clone());
-    let prompt = system_prompt_for(&state.agent, &project);
+    let (provider, model) = default_provider_model(&state.config);
+    let prompt = system_prompt_for(&state.agent, &project, &provider, &model);
     let session = Session::new(project, prompt);
     let id = session.id.clone();
     let title = session.title.clone();

@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::types::{
-    CONFIG_SCHEMA_VERSION, CommandConfig, Config, CustomCommandConfig, nonempty_opt,
-    parse_notify_on_csv,
+    CONFIG_SCHEMA_VERSION, CommandConfig, Config, CustomCommandConfig, SystemPromptOverlays,
+    nonempty_opt, overlay_key, parse_notify_on_csv,
 };
 use whycodes_core::network;
 use whycodes_core::types::{AgentInfo, ModelConfig, ProviderConfig};
@@ -345,6 +345,22 @@ impl Config {
         );
         // Built-ins last only for missing keys — user/project markdown wins.
         self.ensure_builtin_prompt_commands();
+        self.load_prompt_files(project_dir);
+    }
+
+    /// Load provider/model system-prompt extras from markdown:
+    /// - global: `~/.config/.../prompts/`
+    /// - project: `<project>/.whycodes/prompts/` (wins on the same key)
+    pub fn load_prompt_files(&mut self, project_dir: &Path) {
+        if let Ok(global_dir) = Self::default_path()
+            && let Some(parent) = global_dir.parent()
+        {
+            load_prompt_overlays(&mut self.system_prompt_overlays, &parent.join("prompts"));
+        }
+        load_prompt_overlays(
+            &mut self.system_prompt_overlays,
+            &whycodes_core::project_dir(project_dir).join("prompts"),
+        );
     }
 
     /// Claude Code–style PromptCommands: fixed prompts that kick a turn.
@@ -424,6 +440,88 @@ User notes: $ARGUMENTS"#
             },
         ),
     ]
+}
+
+fn load_prompt_overlays(into: &mut SystemPromptOverlays, dir: &Path) {
+    load_prompt_overlays_at(into, dir, None);
+}
+
+fn load_prompt_overlays_at(into: &mut SystemPromptOverlays, dir: &Path, provider: Option<&str>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_missing_dir) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if provider.is_some() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if name.eq_ignore_ascii_case("models") {
+                load_model_overlay_dir(into, &path);
+            } else {
+                load_prompt_overlays_at(into, &path, Some(name));
+            }
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Some(body) = read_overlay_markdown(&path) else {
+            continue;
+        };
+        if let Some(p) = provider {
+            into.models
+                .insert(format!("{}/{}", overlay_key(p), overlay_key(stem)), body);
+        } else {
+            into.providers.insert(overlay_key(stem), body);
+        }
+    }
+}
+
+fn load_model_overlay_dir(into: &mut SystemPromptOverlays, dir: &Path) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_missing_dir) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Some(body) = read_overlay_markdown(&path) else {
+            continue;
+        };
+        into.models.insert(overlay_key(stem), body);
+    }
+}
+
+fn read_overlay_markdown(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let body = strip_overlay_frontmatter(&content);
+    if body.is_empty() { None } else { Some(body) }
+}
+
+fn strip_overlay_frontmatter(content: &str) -> String {
+    let trimmed = content.trim();
+    if let Some(rest) = trimmed.strip_prefix("---")
+        && let Some((_, body)) = rest.split_once("---")
+    {
+        return body.trim().to_string();
+    }
+    trimmed.to_string()
 }
 
 fn load_commands_from_dir(into: &mut HashMap<String, CustomCommandConfig>, dir: &Path) {
