@@ -41,13 +41,22 @@ fn main() -> anyhow::Result<()> {
     // never build a Tokio runtime, never run clap, never touch config/logging.
     // The old `#[tokio::main]` wrapper paid for a multi-thread executor on
     // every invocation — including the ones that only print a version string.
-    if early_print_version_from(std::env::args_os().skip(1)) {
+    //
+    // Windows: scan GetCommandLineW (no CommandLineToArgvW) and WriteFile
+    // (no println! locale). Unix: write(1) the same bytes.
+    if try_print_version_fast() {
         return Ok(());
     }
 
     // First statement on the real path: everything after it is time a user
     // waits for, and the first-frame benchmark measures from here.
     whycodes_tui::bench::mark_process_start();
+
+    // `whycodes run -d <dir>` (harness) and bare `whycodes`: skip clap + Tokio
+    // until after the first paint. Extra flags still take the full parser.
+    if let Some(project_dir) = early_tui_run_dir_from(std::env::args_os().skip(1)) {
+        return cmd_run_fast_tui(project_dir);
+    }
 
     // Hosts that capture/close stdout (IDE, wrappers: stdout_tty=false) will
     // SIGPIPE-kill the process on any accidental write to stdout. Ignore it so
@@ -77,21 +86,190 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
+const VERSION_LINE: &str = concat!(
+    "whycodes ",
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("WHYCODES_GIT_HASH"),
+    " ",
+    env!("WHYCODES_BUILD_DATE"),
+    ")\n"
+);
+
 /// `whycodes --version` / `whycodes -V` only — same format clap would print.
 ///
 /// Returns true when the process should exit immediately (caller returns Ok).
-fn early_print_version_from<I, S>(args: I) -> bool
+fn try_print_version_fast() -> bool {
+    if !is_version_only_process() {
+        return false;
+    }
+    write_version_line();
+    true
+}
+
+fn write_version_line() {
+    #[cfg(windows)]
+    {
+        write_version_line_windows();
+    }
+    #[cfg(not(windows))]
+    {
+        if let Err(e) = std::io::Write::write_all(&mut std::io::stdout(), VERSION_LINE.as_bytes()) {
+            tracing::debug!(error = %e, "version line write failed");
+        }
+    }
+}
+
+#[cfg(windows)]
+fn write_version_line_windows() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetStdHandle(nStdHandle: i32) -> *mut core::ffi::c_void;
+        fn WriteFile(
+            hFile: *mut core::ffi::c_void,
+            lpBuffer: *const u8,
+            nNumberOfBytesToWrite: u32,
+            lpNumberOfBytesWritten: *mut u32,
+            lpOverlapped: *mut core::ffi::c_void,
+        ) -> i32;
+    }
+    const STD_OUTPUT_HANDLE: i32 = -11;
+    unsafe {
+        let handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        if handle.is_null() || handle == (-1isize as *mut core::ffi::c_void) {
+            return;
+        }
+        let bytes = VERSION_LINE.as_bytes();
+        let mut written = 0u32;
+        let ok = WriteFile(
+            handle,
+            bytes.as_ptr(),
+            bytes.len() as u32,
+            &mut written,
+            core::ptr::null_mut(),
+        );
+        if ok == 0 || written == 0 {
+            tracing::debug!("WriteFile version line failed");
+        }
+    }
+}
+
+#[cfg(windows)]
+fn is_version_only_process() -> bool {
+    is_version_only_command_line_utf16(windows_command_line_utf16())
+}
+
+/// Raw `GetCommandLineW` as UTF-16, no String alloc.
+#[cfg(windows)]
+fn windows_command_line_utf16() -> &'static [u16] {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCommandLineW() -> *const u16;
+    }
+    unsafe {
+        let ptr = GetCommandLineW();
+        if ptr.is_null() {
+            return &[];
+        }
+        let mut len = 0usize;
+        while *ptr.add(len) != 0 {
+            len += 1;
+            if len > 32_768 {
+                break;
+            }
+        }
+        core::slice::from_raw_parts(ptr, len)
+    }
+}
+
+#[cfg(any(windows, test))]
+pub(crate) fn is_version_only_command_line_utf16(line: &[u16]) -> bool {
+    let line = trim_u16(line);
+    let rest = trim_u16(strip_exe_prefix_u16(line));
+    u16_eq_ascii(rest, b"--version") || u16_eq_ascii(rest, b"-V")
+}
+
+#[cfg(any(windows, test))]
+fn u16_eq_ascii(u: &[u16], ascii: &[u8]) -> bool {
+    u.len() == ascii.len() && u.iter().zip(ascii).all(|(c, b)| *c == u16::from(*b))
+}
+
+#[cfg(any(windows, test))]
+fn trim_u16(s: &[u16]) -> &[u16] {
+    let start = s.iter().position(|&c| !is_u16_space(c)).unwrap_or(s.len());
+    let end = s
+        .iter()
+        .rposition(|&c| !is_u16_space(c))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    if start >= end { &[] } else { &s[start..end] }
+}
+
+#[cfg(any(windows, test))]
+fn is_u16_space(c: u16) -> bool {
+    c == b' ' as u16 || c == b'\t' as u16 || c == 0x0a || c == 0x0d
+}
+
+#[cfg(any(windows, test))]
+fn strip_exe_prefix_u16(line: &[u16]) -> &[u16] {
+    let line = trim_u16(line);
+    if line.first().copied() == Some(b'"' as u16) {
+        return match line.iter().skip(1).position(|&c| c == b'"' as u16) {
+            Some(end) => &line[end + 2..],
+            None => &[],
+        };
+    }
+    match line.iter().position(|&c| is_u16_space(c)) {
+        Some(i) => &line[i..],
+        None => &[],
+    }
+}
+
+#[cfg(not(windows))]
+fn is_version_only_process() -> bool {
+    is_version_only_argv(std::env::args_os().skip(1))
+}
+
+/// True when the process was invoked as `whycodes --version` or `whycodes -V`
+/// (optional quoted exe path, optional surrounding spaces). Extra flags fail.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn is_version_only_command_line(line: &str) -> bool {
+    let line = line.trim();
+    let rest = strip_exe_prefix(line).trim();
+    rest == "--version" || rest == "-V"
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn strip_exe_prefix(line: &str) -> &str {
+    let line = line.trim_start();
+    if let Some(inner) = line.strip_prefix('"') {
+        return match inner.find('"') {
+            Some(end) => &inner[end + 1..],
+            None => "",
+        };
+    }
+    match line.find(char::is_whitespace) {
+        Some(i) => &line[i..],
+        None => "",
+    }
+}
+
+/// Iterator form for tests / Unix. Writes the version line when argv is only
+/// `--version` / `-V`.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn early_print_version_from<I, S>(args: I) -> bool
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
     if is_version_only_argv(args) {
-        println!("whycodes {VERSION_LONG}");
+        write_version_line();
         return true;
     }
     false
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 pub(crate) fn is_version_only_argv<I, S>(args: I) -> bool
 where
     I: IntoIterator<Item = S>,
@@ -107,6 +285,43 @@ where
     only.as_ref() == "--version" || only.as_ref() == "-V"
 }
 
+/// `whycodes`, `whycodes run`, or `whycodes run -d <dir>` with no other flags.
+///
+/// Anything else (`--plain`, `-P`, a prompt) needs clap. The first-frame
+/// harness is exactly `run -d <tempdir>`.
+pub(crate) fn early_tui_run_dir_from<I, S>(args: I) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let mut args = args.into_iter();
+    let Some(first) = args.next() else {
+        return Some(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    };
+    let first = first.as_ref();
+    if first == "run" {
+        let Some(flag) = args.next() else {
+            return Some(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        };
+        if flag.as_ref() != "-d" && flag.as_ref() != "--dir" {
+            return None;
+        }
+        let dir = args.next()?;
+        if args.next().is_some() {
+            return None;
+        }
+        return Some(PathBuf::from(dir.as_ref()));
+    }
+    if first == "-d" || first == "--dir" {
+        let dir = args.next()?;
+        if args.next().is_some() {
+            return None;
+        }
+        return Some(PathBuf::from(dir.as_ref()));
+    }
+    None
+}
+
 /// Light subcommands (config/session/stats/…) use a current-thread runtime so
 /// they do not pay for worker-thread spawn. Interactive TUI / network / agent
 /// paths keep the multi-thread pool.
@@ -117,6 +332,14 @@ where
 /// force-cancels (2026-09-01).
 fn runtime_for(cli: &Cli) -> std::io::Result<tokio::runtime::Runtime> {
     if command_needs_multi_thread(cli) {
+        // First-frame harness never runs a turn. A current-thread runtime
+        // skips worker spawn (~Windows CreateThread tax) and is enough for
+        // chrome → draw → exit (`WHYCODES_BENCH_DURATION_MS=0`).
+        if std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty()) {
+            return tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+        }
         let mut builder = tokio::runtime::Builder::new_multi_thread();
         builder.enable_all();
         // Generate / Serve keep the default nproc pool; interactive TUI
@@ -186,7 +409,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // Grok-style logging: always-on JSONL under data_dir/logs/, optional file,
     // panic → data_dir/crash/. TUI keeps stderr quiet so the alternate screen
     // is not corrupted (use --debug or WHYCODES_LOG_FILE to capture human logs).
-    init_logging(&cli);
+    // First-frame harness (`WHYCODES_BENCH`) skips disk logging so AppData
+    // mkdir + JSONL open is not on the TTFF clock (issue #85).
+    let bench = std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty());
+    if !bench {
+        init_logging(&cli);
+    }
     if !is_tui_invoke(&cli) {
         load_auth_plugins(&cli);
     }

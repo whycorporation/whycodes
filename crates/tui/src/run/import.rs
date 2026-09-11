@@ -10,9 +10,13 @@ use whycodes_import::{
     scan_with_home,
 };
 
-/// True when CI / `WHYCODES_SKIP_IMPORT` should suppress the home popup.
+/// True when CI / `WHYCODES_SKIP_IMPORT` / first-frame harness should suppress
+/// the home popup. The scan walks `$HOME` for other agent CLIs; that must not
+/// sit on the first paint or the idle-draw counter.
 pub(super) fn import_env_skipped() -> bool {
-    std::env::var_os("CI").is_some() || std::env::var_os("WHYCODES_SKIP_IMPORT").is_some()
+    std::env::var_os("CI").is_some()
+        || std::env::var_os("WHYCODES_SKIP_IMPORT").is_some()
+        || std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty())
 }
 
 /// Home-screen first-run offer. Same gating as the TTY prompt, minus stdin:

@@ -2394,6 +2394,12 @@ impl TuiApp {
         self.mark_dirty();
     }
 
+    /// `.git/HEAD` only — no `git` spawn. First-frame chrome uses this so an
+    /// empty project (harness temp dir) does not pay `CreateProcess`.
+    pub(crate) fn refresh_git_branch_fast(&mut self) {
+        self.git_branch = resolve_git_branch_fast(&self.project_dir);
+    }
+
     /// Refresh `git_branch` from the working tree (cheap; call on start / idle).
     pub fn refresh_git_branch(&mut self) {
         self.git_branch = resolve_git_branch_fast(&self.project_dir)
@@ -3944,6 +3950,12 @@ const GIT_BRANCH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis
 /// Resolve the current branch name for `dir`, if it is a git work tree.
 fn resolve_git_branch(dir: &std::path::Path) -> Option<String> {
     use std::process::Command;
+
+    // No `.git` ⇒ not a work tree. Spawning `git` on an empty temp dir is
+    // the Windows first-frame harness tax (CreateProcess + a failing child).
+    if !dir.join(".git").exists() {
+        return None;
+    }
 
     let out = git_output_timeout(
         Command::new("git")

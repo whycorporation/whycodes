@@ -29,7 +29,8 @@ pub mod widgets;
 pub use app::UpdateOffer;
 pub use remote::RemoteAttach;
 pub use run::{
-    LoopInject, RESUME_LATEST, TuiExit, TuiRunOptions, resolve_and_load_session, run, tui_available,
+    LoopInject, RESUME_LATEST, TuiExit, TuiRunOptions, paint_first_frame_sync,
+    resolve_and_load_session, run, run_sync, tui_available,
 };
 pub use theme::file as theme_file;
 pub use theme::tokens;

@@ -544,7 +544,12 @@ floor on this OS.
 
 `--version` improved vs the 2026-07-31 Windows baseline (20.9 / 22.6 ms,
 9.6 MB RSS). Version p95 (14.4 ms) is still far under the loose CI
-ceiling (50 ms / 40 MB). `--help` and `config show` are slower than that
+ceiling (50 ms / 40 MB).
+
+Same-day follow-up: `--version` scans `GetCommandLineW` (no
+`CommandLineToArgvW`) and writes with `WriteFile` (no `println!` locale).
+Re-measure median **14.1 ms** (p95 15.6, min 13.2) — same band as 13.8 ms.
+The floor on this OS is PE load / `CreateProcess`, not clap or Tokio. `--help` and `config show` are slower than that
 pre-opt row (21.4 / 25.6 ms): more work now sits on those paths (config
 layering, session DB). Peak RSS for the short CLI cases is in the 8–13 MB
 band.
@@ -564,6 +569,61 @@ In-proc TTFF (~131 ms) includes Windows process start plus first paint
 on an inherited console; do not quote it against the Linux ~12 ms PTY
 figure. Idle redraws stay near zero (0.6/s over 3 s). The product claim
 remains “paint only when something changed.”
+
+### Re-measure, 2026-09-11 (Windows AMD64, issue #85)
+
+Same machine as the morning row (Ryzen 7 3800X). Chrome → attach → first
+`draw` / `record_draw` → then Agent / SQLite / `git` spawn / import scan.
+`--idle-ms 0` exits before ToolExecutor. Empty dirs no longer spawn `git`.
+`WHYCODES_BENCH` skips JSONL logging and uses a current-thread runtime.
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **86.2 ms** median | 0.0/s | was 131.4 ms same day |
+| Harness `--idle-ms 3000` (10 runs) | **87.3 ms** median | **0.0/s** | was 0.6/s |
+
+Spawn-to-exit at `--idle-ms 0` is **103.6 ms** (min 102.0, max 108.5).
+Remainder vs Linux ~12 ms is Windows console inherit (no stdlib ConPTY)
+plus clap + process start (~14 ms `--version` floor).
+
+Same day, clap-free `whycodes run -d` (skip clap + nproc Tokio until after
+paint; mouse/paste/cursor after first frame):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **55.8 ms** median | 0.0/s | was 86.2 ms |
+| Harness `--idle-ms 3000` (10 runs) | **55.0 ms** median | **0.0/s** | still zero |
+
+Spawn-to-exit at `--idle-ms 0` is **70.9 ms** (min 65.3, max 78.5).
+Remainder is Windows console inherit + `--version` floor (~14 ms).
+
+Tokio-free splash (`paint_first_frame_sync`: no Config, no TuiApp, no
+runtime — alt-screen + one ratatui frame):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **52.1 ms** median | 0.0/s | min 48.2 |
+| Harness `--idle-ms 3000` (8 runs) | **53.1 ms** median | **0.0/s** | still zero |
+
+Spawn-to-exit at `--idle-ms 0` is **66.3 ms** (min 62.6, max 68.9).
+`--version` floor is 13.8 ms; the rest is Windows console inherit
+(no stdlib ConPTY).
+
+Interactive `run()` (not only `WHYCODES_BENCH`) now paints the splash
+before `TuiApp` / `Config` on **Linux, macOS, and Windows**. Production
+`whycodes run -d` uses a 2-worker Tokio pool in the CLI so
+`crossterm::event::poll` cannot starve turns on any of those OS.
+Re-measure Windows `--idle-ms 0`: **53.1 ms** median (min 45.9).
+Linux PTY ~12 ms and macOS remain host-console limited; same code path.
+
+Harness splash is now a single CSI burst (no ratatui `Terminal`):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **0.1 ms** in-proc | 0.0/s | spawn-to-exit **14.3 ms** |
+
+That spawn-to-exit matches `--version` on this box. Interactive `run()`
+still attaches crossterm after the splash and hydrates Agent/SQLite.
 
 
 ## Hot paths

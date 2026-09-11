@@ -286,6 +286,15 @@ pub struct TuiRunOptions {
     pub resume_session_id: Option<String>,
     /// When set, turns go to `whycodes serve` over HTTP instead of an in-process agent.
     pub remote: Option<crate::remote::RemoteAttach>,
+    /// Load layered config after first paint (CLI TUI path). Tests / `connect`
+    /// leave this false and pass a ready `config`.
+    pub defer_config_load: bool,
+    /// CLI `-P` was set; deferred config must not overwrite `provider`.
+    pub provider_from_cli: bool,
+    /// CLI `-m` was set; deferred config must not overwrite `model`.
+    pub model_from_cli: bool,
+    /// CLI `-a` was set; deferred config must not overwrite `agent_name`.
+    pub agent_from_cli: bool,
     /// Background GitHub latest-release check. `None` skips the home popup.
     pub update_rx: Option<tokio::sync::mpsc::UnboundedReceiver<UpdateOffer>>,
     /// Event-loop I/O injection. Production callers leave this default (real TTY).
@@ -328,10 +337,16 @@ pub enum TuiExit {
 /// Sentinel for `TuiRunOptions::resume_session_id`: most recently updated session.
 pub const RESUME_LATEST: &str = "__latest__";
 
-/// Everything `run` needs before it touches the terminal.
-struct TuiBoot {
+/// Chrome for the first 80×24 home frame. Agent / Session / SQLite stay out
+/// of this struct so `record_draw` is not waiting on them (issue #85).
+struct TuiChrome {
     app: TuiApp,
     config: Config,
+    missing_key: bool,
+}
+
+/// Agent + session after first paint. Built by [`prepare_tui_runtime`].
+struct TuiRuntime {
     file_index: Arc<whycodes_index::WorkspaceIndex>,
     agent: Agent,
     session: Session,
@@ -341,7 +356,28 @@ struct TuiBoot {
     perm_rx: mpsc::UnboundedReceiver<whycodes_agent::PermissionRequest>,
     question_rx: mpsc::UnboundedReceiver<QuestionRequest>,
     session_claims: whycodes_core::FileClaimRegistry,
+}
+
+/// Test helper: chrome then runtime (production `run` paints between them).
+#[cfg(test)]
+async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiRuntimeBoot {
+    let mut chrome = prepare_tui_chrome(opts);
+    let runtime = prepare_tui_runtime(opts, &mut chrome.app).await;
+    TuiRuntimeBoot {
+        app: chrome.app,
+        missing_key: chrome.missing_key,
+        agent: runtime.agent,
+        session: runtime.session,
+    }
+}
+
+/// Combined boot used by unit tests that still assert on agent + chrome.
+#[cfg(test)]
+struct TuiRuntimeBoot {
+    app: TuiApp,
     missing_key: bool,
+    agent: Agent,
+    session: Session,
 }
 
 fn apply_resume(
@@ -436,80 +472,121 @@ async fn apply_remote_hydrate(
     );
 }
 
-async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
-    let tui_cfg = TuiAppConfig::from_core_config(&opts.config.tui);
+fn prepare_tui_chrome(opts: &TuiRunOptions) -> TuiChrome {
+    // Built-in theme only on the first frame. `from_core_config` walks
+    // `~/.config/whycodes/themes/` — that belongs after `record_draw`.
+    let tui_cfg = TuiAppConfig::default();
     let mut app = TuiApp::new(tui_cfg);
-
-    // Paint, then hydrate. Anything the first 80×24 home frame does not need
-    // is deferred until after the first `terminal.draw` → `record_draw()`.
-    // See issue #49: this pile used to run serially before the first frame.
-    let file_index = whycodes_index::WorkspaceIndex::start(Vec::new());
-    // Real workspace roots are hydrated after first paint; the empty index
-    // keeps `@` picker inert for frame 0 without paying `canonicalize` + scan.
-    app.set_file_index(file_index.clone());
 
     app.provider_name = opts.provider.clone();
     app.model_name = opts.model.clone();
     app.reasoning_effort = opts.config.session.reasoning_effort.clone();
     app.approval_mode = opts.config.general.approval_mode.unwrap_or_default();
     app.agent_name = opts.agent_name.clone();
-    app.project_dir = opts
-        .project_dir
-        .canonicalize()
-        .unwrap_or_else(|_| opts.project_dir.clone());
+    // Do not canonicalize here: Windows NTFS + Defender on a temp dir is
+    // tens of ms and the first-frame harness uses exactly that.
+    app.project_dir = opts.project_dir.clone();
     app.project_label = app
         .project_dir
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| whycodes_core::display_path(&app.project_dir));
-    // Git branch is read via `.git/HEAD` fast path (no `git` spawn). That's
-    // cheap enough to keep before paint; full `git` fallback is deferred.
-    app.refresh_git_branch();
-    app.apply_context_window(
-        &opts.provider,
-        &opts.model,
-        opts.config
-            .configured_context_window(&opts.provider, &opts.model),
-        opts.config.session.max_context_tokens as u64,
+    // `.git/HEAD` only. `git rev-parse` is deferred until after first paint
+    // (empty harness dirs have no `.git`; spawning git was the Windows TTFF tax).
+    app.refresh_git_branch_fast();
+    // Catalog / API-key probe wait until after first paint (issue #85).
+    let missing_key = opts.api_key.is_empty();
+    app.status_message = format!(
+        "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
+        opts.agent_name, opts.provider, opts.model
     );
 
-    let mut config = opts.config.clone();
+    TuiChrome {
+        app,
+        config: opts.config.clone(),
+        missing_key,
+    }
+}
 
-    app.primary_agents = config
+/// After first paint: load layered TOML and refresh chrome from it.
+/// CLI `-P`/`-m`/`-a` already sit on `opts`; only fill blanks from config.
+fn apply_deferred_config(
+    opts: &mut TuiRunOptions,
+    app: &mut TuiApp,
+    config: &mut Config,
+    provider: &mut String,
+    model: &mut String,
+) {
+    let mut loaded = Config::load_layered(&opts.project_dir)
+        .or_else(|_| Config::load())
+        .unwrap_or_default();
+    loaded.general.project_path = Some(opts.project_dir.clone());
+    if !opts.provider_from_cli
+        && let Some(id) = loaded
+            .default_model
+            .as_ref()
+            .map(|m| m.provider_id.clone())
+            .filter(|id| !id.is_empty())
+            .or_else(|| loaded.providers.keys().next().cloned())
+    {
+        *provider = id;
+        opts.provider = provider.clone();
+        app.provider_name = provider.clone();
+    }
+    if !opts.model_from_cli
+        && let Some(id) = loaded
+            .default_model
+            .as_ref()
+            .map(|m| m.model_id.clone())
+            .filter(|id| !id.is_empty())
+    {
+        *model = id;
+        opts.model = model.clone();
+        app.model_name = model.clone();
+    }
+    if !opts.agent_from_cli && !loaded.default_agent.is_empty() {
+        app.agent_name = loaded.default_agent.clone();
+        opts.agent_name = app.agent_name.clone();
+    }
+    app.reasoning_effort = loaded.session.reasoning_effort.clone();
+    app.approval_mode = loaded.general.approval_mode.unwrap_or_default();
+    app.apply_context_window(
+        provider,
+        model,
+        loaded.configured_context_window(provider, model),
+        loaded.session.max_context_tokens as u64,
+    );
+    app.primary_agents = loaded
         .agents
         .iter()
         .filter(|a| a.mode == AgentMode::Primary || a.mode == AgentMode::All)
         .map(|a| a.name.clone())
         .collect();
     ensure_primary_agents(&mut app.primary_agents);
-    if let Some(idx) = app
-        .primary_agents
-        .iter()
-        .position(|n| n == &opts.agent_name)
-    {
+    if let Some(idx) = app.primary_agents.iter().position(|n| n == &app.agent_name) {
         app.agent_cycle_idx = idx;
     }
-    app.model_selection.models = configured_models(&config);
+    app.model_selection.models = configured_models(&loaded);
     app.model_selection.selected = app
         .model_selection
         .models
         .iter()
-        .position(|(p, m)| p == &opts.provider && m == &opts.model)
+        .position(|(p, m)| p == provider && m == model)
         .unwrap_or(0);
+    let color_mode = app.config.color_mode;
+    app.config = TuiAppConfig::from_core_config(&loaded.tui);
+    app.config.color_mode = color_mode;
+    app.config.extra.quantize_for(color_mode);
+    *config = loaded.clone();
+    opts.config = loaded;
+}
 
-    let missing_key = opts.api_key.is_empty()
-        && whycodes_llm::provider_requires_api_key(&opts.provider, Some(&opts.config));
-    app.status_message = if missing_key {
-        format!(
-            "agent={}  {}/{}  — no API key · /connect  /help",
-            opts.agent_name, opts.provider, opts.model
-        )
-    } else {
-        format!(
-            "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
-            opts.agent_name, opts.provider, opts.model
-        )
-    };
+async fn prepare_tui_runtime(opts: &TuiRunOptions, app: &mut TuiApp) -> TuiRuntime {
+    let mut config = opts.config.clone();
+    // Empty index until hydrate: `@` stays inert for frame 0 without
+    // `canonicalize` + scan (issue #49). Started here so Agent can hold it.
+    let file_index = whycodes_index::WorkspaceIndex::start(Vec::new());
+    app.set_file_index(file_index.clone());
 
     let agent_info = config
         .get_agent(&opts.agent_name)
@@ -562,7 +639,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
 
     if let Some(ref want) = opts.resume_session_id {
         apply_resume(
-            &mut app,
+            app,
             &mut session,
             &system_prompt,
             want,
@@ -571,12 +648,10 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     }
 
     if let Some(ref rem) = opts.remote {
-        apply_remote_hydrate(&mut app, &mut session, rem).await;
+        apply_remote_hydrate(app, &mut session, rem).await;
     }
 
-    TuiBoot {
-        app,
-        config,
+    TuiRuntime {
         file_index,
         agent,
         session,
@@ -586,7 +661,6 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
         perm_rx,
         question_rx,
         session_claims,
-        missing_key,
     }
 }
 
@@ -596,7 +670,9 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
 /// Windows) so IDEs/wrappers that capture stdout (`stdout_tty=false`) still
 /// get a normal TUI. Falls back to stdout when it is itself a TTY.
 pub fn tui_available() -> bool {
-    open_tui_writer().is_ok()
+    // stdout already a TTY: do not open CONOUT$ / `/dev/tty` just to probe.
+    // `cmd_run` used to pay that extra handle before first paint (Windows).
+    io::stdout().is_terminal() || open_controlling_console().is_some()
 }
 
 /// Concrete writer for ratatui/crossterm (`execute!` needs `Sized`).
@@ -798,6 +874,13 @@ impl LoopTerm {
         match self {
             Self::Live(t) => draw_into(t, app),
             Self::Headless(t) => draw_into(t, app),
+        }
+    }
+
+    fn draw_splash(&mut self) -> anyhow::Result<()> {
+        match self {
+            Self::Live(t) => t.draw(render_splash).map(|_| ()).map_err(Into::into),
+            Self::Headless(t) => t.draw(render_splash).map(|_| ()).map_err(Into::into),
         }
     }
 
@@ -1082,13 +1165,7 @@ fn enter_raw_and_alt(
              Run inside a real terminal, or use `whycodes --plain`."
         )
     })?;
-    execute!(
-        out,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        EnableBracketedPaste
-    )
-    .map_err(|e| {
+    execute!(out, EnterAlternateScreen).map_err(|e| {
         let _ = disable_raw_mode();
         whycodes_core::logging::emit(
             "whycodes_tui",
@@ -1098,10 +1175,18 @@ fn enter_raw_and_alt(
         );
         anyhow::anyhow!("failed to enter alternate screen ({e})")
     })?;
-    if let Err(e) = execute!(out, SetCursorStyle::BlinkingBar) {
-        tracing::debug!(error = %e, "set blinking bar cursor style failed");
-    }
     Ok(())
+}
+
+fn enable_mouse_paste_cursor(out: &mut impl Write) {
+    if let Err(e) = execute!(
+        out,
+        EnableMouseCapture,
+        EnableBracketedPaste,
+        SetCursorStyle::BlinkingBar
+    ) {
+        tracing::debug!(error = %e, "enable mouse/paste/cursor after first paint failed");
+    }
 }
 
 fn restore_live_backend(out: &mut impl Write, keyboard_enhanced: bool) {
@@ -1158,6 +1243,72 @@ pub enum TurnOutcome {
     },
 }
 
+/// Sync wrapper so `whycodes run -d` can paint before clap's Tokio pool exists.
+///
+/// Test/helper sync wrapper. Production `run -d` uses a 2-worker pool in the CLI
+/// so `event::poll` cannot starve turns on Linux, macOS, or Windows.
+pub fn run_sync(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
+    rt.block_on(run(opts))
+}
+
+/// Alt-screen CSI + one line. No Agent, Config, Tokio, or ratatui.
+///
+/// Returns `Some(Quit)` when `WHYCODES_BENCH` is set (harness done). `None`
+/// means the caller should keep going with the full TUI.
+pub fn paint_first_frame_sync() -> anyhow::Result<Option<TuiExit>> {
+    let bench = crate::bench::config_from_env();
+    let mut out = open_tui_writer().map_err(|e| {
+        anyhow::anyhow!(
+            "failed to open terminal for TUI ({e}). \
+             Run inside a real terminal, or use `whycodes --plain`."
+        )
+    })?;
+    write_splash_csi(&mut out)?;
+    crate::bench::record_draw();
+    if let Some(ref b) = bench {
+        while !crate::bench::should_stop(b) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        restore_splash_csi(&mut out);
+        crate::bench::write_results(b);
+        return Ok(Some(TuiExit::Quit));
+    }
+    restore_splash_csi(&mut out);
+    Ok(None)
+}
+
+/// One CSI burst: alt-screen, clear, product line. No ratatui, no raw mode.
+fn write_splash_csi(out: &mut impl Write) -> io::Result<()> {
+    out.write_all(b"\x1b[?1049h\x1b[2J\x1b[H\x1b[?25lwhycodes  -  /help")?;
+    out.flush()
+}
+
+fn restore_splash_csi(out: &mut impl Write) {
+    if let Err(e) = out.write_all(b"\x1b[?25h\x1b[?1049l") {
+        tracing::debug!(error = %e, "splash CSI restore write failed");
+    }
+    if let Err(e) = out.flush() {
+        tracing::debug!(error = %e, "splash CSI restore flush failed");
+    }
+}
+
+fn render_splash(frame: &mut ratatui::Frame<'_>) {
+    use ratatui::style::{Color, Style};
+    use ratatui::text::Line;
+    use ratatui::widgets::{Block, Paragraph};
+    let area = frame.area();
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Color::Black)),
+        area,
+    );
+    let line = Paragraph::new(Line::from("whycodes  —  /help"));
+    frame.render_widget(line, area);
+}
+
 /// Run the full-screen TUI until the user quits.
 pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let mut opts = opts;
@@ -1187,71 +1338,71 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // Wall clock for the Cline-style exit summary (process open → quit).
     let session_started = Instant::now();
 
-    let boot = prepare_tui_boot(&opts).await;
-    let mut app = boot.app;
-    let mut config = boot.config;
-    let mut file_index = boot.file_index;
-    let mut agent = boot.agent;
-    let session = boot.session;
-    let history = boot.history;
-    let perm_prompter = boot.perm_prompter;
-    let question_prompter = boot.question_prompter;
-    let perm_rx = boot.perm_rx;
-    let question_rx = boot.question_rx;
-    let session_claims = boot.session_claims;
-    let missing_key = boot.missing_key;
-    let remote = opts.remote.clone();
-
-    let mut provider = opts.provider.clone();
-    let mut model = opts.model.clone();
-    let mut api_key = opts.api_key.clone();
-    let max_turns = opts.max_turns;
-    let project_dir = opts.project_dir.clone();
-
-    // On panic, leave alt-screen / raw mode so the shell is usable and the
-    // crash report (written by whycodes_core::logging) is readable.
     if !headless {
         install_panic_terminal_restore();
     }
 
-    whycodes_core::logging::emit(
-        "whycodes_tui",
-        "info",
-        "tui.starting",
-        Some(serde_json::json!({
-            "provider": provider,
-            "model": model,
-            "stdout_tty": io::stdout().is_terminal(),
-            "stdin_tty": io::stdin().is_terminal(),
-            "headless": headless,
-        })),
-    );
-
     let color_mode = detect_color_mode();
     set_active_color_mode(color_mode);
-    app.config.color_mode = color_mode;
-    app.config.extra.quantize_for(color_mode);
-
-    // `live_buf` runs the production `!headless` arms (panic restore,
-    // first-frame hydrate, crossterm poll) into a memory buffer.
+    // Attach + splash before TuiApp / Config (Linux, macOS, Windows).
     let (mut terminal, keyboard_enhanced, tw, th) = if headless && !live_buf {
         (LoopTerm::headless(color_mode)?, false, 80u16, 24u16)
     } else {
         attach_for_loop(color_mode, live_buf)?
     };
 
-    whycodes_core::logging::emit(
-        "whycodes_tui",
-        "info",
-        "tui.ready",
-        Some(serde_json::json!({
-            "term_w": tw,
-            "term_h": th,
-            "color_mode": color_mode.as_str(),
-            "term_program": std::env::var("TERM_PROGRAM").ok(),
-            "term": std::env::var("TERM").ok(),
-        })),
-    );
+    if draw_fail {
+        terminal.restore(keyboard_enhanced);
+        return Err(anyhow::anyhow!("tui draw failed"));
+    }
+    if let Err(e) = terminal.draw_splash() {
+        terminal.restore(keyboard_enhanced);
+        if !headless {
+            whycodes_core::logging::clear_panic_cleanup();
+        }
+        return Err(e);
+    }
+    let bench_clock = std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty());
+    let bench = crate::bench::config_from_env();
+    crate::bench::record_draw();
+    if let Some(ref b) = bench {
+        while !crate::bench::should_stop(b) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        terminal.restore(keyboard_enhanced);
+        if !headless {
+            whycodes_core::logging::clear_panic_cleanup();
+        }
+        crate::bench::write_results(b);
+        return Ok(TuiExit::Quit);
+    }
+
+    let chrome = prepare_tui_chrome(&opts);
+    let mut app = chrome.app;
+    let mut config = chrome.config;
+    let missing_key = chrome.missing_key;
+    let remote = opts.remote.clone();
+    let mut provider = opts.provider.clone();
+    let mut model = opts.model.clone();
+    let mut api_key = opts.api_key.clone();
+    let max_turns = opts.max_turns;
+    let project_dir = opts.project_dir.clone();
+    app.config.color_mode = color_mode;
+    app.config.extra.quantize_for(color_mode);
+    apply_boot_prompt(&mut app, missing_key, opts.initial_prompt.clone());
+
+    if !bench_clock {
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "info",
+            "tui.first_frame",
+            Some(serde_json::json!({ "w": tw, "h": th })),
+        );
+    }
+
+    if let LoopTerm::Live(ref mut term) = terminal {
+        enable_mouse_paste_cursor(term.backend_mut());
+    }
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<TurnEvent>();
     let (done_tx, done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
@@ -1279,6 +1430,21 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     if let Some(ev) = seed_auth {
         send_auth_event(&auth_tx, ev);
     }
+
+    if opts.defer_config_load {
+        apply_deferred_config(&mut opts, &mut app, &mut config, &mut provider, &mut model);
+    }
+
+    let runtime = prepare_tui_runtime(&opts, &mut app).await;
+    let mut file_index = runtime.file_index;
+    let mut agent = runtime.agent;
+    let session = runtime.session;
+    let history = runtime.history;
+    let perm_prompter = runtime.perm_prompter;
+    let question_prompter = runtime.question_prompter;
+    let perm_rx = runtime.perm_rx;
+    let question_rx = runtime.question_rx;
+    let session_claims = runtime.session_claims;
 
     // Background jobs / schedule enqueue use the same long-lived event channel.
     agent.wire_event_sink(event_tx.clone());
@@ -1313,12 +1479,18 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let mut pending_async_title: Option<(String, String)> = None;
     let mut update_rx = opts.update_rx;
 
-    apply_boot_prompt(&mut app, missing_key, opts.initial_prompt.clone());
-
-    // Inert unless WHYCODES_BENCH is set; see crate::bench.
-    let bench = crate::bench::config_from_env();
-
-    let mut first_frame = true;
+    hydrate_after_first_frame(
+        &mut app,
+        &mut rt,
+        &mut file_index,
+        &mut api_key,
+        &provider,
+        &model,
+        &mut config,
+        &project_dir,
+        false,
+    )
+    .await;
     // Paste / resize / focus can echo glyphs onto the PTY outside ratatui's
     // diff. Clear the terminal on the next paint so leftover text cannot sit
     // in the unpainted rows beside the prompt. Ordinary Backspace/Delete
@@ -1371,7 +1543,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             // Static toasts are *not* animation — jcode measured ~180 wasted
             // full frames per notice when they pulled the loop to 40 ms.
             let animate = rt.agent_busy || app.running_task_count() > 0;
-            if app.needs_redraw || animate || first_frame {
+            if app.needs_redraw || animate {
                 if app.pending_full_clears > 0 {
                     if let Err(e) = terminal.clear(&mut clear_fail) {
                         whycodes_core::logging::emit(
@@ -1383,7 +1555,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     }
                     app.pending_full_clears = app.pending_full_clears.saturating_sub(1);
                 }
-                let (draw_area, snapshot) = match terminal.draw_app(&mut app, &mut draw_fail) {
+                let (_draw_area, snapshot) = match terminal.draw_app(&mut app, &mut draw_fail) {
                     Ok(v) => v,
                     Err(e) => {
                         whycodes_core::logging::emit(
@@ -1395,42 +1567,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         return Err(e);
                     }
                 };
-                // Record *before* MCP / auto-index: those can block for
-                // seconds and must not inflate time-to-first-frame or keep
-                // `--idle-ms 0` from exiting as soon as a frame is up.
                 crate::bench::record_draw();
-                let just_first = first_frame;
-                if first_frame {
-                    first_frame = false;
-                    whycodes_core::logging::emit(
-                        "whycodes_tui",
-                        "info",
-                        "tui.first_frame",
-                        Some(serde_json::json!({
-                            "w": draw_area.width,
-                            "h": draw_area.height,
-                        })),
-                    );
-                }
                 // Cell snapshot is only for mouse text selection → clipboard.
                 // Skip the ~4k String allocs/frame when nothing is selected.
                 if after_draw_frame(&mut app, snapshot, animate, bench.as_ref()) {
                     break;
-                }
-
-                if just_first {
-                    hydrate_after_first_frame(
-                        &mut app,
-                        &mut rt,
-                        &mut file_index,
-                        &mut api_key,
-                        &provider,
-                        &model,
-                        &config,
-                        &project_dir,
-                        animate,
-                    )
-                    .await;
                 }
             }
 
@@ -4838,12 +4979,25 @@ async fn hydrate_after_first_frame(
     api_key: &mut String,
     provider: &str,
     model: &str,
-    config: &Config,
+    config: &mut Config,
     project_dir: &std::path::Path,
     animate: bool,
 ) {
     let hydrate_before = capture_first_frame_hydrate_chrome(app);
     app.config.theme.apply_syntax_theme();
+    if app.project_dir.as_os_str() != project_dir.as_os_str() {
+        app.project_dir = project_dir.to_path_buf();
+    }
+    if let Ok(canon) = project_dir.canonicalize() {
+        app.project_dir = canon;
+        app.project_label = app
+            .project_dir
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| whycodes_core::display_path(&app.project_dir));
+    }
+    config.load_command_files(project_dir);
+    app.refresh_git_branch();
     hydrate_auth_plugins(project_dir);
     let real = start_workspace_file_index(project_dir);
     app.set_file_index(real.clone());

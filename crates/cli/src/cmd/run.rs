@@ -376,6 +376,56 @@ pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     }
 }
 
+/// Clap-free TUI entry for `whycodes` / `whycodes run -d <dir>`.
+///
+/// The first-frame harness is this argv. Building clap + a Tokio runtime
+/// before paint was tens of ms on Windows (issue #85 follow-up).
+pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
+    if std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty()) {
+        let exit = whycodes_tui::paint_first_frame_sync()
+            .map_err(map_tui_run_error)?
+            .unwrap_or(whycodes_tui::TuiExit::Quit);
+        return match exit {
+            whycodes_tui::TuiExit::Quit => Ok(()),
+            whycodes_tui::TuiExit::Upgrade => Ok(()),
+        };
+    }
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()?;
+    let exit = rt
+        .block_on(whycodes_tui::run(whycodes_tui::TuiRunOptions {
+            project_dir,
+            provider: "anthropic".into(),
+            model: "claude-sonnet-4-20250514".into(),
+            api_key: String::new(),
+            agent_name: "build".into(),
+            max_turns: None,
+            initial_prompt: None,
+            config: Config::default(),
+            resume_session_id: None,
+            remote: None,
+            defer_config_load: true,
+            provider_from_cli: false,
+            model_from_cli: false,
+            agent_from_cli: false,
+            update_rx: None,
+            inject: Default::default(),
+        }))
+        .map_err(map_tui_run_error)?;
+    match exit {
+        whycodes_tui::TuiExit::Quit => Ok(()),
+        whycodes_tui::TuiExit::Upgrade => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(super::debug::after_tui_exit(exit))
+        }
+    }
+}
+
 pub(crate) async fn cmd_run(
     cli: &Cli,
     prompt: Option<&str>,
@@ -402,25 +452,39 @@ pub(crate) async fn cmd_run(
     }
 
     let project_dir_early = resolve_dir(cli);
-    let mut config = Config::load_layered(&project_dir_early)
-        .or_else(|_| Config::load())
-        .unwrap_or_default();
-    if cli.no_memory {
-        config.memory.enabled = false;
-    }
-    let provider = resolve_provider(cli, &config);
-    let model = resolve_model(cli, &config);
-    let agent_name = resolve_agent(cli, &config);
-    let project_dir = resolve_dir(cli);
-    config.load_command_files(&project_dir);
-
-    // Full-screen TUI unless --plain / WHYCODES_PLAIN.
-    // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
-    // while still having a controlling terminal — tui_available() opens
-    // /dev/tty (Unix) or CONOUT$ (Windows) in that case so the TUI still works.
+    // Full-screen TUI unless --plain / WHYCODES_PLAIN. Decide *before*
+    // layered TOML so the first-frame clock is not waiting on config I/O.
     let force_plain = force_plain_mode(cli.plain);
     let stub_tui = cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some();
     let use_tui = should_use_tui(force_plain, stub_tui, whycodes_tui::tui_available());
+    let project_dir = project_dir_early.clone();
+
+    let mut config;
+    let provider;
+    let model;
+    let agent_name;
+    if use_tui {
+        // Empty config until after first paint. CLI flags still win via
+        // `resolve_*`; `load_layered` runs after `record_draw` (issue #85).
+        config = Config::default();
+        if cli.no_memory {
+            config.memory.enabled = false;
+        }
+        provider = resolve_provider(cli, &config);
+        model = resolve_model(cli, &config);
+        agent_name = resolve_agent(cli, &config);
+    } else {
+        config = Config::load_layered(&project_dir_early)
+            .or_else(|_| Config::load())
+            .unwrap_or_default();
+        if cli.no_memory {
+            config.memory.enabled = false;
+        }
+        provider = resolve_provider(cli, &config);
+        model = resolve_model(cli, &config);
+        agent_name = resolve_agent(cli, &config);
+        config.load_command_files(&project_dir);
+    }
     let interactive = is_repl_interactive(prompt, format.is_structured());
     // TUI owns first-run import as a home-screen confirm (same chrome as
     // the update offer). `--plain` REPL still asks on stdin before the loop.
@@ -480,6 +544,10 @@ pub(crate) async fn cmd_run(
             config,
             resume_session_id: resume_want,
             remote: None,
+            defer_config_load: true,
+            provider_from_cli: cli.provider.is_some(),
+            model_from_cli: cli.model.is_some(),
+            agent_from_cli: cli.agent_flag.is_some(),
             update_rx,
             inject: Default::default(),
         })

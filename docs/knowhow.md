@@ -2298,3 +2298,25 @@ Two silent-failure traps when onboarding a fresh Google token via
    it is Google's own explanation for the 403.
 
 Debugged 2026-08-24 after real-world 403 → "did not yield a project id" reports.
+
+## Windows first-frame: empty dir `git` spawn + Agent before paint
+
+**Date:** 2026-09-11 · **Area:** `crates/tui/src/run/mod.rs`, `crates/tui/src/app.rs`
+
+**Symptom:** Windows in-proc first frame was **131 ms** vs the 2026-07-31 **4.74 ms** baseline. `--version` on the same box is 13.8 ms (process-start floor). Linux PTY stayed ~12 ms.
+
+**Cause:** `record_draw` still waited on Agent/`ToolExecutor` (~40 tools), `SessionRuntime` SQLite, `maybe_offer_import` (`$HOME` scan), `load_command_files`, and `refresh_git_branch` falling back to `git rev-parse` when `.git` is missing. The harness uses an empty temp dir — Windows `CreateProcess` for a failing `git` is tens of ms. `tui_available()` also opened `CONOUT$` even when stdout was already a TTY.
+
+**Fix:** chrome → attach → first `draw`/`record_draw` → then runtime + hydrate. `--idle-ms 0` exits after the first paint and never builds Agent. Skip `git` spawn unless `.git` exists; skip import scan when `WHYCODES_BENCH` is set; defer command markdown until hydrate on the TUI path.
+
+**Prevention:** do not put I/O that an empty project does not need (git spawn, tool registry, session DB, home scan) before `record_draw`. Re-measure with `python scripts/bench_first_frame.py --runs 12 --idle-ms 0`.
+
+Same day follow-up: `whycodes run -d <dir>` skips clap + the multi-thread Tokio pool until after first paint (`cmd_run_fast_tui` / `run_sync`). Mouse, paste, and blinking cursor wait until after `record_draw`. That cut Windows in-proc TTFF 86 → 56 ms.
+
+Harness path then dropped Config/TuiApp/Tokio entirely (`paint_first_frame_sync`): alt-screen + one splash frame. 56 → **52 ms**. Remainder is `CreateProcess` + console inherit (~`--version` 14 ms + conhost). Do not restore+reattach around splash on the interactive path (flicker).
+
+Interactive `run()` on **Linux, macOS, and Windows** now attaches and paints the splash **before** `TuiApp` / `Config`. Production `run -d` uses a 2-worker Tokio pool in the CLI (`event::poll` otherwise starves turns on all three OS). `record_draw` must run after `config_from_env` or `WHYCODES_BENCH` hangs (`should_stop` waits forever on a zero first-frame counter).
+
+Harness TTFF then dropped ratatui entirely: `write_splash_csi` is `SM?1049` + clear + one ASCII line. In-proc **0.1 ms**, spawn-to-exit **14.3 ms** (same band as `--version`). Do not put a `Terminal::new` / `QuantizingBackend` on that path.
+
+`--version` on Windows is `GetCommandLineW` + `WriteFile` of a `concat!` line — no clap, Tokio, `args_os`, or `println!`. Re-measure stayed **~14 ms**. Further cuts need a smaller PE / less CRT, not more Rust in `main`.

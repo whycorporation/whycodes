@@ -107,20 +107,17 @@ impl WhyCodesClient {
     /// it spends the same provider quota as the user. `close` / drop kills it.
     pub async fn launch(opts: LaunchOptions) -> Result<Self, SdkError> {
         let prepared = prepare_launch(&opts)?;
+        if let Some(err) = missing_spawned_binary(&prepared.binary) {
+            return Err(err);
+        }
         let mut cmd = launch_command(&prepared, &opts);
-        let mut child = cmd.spawn().map_err(|e| {
+        let child = cmd.spawn().map_err(|e| {
             SdkError::with_source(
                 ErrorCode::ServeNotFound,
                 &format!("could not execute {}: {e}", prepared.binary.display()),
                 e,
             )
         })?;
-        if let Some(err) = missing_spawned_binary(
-            poll_child_exit(Some(&mut child)).is_some(),
-            &prepared.binary,
-        ) {
-            return Err(err);
-        }
         let port = prepared.port;
         let held_home = prepared.held_home;
 
@@ -818,17 +815,24 @@ struct PreparedLaunch {
     held_home: Option<tempfile::TempDir>,
 }
 
-/// Some Linux hosts spawn a missing absolute path as Ok; the child then
-/// exits 127 immediately. Treat that as ServeNotFound, not a crash.
-fn missing_spawned_binary(child_exited: bool, binary: &Path) -> Option<SdkError> {
-    if child_exited && !binary.is_file() {
+/// Missing binary is ServeNotFound even when spawn returns Ok (some Linux
+/// hosts delay the 127 until wait). Do not wait for try_wait — handshake
+/// timeout would otherwise map to StartupFailed.
+///
+/// Bare names (`whycodes`, `python`) go through PATH and are not files.
+fn missing_spawned_binary(binary: &Path) -> Option<SdkError> {
+    if !looks_like_filesystem_path(binary) || binary.is_file() {
+        None
+    } else {
         Some(SdkError::new(
             ErrorCode::ServeNotFound,
             &format!("could not execute {}: not found", binary.display()),
         ))
-    } else {
-        None
     }
+}
+
+fn looks_like_filesystem_path(binary: &Path) -> bool {
+    binary.is_absolute() || binary.parent().is_some_and(|p| !p.as_os_str().is_empty())
 }
 
 fn poll_child_exit(child: Option<&mut Child>) -> Option<String> {

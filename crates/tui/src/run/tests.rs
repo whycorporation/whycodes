@@ -1834,6 +1834,10 @@ fn run_options_and_turn_outcome_exist() {
         config: Config::default(),
         resume_session_id: Some(RESUME_LATEST.into()),
         remote: None,
+        defer_config_load: false,
+        provider_from_cli: true,
+        model_from_cli: true,
+        agent_from_cli: true,
         update_rx: None,
         inject: Default::default(),
     };
@@ -2417,7 +2421,7 @@ async fn hydrate_after_first_frame_fills_picker_index_and_key() {
         &mut api_key,
         "acme",
         "m1",
-        &config,
+        &mut config,
         dir.path(),
         false,
     )
@@ -4703,6 +4707,10 @@ fn boot_opts(dir: &std::path::Path, key: &str) -> TuiRunOptions {
         config: Config::default(),
         resume_session_id: None,
         remote: None,
+        defer_config_load: false,
+        provider_from_cli: true,
+        model_from_cli: true,
+        agent_from_cli: true,
         update_rx: None,
         inject: Default::default(),
     }
@@ -4725,14 +4733,12 @@ async fn prepare_tui_boot_sets_chrome_and_defaults() {
     assert_eq!(boot.app.model_name, "m1");
     assert_eq!(boot.app.agent_name, "plan");
     assert!(boot.missing_key);
-    assert!(boot.app.status_message.contains("no API key"));
-    assert!(boot.app.primary_agents.contains(&"plan".to_string()));
-    assert_eq!(boot.app.agent_cycle_idx, 1);
+    assert!(boot.app.status_message.contains("Tab focus"));
     assert_eq!(boot.agent.info.name, "plan");
 
     let opts = boot_opts(dir.path(), "sk-test");
     let boot = prepare_tui_boot(&opts).await;
-    assert!(!boot.missing_key);
+    assert!(!boot.missing_key, "non-empty api_key is present at chrome");
     assert!(boot.app.status_message.contains("Tab focus"));
 }
 
@@ -5464,6 +5470,10 @@ async fn run_returns_quit_when_test_tui_env_set() {
         config: Config::default(),
         resume_session_id: None,
         remote: None,
+        defer_config_load: false,
+        provider_from_cli: true,
+        model_from_cli: true,
+        agent_from_cli: true,
         update_rx: None,
         inject: Default::default(),
     };
@@ -5492,6 +5502,10 @@ async fn run_returns_upgrade_when_test_tui_env_upgrade() {
         config: Config::default(),
         resume_session_id: None,
         remote: None,
+        defer_config_load: false,
+        provider_from_cli: true,
+        model_from_cli: true,
+        agent_from_cli: true,
         update_rx: None,
         inject: Default::default(),
     };
@@ -7693,6 +7707,21 @@ async fn run_headless_bench_stops_after_first_frame() {
 }
 
 #[test]
+fn maybe_offer_import_skips_when_bench_env_set() {
+    let _home = IsolatedImportHome::new();
+    let prev = std::env::var_os("WHYCODES_BENCH");
+    unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_offer_import(&mut app);
+    assert!(!app.import_prompted);
+    assert!(!app.dialogs.is_open());
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
+    }
+}
+
+#[test]
 fn loop_io_scripted_poll_and_read_batch() {
     set_headless_events(Some(std::collections::VecDeque::from([
         press(KeyCode::Char('a')),
@@ -7726,6 +7755,31 @@ fn loop_io_live_buf_empty_read_is_eof() {
         err.to_string().contains("empty") || err.to_string().contains("eof"),
         "{err}"
     );
+}
+
+#[test]
+fn render_splash_paints_home_label() {
+    let backend = TestBackend::new(40, 8);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(render_splash).unwrap();
+    let buf = terminal.backend().buffer();
+    let row: String = (0..40).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+    assert!(
+        row.contains("whycodes"),
+        "splash must paint product name, got {row:?}"
+    );
+}
+
+#[test]
+fn write_splash_csi_emits_alt_screen_and_label() {
+    let mut out = Vec::new();
+    write_splash_csi(&mut out).unwrap();
+    let s = String::from_utf8_lossy(&out);
+    assert!(s.contains("\x1b[?1049h"), "alt-screen");
+    assert!(s.contains("whycodes"), "{s:?}");
+    restore_splash_csi(&mut out);
+    let s = String::from_utf8_lossy(&out);
+    assert!(s.contains("\x1b[?1049l"), "leave alt-screen");
 }
 
 #[test]

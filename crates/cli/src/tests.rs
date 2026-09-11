@@ -985,6 +985,30 @@ fn version_only_argv_and_tui_invoke() {
     assert!(!is_version_only_argv(["--version", "--debug"]));
     assert!(!is_version_only_argv(["config"]));
     assert!(!is_version_only_argv(["-V", "extra"]));
+    assert!(is_version_only_command_line(
+        r#"C:\bin\whycodes.exe --version"#
+    ));
+    assert!(is_version_only_command_line(
+        r#""C:\Program Files\whycodes.exe" -V"#
+    ));
+    assert!(!is_version_only_command_line(
+        r#"whycodes.exe --version --debug"#
+    ));
+    assert!(!is_version_only_command_line(r#"whycodes.exe"#));
+    assert!(is_version_only_command_line_utf16(
+        &"whycodes.exe --version".encode_utf16().collect::<Vec<_>>()
+    ));
+    assert!(early_tui_run_dir_from(Vec::<&str>::new()).is_some());
+    assert_eq!(
+        early_tui_run_dir_from(["run", "-d", "proj"]).as_deref(),
+        Some(std::path::Path::new("proj"))
+    );
+    assert!(early_tui_run_dir_from(["run", "--plain"]).is_none());
+    assert!(early_tui_run_dir_from(["run", "-d", "x", "extra"]).is_none());
+    assert_eq!(
+        early_tui_run_dir_from(["-d", "."]).as_deref(),
+        Some(std::path::Path::new("."))
+    );
 
     assert!(is_tui_invoke(&cli(None)));
     assert!(is_tui_invoke(&cli(Some(Commands::Run {
