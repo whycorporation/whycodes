@@ -519,6 +519,53 @@ machine. The product claim remains “paint only when something changed,”
 not a frames-per-second race.
 
 
+### Re-measure, 2026-09-11 (Windows AMD64, release, HEAD `f5686a9`)
+
+Machine: AMD Ryzen 7 3800X 8-Core, Windows 11 Pro 10.0.26200. Release
+binary **16.5 MB** (`st_size / 1e6`), built with `--features bundled-sqlite`
+(system `sqlite3.lib` is not on PATH). Recorded JSON:
+[`bench-results.json`](bench-results.json). Process-level **and** criterion
+hot paths / index (sample-size 15). First Windows re-measure since the
+2026-07-31 pre-optimisation baseline; last Linux snapshot remains
+2026-09-02 `56f2e43`.
+
+Do not compare these startup / TTFF numbers to the Linux 1–3 ms / ~12 ms
+rows. Windows process creation and the console-inherit first-frame harness
+(no stdlib ConPTY) sit in a different band. `--version` is still the
+floor on this OS.
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **13.8 ms** | 14.4 ms | **7.6 MB** |
+| `--help` | **43.2 ms** | 65.2 ms | — |
+| `config show` | **50.2 ms** | 54.5 ms | **12.9 MB** |
+| `session list` | — | — | **12.9 MB** |
+| binary size | **16.5 MB** | — | — |
+
+`--version` improved vs the 2026-07-31 Windows baseline (20.9 / 22.6 ms,
+9.6 MB RSS). Version p95 (14.4 ms) is still far under the loose CI
+ceiling (50 ms / 40 MB). `--help` and `config show` are slower than that
+pre-opt row (21.4 / 25.6 ms): more work now sits on those paths (config
+layering, session DB). Peak RSS for the short CLI cases is in the 8–13 MB
+band.
+
+**Multi-session PSS:** skipped (needs Linux `/proc/.../smaps_rollup`).
+
+**First frame / idle** (`bench_first_frame.py`, empty project; child
+inherits this console):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **131.4 ms** median | 0.0/s | Linux PTY was 12.0 ms |
+| Harness `--idle-ms 3000` (10 runs) | **129.0 ms** median | **0.6/s** | Linux was 0.3/s |
+
+Spawn-to-exit at `--idle-ms 0` is **158.8 ms** (min 150.2, max 171.4).
+In-proc TTFF (~131 ms) includes Windows process start plus first paint
+on an inherited console; do not quote it against the Linux ~12 ms PTY
+figure. Idle redraws stay near zero (0.6/s over 3 s). The product claim
+remains “paint only when something changed.”
+
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
@@ -737,6 +784,59 @@ render of a 200-line fence is cheaper this run (43 ms vs 57 ms).
 | entries snapshot | 116 µs |
 | 20k query_now (non-blocking) | **13 µs** |
 | 20k query_settle | 13 µs |
+
+### Re-measure, 2026-09-11 (Windows, criterion sample-size 15)
+
+Same machine as the process-level re-measure above (`f5686a9`). Warm
+highlight is in the same nanosecond band as Linux 2026-09-02; parse and
+assess are a bit slower on this Windows run. Cold highlight of 500 lines
+is still noisy (syntect + memo seed). Index **walk** is the standout
+Windows cost: NTFS + antivirus on a ~2k-file fixture is ~5× the Linux
+serial walk; parallel (4 / 8 threads) recovers most of it. Query stays
+in the tens of microseconds.
+
+**`highlight_code_spans`**
+
+| Case | cold | warm |
+|---|---|---|
+| Rust, 10 lines | ~2.0 ms | **83 ns** |
+| Rust, 100 lines | ~1.9 ms | **248 ns** |
+| Rust, 500 lines | (noisy) | **1.03 µs** |
+| untagged, 100 lines (warm) | — | 215 ns |
+
+**`parse_markdown`**
+
+| Case | time |
+|---|---|
+| typical response | 7.4 µs |
+| streaming prefix 200 / 1000 / 4000 chars | 3.7 / 13.7 / 53.4 µs |
+
+**`assess` (command-risk)**
+
+| Case | time |
+|---|---|
+| safe short (`ls -la` class) | 890 ns |
+| safe build (`cargo test …`) | 2.63 µs |
+| caution / destructive / catastrophic | 4.49 / 4.94 / 2.84 µs |
+| pipeline | 9.04 µs |
+
+**`render_markdown` (ANSI, uncached per call)**
+
+| Case | time |
+|---|---|
+| typical response | 1.26 ms |
+| 200-line Rust fence | 40.9 ms |
+
+**Index (`whycodes-index`)**
+
+| Case | time |
+|---|---|
+| walk root (1 / 4 / 8 threads) | ~24.0 / 10.0 / 8.5 ms |
+| query warm | **18 µs** |
+| browse top | 46 µs |
+| entries snapshot | 128 µs |
+| 20k query_now (non-blocking) | **17 µs** |
+| 20k query_settle | 17 µs |
 
 **The tokeniser allocated per character.** `match_operator` collected each of
 its fifteen candidate operators into a `Vec<char>` at every character position,
