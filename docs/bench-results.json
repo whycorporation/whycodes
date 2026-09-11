@@ -1,148 +1,115 @@
 {
-  "date": "2026-09-02",
-  "git": "56f2e43",
+  "date": "2026-09-11",
+  "git": "f5686a9",
   "machine": {
-    "platform": "Linux x86_64",
-    "cpu": "Intel(R) Core(TM) i5-4200H CPU @ 2.80GHz",
-    "kernel": "7.2.2-1-cachyos"
+    "platform": "Windows AMD64",
+    "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
+    "os": "Microsoft Windows 11 Pro 10.0.26200"
   },
-  "binary": "target/release/whycodes",
+  "binary": "target/release/whycodes.exe",
   "profile": "release",
-  "binary_size_mb": 14.8,
-  "version_ms_p95": 1.95,
-  "version_rss_mb": 0.54,
+  "features": ["bundled-sqlite"],
+  "binary_size_mb": 16.5,
+  "version_ms_p95": 14.41,
+  "version_rss_mb": 7.61,
   "startup": {
     "version": {
       "runs": 20,
-      "median_ms": 1.43,
-      "p95_ms": 1.95,
-      "min_ms": 1.3,
-      "max_ms": 1.95
+      "median_ms": 13.8,
+      "p95_ms": 14.41,
+      "min_ms": 13.0,
+      "max_ms": 14.41
     },
     "help": {
       "runs": 20,
-      "median_ms": 1.91,
-      "p95_ms": 2.14,
-      "min_ms": 1.79,
-      "max_ms": 2.14
+      "median_ms": 43.17,
+      "p95_ms": 65.15,
+      "min_ms": 39.38,
+      "max_ms": 65.15
     },
     "config-show": {
       "runs": 20,
-      "median_ms": 2.53,
-      "p95_ms": 3.2,
-      "min_ms": 2.45,
-      "max_ms": 3.2
+      "median_ms": 50.18,
+      "p95_ms": 54.52,
+      "min_ms": 47.9,
+      "max_ms": 54.52
     }
   },
   "memory": {
     "version": {
-      "runs": 10,
-      "median_mb": 0.54,
-      "max_mb": 15.58,
-      "note": "Short-lived --version RSS sampling is noisy (most samples 0.44–0.64 MB; one 15.58 MB miss). Median from an isolated 10-run remeasure."
+      "runs": 5,
+      "median_mb": 7.61,
+      "max_mb": 7.66
     },
     "config-show": {
       "runs": 5,
-      "median_mb": 5.32,
-      "max_mb": 5.97
+      "median_mb": 12.9,
+      "max_mb": 12.91
     },
     "session-list": {
       "runs": 5,
-      "median_mb": 11.47,
-      "max_mb": 11.66
+      "median_mb": 12.93,
+      "max_mb": 13.02
     }
   },
   "multi_session": {
-    "settle_s": 1.5,
-    "counts": {
-      "1": {
-        "runs": 5,
-        "sessions": 1,
-        "median_pss_mb": 10.5,
-        "max_pss_mb": 10.8,
-        "min_pss_mb": 10.5,
-        "median_process_count": 1,
-        "samples_mb": [
-          10.5,
-          10.5,
-          10.5,
-          10.6,
-          10.8
-        ]
-      },
-      "10": {
-        "runs": 5,
-        "sessions": 10,
-        "median_pss_mb": 32.0,
-        "max_pss_mb": 32.2,
-        "min_pss_mb": 32.0,
-        "median_process_count": 10,
-        "samples_mb": [
-          32.0,
-          32.0,
-          32.0,
-          32.1,
-          32.2
-        ],
-        "extra_over_one_mb": 21.5,
-        "per_added_session_mb": 2.4
-      }
-    }
+    "skipped": true,
+    "reason": "not-linux"
   },
-  "first_frame_note": "TUI `run` is still multi-thread Tokio (never current_thread; turns must not starve on event::poll), capped at TUI_WORKER_THREADS=2. HEAD `56f2e43` is test-coverage local-mod work on top of `ea098af` idle gates; production TUI/boot path is unchanged vs the earlier 2026-09-02 process-level row. Same 80x24 harness PTY. In-proc TTFF 12.0 ms median vs 13.1 ms on ea098af, 13.0 ms on 50e05d8, 12.5 ms on 5f6849e, and 11.1 ms on 2026-09-01 (current_thread). Spawn-to-exit at --idle-ms 0 is 16.0 ms (min 15.2, max 17.8), quieter than ea098af's 20.6 ms. Idle draws 0.3/s over 3 s (same as ea098af / 50e05d8 / 5f6849e; was 0.0/s on 09-01).",
+  "first_frame_note": "Windows 11, AMD Ryzen 7 3800X, HEAD f5686a9 on feat/lsp-config. Release binary built with --features bundled-sqlite (system sqlite3.lib is not on PATH). TUI run is still multi-thread Tokio, capped at TUI_WORKER_THREADS=2. Windows has no stdlib ConPTY: bench_first_frame.py inherits the console, so TTFF is not comparable to the Linux 80x24 PTY harness (~12 ms on 2026-09-02). Idle draws over 3 s are 0.6/s (was 0.3/s on Linux 56f2e43). Compared with the 2026-07-31 Windows baseline: --version 20.9 -> 13.8 ms, peak RSS 9.6 -> 7.6 MB. --help / config show are slower than that pre-opt row (43 / 50 ms vs 21 / 26 ms) because more work sits on those paths now; they are still the Windows process-start band, not the Linux 1-3 ms floor.",
   "first_frame_harness": {
-    "median_ms": 12.0,
-    "min_ms": 11.57,
-    "max_ms": 13.14,
+    "median_ms": 131.44,
+    "min_ms": 122.11,
+    "max_ms": 141.45,
     "runs": 12,
     "idle_ms": 0,
-    "spawn_to_exit_median_ms": 16.01,
-    "spawn_to_exit_min_ms": 15.18,
-    "spawn_to_exit_max_ms": 17.75
+    "spawn_to_exit_median_ms": 158.76,
+    "spawn_to_exit_min_ms": 150.15,
+    "spawn_to_exit_max_ms": 171.44
   },
   "idle_draws_harness": {
-    "median_per_s": 0.33,
+    "median_per_s": 0.58,
     "window_ms": 3000,
-    "first_frame_median_ms": 11.72
+    "first_frame_median_ms": 128.97
   },
   "hot_paths": {
     "assess": {
-      "safe_short_ns": 544,
-      "safe_build_us": 2.09,
-      "caution_us": 2.23,
-      "destructive_us": 2.49,
-      "catastrophic_us": 1.42,
-      "pipeline_us": 5.29
+      "safe_short_ns": 890,
+      "safe_build_us": 2.63,
+      "caution_us": 4.49,
+      "destructive_us": 4.94,
+      "catastrophic_us": 2.84,
+      "pipeline_us": 9.04
     },
     "parse_markdown": {
-      "typical_us": 4.37,
-      "stream_200_us": 2.28,
-      "stream_1000_us": 7.94,
-      "stream_4000_us": 35.2
+      "typical_us": 7.41,
+      "stream_200_us": 3.73,
+      "stream_1000_us": 13.7,
+      "stream_4000_us": 53.4
     },
     "highlight_warm": {
-      "rust_10_ns": 87,
-      "rust_100_ns": 309,
-      "rust_500_us": 1.32,
-      "untagged_100_ns": 272
+      "rust_10_ns": 83,
+      "rust_100_ns": 248,
+      "rust_500_us": 1.03,
+      "untagged_100_ns": 215
     },
     "highlight_cold": {
-      "rust_10_ms": 1.96,
-      "rust_100_ms": 1.89
+      "rust_10_ms": 1.98,
+      "rust_100_ms": 1.88
     },
     "render_markdown_ansi": {
-      "typical_ms": 1.31,
-      "code_200_ms": 43.3
+      "typical_ms": 1.26,
+      "code_200_ms": 40.9
     }
   },
   "index": {
-    "walk_root_t1_ms": 5.16,
-    "walk_root_t4_ms": 5.12,
-    "walk_root_t8_ms": 5.02,
-    "query_warm_us": 12.8,
-    "browse_top_us": 25.0,
-    "entries_snapshot_us": 116,
-    "query_now_nonblocking_20k_us": 12.8,
-    "query_settle_20k_us": 13.4
+    "walk_root_t1_ms": 24.0,
+    "walk_root_t4_ms": 9.97,
+    "walk_root_t8_ms": 8.48,
+    "query_warm_us": 17.7,
+    "browse_top_us": 46.1,
+    "entries_snapshot_us": 128,
+    "query_now_nonblocking_20k_us": 17.0,
+    "query_settle_20k_us": 17.4
   }
 }
