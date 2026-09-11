@@ -49,6 +49,12 @@ fn main() -> anyhow::Result<()> {
     // waits for, and the first-frame benchmark measures from here.
     whycodes_tui::bench::mark_process_start();
 
+    // `whycodes run -d <dir>` (harness) and bare `whycodes`: skip clap + Tokio
+    // until after the first paint. Extra flags still take the full parser.
+    if let Some(project_dir) = early_tui_run_dir_from(std::env::args_os().skip(1)) {
+        return cmd_run_fast_tui(project_dir);
+    }
+
     // Hosts that capture/close stdout (IDE, wrappers: stdout_tty=false) will
     // SIGPIPE-kill the process on any accidental write to stdout. Ignore it so
     // the TUI (which draws on the controlling console) keeps running.
@@ -105,6 +111,43 @@ where
         return false;
     }
     only.as_ref() == "--version" || only.as_ref() == "-V"
+}
+
+/// `whycodes`, `whycodes run`, or `whycodes run -d <dir>` with no other flags.
+///
+/// Anything else (`--plain`, `-P`, a prompt) needs clap. The first-frame
+/// harness is exactly `run -d <tempdir>`.
+pub(crate) fn early_tui_run_dir_from<I, S>(args: I) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let mut args = args.into_iter();
+    let Some(first) = args.next() else {
+        return Some(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    };
+    let first = first.as_ref();
+    if first == "run" {
+        let Some(flag) = args.next() else {
+            return Some(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        };
+        if flag.as_ref() != "-d" && flag.as_ref() != "--dir" {
+            return None;
+        }
+        let dir = args.next()?;
+        if args.next().is_some() {
+            return None;
+        }
+        return Some(PathBuf::from(dir.as_ref()));
+    }
+    if first == "-d" || first == "--dir" {
+        let dir = args.next()?;
+        if args.next().is_some() {
+            return None;
+        }
+        return Some(PathBuf::from(dir.as_ref()));
+    }
+    None
 }
 
 /// Light subcommands (config/session/stats/…) use a current-thread runtime so

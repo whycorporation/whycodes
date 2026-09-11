@@ -494,56 +494,16 @@ fn prepare_tui_chrome(opts: &TuiRunOptions) -> TuiChrome {
     // `.git/HEAD` only. `git rev-parse` is deferred until after first paint
     // (empty harness dirs have no `.git`; spawning git was the Windows TTFF tax).
     app.refresh_git_branch_fast();
-    app.apply_context_window(
-        &opts.provider,
-        &opts.model,
-        opts.config
-            .configured_context_window(&opts.provider, &opts.model),
-        opts.config.session.max_context_tokens as u64,
+    // Catalog / API-key probe wait until after first paint (issue #85).
+    let missing_key = opts.api_key.is_empty();
+    app.status_message = format!(
+        "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
+        opts.agent_name, opts.provider, opts.model
     );
-
-    let mut config = opts.config.clone();
-    config.general.project_path = Some(opts.project_dir.clone());
-
-    app.primary_agents = config
-        .agents
-        .iter()
-        .filter(|a| a.mode == AgentMode::Primary || a.mode == AgentMode::All)
-        .map(|a| a.name.clone())
-        .collect();
-    ensure_primary_agents(&mut app.primary_agents);
-    if let Some(idx) = app
-        .primary_agents
-        .iter()
-        .position(|n| n == &opts.agent_name)
-    {
-        app.agent_cycle_idx = idx;
-    }
-    app.model_selection.models = configured_models(&config);
-    app.model_selection.selected = app
-        .model_selection
-        .models
-        .iter()
-        .position(|(p, m)| p == &opts.provider && m == &opts.model)
-        .unwrap_or(0);
-
-    let missing_key = opts.api_key.is_empty()
-        && whycodes_llm::provider_requires_api_key(&opts.provider, Some(&opts.config));
-    app.status_message = if missing_key {
-        format!(
-            "agent={}  {}/{}  — no API key · /connect  /help",
-            opts.agent_name, opts.provider, opts.model
-        )
-    } else {
-        format!(
-            "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
-            opts.agent_name, opts.provider, opts.model
-        )
-    };
 
     TuiChrome {
         app,
-        config,
+        config: Config::default(),
         missing_key,
     }
 }
@@ -1198,13 +1158,7 @@ fn enter_raw_and_alt(
              Run inside a real terminal, or use `whycodes --plain`."
         )
     })?;
-    execute!(
-        out,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        EnableBracketedPaste
-    )
-    .map_err(|e| {
+    execute!(out, EnterAlternateScreen).map_err(|e| {
         let _ = disable_raw_mode();
         whycodes_core::logging::emit(
             "whycodes_tui",
@@ -1214,10 +1168,18 @@ fn enter_raw_and_alt(
         );
         anyhow::anyhow!("failed to enter alternate screen ({e})")
     })?;
-    if let Err(e) = execute!(out, SetCursorStyle::BlinkingBar) {
-        tracing::debug!(error = %e, "set blinking bar cursor style failed");
-    }
     Ok(())
+}
+
+fn enable_mouse_paste_cursor(out: &mut impl Write) {
+    if let Err(e) = execute!(
+        out,
+        EnableMouseCapture,
+        EnableBracketedPaste,
+        SetCursorStyle::BlinkingBar
+    ) {
+        tracing::debug!(error = %e, "enable mouse/paste/cursor after first paint failed");
+    }
 }
 
 fn restore_live_backend(out: &mut impl Write, keyboard_enhanced: bool) {
@@ -1272,6 +1234,15 @@ pub enum TurnOutcome {
         outcome: whycodes_session::CompactOutcome,
         work_ms: u128,
     },
+}
+
+/// Sync wrapper so `whycodes run -d` can paint before clap's Tokio pool exists.
+pub fn run_sync(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
+    rt.block_on(run(opts))
 }
 
 /// Run the full-screen TUI until the user quits.
@@ -1366,37 +1337,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
         );
     }
 
-    let (event_tx, event_rx) = mpsc::unbounded_channel::<TurnEvent>();
-    let (done_tx, done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
-    // Async session titles (small-model refine) — never blocks agent_busy.
-    // Payload: (session_id, title) so a late refine cannot touch another session.
-    let (title_tx, mut title_rx) = mpsc::unbounded_channel::<(String, String)>();
-    // Live context window from config provider's GET …/v1/models (only active model).
-    // Channel payload is tiny: (provider, model, context_window) — never the full catalog.
-    //
-    // Do **not** spawn at TUI open: a slow/hanging catalog races the first chat
-    // on the same gateway host and can serialize the turn (wall ≫ server Duration).
-    // Queue a fetch after the first turn finishes, or on model switch when idle.
-    let (catalog_tx, mut catalog_rx) = mpsc::unbounded_channel::<(String, String, u32)>();
-    let mut catalog_fetch_pending = false;
-    // A7 idle prompt suggestions (default off).
-    let (suggest_tx, mut suggest_rx) = mpsc::unbounded_channel::<String>();
-    // In-TUI OAuth login (`/connect`): flow progress → event loop.
-    let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<AuthFlowEvent>();
-    if let Some(win) = seed_catalog {
-        seed_unbounded(&catalog_tx, win, "seed catalog");
-    }
-    if let Some(s) = seed_suggest {
-        seed_unbounded(&suggest_tx, s, "seed suggestion");
-    }
-    if let Some(ev) = seed_auth {
-        send_auth_event(&auth_tx, ev);
-    }
-
     apply_boot_prompt(&mut app, missing_key, opts.initial_prompt.clone());
 
     // Inert unless WHYCODES_BENCH is set; see crate::bench.
     let bench = crate::bench::config_from_env();
+    // Channels / mouse / paste wait until after first paint.
 
     // First paint before Agent / Session / SQLite (issue #85). `--idle-ms 0`
     // exits here and never pays ToolExecutor or the session DB.
@@ -1453,6 +1398,37 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
         }
         crate::bench::write_results(b);
         return Ok(TuiExit::Quit);
+    }
+
+    if let LoopTerm::Live(ref mut term) = terminal {
+        enable_mouse_paste_cursor(term.backend_mut());
+    }
+
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<TurnEvent>();
+    let (done_tx, done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
+    // Async session titles (small-model refine) — never blocks agent_busy.
+    // Payload: (session_id, title) so a late refine cannot touch another session.
+    let (title_tx, mut title_rx) = mpsc::unbounded_channel::<(String, String)>();
+    // Live context window from config provider's GET …/v1/models (only active model).
+    // Channel payload is tiny: (provider, model, context_window) — never the full catalog.
+    //
+    // Do **not** spawn at TUI open: a slow/hanging catalog races the first chat
+    // on the same gateway host and can serialize the turn (wall ≫ server Duration).
+    // Queue a fetch after the first turn finishes, or on model switch when idle.
+    let (catalog_tx, mut catalog_rx) = mpsc::unbounded_channel::<(String, String, u32)>();
+    let mut catalog_fetch_pending = false;
+    // A7 idle prompt suggestions (default off).
+    let (suggest_tx, mut suggest_rx) = mpsc::unbounded_channel::<String>();
+    // In-TUI OAuth login (`/connect`): flow progress → event loop.
+    let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<AuthFlowEvent>();
+    if let Some(win) = seed_catalog {
+        seed_unbounded(&catalog_tx, win, "seed catalog");
+    }
+    if let Some(s) = seed_suggest {
+        seed_unbounded(&suggest_tx, s, "seed suggestion");
+    }
+    if let Some(ev) = seed_auth {
+        send_auth_event(&auth_tx, ev);
     }
 
     if opts.defer_config_load {

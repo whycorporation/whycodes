@@ -581,6 +581,17 @@ Spawn-to-exit at `--idle-ms 0` is **103.6 ms** (min 102.0, max 108.5).
 Remainder vs Linux ~12 ms is Windows console inherit (no stdlib ConPTY)
 plus clap + process start (~14 ms `--version` floor).
 
+Same day, clap-free `whycodes run -d` (skip clap + nproc Tokio until after
+paint; mouse/paste/cursor after first frame):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **55.8 ms** median | 0.0/s | was 86.2 ms |
+| Harness `--idle-ms 3000` (10 runs) | **55.0 ms** median | **0.0/s** | still zero |
+
+Spawn-to-exit at `--idle-ms 0` is **70.9 ms** (min 65.3, max 78.5).
+Remainder is Windows console inherit + `--version` floor (~14 ms).
+
 
 ## Hot paths
 

@@ -4733,14 +4733,12 @@ async fn prepare_tui_boot_sets_chrome_and_defaults() {
     assert_eq!(boot.app.model_name, "m1");
     assert_eq!(boot.app.agent_name, "plan");
     assert!(boot.missing_key);
-    assert!(boot.app.status_message.contains("no API key"));
-    assert!(boot.app.primary_agents.contains(&"plan".to_string()));
-    assert_eq!(boot.app.agent_cycle_idx, 1);
+    assert!(boot.app.status_message.contains("Tab focus"));
     assert_eq!(boot.agent.info.name, "plan");
 
     let opts = boot_opts(dir.path(), "sk-test");
     let boot = prepare_tui_boot(&opts).await;
-    assert!(!boot.missing_key);
+    assert!(!boot.missing_key, "non-empty api_key is present at chrome");
     assert!(boot.app.status_message.contains("Tab focus"));
 }
 

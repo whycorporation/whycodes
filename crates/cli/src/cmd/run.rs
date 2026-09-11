@@ -376,6 +376,41 @@ pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     }
 }
 
+/// Clap-free TUI entry for `whycodes` / `whycodes run -d <dir>`.
+///
+/// The first-frame harness is this argv. Building clap + a Tokio runtime
+/// before paint was tens of ms on Windows (issue #85 follow-up).
+pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
+    let exit = whycodes_tui::run_sync(whycodes_tui::TuiRunOptions {
+        project_dir,
+        provider: "anthropic".into(),
+        model: "claude-sonnet-4-20250514".into(),
+        api_key: String::new(),
+        agent_name: "build".into(),
+        max_turns: None,
+        initial_prompt: None,
+        config: Config::default(),
+        resume_session_id: None,
+        remote: None,
+        defer_config_load: true,
+        provider_from_cli: false,
+        model_from_cli: false,
+        agent_from_cli: false,
+        update_rx: None,
+        inject: Default::default(),
+    })
+    .map_err(map_tui_run_error)?;
+    match exit {
+        whycodes_tui::TuiExit::Quit => Ok(()),
+        whycodes_tui::TuiExit::Upgrade => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(super::debug::after_tui_exit(exit))
+        }
+    }
+}
+
 pub(crate) async fn cmd_run(
     cli: &Cli,
     prompt: Option<&str>,

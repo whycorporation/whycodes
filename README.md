@@ -145,10 +145,10 @@ first-frame to the Linux ~12 ms PTY row. Method and machines in
 | 1 session PSS | — (`/proc` only) | **10.5 MB** |
 | 10 sessions PSS | — | **32.0 MB** (~2.4 MB each extra) |
 | `--version` | **13.8 ms** | **1.4 ms** |
-| First frame (harness, in-proc) | **86 ms** (console inherit) | **12 ms** (80×24 PTY) |
+| First frame (harness, in-proc) | **56 ms** (console inherit) | **12 ms** (80×24 PTY) |
 | Idle redraws (harness, 3 s) | **0.0 /s** | **0.3 /s** |
 
-The TUI paints only when something changed. This Windows run’s 3 s harness idle is **0.0 redraws/s** (Linux 2026-09-02 was 0.3/s); the product target is still **0 redraws/s**, not a frames-per-second race. Windows first-frame dropped from 131 ms (same-day morning re-measure) after issue #85 deferred Agent/SQLite/`git` spawn until after `record_draw`.
+The TUI paints only when something changed. This Windows run’s 3 s harness idle is **0.0 redraws/s** (Linux 2026-09-02 was 0.3/s); the product target is still **0 redraws/s**, not a frames-per-second race. Windows first-frame dropped from 131 ms → 86 ms → **56 ms** the same day (issue #85): clap-free `run -d` boot, then Agent/SQLite/`git` after `record_draw`.
 
 Workspace line coverage is **85.58%** (Linux x86_64, 2026-08-21). CI fails
 below 82%, with twelve foundational crates held at 100% production-code line
