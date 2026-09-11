@@ -737,6 +737,17 @@ fn process_exe() -> std::io::Result<PathBuf> {
 
 fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf, SdkError> {
     if let Some(p) = explicit {
+        // A path with a directory that is not a file must not reach
+        // `Command::spawn`: on some Linux hosts spawn reports Ok and the
+        // child exits 127, which launch_poll maps to StartupFailed.
+        // Bare names (`whycodes`) still go to spawn so PATH lookup works.
+        let has_dir = p.is_absolute() || p.components().count() > 1;
+        if has_dir && !p.is_file() {
+            return Err(SdkError::new(
+                ErrorCode::ServeNotFound,
+                &format!("could not execute {}: not found", p.display()),
+            ));
+        }
         return Ok(p.to_path_buf());
     }
     if let Ok(p) = std::env::var("WHYCODES")

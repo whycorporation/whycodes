@@ -42,8 +42,14 @@ fn normalize_https_and_whitespace() {
 #[test]
 fn resolve_binary_prefers_explicit_then_env() {
     let _lock = env_lock();
-    let p = resolve_binary(Some(Path::new("/opt/whycodes"))).unwrap();
-    assert_eq!(p, PathBuf::from("/opt/whycodes"));
+    let missing_dir = tempfile::tempdir().unwrap();
+    let missing = missing_dir.path().join("no-such-whycodes-binary");
+    let err = resolve_binary(Some(&missing)).unwrap_err();
+    assert_eq!(err.code, ErrorCode::ServeNotFound);
+    let dir = tempfile::tempdir().unwrap();
+    let present = dir.path().join("whycodes-present");
+    std::fs::write(&present, b"").unwrap();
+    assert_eq!(resolve_binary(Some(&present)).unwrap(), present);
     let prev = std::env::var_os("WHYCODES");
     unsafe { std::env::set_var("WHYCODES", "/env/whycodes") };
     let p = resolve_binary(None).unwrap();
