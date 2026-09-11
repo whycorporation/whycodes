@@ -153,12 +153,13 @@ def main() -> int:
             continue
         covered, total = pair
         pct = (covered / total * 100.0) if total else 0.0
-        status = "OK" if pct + 1e-9 >= floor else "FAIL"
-        print(f"{status} {crate}: {covered}/{total} lines {pct:.1f}% floor {floor:.0f}%")
-        if pct + 1e-9 < floor:
+        # Compare at the same 1-decimal rounding we print (785/789 → 99.5).
+        shown = round(pct, 1)
+        status = "OK" if shown + 1e-9 >= floor else "FAIL"
+        print(f"{status} {crate}: {covered}/{total} lines {shown:.1f}% floor {floor:g}%")
+        if shown + 1e-9 < floor:
             ok = False
-            # Show missing lines hint if available
-            print(f"  -> below floor by {floor - pct:.1f}pp", file=sys.stderr)
+            print(f"  -> below floor by {floor - shown:.1f}pp", file=sys.stderr)
 
     # Also print any whycodes crate not in floors for visibility
     extra = sorted(set(agg.keys()) - {c for c, _ in FLOORS})
