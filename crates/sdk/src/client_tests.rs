@@ -500,10 +500,15 @@ fn launch_poll_covers_timeout_exit_version_retry_and_ready() {
 
     assert!(poll_child_exit(None).is_none());
 
-    assert!(missing_spawned_binary(false, Path::new("/no/such/whycodes")).is_none());
+    assert!(missing_spawned_binary(Path::new("python")).is_none());
+    assert!(missing_spawned_binary(Path::new("whycodes")).is_none());
+    let relative = missing_spawned_binary(Path::new("no/such/whycodes")).unwrap();
+    assert_eq!(relative.code, ErrorCode::ServeNotFound);
+    let missing = missing_spawned_binary(Path::new("/no/such/whycodes")).unwrap();
+    assert_eq!(missing.code, ErrorCode::ServeNotFound);
     let present = tempfile::NamedTempFile::new().unwrap();
-    assert!(missing_spawned_binary(true, present.path()).is_none());
-    let err = missing_spawned_binary(true, Path::new("/no/such/whycodes-binary")).unwrap();
+    assert!(missing_spawned_binary(present.path()).is_none());
+    let err = missing_spawned_binary(Path::new("/no/such/whycodes-binary")).unwrap();
     assert_eq!(err.code, ErrorCode::ServeNotFound);
     assert!(err.message.contains("not found"), "{err:?}");
 }

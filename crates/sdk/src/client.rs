@@ -115,10 +115,8 @@ impl WhyCodesClient {
                 e,
             )
         })?;
-        if let Some(err) = missing_spawned_binary(
-            poll_child_exit(Some(&mut child)).is_some(),
-            &prepared.binary,
-        ) {
+        if let Some(err) = missing_spawned_binary(&prepared.binary) {
+            let _kill = child.kill().await;
             return Err(err);
         }
         let port = prepared.port;
@@ -818,17 +816,24 @@ struct PreparedLaunch {
     held_home: Option<tempfile::TempDir>,
 }
 
-/// Some Linux hosts spawn a missing absolute path as Ok; the child then
-/// exits 127 immediately. Treat that as ServeNotFound, not a crash.
-fn missing_spawned_binary(child_exited: bool, binary: &Path) -> Option<SdkError> {
-    if child_exited && !binary.is_file() {
+/// Missing binary is ServeNotFound even when spawn returns Ok (some Linux
+/// hosts delay the 127 until wait). Do not wait for try_wait — handshake
+/// timeout would otherwise map to StartupFailed.
+///
+/// Bare names (`whycodes`, `python`) go through PATH and are not files.
+fn missing_spawned_binary(binary: &Path) -> Option<SdkError> {
+    if !looks_like_filesystem_path(binary) || binary.is_file() {
+        None
+    } else {
         Some(SdkError::new(
             ErrorCode::ServeNotFound,
             &format!("could not execute {}: not found", binary.display()),
         ))
-    } else {
-        None
     }
+}
+
+fn looks_like_filesystem_path(binary: &Path) -> bool {
+    binary.is_absolute() || binary.parent().is_some_and(|p| !p.as_os_str().is_empty())
 }
 
 fn poll_child_exit(child: Option<&mut Child>) -> Option<String> {
