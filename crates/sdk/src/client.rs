@@ -107,18 +107,17 @@ impl WhyCodesClient {
     /// it spends the same provider quota as the user. `close` / drop kills it.
     pub async fn launch(opts: LaunchOptions) -> Result<Self, SdkError> {
         let prepared = prepare_launch(&opts)?;
+        if let Some(err) = missing_spawned_binary(&prepared.binary) {
+            return Err(err);
+        }
         let mut cmd = launch_command(&prepared, &opts);
-        let mut child = cmd.spawn().map_err(|e| {
+        let child = cmd.spawn().map_err(|e| {
             SdkError::with_source(
                 ErrorCode::ServeNotFound,
                 &format!("could not execute {}: {e}", prepared.binary.display()),
                 e,
             )
         })?;
-        if let Some(err) = missing_spawned_binary(&prepared.binary) {
-            let _kill = child.kill().await;
-            return Err(err);
-        }
         let port = prepared.port;
         let held_home = prepared.held_home;
 

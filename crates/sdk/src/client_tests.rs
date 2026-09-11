@@ -527,6 +527,19 @@ async fn launch_missing_binary_is_serve_not_found() {
         Ok(_) => panic!("expected ServeNotFound"),
     };
     assert_eq!(err.code, ErrorCode::ServeNotFound);
+
+    let err = match WhyCodesClient::launch(LaunchOptions {
+        binary: Some(PathBuf::from("whycodes-no-such-binary-on-path")),
+        inherit_logins: false,
+        startup_timeout: Duration::from_millis(200),
+        ..Default::default()
+    })
+    .await
+    {
+        Err(e) => e,
+        Ok(_) => panic!("expected ServeNotFound"),
+    };
+    assert_eq!(err.code, ErrorCode::ServeNotFound);
 }
 
 #[tokio::test]
