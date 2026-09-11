@@ -180,7 +180,8 @@ jobs:
       # checked by Python instead of 12 separate `cargo llvm-cov -p` re-runs.
       # Wrapper flags live in scripts/coverage.sh (same as local `scripts/coverage.sh`).
       - name: Measure coverage
-        run: COVERAGE_FEATURES=whycodes-storage/bundled scripts/coverage.sh
+        # Unique path so two coverage jobs on one host cannot clobber /tmp/cov.json.
+        run: COVERAGE_FEATURES=whycodes-storage/bundled REPORT_JSON="$RUNNER_TEMP/cov.json" scripts/coverage.sh
 
   build:
     name: Build (linux)
