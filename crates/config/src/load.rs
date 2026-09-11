@@ -776,4 +776,71 @@ mod tests {
 
         assert!(cfg.get_command_config("missing").is_none());
     }
+
+    #[test]
+    fn prompt_overlay_loader_covers_missing_and_junk() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-such-prompts");
+        let mut empty = SystemPromptOverlays::default();
+        load_prompt_overlays(&mut empty, &missing);
+        load_model_overlay_dir(&mut empty, &missing);
+        assert!(empty.is_empty());
+        assert!(read_overlay_markdown(&missing).is_none());
+        assert!(read_overlay_markdown(dir.path()).is_none());
+
+        let models = dir.path().join("models");
+        std::fs::create_dir_all(models.join("nested")).unwrap();
+        std::fs::write(models.join("skip.txt"), "ignored").unwrap();
+        std::fs::write(models.join("empty.md"), "  \n").unwrap();
+        std::fs::write(models.join("ok.md"), "bare model extra").unwrap();
+        let mut loaded = SystemPromptOverlays::default();
+        load_model_overlay_dir(&mut loaded, &models);
+        assert_eq!(
+            loaded.models.get("ok").map(String::as_str),
+            Some("bare model extra")
+        );
+        assert!(!loaded.models.contains_key("skip"));
+        assert!(!loaded.models.contains_key("empty"));
+        assert!(!loaded.models.contains_key("nested"));
+
+        std::fs::write(dir.path().join("notes.txt"), "not markdown").unwrap();
+        let mut mixed = SystemPromptOverlays::default();
+        load_prompt_overlays(&mut mixed, dir.path());
+        assert_eq!(
+            mixed.models.get("ok").map(String::as_str),
+            Some("bare model extra")
+        );
+
+        let provider_dir = dir.path().join("xai");
+        std::fs::create_dir_all(provider_dir.join("nested")).unwrap();
+        std::fs::write(provider_dir.join("nested/skip.md"), "nope").unwrap();
+        std::fs::write(provider_dir.join("notes.txt"), "ignored").unwrap();
+        let mut under_provider = SystemPromptOverlays::default();
+        load_prompt_overlays_at(&mut under_provider, &provider_dir, Some("xai"));
+        assert!(under_provider.models.is_empty());
+        assert!(under_provider.providers.is_empty());
+    }
+
+    /// `file_name` / `file_stem` `to_str()` is `None` for non-UTF-8 paths (Linux CI).
+    #[cfg(unix)]
+    #[test]
+    fn prompt_overlay_skips_non_utf8_names() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bad_dir = dir.path().join(std::ffi::OsStr::from_bytes(b"bad\xffdir"));
+        std::fs::create_dir(&bad_dir).unwrap();
+        std::fs::write(
+            dir.path().join(std::ffi::OsStr::from_bytes(b"bad\xff.md")),
+            "x",
+        )
+        .unwrap();
+        let models = dir.path().join("models");
+        std::fs::create_dir(&models).unwrap();
+        std::fs::write(models.join(std::ffi::OsStr::from_bytes(b"m\xff.md")), "y").unwrap();
+
+        let mut loaded = SystemPromptOverlays::default();
+        load_prompt_overlays(&mut loaded, dir.path());
+        assert!(loaded.providers.is_empty());
+        assert!(loaded.models.is_empty());
+    }
 }
