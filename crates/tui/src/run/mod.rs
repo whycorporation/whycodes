@@ -694,7 +694,10 @@ impl LoopIo {
         if !self.crossterm.is_empty() {
             return Ok(true);
         }
-        live_poll_crossterm(poll_timeout(timeout, self.force_zero_poll))
+        if self.force_zero_poll {
+            return Ok(false);
+        }
+        live_poll_crossterm(timeout)
     }
 
     fn read_crossterm(&mut self) -> io::Result<Event> {
@@ -736,7 +739,14 @@ enum LoopTerm {
 
 impl LoopTerm {
     fn live(out: TuiWriter, color_mode: ColorMode) -> anyhow::Result<Self> {
-        let backend = QuantizingBackend::new(CrosstermBackend::new(out), color_mode);
+        let backend = QuantizingBackend::with_size_fallback(
+            CrosstermBackend::new(out),
+            color_mode,
+            ratatui::layout::Size {
+                width: 80,
+                height: 24,
+            },
+        );
         Ok(Self::Live(
             Terminal::new(backend).inspect_err(on_terminal_new_failed)?,
         ))
@@ -2036,6 +2046,7 @@ fn read_crossterm_with(read: impl FnOnce() -> io::Result<Event>) -> io::Result<E
 }
 
 /// Tests force a zero timeout so an empty stub cannot block on a missing TTY.
+#[cfg(test)]
 fn poll_timeout(requested: Duration, force_zero: bool) -> Duration {
     if force_zero {
         Duration::ZERO

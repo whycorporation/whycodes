@@ -1,6 +1,7 @@
 use super::*;
 use ratatui::Terminal;
 use ratatui::backend::{Backend, TestBackend};
+use ratatui::layout::{Position, Size};
 use std::io::Write;
 
 #[test]
@@ -274,6 +275,19 @@ fn color_mode_and_named_rgb_helpers() {
     ));
     let _ = term.backend_mut().size();
     let _ = term.backend_mut().window_size();
+
+    let fallback = QuantizingBackend::with_size_fallback(
+        TestBackend::new(0, 0),
+        ColorMode::Ansi256,
+        Size {
+            width: 80,
+            height: 24,
+        },
+    );
+    assert_eq!(fallback.size().unwrap().width, 80);
+    let mut fallback = fallback;
+    assert_eq!(fallback.window_size().unwrap().columns_rows.width, 80);
+    assert_eq!(fallback.get_cursor_position().unwrap(), Position::ORIGIN);
     let _ = term.backend_mut().hide_cursor();
     let _ = term.backend_mut().show_cursor();
     let _ = term.backend_mut().get_cursor_position();

@@ -125,11 +125,15 @@ fn command_stdout_not_found_and_timeout() {
         Err(RunErr::NotFound) => {}
         other => panic!("expected NotFound, got {other:?}"),
     }
-    match command_stdout(
+    #[cfg(windows)]
+    let hanging = command_stdout(
         "cmd",
         &["/C", "ping -n 30 127.0.0.1 > NUL"],
         Duration::from_millis(1),
-    ) {
+    );
+    #[cfg(not(windows))]
+    let hanging = command_stdout("sleep", &["30"], Duration::from_millis(1));
+    match hanging {
         Err(RunErr::Timeout) | Err(RunErr::Exit) | Err(RunErr::Io(_)) => {}
         other => panic!("expected timeout/exit, got {other:?}"),
     }
