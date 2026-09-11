@@ -182,16 +182,19 @@ fn windows_command_line_utf16() -> &'static [u16] {
     }
 }
 
+#[cfg(any(windows, test))]
 pub(crate) fn is_version_only_command_line_utf16(line: &[u16]) -> bool {
     let line = trim_u16(line);
     let rest = trim_u16(strip_exe_prefix_u16(line));
     u16_eq_ascii(rest, b"--version") || u16_eq_ascii(rest, b"-V")
 }
 
+#[cfg(any(windows, test))]
 fn u16_eq_ascii(u: &[u16], ascii: &[u8]) -> bool {
     u.len() == ascii.len() && u.iter().zip(ascii).all(|(c, b)| *c == u16::from(*b))
 }
 
+#[cfg(any(windows, test))]
 fn trim_u16(s: &[u16]) -> &[u16] {
     let start = s.iter().position(|&c| !is_u16_space(c)).unwrap_or(s.len());
     let end = s
@@ -202,10 +205,12 @@ fn trim_u16(s: &[u16]) -> &[u16] {
     if start >= end { &[] } else { &s[start..end] }
 }
 
+#[cfg(any(windows, test))]
 fn is_u16_space(c: u16) -> bool {
     c == b' ' as u16 || c == b'\t' as u16 || c == 0x0a || c == 0x0d
 }
 
+#[cfg(any(windows, test))]
 fn strip_exe_prefix_u16(line: &[u16]) -> &[u16] {
     let line = trim_u16(line);
     if line.first().copied() == Some(b'"' as u16) {
