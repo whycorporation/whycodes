@@ -544,7 +544,12 @@ floor on this OS.
 
 `--version` improved vs the 2026-07-31 Windows baseline (20.9 / 22.6 ms,
 9.6 MB RSS). Version p95 (14.4 ms) is still far under the loose CI
-ceiling (50 ms / 40 MB). `--help` and `config show` are slower than that
+ceiling (50 ms / 40 MB).
+
+Same-day follow-up: `--version` scans `GetCommandLineW` (no
+`CommandLineToArgvW`) and writes with `WriteFile` (no `println!` locale).
+Re-measure median **14.1 ms** (p95 15.6, min 13.2) — same band as 13.8 ms.
+The floor on this OS is PE load / `CreateProcess`, not clap or Tokio. `--help` and `config show` are slower than that
 pre-opt row (21.4 / 25.6 ms): more work now sits on those paths (config
 layering, session DB). Peak RSS for the short CLI cases is in the 8–13 MB
 band.

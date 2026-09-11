@@ -2318,3 +2318,5 @@ Harness path then dropped Config/TuiApp/Tokio entirely (`paint_first_frame_sync`
 Interactive `run()` on **Linux, macOS, and Windows** now attaches and paints the splash **before** `TuiApp` / `Config`. Production `run -d` uses a 2-worker Tokio pool in the CLI (`event::poll` otherwise starves turns on all three OS). `record_draw` must run after `config_from_env` or `WHYCODES_BENCH` hangs (`should_stop` waits forever on a zero first-frame counter).
 
 Harness TTFF then dropped ratatui entirely: `write_splash_csi` is `SM?1049` + clear + one ASCII line. In-proc **0.1 ms**, spawn-to-exit **14.3 ms** (same band as `--version`). Do not put a `Terminal::new` / `QuantizingBackend` on that path.
+
+`--version` on Windows is `GetCommandLineW` + `WriteFile` of a `concat!` line — no clap, Tokio, `args_os`, or `println!`. Re-measure stayed **~14 ms**. Further cuts need a smaller PE / less CRT, not more Rust in `main`.
