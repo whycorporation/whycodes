@@ -179,6 +179,7 @@ fn project_roots_reads_allowlist() {
 fn empty_roots_is_safe() {
     let idx = WorkspaceIndex::start_with(vec![], IndexOptions::default());
     assert!(idx.roots().is_empty());
+    assert!(idx.primary_root().is_none());
     assert!(idx.query("x", 5).is_empty());
 }
 
@@ -399,7 +400,10 @@ fn start_helpers_status_browse_and_rescan() {
         PathBuf::from("/no/such/index/root"),
     ]);
     assert!(idx.wait_ready(Duration::from_secs(10)));
-    assert_eq!(idx.primary_root(), dir.path().canonicalize().unwrap());
+    assert_eq!(
+        idx.primary_root(),
+        Some(dir.path().canonicalize().unwrap().as_path())
+    );
     assert!(!idx.is_empty());
     let _ = format!("{:?}", idx);
     match idx.status() {

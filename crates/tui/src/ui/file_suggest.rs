@@ -96,8 +96,10 @@ impl FileSuggestState {
     pub fn set_index(&mut self, index: Arc<WorkspaceIndex>) {
         // Frecency is keyed by the canonical primary root — same project,
         // same habits, regardless of the directory the user launched from.
-        if self.frecency.is_none() && !index.roots().is_empty() {
-            self.frecency = Some(Frecency::load(index.primary_root()));
+        if self.frecency.is_none()
+            && let Some(root) = index.primary_root()
+        {
+            self.frecency = Some(Frecency::load(root));
         }
         self.index = Some(index);
     }

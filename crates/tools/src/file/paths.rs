@@ -72,7 +72,7 @@ pub fn visit_index(
         return index_cold();
     }
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let primary = index.primary_root();
+    let primary = index.primary_root()?;
     let rel_root = root.strip_prefix(primary).ok()?;
     let prefix = rel_root.to_string_lossy().replace('\\', "/");
     let prefix = prefix.trim_matches('/').to_string();
