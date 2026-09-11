@@ -43,7 +43,6 @@ FULL_COVER_CRATES = [
     "whycodes-agent",
     "whycodes-lsp",
     "whycodes-mcp",
-    "whycodes-sdk",
     "whycodes-server",
     "whycodes-format",
     "whycodes-import",
@@ -54,6 +53,9 @@ FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
     # Merge of origin/main brought content-tag / browser / paths lines that
     # skip-expansions still counts (99.0% = 8211/8290). Restore 100% in #82.
     ("whycodes-tools", 99.0),
+    # Linux spawn("/missing") is Err, so launch()'s spawn-ok-then-exit-127
+    # arm is uncovered (785/789 = 99.5%). Restore 100% in #82.
+    ("whycodes-sdk", 99.5),
 ]
 
 
