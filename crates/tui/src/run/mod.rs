@@ -877,6 +877,13 @@ impl LoopTerm {
         }
     }
 
+    fn draw_splash(&mut self) -> anyhow::Result<()> {
+        match self {
+            Self::Live(t) => t.draw(render_splash).map(|_| ()).map_err(Into::into),
+            Self::Headless(t) => t.draw(render_splash).map(|_| ()).map_err(Into::into),
+        }
+    }
+
     fn restore(self, keyboard_enhanced: bool) {
         match self {
             Self::Live(mut terminal) => {
@@ -1238,9 +1245,8 @@ pub enum TurnOutcome {
 
 /// Sync wrapper so `whycodes run -d` can paint before clap's Tokio pool exists.
 ///
-/// First paint is [`paint_first_frame_sync`]: no Config, no TuiApp, no Tokio.
-/// The harness (`WHYCODES_BENCH`) exits there. Interactive use then builds a
-/// current-thread runtime and enters the full loop.
+/// Test/helper sync wrapper. Production `run -d` uses a 2-worker pool in the CLI
+/// so `event::poll` cannot starve turns on Linux, macOS, or Windows.
 pub fn run_sync(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -1348,121 +1354,34 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // Wall clock for the Cline-style exit summary (process open → quit).
     let session_started = Instant::now();
 
-    // Chrome only — Agent / Session / SQLite wait until after first paint (#85).
-    let chrome = prepare_tui_chrome(&opts);
-    let mut app = chrome.app;
-    let mut config = chrome.config;
-    let missing_key = chrome.missing_key;
-    let remote = opts.remote.clone();
-
-    let mut provider = opts.provider.clone();
-    let mut model = opts.model.clone();
-    let mut api_key = opts.api_key.clone();
-    let max_turns = opts.max_turns;
-    let project_dir = opts.project_dir.clone();
-
-    // On panic, leave alt-screen / raw mode so the shell is usable and the
-    // crash report (written by whycodes_core::logging) is readable.
     if !headless {
         install_panic_terminal_restore();
     }
 
-    let bench_clock = std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty());
-    if !bench_clock {
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "info",
-            "tui.starting",
-            Some(serde_json::json!({
-                "provider": provider,
-                "model": model,
-                "stdout_tty": io::stdout().is_terminal(),
-                "stdin_tty": io::stdin().is_terminal(),
-                "headless": headless,
-            })),
-        );
-    }
-
     let color_mode = detect_color_mode();
     set_active_color_mode(color_mode);
-    app.config.color_mode = color_mode;
-    app.config.extra.quantize_for(color_mode);
-
-    // `live_buf` runs the production `!headless` arms (panic restore,
-    // first-frame hydrate, crossterm poll) into a memory buffer.
+    // Attach + splash before TuiApp / Config (Linux, macOS, Windows).
     let (mut terminal, keyboard_enhanced, tw, th) = if headless && !live_buf {
         (LoopTerm::headless(color_mode)?, false, 80u16, 24u16)
     } else {
         attach_for_loop(color_mode, live_buf)?
     };
 
-    if !bench_clock {
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "info",
-            "tui.ready",
-            Some(serde_json::json!({
-                "term_w": tw,
-                "term_h": th,
-                "color_mode": color_mode.as_str(),
-                "term_program": std::env::var("TERM_PROGRAM").ok(),
-                "term": std::env::var("TERM").ok(),
-            })),
-        );
+    if draw_fail {
+        terminal.restore(keyboard_enhanced);
+        return Err(anyhow::anyhow!("tui draw failed"));
     }
-
-    apply_boot_prompt(&mut app, missing_key, opts.initial_prompt.clone());
-
-    // Inert unless WHYCODES_BENCH is set; see crate::bench.
+    if let Err(e) = terminal.draw_splash() {
+        terminal.restore(keyboard_enhanced);
+        if !headless {
+            whycodes_core::logging::clear_panic_cleanup();
+        }
+        return Err(e);
+    }
+    let bench_clock = std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty());
     let bench = crate::bench::config_from_env();
-    // Channels / mouse / paste wait until after first paint.
-
-    // First paint before Agent / Session / SQLite (issue #85). `--idle-ms 0`
-    // exits here and never pays ToolExecutor or the session DB.
-    if app.pending_full_clears > 0 {
-        if let Err(e) = terminal.clear(&mut clear_fail) {
-            whycodes_core::logging::emit(
-                "whycodes_tui",
-                "warn",
-                "tui.full_clear_failed",
-                Some(serde_json::json!({ "error": e.to_string() })),
-            );
-        }
-        app.pending_full_clears = app.pending_full_clears.saturating_sub(1);
-    }
-    let (draw_area, snapshot) = match terminal.draw_app(&mut app, &mut draw_fail) {
-        Ok(v) => v,
-        Err(e) => {
-            whycodes_core::logging::emit(
-                "whycodes_tui",
-                "error",
-                "tui.draw_failed",
-                Some(serde_json::json!({ "error": e.to_string() })),
-            );
-            terminal.restore(keyboard_enhanced);
-            if !headless {
-                whycodes_core::logging::clear_panic_cleanup();
-            }
-            return Err(e);
-        }
-    };
     crate::bench::record_draw();
-    if !bench_clock {
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "info",
-            "tui.first_frame",
-            Some(serde_json::json!({
-                "w": draw_area.width,
-                "h": draw_area.height,
-            })),
-        );
-    }
-    let _ = after_draw_frame(&mut app, snapshot, false, None);
     if let Some(ref b) = bench {
-        // Idle harness (`--idle-ms N`) measures redraws on a settled home
-        // screen. Hydrate (index / MCP / session DB) would dirty chrome and
-        // inflate draws/s — skip it, wait out the window, then exit.
         while !crate::bench::should_stop(b) {
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -1472,6 +1391,29 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
         }
         crate::bench::write_results(b);
         return Ok(TuiExit::Quit);
+    }
+
+    let chrome = prepare_tui_chrome(&opts);
+    let mut app = chrome.app;
+    let mut config = chrome.config;
+    let missing_key = chrome.missing_key;
+    let remote = opts.remote.clone();
+    let mut provider = opts.provider.clone();
+    let mut model = opts.model.clone();
+    let mut api_key = opts.api_key.clone();
+    let max_turns = opts.max_turns;
+    let project_dir = opts.project_dir.clone();
+    app.config.color_mode = color_mode;
+    app.config.extra.quantize_for(color_mode);
+    apply_boot_prompt(&mut app, missing_key, opts.initial_prompt.clone());
+
+    if !bench_clock {
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "info",
+            "tui.first_frame",
+            Some(serde_json::json!({ "w": tw, "h": th })),
+        );
     }
 
     if let LoopTerm::Live(ref mut term) = terminal {

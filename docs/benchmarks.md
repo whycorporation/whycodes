@@ -604,6 +604,13 @@ Spawn-to-exit at `--idle-ms 0` is **66.3 ms** (min 62.6, max 68.9).
 `--version` floor is 13.8 ms; the rest is Windows console inherit
 (no stdlib ConPTY).
 
+Interactive `run()` (not only `WHYCODES_BENCH`) now paints the splash
+before `TuiApp` / `Config` on **Linux, macOS, and Windows**. Production
+`whycodes run -d` uses a 2-worker Tokio pool in the CLI so
+`crossterm::event::poll` cannot starve turns on any of those OS.
+Re-measure Windows `--idle-ms 0`: **53.1 ms** median (min 45.9).
+Linux PTY ~12 ms and macOS remain host-console limited; same code path.
+
 
 ## Hot paths
 

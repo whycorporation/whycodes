@@ -390,25 +390,31 @@ pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
             whycodes_tui::TuiExit::Upgrade => Ok(()),
         };
     }
-    let exit = whycodes_tui::run_sync(whycodes_tui::TuiRunOptions {
-        project_dir,
-        provider: "anthropic".into(),
-        model: "claude-sonnet-4-20250514".into(),
-        api_key: String::new(),
-        agent_name: "build".into(),
-        max_turns: None,
-        initial_prompt: None,
-        config: Config::default(),
-        resume_session_id: None,
-        remote: None,
-        defer_config_load: true,
-        provider_from_cli: false,
-        model_from_cli: false,
-        agent_from_cli: false,
-        update_rx: None,
-        inject: Default::default(),
-    })
-    .map_err(map_tui_run_error)?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_io()
+        .enable_time()
+        .build()?;
+    let exit = rt
+        .block_on(whycodes_tui::run(whycodes_tui::TuiRunOptions {
+            project_dir,
+            provider: "anthropic".into(),
+            model: "claude-sonnet-4-20250514".into(),
+            api_key: String::new(),
+            agent_name: "build".into(),
+            max_turns: None,
+            initial_prompt: None,
+            config: Config::default(),
+            resume_session_id: None,
+            remote: None,
+            defer_config_load: true,
+            provider_from_cli: false,
+            model_from_cli: false,
+            agent_from_cli: false,
+            update_rx: None,
+            inject: Default::default(),
+        }))
+        .map_err(map_tui_run_error)?;
     match exit {
         whycodes_tui::TuiExit::Quit => Ok(()),
         whycodes_tui::TuiExit::Upgrade => {
@@ -458,8 +464,8 @@ pub(crate) async fn cmd_run(
     let model;
     let agent_name;
     if use_tui {
-        // Built-in defaults for the first 80×24 frame. CLI flags still win;
-        // `load_layered` runs after `record_draw` (issue #85).
+        // Empty config until after first paint. CLI flags still win via
+        // `resolve_*`; `load_layered` runs after `record_draw` (issue #85).
         config = Config::default();
         if cli.no_memory {
             config.memory.enabled = false;
