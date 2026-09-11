@@ -126,8 +126,16 @@ fn hover_contents_string_flattens_every_variant() {
 #[test]
 fn minimal_initialize_params_carries_the_workspace() {
     let p = InitializeParams::minimal("/workspace");
-    assert_eq!(p.inner["rootUri"], "file:///workspace");
+    assert_eq!(p.inner["rootUri"], crate::detect::file_uri("/workspace"));
     assert_eq!(p.inner["rootPath"], "/workspace");
+    let with_opts = InitializeParams::with_options(
+        "/workspace",
+        Some(&serde_json::json!({"cargo": {"buildScripts": true}})),
+    );
+    assert_eq!(
+        with_opts.inner["initializationOptions"]["cargo"]["buildScripts"],
+        true
+    );
     assert_eq!(p.inner["workspaceFolders"][0]["name"], "workspace");
     assert!(p.inner.get("processId").is_some());
     assert!(p.inner["capabilities"]["textDocument"]["completion"].is_object());
@@ -163,6 +171,8 @@ fn incoming_message_detects_notifications_and_responses() {
     assert!(matches!(weird, IncomingMessage::Response(_)));
 
     assert!(IncomingMessage::from_line("not json").is_err());
+    assert!(IncomingMessage::from_line(r#"{"method":"x"}"#).is_err());
+    assert!(IncomingMessage::from_line(r#"{"id":1}"#).is_err());
 }
 
 #[test]

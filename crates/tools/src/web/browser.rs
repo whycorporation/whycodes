@@ -15,6 +15,9 @@ use serde_json::{Value, json};
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
+type SessionPoll = Result<Result<u16, String>, (Child, PathBuf)>;
+type SplitPoll = (Option<Result<u16, String>>, Option<(Child, PathBuf)>);
+
 struct BrowserSession {
     child: Child,
     port: u16,
@@ -111,70 +114,71 @@ impl Tool for BrowserTool {
     }
 }
 
-fn err(msg: impl Into<String>) -> ToolResult {
+fn err(msg: &str) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
-        content: msg.into(),
+        content: msg.to_string(),
         is_error: true,
     }
 }
 
-fn ok(msg: impl Into<String>) -> ToolResult {
+fn ok(msg: &str) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
-        content: msg.into(),
+        content: msg.to_string(),
         is_error: false,
     }
 }
 
+const BROWSER_NAMES: &[&str] = &[
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "msedge",
+    "microsoft-edge",
+    "chrome",
+];
+
 fn find_browser() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("WHYCODES_BROWSER") {
-        let pb = PathBuf::from(p);
-        if pb.exists() {
-            return Some(pb);
-        }
+    find_browser_from_env().or_else(find_browser_on_path)
+}
+
+fn find_browser_from_env() -> Option<PathBuf> {
+    let p = std::env::var("WHYCODES_BROWSER").ok()?;
+    let pb = PathBuf::from(p);
+    pb.exists().then_some(pb)
+}
+
+fn find_browser_on_path() -> Option<PathBuf> {
+    BROWSER_NAMES.iter().find_map(|name| which_browser(name))
+}
+
+fn which_browser(name: &str) -> Option<PathBuf> {
+    which_browser_from(Command::new("which").arg(name).output().ok())
+}
+
+fn which_browser_from(output: Option<std::process::Output>) -> Option<PathBuf> {
+    let out = output?;
+    if !out.status.success() {
+        return None;
     }
-    const NAMES: &[&str] = &[
-        "google-chrome",
-        "google-chrome-stable",
-        "chromium",
-        "chromium-browser",
-        "msedge",
-        "microsoft-edge",
-        "chrome",
-    ];
-    for name in NAMES {
-        if let Ok(out) = Command::new("which").arg(name).output()
-            && out.status.success()
-        {
-            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !p.is_empty() {
-                return Some(PathBuf::from(p));
-            }
-        }
+    let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if p.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(p))
     }
-    None
 }
 
 fn status() -> ToolResult {
     let bin = find_browser();
-    let (running, port) = match SESSION.lock() {
-        Ok(g) => (g.is_some(), g.as_ref().map(|s| s.port)),
-        Err(p) => {
-            let g = p.into_inner();
-            (g.is_some(), g.as_ref().map(|s| s.port))
-        }
-    };
+    let (running, port) = session_status();
     match bin {
         None => err(
             "No Chromium/Chrome on PATH. Install Chromium or set WHYCODES_BROWSER=/path/to/chrome.",
         ),
-        Some(p) => ok(format!(
-            "browser: {}\nrunning: {}\nport: {}",
-            p.display(),
-            running,
-            port.map(|n| n.to_string()).unwrap_or_else(|| "-".into())
-        )),
+        Some(p) => browser_found_status(&p, running, port),
     }
 }
 
@@ -183,20 +187,16 @@ fn user_data_dir() -> PathBuf {
 }
 
 fn ensure_session() -> Result<u16, String> {
-    if let Ok(g) = SESSION.lock()
-        && let Some(s) = g.as_ref()
-    {
-        return Ok(s.port);
+    if let Some(port) = existing_session_port(SESSION.lock()) {
+        return Ok(port);
     }
     let bin = find_browser().ok_or_else(|| {
         "No Chromium/Chrome on PATH. Install Chromium or set WHYCODES_BROWSER.".to_string()
     })?;
     let dir = user_data_dir();
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        tracing::debug!(error = %e, "browser profile mkdir");
-    }
+    mkdir_browser_profile(&dir);
     let port = pick_port();
-    let mut child = Command::new(&bin)
+    let child = Command::new(&bin)
         .args([
             "--headless=new",
             "--disable-gpu",
@@ -214,24 +214,196 @@ fn ensure_session() -> Result<u16, String> {
         .spawn()
         .map_err(|e| format!("failed to launch {}: {e}", bin.display()))?;
 
+    poll_session_ready(child, port, dir)
+}
+
+fn browser_found_status(path: &Path, running: bool, port: Option<u16>) -> ToolResult {
+    ok(&browser_status_line(path, running, port))
+}
+
+fn browser_status_line(path: &Path, running: bool, port: Option<u16>) -> String {
+    format!(
+        "browser: {}\nrunning: {}\nport: {}",
+        path.display(),
+        running,
+        port.map(|n| n.to_string()).unwrap_or_else(|| "-".into())
+    )
+}
+
+fn session_status() -> (bool, Option<u16>) {
+    session_from_guard(SESSION.lock())
+}
+
+fn existing_session_port(
+    result: Result<
+        std::sync::MutexGuard<'static, Option<BrowserSession>>,
+        std::sync::PoisonError<std::sync::MutexGuard<'static, Option<BrowserSession>>>,
+    >,
+) -> Option<u16> {
+    let (running, port) = session_from_guard(result);
+    if running { port } else { None }
+}
+
+fn mkdir_browser_profile(dir: &Path) {
+    mkdir_browser_profile_result(std::fs::create_dir_all(dir));
+}
+
+fn mkdir_browser_profile_result(result: std::io::Result<()>) {
+    if let Err(e) = result {
+        tracing::debug!(error = %e, "browser profile mkdir");
+    }
+}
+
+fn store_session(child: Child, port: u16, dir: PathBuf) -> Result<u16, String> {
+    if let Ok(mut g) = SESSION.lock() {
+        *g = Some(BrowserSession {
+            child,
+            port,
+            _user_data: dir,
+        });
+    }
+    Ok(port)
+}
+
+fn poll_session_ready(mut child: Child, port: u16, mut dir: PathBuf) -> Result<u16, String> {
     let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline {
-        if http_get(&format!("http://127.0.0.1:{port}/json/version")).is_ok() {
-            if let Ok(mut g) = SESSION.lock() {
-                *g = Some(BrowserSession {
-                    child,
-                    port,
-                    _user_data: dir,
-                });
+        match apply_split_poll(split_session_poll(finish_session_poll(step_session_poll(
+            child, port, dir,
+        )))) {
+            Ok(stored) => return stored,
+            Err(retry) => {
+                let (c, d) = retry_or_invariant(retry)?;
+                child = c;
+                dir = d;
             }
-            return Ok(port);
         }
         std::thread::sleep(Duration::from_millis(80));
     }
-    if let Err(e) = child.kill() {
-        tracing::debug!(error = %e, "browser launch timeout kill");
-    }
+    kill_launch_timeout(&mut child);
     Err("Chromium started but CDP never became ready".into())
+}
+
+fn poll_invariant() -> Result<u16, String> {
+    Err("browser session poll invariant".into())
+}
+
+fn retry_or_invariant(retry: Option<(Child, PathBuf)>) -> Result<(Child, PathBuf), String> {
+    match retry {
+        Some(retry) => Ok(retry),
+        None => Err(poll_invariant().unwrap_err()),
+    }
+}
+
+fn apply_split_poll(split: SplitPoll) -> Result<Result<u16, String>, Option<(Child, PathBuf)>> {
+    match split {
+        (Some(stored), None) => Ok(stored),
+        (None, Some(retry)) => Err(Some(retry)),
+        _ => Err(None),
+    }
+}
+
+fn split_session_poll(poll: SessionPoll) -> SplitPoll {
+    match poll {
+        Ok(stored) => (Some(stored), None),
+        Err(retry) => (None, Some(retry)),
+    }
+}
+
+fn finish_session_poll(result: SessionPoll) -> SessionPoll {
+    result
+}
+
+fn step_session_poll(child: Child, port: u16, dir: PathBuf) -> SessionPoll {
+    next_session_poll(
+        http_get(&format!("http://127.0.0.1:{port}/json/version")).is_ok(),
+        child,
+        port,
+        dir,
+    )
+}
+
+fn next_session_poll(ready: bool, child: Child, port: u16, dir: PathBuf) -> SessionPoll {
+    apply_ready_session(take_ready_session(ready, child, port, dir))
+}
+
+fn take_ready_session(ready: bool, child: Child, port: u16, dir: PathBuf) -> SessionPoll {
+    if ready {
+        Ok(store_session(child, port, dir))
+    } else {
+        Err((child, dir))
+    }
+}
+
+fn apply_ready_session(result: SessionPoll) -> SessionPoll {
+    result
+}
+
+fn kill_launch_timeout(child: &mut Child) {
+    kill_child_debug(child.kill(), "browser launch timeout kill");
+}
+
+fn session_from_guard(
+    result: Result<
+        std::sync::MutexGuard<'static, Option<BrowserSession>>,
+        std::sync::PoisonError<std::sync::MutexGuard<'static, Option<BrowserSession>>>,
+    >,
+) -> (bool, Option<u16>) {
+    session_from_unlocked(unlock_session(result))
+}
+
+fn unlock_session(
+    result: Result<
+        std::sync::MutexGuard<'static, Option<BrowserSession>>,
+        std::sync::PoisonError<std::sync::MutexGuard<'static, Option<BrowserSession>>>,
+    >,
+) -> std::sync::MutexGuard<'static, Option<BrowserSession>> {
+    unlock_session_result(result)
+}
+
+fn unlock_session_result(
+    result: Result<
+        std::sync::MutexGuard<'static, Option<BrowserSession>>,
+        std::sync::PoisonError<std::sync::MutexGuard<'static, Option<BrowserSession>>>,
+    >,
+) -> std::sync::MutexGuard<'static, Option<BrowserSession>> {
+    recover_lock(result)
+}
+
+fn recover_lock<T>(result: Result<T, std::sync::PoisonError<T>>) -> T {
+    match result {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
+
+fn session_from_unlocked(
+    g: std::sync::MutexGuard<'static, Option<BrowserSession>>,
+) -> (bool, Option<u16>) {
+    session_fields(&g)
+}
+
+fn session_fields(g: &Option<BrowserSession>) -> (bool, Option<u16>) {
+    (g.is_some(), g.as_ref().map(|s| s.port))
+}
+
+fn pick_port_fallback(err: &str, msg: &'static str) -> u16 {
+    tracing::debug!(error = %err, "{msg}");
+    9222
+}
+
+fn pick_bound_port(result: std::io::Result<std::net::TcpListener>) -> u16 {
+    match result {
+        Ok(l) => port_from_addr(l.local_addr()),
+        Err(e) => pick_port_fallback(&e.to_string(), "ephemeral port bind"),
+    }
+}
+
+fn port_from_addr(result: std::io::Result<std::net::SocketAddr>) -> u16 {
+    match result {
+        Ok(a) => a.port(),
+        Err(e) => pick_port_fallback(&e.to_string(), "ephemeral port local_addr"),
+    }
 }
 
 fn pick_port() -> u16 {
@@ -242,34 +414,33 @@ fn pick_port() -> u16 {
     {
         return n;
     }
-    match std::net::TcpListener::bind("127.0.0.1:0") {
-        Ok(l) => match l.local_addr() {
-            Ok(a) => a.port(),
-            Err(e) => {
-                tracing::debug!(error = %e, "ephemeral port local_addr");
-                9222
-            }
-        },
-        Err(e) => {
-            tracing::debug!(error = %e, "ephemeral port bind");
-            9222
-        }
-    }
+    pick_bound_port(std::net::TcpListener::bind("127.0.0.1:0"))
 }
 
 fn open_url(url: &str) -> ToolResult {
-    let port = match ensure_session() {
-        Ok(p) => p,
-        Err(e) => return err(e),
-    };
+    match ensure_session() {
+        Ok(port) => navigate_opened(port, url),
+        Err(e) => err(&e),
+    }
+}
+
+fn navigate_opened(port: u16, url: &str) -> ToolResult {
     match cdp(port, "Page.navigate", json!({ "url": url })) {
         Ok(_) => {
-            if let Err(e) = cdp(port, "Page.enable", json!({})) {
-                tracing::debug!(error = %e, "Page.enable");
-            }
-            ok(format!("opened {url}"))
+            page_enable_best_effort(port);
+            ok(&format!("opened {url}"))
         }
-        Err(e) => err(e),
+        Err(e) => err(&e),
+    }
+}
+
+fn page_enable_best_effort(port: u16) {
+    page_enable_result(cdp(port, "Page.enable", json!({})));
+}
+
+fn page_enable_result(result: Result<Value, String>) {
+    if let Err(e) = result {
+        tracing::debug!(error = %e, "Page.enable");
     }
 }
 
@@ -292,9 +463,13 @@ fn snapshot() -> ToolResult {
         });
       return {title, url, text, interactables: els};
     })()"#;
-    match evaluate(port, expr) {
-        Ok(v) => ok(serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string())),
-        Err(e) => err(e),
+    snapshot_from_eval(evaluate(port, expr))
+}
+
+fn snapshot_from_eval(result: Result<Value, String>) -> ToolResult {
+    match result {
+        Ok(v) => ok(&serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string())),
+        Err(e) => err(&e),
     }
 }
 
@@ -307,12 +482,16 @@ fn click(selector: &str) -> ToolResult {
         r#"(function(){{ const e = document.querySelector({sel}); if(!e) return {{ok:false,error:'not found'}}; e.click(); return {{ok:true}}; }})()"#,
         sel = json!(selector)
     );
-    match evaluate(port, &expr) {
+    click_from_eval(evaluate(port, &expr), selector)
+}
+
+fn click_from_eval(result: Result<Value, String>, selector: &str) -> ToolResult {
+    match result {
         Ok(v) if v.get("ok").and_then(|b| b.as_bool()) == Some(true) => {
-            ok(format!("clicked {selector}"))
+            ok(&format!("clicked {selector}"))
         }
-        Ok(v) => err(format!("click failed: {v}")),
-        Err(e) => err(e),
+        Ok(v) => err(&format!("click failed: {v}")),
+        Err(e) => err(&e),
     }
 }
 
@@ -326,10 +505,14 @@ fn type_text(selector: &str, text: &str) -> ToolResult {
         sel = json!(selector),
         val = json!(text)
     );
-    match evaluate(port, &expr) {
+    type_from_eval(evaluate(port, &expr))
+}
+
+fn type_from_eval(result: Result<Value, String>) -> ToolResult {
+    match result {
         Ok(v) if v.get("ok").and_then(|b| b.as_bool()) == Some(true) => ok("typed"),
-        Ok(v) => err(format!("type failed: {v}")),
-        Err(e) => err(e),
+        Ok(v) => err(&format!("type failed: {v}")),
+        Err(e) => err(&e),
     }
 }
 
@@ -340,7 +523,7 @@ fn clamp_wait_ms(ms: u64) -> u64 {
 fn wait_ms(ms: u64) -> ToolResult {
     let ms = clamp_wait_ms(ms);
     std::thread::sleep(Duration::from_millis(ms));
-    ok(format!("waited {ms}ms"))
+    ok(&format!("waited {ms}ms"))
 }
 
 fn screenshot(ctx: &ToolContext) -> ToolResult {
@@ -348,59 +531,132 @@ fn screenshot(ctx: &ToolContext) -> ToolResult {
         Some(p) => p,
         None => return err("no browser session — call browser open first"),
     };
-    let v = match cdp(port, "Page.captureScreenshot", json!({ "format": "png" })) {
+    screenshot_from_cdp(
+        cdp(port, "Page.captureScreenshot", json!({ "format": "png" })),
+        ctx,
+    )
+}
+
+fn screenshot_from_cdp(result: Result<Value, String>, ctx: &ToolContext) -> ToolResult {
+    let v = match result {
         Ok(v) => v,
-        Err(e) => return err(e),
+        Err(e) => return err(&e),
     };
-    let Some(b64) = v.get("data").and_then(|d| d.as_str()) else {
+    let Some(b64) = screenshot_data(&v) else {
         return err("screenshot: no data");
     };
-    use base64::Engine as _;
-    let bytes = match base64::engine::general_purpose::STANDARD.decode(b64) {
+    let bytes = match decode_screenshot(b64) {
         Ok(b) => b,
-        Err(e) => return err(format!("screenshot decode: {e}")),
+        Err(e) => return err(&e),
     };
+    write_screenshot_bytes(ctx, &bytes)
+}
+
+fn screenshot_mkdir_failed(e: &str) -> ToolResult {
+    err(&format!("mkdir: {e}"))
+}
+
+fn screenshot_write_failed(e: &str) -> ToolResult {
+    err(&format!("write screenshot: {e}"))
+}
+
+fn write_screenshot_bytes(ctx: &ToolContext, bytes: &[u8]) -> ToolResult {
     let dir = whycodes_core::project_dir(Path::new(&ctx.working_dir)).join("browser");
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        return err(format!("mkdir: {e}"));
+    if let Err(e) = mkdir_screenshot_dir(&dir) {
+        return e;
     }
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let path = dir.join(format!("shot-{ts}.png"));
-    if let Err(e) = std::fs::write(&path, bytes) {
-        return err(format!("write screenshot: {e}"));
+    write_screenshot_file(&path, bytes)
+}
+
+fn mkdir_screenshot_dir(dir: &Path) -> Result<(), ToolResult> {
+    std::fs::create_dir_all(dir).map_err(|e| screenshot_mkdir_failed(&e.to_string()))
+}
+
+fn write_screenshot_file(path: &Path, bytes: &[u8]) -> ToolResult {
+    match std::fs::write(path, bytes) {
+        Ok(()) => ok(&format!("saved {}", path.display())),
+        Err(e) => screenshot_write_failed(&e.to_string()),
     }
-    ok(format!("saved {}", path.display()))
 }
 
 fn close_browser() -> ToolResult {
-    let mut g = match SESSION.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
+    let mut g = SESSION.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(mut s) = g.take() {
-        if let Err(e) = s.child.kill() {
-            tracing::debug!(error = %e, "browser kill");
-        }
-        if let Err(e) = s.child.wait() {
-            tracing::debug!(error = %e, "browser wait");
-        }
+        kill_browser_child(&mut s.child);
+        wait_browser_child(&mut s.child);
         return ok("browser closed");
     }
     ok("no browser session")
 }
 
 fn current_port() -> Option<u16> {
-    match SESSION.lock() {
-        Ok(g) => g.as_ref().map(|s| s.port),
-        Err(p) => p.into_inner().as_ref().map(|s| s.port),
+    session_status().1
+}
+
+fn screenshot_data(v: &Value) -> Option<&str> {
+    v.get("data").and_then(|d| d.as_str())
+}
+
+fn decode_screenshot(b64: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("screenshot decode: {e}"))
+}
+
+fn evaluate_js_exception(ex: &Value) -> Result<Value, String> {
+    Err(format!("js exception: {ex}"))
+}
+
+fn js_exception_from(ex: &Value) -> Result<Value, String> {
+    evaluate_js_exception(ex)
+}
+
+fn kill_browser_child(child: &mut Child) {
+    kill_child_debug(child.kill(), "browser kill");
+}
+
+fn wait_browser_child(child: &mut Child) {
+    kill_child_debug(child.wait().map(|_| ()), "browser wait");
+}
+
+fn set_http_read_timeout(stream: &TcpStream) {
+    set_timeout_debug(
+        stream.set_read_timeout(Some(Duration::from_secs(5))),
+        "http get timeout",
+    );
+}
+
+fn set_cdp_timeouts(stream: &TcpStream) {
+    set_timeout_debug(
+        stream.set_read_timeout(Some(Duration::from_secs(10))),
+        "cdp read timeout",
+    );
+    set_timeout_debug(
+        stream.set_write_timeout(Some(Duration::from_secs(10))),
+        "cdp write timeout",
+    );
+}
+
+fn kill_child_debug(result: std::io::Result<()>, msg: &'static str) {
+    if let Err(e) = result {
+        tracing::debug!(error = %e, "{msg}");
+    }
+}
+
+fn set_timeout_debug(result: std::io::Result<()>, msg: &'static str) {
+    if let Err(e) = result {
+        tracing::debug!(error = %e, "{msg}");
     }
 }
 
 fn evaluate(port: u16, expression: &str) -> Result<Value, String> {
-    let v = cdp(
+    evaluate_cdp_result(cdp(
         port,
         "Runtime.evaluate",
         json!({
@@ -408,9 +664,13 @@ fn evaluate(port: u16, expression: &str) -> Result<Value, String> {
             "returnByValue": true,
             "awaitPromise": true
         }),
-    )?;
+    ))
+}
+
+fn evaluate_cdp_result(result: Result<Value, String>) -> Result<Value, String> {
+    let v = result?;
     if let Some(ex) = v.get("exceptionDetails") {
-        return Err(format!("js exception: {ex}"));
+        return js_exception_from(ex);
     }
     Ok(v.get("result")
         .and_then(|r| r.get("value"))
@@ -438,9 +698,7 @@ fn http_get(url: &str) -> Result<String, String> {
     let (hostport, path) = url.split_once('/').unwrap_or((url, ""));
     let path = format!("/{path}");
     let mut stream = TcpStream::connect(hostport).map_err(|e| e.to_string())?;
-    if let Err(e) = stream.set_read_timeout(Some(Duration::from_secs(5))) {
-        tracing::debug!(error = %e, "http get timeout");
-    }
+    set_http_read_timeout(&stream);
     let req = format!("GET {path} HTTP/1.0\r\nHost: {hostport}\r\nConnection: close\r\n\r\n");
     stream
         .write_all(req.as_bytes())
@@ -459,12 +717,7 @@ fn ws_cdp_call(ws_url: &str, method: &str, params: Value) -> Result<Value, Strin
     let (hostport, path) = url.split_once('/').unwrap_or((url, ""));
     let path = format!("/{path}");
     let mut stream = TcpStream::connect(hostport).map_err(|e| format!("cdp connect: {e}"))?;
-    if let Err(e) = stream.set_read_timeout(Some(Duration::from_secs(10))) {
-        tracing::debug!(error = %e, "cdp read timeout");
-    }
-    if let Err(e) = stream.set_write_timeout(Some(Duration::from_secs(10))) {
-        tracing::debug!(error = %e, "cdp write timeout");
-    }
+    set_cdp_timeouts(&stream);
     let key = base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
         *b"whycodes-cdp-key!!",

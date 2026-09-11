@@ -112,17 +112,21 @@ fn push_if_present(
     if !path.exists() || !seen.insert(path.clone()) {
         return;
     }
-    let state = if is_symlink(&path) {
-        SourceState::Symlink
-    } else {
-        consent.state_for(&path)
-    };
+    let state = classify(is_symlink(&path), consent.state_for(&path));
     found.push(FoundSource {
         product,
         rel_path,
         path,
         state,
     });
+}
+
+fn classify(is_link: bool, fallback: SourceState) -> SourceState {
+    if is_link {
+        SourceState::Symlink
+    } else {
+        fallback
+    }
 }
 
 fn is_symlink(path: &Path) -> bool {
@@ -200,6 +204,8 @@ mod tests {
             assert!(found.iter().any(|f| f.rel_path == ".claude.json"));
             let _ = real;
         }
+        assert_eq!(classify(true, SourceState::New), SourceState::Symlink);
+        assert_eq!(classify(false, SourceState::New), SourceState::New);
     }
 
     #[test]

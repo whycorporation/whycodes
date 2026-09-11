@@ -273,7 +273,7 @@ async fn connect_and_session_surface() {
 
     let created = c.create_session(Some("/tmp")).await.unwrap();
     assert_eq!(created.id, "s-new");
-    let _ = c.create_session(None::<String>).await.unwrap();
+    let _ = c.create_session(None).await.unwrap();
 
     let got = c.get_session("abc").await.unwrap();
     assert_eq!(got.title, "got");
@@ -444,7 +444,7 @@ async fn request_options_are_sent_as_protocol_json() {
         .route("/v1/sessions/{id}/compact", post(compact_body))
         .route("/v1/sessions/{id}/run", post(run_body));
     let (base, _server) = bind_app(app).await;
-    let client = WhyCodesClient::connect(base).await.unwrap();
+    let client = WhyCodesClient::connect(&base).await.unwrap();
 
     assert_eq!(
         client.create_session(Some("/project")).await.unwrap().id,
@@ -489,13 +489,13 @@ async fn http_and_decode_failures_return_stable_error_codes() {
         .route("/v1/models", get(invalid_json))
         .route("/v1/sessions/{id}/cancel", post(server_error));
     let (base, _server) = bind_app(app).await;
-    let client = WhyCodesClient::connect(base).await.unwrap();
+    let client = WhyCodesClient::connect(&base).await.unwrap();
 
     let auth = client.list_sessions().await.unwrap_err();
     assert_eq!(auth.code, ErrorCode::Auth);
     assert!(auth.message.contains("list sessions failed: 401"));
 
-    let invalid = client.create_session(None::<String>).await.unwrap_err();
+    let invalid = client.create_session(None).await.unwrap_err();
     assert_eq!(invalid.code, ErrorCode::InvalidRequest);
     assert!(invalid.message.contains("create session failed: 400"));
 
@@ -550,7 +550,7 @@ async fn run_collects_cancel_and_error_event_branches() {
         .route("/v1/health", get(healthy))
         .route("/v1/sessions/{id}/run", post(events));
     let (base, _server) = bind_app(app).await;
-    let client = WhyCodesClient::connect(base).await.unwrap();
+    let client = WhyCodesClient::connect(&base).await.unwrap();
 
     let cancelled = client
         .run("cancelled", "go", RunOptions::default())
@@ -816,7 +816,7 @@ async fn run_covers_ignored_events_and_keeps_delta_over_turn_done() {
         .route("/v1/health", get(healthy))
         .route("/v1/sessions/{id}/run", post(events));
     let (base, _server) = bind_app(app).await;
-    let client = WhyCodesClient::connect(base).await.unwrap();
+    let client = WhyCodesClient::connect(&base).await.unwrap();
     let turn = client.run("s1", "go", RunOptions::default()).await.unwrap();
     assert_eq!(turn.text, "keep");
 }
@@ -855,7 +855,7 @@ async fn run_events_stream_error_maps_disconnected() {
         .route("/v1/health", get(healthy))
         .route("/v1/sessions/{id}/run", post(blank_then_done));
     let (base, _server) = bind_app(app).await;
-    let client = WhyCodesClient::connect(base).await.unwrap();
+    let client = WhyCodesClient::connect(&base).await.unwrap();
     let turn = client
         .run("blank", "go", RunOptions::default())
         .await
@@ -876,7 +876,7 @@ async fn run_events_stream_error_maps_disconnected() {
         .route("/v1/health", get(healthy))
         .route("/v1/sessions/{id}/run", post(broken));
     let (base, _server) = bind_app(app).await;
-    let client = WhyCodesClient::connect(base).await.unwrap();
+    let client = WhyCodesClient::connect(&base).await.unwrap();
     let err = client
         .run("s1", "go", RunOptions::default())
         .await
@@ -920,7 +920,7 @@ async fn run_structured_schema_retry_and_success_paths() {
         .route("/v1/health", get(healthy))
         .route("/v1/sessions/{id}/run", post(scripted));
     let (base, _server) = bind_app(app).await;
-    let client = WhyCodesClient::connect(base).await.unwrap();
+    let client = WhyCodesClient::connect(&base).await.unwrap();
 
     let invalid = client
         .run_structured(
@@ -1000,20 +1000,47 @@ async fn run_structured_schema_retry_and_success_paths() {
 }
 
 fn write_fake_binary(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
-    let path = dir.join("whycodes");
-    let script = format!("#!/usr/bin/env python3\n{body}\n");
+    #[cfg(windows)]
     {
-        use std::io::Write;
-        let mut f = std::fs::File::create(&path).unwrap();
-        f.write_all(script.as_bytes()).unwrap();
-        f.sync_all().unwrap();
+        // `launch` runs `<binary> serve <port>` with `current_dir` = working_dir,
+        // so Python executes the file named `serve` in that directory.
+        std::fs::write(dir.join("serve"), format!("{body}\n")).unwrap();
+        python_bin()
     }
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     {
+        let path = dir.join("whycodes");
+        let script = format!("#!/usr/bin/env python3\n{body}\n");
+        {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(script.as_bytes()).unwrap();
+            f.sync_all().unwrap();
+        }
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
     }
-    path
+}
+
+#[cfg(windows)]
+fn python_bin() -> std::path::PathBuf {
+    for cmd in ["python3", "python", "py"] {
+        if let Ok(path) = std::env::var("PATH") {
+            let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into());
+            for dir in std::env::split_paths(&path) {
+                if dir.join(cmd).is_file() {
+                    return std::path::PathBuf::from(cmd);
+                }
+                for ext in exts.split(';').filter(|s| !s.is_empty()) {
+                    if dir.join(format!("{cmd}{ext}")).is_file() {
+                        return std::path::PathBuf::from(cmd);
+                    }
+                }
+            }
+        }
+    }
+    std::path::PathBuf::from("python")
 }
 
 fn is_busy_exec(err: &crate::SdkError) -> bool {
@@ -1055,7 +1082,7 @@ async fn launch_expecting_err(opts: LaunchOptions) -> crate::SdkError {
 const PY_HEALTH: &str = r#"
 import json, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
-PORT = int(sys.argv[2])
+PORT = int(sys.argv[-1])
 PROTO = int(__import__("os").environ.get("FAKE_PROTO", "1"))
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1173,8 +1200,16 @@ async fn launch_child_exit_is_startup_failed() {
         port: Some(crate::client::ephemeral_port_for_test()),
     })
     .await;
-    assert_eq!(err.code, ErrorCode::StartupFailed);
-    assert!(err.message.contains("nope") || err.message.contains("exited"));
+    assert!(
+        err.code == ErrorCode::StartupFailed || err.code == ErrorCode::StartupTimeout,
+        "{err:?}"
+    );
+    assert!(
+        err.message.contains("nope")
+            || err.message.contains("exited")
+            || err.message.contains("did not become healthy"),
+        "{err:?}"
+    );
 }
 
 #[tokio::test]

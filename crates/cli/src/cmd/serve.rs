@@ -77,6 +77,7 @@ pub(crate) async fn cmd_connect(
         resume_session_id: None,
         remote: Some(whycodes_tui::RemoteAttach::new(base, session_id)),
         update_rx: None,
+        inject: Default::default(),
     })
     .await
     .map(|_| ())

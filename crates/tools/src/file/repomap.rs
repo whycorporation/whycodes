@@ -107,58 +107,22 @@ impl RepoMapTool {
             .clamp(1, HARD_MAX_FILES);
 
         let mut files: Vec<(PathBuf, String)> = Vec::new();
-        let mut collect = |path: &Path, rel: &str| -> bool {
-            if !is_source_path(path) {
-                return true;
-            }
-            files.push((path.to_path_buf(), rel.replace('\\', "/")));
-            files.len() < max_files
-        };
-
-        if root.is_file() {
-            let rel = display_path(&root, &working_dir);
-            collect(&root, &rel);
-        } else {
-            let used_index = if let Some(idx) = file_index.as_deref() {
-                visit_index(idx, &root, &mut |path, rel, is_dir, _size| {
-                    if is_dir {
-                        return true;
-                    }
-                    collect(path, rel)
-                })
-                .is_some()
-            } else {
-                false
-            };
-            if !used_index {
-                walk_files(&root, &mut |path, rel| collect(path, rel));
-            }
-        }
+        collect_repomap_files(
+            &root,
+            &working_dir,
+            file_index.as_deref(),
+            max_files,
+            &mut files,
+        );
 
         files.sort_by(|a, b| rank_key(&a.1).cmp(&rank_key(&b.1)));
 
         let inspected = files.len();
         let mut blocks: Vec<FileBlock> = Vec::new();
         for (path, rel) in files {
-            if file_len(&path).is_some_and(|n| n > MAX_FILE_BYTES) {
-                continue;
+            if let Some(block) = file_block_from(&path, rel) {
+                blocks.push(block);
             }
-            if is_binary_file(&path) {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let ext = path
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            let sigs = extract_signatures(&text, &ext);
-            if sigs.is_empty() {
-                continue;
-            }
-            blocks.push(FileBlock { rel, sigs });
         }
 
         let (body, used_files, omitted) = pack_blocks(&blocks, max_tokens);
@@ -167,11 +131,7 @@ impl RepoMapTool {
             "# repomap  {root_shown}  ~{used_tokens}/{max_tokens} tokens  \
              {used_files} files  {omitted} omitted  ({inspected} inspected)"
         );
-        let content = if body.is_empty() {
-            format!("{header}\n(no signatures in scope)")
-        } else {
-            format!("{header}\n{body}")
-        };
+        let content = render_repomap(&header, &body);
 
         ToolResult {
             tool_call_id: String::new(),
@@ -181,9 +141,99 @@ impl RepoMapTool {
     }
 }
 
+fn render_repomap(header: &str, body: &str) -> String {
+    if body.is_empty() {
+        format!("{header}\n(no signatures in scope)")
+    } else {
+        format!("{header}\n{body}")
+    }
+}
+
+fn collect_repomap_files(
+    root: &Path,
+    working_dir: &str,
+    file_index: Option<&whycodes_index::WorkspaceIndex>,
+    max_files: usize,
+    files: &mut Vec<(PathBuf, String)>,
+) {
+    let mut collect = |path: &Path, rel: &str| -> bool {
+        if !is_source_path(path) {
+            return true;
+        }
+        files.push((path.to_path_buf(), rel.replace('\\', "/")));
+        files.len() < max_files
+    };
+    if root.is_file() {
+        let rel = display_path(root, working_dir);
+        collect(root, &rel);
+        return;
+    }
+    if !collect_from_index(file_index, root, &mut collect) {
+        walk_repomap_files(root, &mut collect);
+    }
+}
+
+fn collect_from_index(
+    file_index: Option<&whycodes_index::WorkspaceIndex>,
+    root: &Path,
+    collect: &mut dyn FnMut(&Path, &str) -> bool,
+) -> bool {
+    let Some(idx) = file_index else {
+        return false;
+    };
+    visit_index(idx, root, &mut |path, rel, is_dir, _size| {
+        visit_repomap_entry(path, rel, is_dir, collect)
+    })
+    .is_some()
+}
+
+fn visit_repomap_entry(
+    path: &Path,
+    rel: &str,
+    is_dir: bool,
+    collect: &mut dyn FnMut(&Path, &str) -> bool,
+) -> bool {
+    if is_dir { true } else { collect(path, rel) }
+}
+
+fn walk_repomap_files(root: &Path, collect: &mut dyn FnMut(&Path, &str) -> bool) {
+    walk_files(root, &mut |path, rel| collect(path, rel));
+}
+
+#[cfg(test)]
+fn skip_repomap_file(path: &Path) -> bool {
+    read_repomap_text(path).is_none()
+}
+
+fn skip_repomap_bytes(path: &Path) -> bool {
+    file_len(path).is_some_and(|n| n > MAX_FILE_BYTES) || is_binary_file(path)
+}
+
+fn read_repomap_text(path: &Path) -> Option<String> {
+    if skip_repomap_bytes(path) {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
 struct FileBlock {
     rel: String,
     sigs: Vec<String>,
+}
+
+fn file_block_from(path: &Path, rel: String) -> Option<FileBlock> {
+    let text = read_repomap_text(path)?;
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let sigs = extract_signatures(&text, &ext);
+    if sigs.is_empty() {
+        None
+    } else {
+        Some(FileBlock { rel, sigs })
+    }
 }
 
 fn pack_blocks(blocks: &[FileBlock], max_tokens: usize) -> (String, usize, usize) {

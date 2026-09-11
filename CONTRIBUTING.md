@@ -68,11 +68,12 @@ Things to know about CI:
   change legitimately needs a new panic site or swallowed error, the budget
   file change is reviewed as part of the PR.
 - Coverage is enforced with `cargo llvm-cov`: the workspace fails below 82%
-  line coverage, eleven foundational crates are locked at 100%, and
-  `whycodes-format` at 95%. Locally: `scripts/coverage.sh` (needs
-  `cargo-llvm-cov` + `llvm-tools-preview`, or `LLVM_COV` / `LLVM_PROFDATA`
-  on a distro toolchain). See [docs/coverage.md](docs/coverage.md).
-  The 100% workspace raise is #57.
+  line coverage, and the crates in `scripts/check_coverage_floors.py`
+  (`FULL_COVER_CRATES`, including `whycodes-tools`) are locked at 100%
+  production lines (`tests.rs` ignored, `--skip-expansions`). Locally:
+  `scripts/coverage.sh` (needs `cargo-llvm-cov` + `llvm-tools-preview`, or
+  `LLVM_COV` / `LLVM_PROFDATA` on a distro toolchain). See
+  [docs/coverage.md](docs/coverage.md). The 100% workspace raise is #57.
 - Internal crate edges are allowlisted in
   `scripts/dependency_boundaries.json`. Adding an edge is a deliberate
   architectural decision — see [docs/architecture.md](docs/architecture.md).
@@ -150,3 +151,8 @@ Issues labelled `good first issue` are meant for a first contribution.
 
 **Security issues:** please use the process in [SECURITY.md](SECURITY.md)
 instead of opening a public issue.
+
+## Sponsors
+
+WhyCodes is independently developed and needs funding to keep shipping.
+Sponsor the project on [GitHub Sponsors](https://github.com/sponsors/whycorporation).

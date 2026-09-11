@@ -6,6 +6,7 @@ use std::process::Command;
 #[test]
 fn diff_module_loads() {
     assert!(!module_path!().is_empty());
+    let _ = GitDiffTool::default();
 }
 
 #[tokio::test]

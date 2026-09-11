@@ -113,10 +113,9 @@ fn a_missing_required_role_is_reported_by_name() {
 
 #[test]
 fn malformed_json_reports_a_parse_error_rather_than_panicking() {
-    assert!(matches!(
-        ThemeFile::parse("{not json"),
-        Err(ThemeFileError::Parse(_))
-    ));
+    let err = ThemeFile::parse("{not json").unwrap_err();
+    assert!(matches!(err, ThemeFileError::Parse(_)));
+    assert!(err.to_string().contains("could not parse theme"));
 }
 
 #[test]
@@ -129,6 +128,20 @@ fn parses_both_hex_lengths() {
     assert_eq!(parse_hex_color("aabbcc"), None);
     assert_eq!(parse_hex_color("#gg0000"), None);
     assert_eq!(parse_hex_color("#ab"), None);
+}
+
+#[test]
+fn a_bad_def_hex_names_the_role() {
+    let json = r##"{"defs":{"bad":"not-hex"},"theme":{
+        "background":{"dark":"#000","light":"#fff"},
+        "text":{"dark":"#fff","light":"#000"},
+        "border":{"dark":"#111","light":"#eee"},
+        "accent":{"dark":"bad","light":"bad"}
+    }}"##;
+    let err = ThemeFile::parse(json).unwrap().palette(false).unwrap_err();
+    assert!(matches!(err, ThemeFileError::BadColor { .. }));
+    assert!(err.to_string().contains("accent"));
+    assert!(err.to_string().contains("not-hex"));
 }
 
 #[test]
@@ -145,6 +158,12 @@ fn loading_a_directory_yields_a_dark_and_a_light_theme_per_file() {
     std::fs::write(dir.join("sample.json"), SAMPLE).unwrap();
     std::fs::write(dir.join("broken.json"), "{not json").unwrap();
     std::fs::write(dir.join("ignored.txt"), SAMPLE).unwrap();
+    std::fs::write(
+        dir.join("partial.json"),
+        r##"{"defs":{},"theme":{"background":"#000"}}"##,
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("unreadable.json")).unwrap();
 
     let (loaded, errors) = load_dir(&dir);
     let _ = std::fs::remove_dir_all(&dir);
@@ -153,8 +172,8 @@ fn loading_a_directory_yields_a_dark_and_a_light_theme_per_file() {
     assert_eq!(names, vec!["sample", "sample-light"]);
     // The broken file is reported, not silently dropped, and does not stop
     // the good one loading.
-    assert_eq!(errors.len(), 1);
-    assert!(errors[0].0.ends_with("broken.json"));
+    assert!(errors.iter().any(|(p, _)| p.ends_with("broken.json")));
+    assert!(errors.iter().any(|(p, _)| p.ends_with("partial.json")));
 }
 
 /// A unique-enough suffix without pulling in a uuid dependency.

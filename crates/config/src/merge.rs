@@ -224,6 +224,14 @@ impl Config {
             merged.mcp_servers.insert(name.clone(), server.clone());
         }
 
+        // LSP overlay: higher-priority idle timeout wins; servers overlay by name.
+        if other.lsp.idle_timeout_ms.is_some() {
+            merged.lsp.idle_timeout_ms = other.lsp.idle_timeout_ms;
+        }
+        for (name, server) in &other.lsp.servers {
+            merged.lsp.servers.insert(name.clone(), server.clone());
+        }
+
         // Global permissions
         for (k, v) in &other.permission {
             merged.permission.insert(k.clone(), *v);

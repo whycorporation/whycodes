@@ -341,7 +341,7 @@ async fn streamable_transport_tracks_session_and_increments_request_ids() {
         .with_state(state.clone());
     let addr = spawn_app(app).await;
     let mut transport =
-        StreamableHttpTransport::new(format!("http://{addr}/mcp"), &HashMap::new()).unwrap();
+        StreamableHttpTransport::new(&format!("http://{addr}/mcp"), &HashMap::new()).unwrap();
 
     assert_eq!(transport.session_id(), None);
     assert_eq!(
@@ -387,7 +387,7 @@ async fn streamable_transport_surfaces_http_rpc_parse_and_notification_errors() 
 
     let addr = spawn_app(Router::new().route("/mcp", post(fail))).await;
     let mut transport =
-        StreamableHttpTransport::new(format!("http://{addr}/mcp"), &HashMap::new()).unwrap();
+        StreamableHttpTransport::new(&format!("http://{addr}/mcp"), &HashMap::new()).unwrap();
 
     let error = transport
         .send_request("http-error", None)
@@ -435,7 +435,8 @@ async fn client_reports_invalid_initialize_payload_and_non_fallback_http_errors(
             .unwrap()
     }
     let addr = spawn_app(Router::new().route("/mcp", post(invalid_initialize))).await;
-    let error = McpClient::connect_http(format!("http://{addr}/mcp"), &HashMap::new())
+    let url = format!("http://{addr}/mcp");
+    let error = McpClient::connect_http(&url, &HashMap::new())
         .await
         .err()
         .expect("invalid initialize payload should fail");
@@ -445,7 +446,8 @@ async fn client_reports_invalid_initialize_payload_and_non_fallback_http_errors(
         (StatusCode::INTERNAL_SERVER_ERROR, "broken")
     }
     let addr = spawn_app(Router::new().route("/mcp", post(unavailable))).await;
-    let error = McpClient::connect_auto(format!("http://{addr}/mcp"), &HashMap::new())
+    let url = format!("http://{addr}/mcp");
+    let error = McpClient::connect_auto(&url, &HashMap::new())
         .await
         .err()
         .expect("500 must not trigger legacy SSE fallback");

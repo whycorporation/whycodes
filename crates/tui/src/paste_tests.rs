@@ -90,4 +90,21 @@ fn line_count_counts_trailing_newline() {
     assert_eq!(line_count("a\nb"), 2);
     assert_eq!(line_count("a\nb\n"), 3);
     assert_eq!(line_count("solo"), 1);
+    assert_eq!(line_count(""), 0);
+    let block = PastedBlock {
+        id: 1,
+        content: "a\nb\n".into(),
+    };
+    assert_eq!(block.line_count(), 3);
+}
+
+#[test]
+fn parse_placeholder_rejects_malformed_tokens() {
+    assert!(find_placeholders("no token").is_empty());
+    assert!(find_placeholders("[pasted #]").is_empty());
+    assert!(find_placeholders("[pasted #x ~ 1 line]").is_empty());
+    assert!(find_placeholders("[pasted #1~ 1 line]").is_empty());
+    assert!(find_placeholders("[pasted #1 ~ line]").is_empty());
+    assert!(find_placeholders("[pasted #1 ~ 1 foo]").is_empty());
+    assert_eq!(find_placeholders("[pasted #2 ~ 1 line]").len(), 1);
 }

@@ -3,9 +3,38 @@ use crate::tool::Tool;
 use crate::tool::ToolContext;
 use serde_json::json;
 
+fn exit_ok_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "exit 0"
+    }
+    #[cfg(not(windows))]
+    {
+        "true"
+    }
+}
+
+fn hang_command() -> &'static str {
+    #[cfg(windows)]
+    {
+        "ping -n 30 127.0.0.1 > NUL"
+    }
+    #[cfg(not(windows))]
+    {
+        "sleep 30"
+    }
+}
+
 #[test]
 fn shell_module_loads() {
     assert!(!module_path!().is_empty());
+    let join = shell_join_error("boom");
+    assert!(join.is_error);
+    assert!(join.content.contains("Task join error"));
+    assert!(shell_join_failed("boom").is_error);
+    let from_join = shell_from_join(Err("boom".into()));
+    assert!(from_join.is_error);
+    assert!(from_join.content.contains("Task join error"));
 }
 
 #[test]
@@ -50,7 +79,7 @@ async fn timeout_zero_is_clamped() {
     let dir = tempfile::TempDir::new().unwrap();
     let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
     let out = ShellTool::default()
-        .execute(json!({"command": "true", "timeout": 0}), &ctx)
+        .execute(json!({"command": exit_ok_command(), "timeout": 0}), &ctx)
         .await;
     assert!(!out.is_error || !out.content.is_empty(), "{out:?}");
 }
@@ -60,7 +89,7 @@ async fn timeout_kills_long_sleep() {
     let dir = tempfile::TempDir::new().unwrap();
     let ctx = ToolContext::unsandboxed(dir.path().to_string_lossy().into_owned());
     let out = ShellTool::new()
-        .execute(json!({"command": "sleep 30", "timeout": 1}), &ctx)
+        .execute(json!({"command": hang_command(), "timeout": 1}), &ctx)
         .await;
     assert!(out.is_error, "{}", out.content);
     assert!(

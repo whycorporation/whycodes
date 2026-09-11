@@ -53,5 +53,5 @@ async fn missing_text_yields_empty() {
 
 #[tokio::test]
 async fn default_constructs() {
-    assert_eq!(TruncateTool.name(), "truncate");
+    assert_eq!(TruncateTool::default().name(), "truncate");
 }

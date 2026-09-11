@@ -225,3 +225,31 @@ fn thinking_header_label_matches_lifecycle() {
         t.header_label()
     );
 }
+
+#[test]
+fn thinking_running_elapsed_and_subagent_block() {
+    let p = palette();
+    let mut t = ThinkingBlock::new("live");
+    t.started_at = std::time::Instant::now() - std::time::Duration::from_millis(1500);
+    let lines = thinking_widget_lines(&t, &p);
+    let all: Vec<String> = lines.iter().map(line_text).collect();
+    assert!(all.iter().any(|l| l.contains("Thinking")), "{all:?}");
+    let w = widget(
+        ChatRole::Assistant,
+        "",
+        vec![
+            ChatBlock::Thinking(t),
+            ChatBlock::Subagent {
+                id: "s1".into(),
+                kind: "explore".into(),
+                description: "look".into(),
+                status: "running".into(),
+                activity: String::new(),
+                elapsed_ms: 10,
+            },
+        ],
+    );
+    let lines = w.to_lines(&p);
+    let all: Vec<String> = lines.iter().map(line_text).collect();
+    assert!(all.iter().any(|l| l.contains("Subagent")), "{all:?}");
+}

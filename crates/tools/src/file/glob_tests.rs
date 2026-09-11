@@ -1,5 +1,6 @@
 use super::*;
 use crate::tool::ToolContext;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use whycodes_index::IndexOptions;
 
@@ -9,7 +10,7 @@ fn ctx(dir: &std::path::Path) -> ToolContext {
 
 #[tokio::test]
 async fn metadata_describes_glob_tool() {
-    let t = GlobTool::new();
+    let t = GlobTool::default();
     assert_eq!(t.name(), "glob");
     assert!(t.description().contains("glob"));
     let params = t.parameters();
@@ -183,6 +184,28 @@ async fn remaining_glob_edges() {
         )
         .await;
     assert!(!out.is_error, "{}", out.content);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "x").unwrap();
+    std::fs::create_dir_all(dir.path().join("target")).unwrap();
+    std::fs::write(dir.path().join("target/skip.rs"), "x").unwrap();
+    let mut results = Vec::new();
+    let mut total = 0usize;
+    let mut hit_cap = false;
+    collect_fallback_glob(
+        vec![
+            Ok(PathBuf::from("a.rs")),
+            Ok(PathBuf::from("target").join("skip.rs")),
+            Ok(PathBuf::from("b.rs")),
+        ],
+        Path::new(""),
+        1,
+        &mut results,
+        &mut total,
+        &mut hit_cap,
+    );
+    assert_eq!(results.len(), 1);
+    assert!(hit_cap);
+    assert_eq!(total, 2);
 }
 
 #[tokio::test]

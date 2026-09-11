@@ -5,6 +5,9 @@ use serde_json::json;
 #[test]
 fn blame_module_loads() {
     assert!(!module_path!().is_empty());
+    let _ = GitBlameTool::default();
+    assert_eq!(blame_stdout(b""), "No blame information available.");
+    assert_eq!(blame_stdout(b"line\n"), "line\n");
 }
 
 #[tokio::test]

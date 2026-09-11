@@ -12,6 +12,10 @@ fn debounce_skips_within_the_interval() {
         "debounce_skip",
         Duration::from_secs(60)
     ));
+    assert!(release_retained_heap_debounced(
+        "debounce_run",
+        Duration::from_secs(0)
+    ));
 }
 
 #[test]

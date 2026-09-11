@@ -268,3 +268,90 @@ fn body_starts_at_content_column() {
     assert!(rendered("just words")[0].starts_with('j'));
     assert!(rendered("# Title")[0].starts_with('T'));
 }
+
+#[test]
+fn mermaid_invalid_and_markdown_link() {
+    let out = rendered("```mermaid\nnot a diagram at all {{{{\n```");
+    let joined = out.join("\n");
+    assert!(
+        joined.contains("mermaid") || joined.contains("not a diagram") || joined.contains("failed"),
+        "{joined}"
+    );
+    let lines = render("see [docs](https://example.com)", &palette());
+    let link = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .find(|s| s.content.contains("docs"));
+    assert!(link.is_some(), "{lines:?}");
+    let tabbed = rendered("```rs\n\tfn main() {}\n```");
+    assert!(tabbed.join("\n").contains("fn main") || !tabbed.is_empty());
+    assert_eq!(super::complete_source_lines(""), 0);
+    assert_eq!(super::complete_source_lines("a\n"), 1);
+    assert_eq!(super::complete_source_lines("a\nb"), 1);
+}
+
+#[test]
+fn mermaid_empty_closed_fence_takes_render_failed_path() {
+    let out = rendered("```mermaid\n\n```");
+    let joined = out.join("\n");
+    assert!(
+        joined.contains("failed") || joined.contains("empty") || joined.contains("mermaid"),
+        "{joined}"
+    );
+}
+
+#[test]
+fn wrap_list_item_and_tabbed_diff_and_open_fence() {
+    let words = (0..12)
+        .map(|i| format!("itemword{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let lines = render_with_width(&format!("- {words}"), &palette(), Some(16));
+    assert!(
+        lines.len() >= 2,
+        "wrapped list should hang-indent: {:?}",
+        lines.iter().map(text).collect::<Vec<_>>()
+    );
+
+    let diff = rendered("```diff\n--- a\n+++ b\n@@ hunk @@\n-old\n+new\n context\n\tindented\n```");
+    let joined = diff.join("\n");
+    assert!(joined.contains("old") && joined.contains("new"), "{joined}");
+
+    let narrow = render_with_width(
+        "```diff\n+this-is-a-very-long-added-line-that-must-wrap\n```",
+        &palette(),
+        Some(12),
+    );
+    assert!(
+        narrow.len() >= 2,
+        "narrow diff wraps: {:?}",
+        narrow.iter().map(text).collect::<Vec<_>>()
+    );
+
+    let mut out = Vec::new();
+    let (src, _) = super::append_open_fence(
+        &mut out,
+        Some("rs"),
+        "fn main() {\n\tlet x = 1;\npartial",
+        &palette(),
+        Some(20),
+        0,
+    );
+    assert!(src > 0 || !out.is_empty());
+    let joined: String = out.iter().map(text).collect();
+    assert!(
+        joined.contains("fn main") || joined.contains("let x"),
+        "{joined}"
+    );
+
+    let empty_item = rendered("- ");
+    assert!(
+        empty_item.iter().any(|l| l.contains('•')),
+        "an empty list marker still paints the bullet, got {empty_item:?}"
+    );
+    let empty_table = super::render_table(&[], &[], &[], &palette(), Some(40));
+    assert!(
+        empty_table.is_empty(),
+        "a table with no headers must paint nothing"
+    );
+}

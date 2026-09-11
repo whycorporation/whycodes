@@ -38,6 +38,32 @@ fn recovered_frame_paints_the_banner() {
     });
     assert!(text.contains("rendering error recovered"), "{text:?}");
     assert!(text.contains("boom"), "{text:?}");
+
+    let owned: Box<dyn std::any::Any + Send> = Box::new("owned boom".to_string());
+    let (_, owned_text) = paint(40, 4, |f| {
+        paint_recovered_frame(f, owned.as_ref());
+    });
+    assert!(
+        owned_text.contains("owned boom"),
+        "String panic payloads must paint, got {owned_text:?}"
+    );
+
+    let unknown: Box<dyn std::any::Any + Send> = Box::new(42u32);
+    let (_, unknown_text) = paint(40, 4, |f| {
+        paint_recovered_frame(f, unknown.as_ref());
+    });
+    assert!(
+        unknown_text.contains("unknown panic") || unknown_text.contains("recovered"),
+        "non-string payloads fall back to unknown panic, got {unknown_text:?}"
+    );
+
+    let (_, empty) = paint(0, 0, |f| {
+        paint_recovered_frame(f, payload.as_ref());
+    });
+    assert!(
+        empty.trim().is_empty(),
+        "a 0×0 recovered frame must skip paint, got {empty:?}"
+    );
 }
 
 #[test]
@@ -731,6 +757,29 @@ fn sticky_todo_panel_aligns_with_chat_and_leaves_gaps() {
             "column left of scrollbar must be blank at y={y}"
         );
     }
+}
+
+#[test]
+fn open_subagent_paints_an_inset_frame_over_the_session() {
+    let mut a = session_with_overflow();
+    a.upsert_subagent(crate::app::SubagentUpdate {
+        id: "kid".into(),
+        kind: "explore".into(),
+        description: "scan".into(),
+        status: "running".into(),
+        activity: "listing".into(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    a.open_subagent = Some("kid".into());
+    let (_buf, text) = paint_full_shell(&mut a, 100, 24);
+    assert!(
+        text.contains("Subagent")
+            || text.contains("explore")
+            || text.contains("scan")
+            || text.contains("kid"),
+        "open subagent view must paint the inset frame, got {text}"
+    );
 }
 
 #[test]

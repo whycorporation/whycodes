@@ -19,13 +19,53 @@ use whycodes_session::session::Session;
 use crate::AppState;
 use crate::perm::{RUN, RunScope};
 
+pub(crate) fn save_session(session: &Session) -> Result<(), String> {
+    let db = AppState::open_db().ok_or_else(|| "database unavailable".to_string())?;
+    persist_save(&db, session)
+}
+
+fn persist_save(db: &whycodes_storage::db::Database, session: &Session) -> Result<(), String> {
+    persist_result(save_to_db_result(session.save_to_db(db)))
+}
+
+fn save_to_db_result(
+    result: Result<(), whycodes_session::error::SessionError>,
+) -> Result<(), String> {
+    result.map_err(|e| e.to_string())
+}
+
+fn persist_result(result: Result<(), String>) -> Result<(), String> {
+    result.map_err(|e| persist_error(&e))
+}
+
+fn persist_error(e: &dyn std::fmt::Display) -> String {
+    e.to_string()
+}
+
+pub(crate) fn warn_persist(context: &str, result: Result<(), String>) {
+    if let Err(e) = result {
+        tracing::warn!(error = %e, "{context}");
+    }
+}
+
+fn read_share_or(path: &std::path::Path, fallback: &str) -> String {
+    std::fs::read_to_string(path).unwrap_or_else(|_| fallback.to_string())
+}
+
 /// Resolve share file directories: project .whycodes/shares + global data dir shares.
 fn share_search_dirs() -> Vec<PathBuf> {
+    share_search_dirs_from(
+        std::env::current_dir().ok(),
+        Some(whycodes_core::paths::data_dir()),
+    )
+}
+
+fn share_search_dirs_from(cwd: Option<PathBuf>, data: Option<PathBuf>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Ok(cwd) = std::env::current_dir() {
+    if let Some(cwd) = cwd {
         dirs.push(whycodes_core::project_dir(&cwd).join("shares"));
     }
-    if let Ok(data) = whycodes_config::Config::data_dir() {
+    if let Some(data) = data {
         dirs.push(data.join("shares"));
     }
     dirs
@@ -71,13 +111,6 @@ pub(crate) async fn resolve_api_key(
     {
         whycodes_llm::oauth_refresh::unregister(provider);
         return Some(key.clone());
-    }
-    if provider == "openai"
-        && let Ok(key) = std::env::var("OPENAI_API_KEY")
-        && !key.is_empty()
-    {
-        whycodes_llm::oauth_refresh::unregister(provider);
-        return Some(key);
     }
     if whycodes_auth::providers::supports_oauth(provider)
         && let Ok(data_dir) = whycodes_config::Config::data_dir()
@@ -174,38 +207,57 @@ pub async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Va
     // Warm in-memory first.
     let ids = state.list_session_ids();
     for id in &ids {
-        if let Some(handle) = state.get_session(id) {
-            let s = handle.lock().await;
-            sessions.push(serde_json::json!({
-                "id": s.id,
-                "title": s.title,
-                "project": s.project_path.display().to_string(),
-                "messages": s.messages.len(),
-                "updated_at": s.updated_at.to_rfc3339(),
-                "source": "memory",
-            }));
-        }
+        push_live_api_session(&mut sessions, state.get_session(id)).await;
     }
 
     // Merge SQLite rows not already live (same DB as TUI).
-    if let Some(db) = AppState::open_db()
-        && let Ok(rows) = db.list_sessions()
-    {
-        for row in rows {
-            if ids.iter().any(|i| i == &row.id) {
-                continue;
-            }
-            sessions.push(serde_json::json!({
-                "id": row.id,
-                "title": row.title,
-                "project": row.project_path,
-                "updated_at": row.updated_at,
-                "source": "db",
-            }));
-        }
-    }
+    push_db_api_sessions(
+        &mut sessions,
+        &ids,
+        AppState::open_db().and_then(|db| db.list_sessions().ok()),
+    );
 
     Json(serde_json::json!({ "sessions": sessions }))
+}
+
+async fn push_live_api_session(
+    sessions: &mut Vec<serde_json::Value>,
+    handle: Option<crate::SessionHandle>,
+) {
+    let Some(handle) = handle else {
+        return;
+    };
+    let s = handle.lock().await;
+    sessions.push(serde_json::json!({
+        "id": s.id,
+        "title": s.title,
+        "project": s.project_path.display().to_string(),
+        "messages": s.messages.len(),
+        "updated_at": s.updated_at.to_rfc3339(),
+        "source": "memory",
+    }));
+}
+
+fn push_db_api_sessions(
+    sessions: &mut Vec<serde_json::Value>,
+    ids: &[String],
+    rows: Option<Vec<whycodes_storage::models::SessionRow>>,
+) {
+    let Some(rows) = rows else {
+        return;
+    };
+    for row in rows {
+        if ids.iter().any(|i| i == &row.id) {
+            continue;
+        }
+        sessions.push(serde_json::json!({
+            "id": row.id,
+            "title": row.title,
+            "project": row.project_path,
+            "updated_at": row.updated_at,
+            "source": "db",
+        }));
+    }
 }
 
 #[derive(Deserialize)]
@@ -228,11 +280,11 @@ pub async fn create_session(
     let id = session.id.clone();
     let title = session.title.clone();
     let persist = req.persist.unwrap_or(true);
-    if persist
-        && let Some(db) = AppState::open_db()
-        && let Err(e) = session.save_to_db(&db)
-    {
-        tracing::warn!(error = %e, "serve: failed to persist new session");
+    if persist {
+        warn_persist(
+            "serve: failed to persist new session",
+            save_session(&session),
+        );
     }
     state.insert_session(session);
     Json(serde_json::json!({
@@ -375,18 +427,17 @@ pub async fn chat(
             })
             .await;
         // Persist after the turn (best-effort).
-        if let Some(db) = AppState::open_db()
-            && let Err(e) = handle.lock().await.save_to_db(&db)
-        {
-            tracing::warn!(error = %e, "serve: failed to save session after chat");
-        }
+        warn_persist(
+            "serve: failed to save session after chat",
+            save_session(&*handle.lock().await),
+        );
         match result {
             Ok(text) => {
-                emit_status(&tx, format!("done:{}chars", text.len()));
+                emit_status(&tx, &format!("done:{}chars", text.len()));
                 emit_status(&tx, "__whycodes_done__");
             }
             Err(e) => {
-                emit_status(&tx, format!("error:{e}"));
+                emit_status(&tx, &format!("error:{e}"));
                 emit_status(&tx, "__whycodes_done__");
             }
         }
@@ -413,8 +464,8 @@ pub async fn chat(
     Ok(Sse::new(stream).keep_alive(keep).into_response())
 }
 
-fn emit_status(tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>, status: impl Into<String>) {
-    if let Err(e) = tx.send(TurnEvent::Status(status.into())) {
+fn emit_status(tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>, status: &str) {
+    if let Err(e) = tx.send(TurnEvent::Status(status.to_string())) {
         tracing::debug!(error = %e, "serve: chat event channel closed");
     }
 }
@@ -651,9 +702,9 @@ pub async fn share_view(Path(id): Path<String>) -> Response {
         .trim_end_matches(".md")
         .to_string();
     let md = match find_share_file(&id, "md") {
-        Some(p) => std::fs::read_to_string(p).unwrap_or_else(|_| "(empty)".into()),
+        Some(p) => read_share_or(&p, "(empty)"),
         None => match find_share_file(&id, "json") {
-            Some(p) => std::fs::read_to_string(p).unwrap_or_else(|_| "Share not found".into()),
+            Some(p) => read_share_or(&p, "Share not found"),
             None => {
                 return (
                     StatusCode::NOT_FOUND,

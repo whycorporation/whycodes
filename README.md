@@ -7,6 +7,12 @@
   <a href="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml"><img src="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/whycorporation/whycodes/releases"><img src="https://img.shields.io/github/v/release/whycorporation/whycodes" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://x.com/whycodesai"><img src="https://img.shields.io/badge/X-@whycodesai-black" alt="Follow @whycodesai on X"></a>
+  <a href="https://github.com/sponsors/whycorporation"><img src="https://img.shields.io/badge/sponsor-whycorporation-ea4aaa" alt="Sponsor WhyCodes"></a>
+</p>
+
+<p align="center">
+  English · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a>
 </p>
 
 **A fast, provider-independent coding agent for the terminal, written in Rust.**
@@ -170,6 +176,23 @@ for coding agents working in this repo. By participating you agree to the
 Please report vulnerabilities through [SECURITY.md](SECURITY.md), not public
 issues.
 
+## Sponsors
+
+WhyCodes is independently developed and needs funding to keep shipping.
+Sponsor the project on [GitHub Sponsors](https://github.com/sponsors/whycorporation).
+
+## Star History
+
+<p align="center">
+  <a href="https://www.star-history.com/?repos=whycorporation%2Fwhycodes&type=date&legend=top-left">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=whycorporation/whycodes&type=date&theme=dark&legend=top-left" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=whycorporation/whycodes&type=date&legend=top-left" />
+      <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=whycorporation/whycodes&type=date&legend=top-left" />
+    </picture>
+  </a>
+</p>
+
 ## License
 
-[MIT](LICENSE) · [why.codes](https://why.codes)
+[MIT](LICENSE) · [why.codes](https://why.codes) · [X @whycodesai](https://x.com/whycodesai) · [Sponsor](https://github.com/sponsors/whycorporation)

@@ -84,11 +84,25 @@ fn urlencoding_and_plain_markup() {
     assert_eq!(urlencoding("A-Z_0~."), "A-Z_0~.");
     assert!(urlencoding("/").contains("%2F"));
     assert_eq!(strip_markup(" plain "), "plain");
-    let t = WebSearchTool;
+    let t = WebSearchTool::default();
     assert_eq!(t.name(), "websearch");
     assert_eq!(WebSearchTool.name(), "websearch");
     assert!(!t.description().is_empty());
     assert_eq!(t.parameters()["required"][0], "query");
+    assert_eq!(
+        search_host_with("MISSING_SEARCH_HOST", "default.host", false),
+        "default.host"
+    );
+    let read_err = search_read_error("eof");
+    assert!(read_err.is_error);
+    assert!(read_err.content.contains("Error reading response"));
+    assert!(search_text_failed("eof").is_error);
+    assert!(search_html_result(Err("eof".into()), 3).is_error);
+    let empty = search_html_result(Ok("<div>nope</div>".into()), 3);
+    assert!(!empty.is_error);
+    assert!(empty.content.contains("No results"));
+    let hits = search_html_result(Ok("<div class=\"result__snippet\">alpha</div>".into()), 3);
+    assert!(hits.content.contains("alpha"));
 }
 
 #[tokio::test]

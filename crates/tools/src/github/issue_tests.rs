@@ -6,7 +6,7 @@ fn client_and_headers() -> (reqwest::Client, reqwest::header::HeaderMap) {
 
 #[test]
 fn metadata_describes_supported_actions_and_required_repository() {
-    let tool = GithubIssueTool::new();
+    let tool = GithubIssueTool::default();
     let parameters = tool.parameters();
 
     assert_eq!(tool.name(), "github_issue");

@@ -128,7 +128,7 @@ impl PermHub {
                 .send(Err(QuestionError::Cancelled))
                 .map_err(|_| "question already timed out".to_string());
         }
-        let Some(pending) = map.get(&key) else {
+        let Some(pending) = map.remove(&key) else {
             return Err(format!("unknown question request {request_id}"));
         };
         let answers: Vec<QuestionAnswer> = answers
@@ -140,10 +140,10 @@ impl PermHub {
                 auto_picked: false,
             })
             .collect();
-        validate_answers(&pending.questions, &answers)?;
-        let pending = map
-            .remove(&key)
-            .ok_or_else(|| format!("unknown question request {request_id}"))?;
+        if let Err(e) = validate_answers(&pending.questions, &answers) {
+            map.insert(key, pending);
+            return Err(e);
+        }
         drop(map);
         pending
             .reply

@@ -377,6 +377,20 @@ pub(crate) fn symlink_or_copy(target: &Path, latest: &Path) {
     }
 }
 
+#[cfg(all(test, not(unix)))]
+mod windows_symlink_helper {
+    use super::*;
+
+    pub(crate) fn symlink_or_copy(target: &Path, latest: &Path) {
+        if fs::copy(target, latest).is_err() {
+            // Best-effort, same as the unix fallback.
+        }
+    }
+}
+
+#[cfg(all(test, not(unix)))]
+pub(crate) use windows_symlink_helper::symlink_or_copy;
+
 pub(crate) fn fmt_file_layer<S>(
     file: File,
 ) -> tracing_subscriber::fmt::Layer<

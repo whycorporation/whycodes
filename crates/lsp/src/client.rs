@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::error::{LspError, Result};
 use serde_json::json;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -28,6 +28,8 @@ pub struct LspClient {
     /// notifications.
     diagnostics: Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>,
     language_id: String,
+    settings: Option<serde_json::Value>,
+    last_used: Arc<Mutex<std::time::Instant>>,
 }
 
 impl LspClient {
@@ -38,11 +40,34 @@ impl LspClient {
         workspace_root: &str,
         language_id: &str,
     ) -> Result<Self> {
-        Self::boot(
+        Self::start_with(
             command,
             args,
             workspace_root,
             language_id,
+            None,
+            None,
+            Self::spawn_background(cfg!(not(test))),
+        )
+        .await
+    }
+
+    /// Start with optional `initializationOptions` and `workspace/didChangeConfiguration`.
+    pub async fn start_configured(
+        command: &str,
+        args: &[String],
+        workspace_root: &str,
+        language_id: &str,
+        init_options: Option<&serde_json::Value>,
+        settings: Option<&serde_json::Value>,
+    ) -> Result<Self> {
+        Self::start_with(
+            command,
+            args,
+            workspace_root,
+            language_id,
+            init_options,
+            settings,
             Self::spawn_background(cfg!(not(test))),
         )
         .await
@@ -52,26 +77,81 @@ impl LspClient {
         for_production
     }
 
+    async fn start_with(
+        command: &str,
+        args: &[String],
+        workspace_root: &str,
+        language_id: &str,
+        init_options: Option<&serde_json::Value>,
+        settings: Option<&serde_json::Value>,
+        spawn_background: bool,
+    ) -> Result<Self> {
+        Self::boot(
+            command,
+            args,
+            workspace_root,
+            language_id,
+            init_options,
+            settings,
+            spawn_background,
+        )
+        .await
+    }
+
     async fn boot(
         command: &str,
         args: &[String],
         workspace_root: &str,
         language_id: &str,
+        init_options: Option<&serde_json::Value>,
+        settings: Option<&serde_json::Value>,
         spawn_background: bool,
     ) -> Result<Self> {
+        Self::boot_inner(
+            command,
+            args,
+            workspace_root,
+            language_id,
+            init_options,
+            settings,
+            spawn_background,
+            true,
+            true,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn boot_inner(
+        command: &str,
+        args: &[String],
+        workspace_root: &str,
+        language_id: &str,
+        init_options: Option<&serde_json::Value>,
+        settings: Option<&serde_json::Value>,
+        spawn_background: bool,
+        pipe_stdin: bool,
+        pipe_stdout: bool,
+    ) -> Result<Self> {
         let mut cmd = Command::new(command);
-        cmd.args(args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+        cmd.args(args).stderr(std::process::Stdio::piped());
+        if pipe_stdin {
+            cmd.stdin(std::process::Stdio::piped());
+        } else {
+            cmd.stdin(std::process::Stdio::null());
+        }
+        if pipe_stdout {
+            cmd.stdout(std::process::Stdio::piped());
+        } else {
+            cmd.stdout(std::process::Stdio::null());
+        }
         #[cfg(test)]
         cmd.kill_on_drop(true);
         let mut child = cmd
             .spawn()
             .map_err(|e| LspError::msg(format!("Failed to spawn LSP server {command}: {e}")))?;
 
-        let stdin = take_child_pipe(child.stdin.take(), "stdin")?;
-        let stdout = take_child_pipe(child.stdout.take(), "stdout")?;
+        let (stdin, stdout) = take_stdio_pair(child.stdin.take(), child.stdout.take())?;
 
         let writer = Arc::new(Mutex::new(stdin));
         let reader = Arc::new(Mutex::new(BufReader::new(stdout)));
@@ -84,10 +164,12 @@ impl LspClient {
             next_id: Arc::new(Mutex::new(1)),
             diagnostics: Arc::new(Mutex::new(HashMap::new())),
             language_id: language_id.to_string(),
+            settings: settings.cloned(),
+            last_used: Arc::new(Mutex::new(std::time::Instant::now())),
         };
 
         // Send initialize
-        let init_params = InitializeParams::minimal(workspace_root);
+        let init_params = InitializeParams::with_options(workspace_root, init_options);
         let _init_resp = client
             .request("initialize", init_params.inner)
             .await
@@ -102,6 +184,20 @@ impl LspClient {
             .notify("initialized", json!({}))
             .await
             .map_err(|e| LspError::msg(format!("initialized notification failed: {e}")))?;
+
+        #[cfg(test)]
+        if args.iter().any(|a| a == "die_after_initialized") {
+            client.kill_for_test().await;
+        }
+        if let Some(settings) = settings {
+            client
+                .notify(
+                    "workspace/didChangeConfiguration",
+                    json!({ "settings": settings }),
+                )
+                .await
+                .map_err(|e| LspError::msg(format!("didChangeConfiguration failed: {e}")))?;
+        }
 
         info!("LSP server {command} initialized for {}", workspace_root);
 
@@ -126,7 +222,16 @@ impl LspClient {
         workspace_root: &str,
         language_id: &str,
     ) -> Result<Self> {
-        Self::boot(command, args, workspace_root, language_id, false).await
+        Self::boot(
+            command,
+            args,
+            workspace_root,
+            language_id,
+            None,
+            None,
+            false,
+        )
+        .await
     }
 
     #[cfg(test)]
@@ -136,7 +241,35 @@ impl LspClient {
         workspace_root: &str,
         language_id: &str,
     ) -> Result<Self> {
-        Self::boot(command, args, workspace_root, language_id, true).await
+        Self::boot(command, args, workspace_root, language_id, None, None, true).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn start_without_stdio(command: &str, args: &[String]) -> Result<Self> {
+        Self::boot_inner(
+            command, args, "/tmp", "rust", None, None, false, false, false,
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn start_without_stdout(command: &str, args: &[String]) -> Result<Self> {
+        Self::boot_inner(
+            command, args, "/tmp", "rust", None, None, false, true, false,
+        )
+        .await
+    }
+
+    pub fn mark_used(&self) {
+        mark_instant(&self.last_used);
+    }
+
+    pub fn idle_for(&self) -> std::time::Duration {
+        idle_since(&self.last_used)
+    }
+
+    pub fn settings(&self) -> Option<&serde_json::Value> {
+        self.settings.as_ref()
     }
 
     #[cfg(test)]
@@ -147,12 +280,18 @@ impl LspClient {
     }
 
     /// Open a text document in the language server.
+    ///
+    /// When `text` is `None`, the file is read from disk. Missing files open as empty.
     pub async fn open_document(&self, uri: &str, text: Option<&str>) -> Result<()> {
+        let body = match text {
+            Some(t) => t.to_string(),
+            None => read_uri_text(uri).unwrap_or_default(),
+        };
         let doc = TextDocumentItem {
             uri: uri.to_string(),
             language_id: self.language_id.clone(),
             version: 1,
-            text: text.unwrap_or("").to_string(),
+            text: body,
         };
         self.notify("textDocument/didOpen", json!({ "textDocument": doc }))
             .await
@@ -201,9 +340,7 @@ impl LspClient {
             },
             position,
         };
-        let resp = self
-            .request("textDocument/hover", serde_json::to_value(&params)?)
-            .await?;
+        let resp = self.request("textDocument/hover", json!(params)).await?;
         parse_hover_result(resp.result)
     }
 
@@ -216,7 +353,7 @@ impl LspClient {
             position,
         };
         let resp = self
-            .request("textDocument/definition", serde_json::to_value(&params)?)
+            .request("textDocument/definition", json!(params))
             .await?;
         parse_locations(resp.result)
     }
@@ -232,6 +369,48 @@ impl LspClient {
         parse_locations(resp.result)
     }
 
+    /// Go to type definition.
+    pub async fn type_definition(&self, uri: &str, position: Position) -> Result<Vec<Location>> {
+        let params = TextDocumentPositionParams {
+            text_document: crate::types::TextDocumentIdentifier {
+                uri: uri.to_string(),
+            },
+            position,
+        };
+        let resp = self
+            .request("textDocument/typeDefinition", json!(params))
+            .await?;
+        parse_locations(resp.result)
+    }
+
+    /// Go to implementation.
+    pub async fn implementation(&self, uri: &str, position: Position) -> Result<Vec<Location>> {
+        let params = TextDocumentPositionParams {
+            text_document: crate::types::TextDocumentIdentifier {
+                uri: uri.to_string(),
+            },
+            position,
+        };
+        let resp = self
+            .request("textDocument/implementation", json!(params))
+            .await?;
+        parse_locations(resp.result)
+    }
+
+    /// Document symbols.
+    pub async fn document_symbols(&self, uri: &str) -> Result<serde_json::Value> {
+        let params = json!({ "textDocument": { "uri": uri } });
+        let resp = self.request("textDocument/documentSymbol", params).await?;
+        Ok(resp.result.unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Workspace symbol search.
+    pub async fn workspace_symbols(&self, query: &str) -> Result<serde_json::Value> {
+        let params = json!({ "query": query });
+        let resp = self.request("workspace/symbol", params).await?;
+        Ok(resp.result.unwrap_or(serde_json::Value::Null))
+    }
+
     // ── Low-level JSON-RPC helpers ───────────────────────────────────────────
 
     async fn send_message(&self, msg: &serde_json::Value) -> Result<()> {
@@ -241,7 +420,7 @@ impl LspClient {
 
     async fn notify(&self, method: &str, params: serde_json::Value) -> Result<()> {
         let notif = JsonRpcNotification::new(method, params);
-        self.send_message(&serde_json::to_value(&notif)?).await
+        self.send_message(&json!(notif)).await
     }
 
     async fn request(&self, method: &str, params: serde_json::Value) -> Result<JsonRpcResponse> {
@@ -252,55 +431,56 @@ impl LspClient {
             id
         };
         let req = JsonRpcRequest::new(id, method, params);
-        self.send_message(&serde_json::to_value(&req)?).await?;
+        self.send_message(&json!(req)).await?;
 
-        // Read back response matching the id.
-        // We read from stdout using Content-Length framing.
         let mut reader = self.stdout.lock().await;
-        let mut header = String::new();
-        loop {
-            header.clear();
-            let n = reader.read_line(&mut header).await?;
-            if n == 0 {
-                return Err(LspError::msg(format!(
-                    "LSP server closed stdout while waiting for response to {method}"
-                )));
+        read_rpc_response(&mut *reader, id, method).await
+    }
+}
+
+async fn read_rpc_response(
+    reader: &mut (dyn tokio::io::AsyncBufRead + Send + Unpin),
+    id: i64,
+    method: &str,
+) -> Result<JsonRpcResponse> {
+    let mut header = String::new();
+    loop {
+        header.clear();
+        let n = reader.read_line(&mut header).await?;
+        if n == 0 {
+            return Err(LspError::msg(format!(
+                "LSP server closed stdout while waiting for response to {method}"
+            )));
+        }
+        let trimmed = header.trim_end_matches('\n').trim_end_matches('\r');
+        if let Some(len_str) = line_strip_prefix("Content-Length: ", trimmed) {
+            let len: usize = len_str
+                .trim()
+                .parse()
+                .map_err(|_| LspError::msg(format!("bad Content-Length: {len_str}")))?;
+            let mut sep = String::new();
+            reader.read_line(&mut sep).await?;
+            let mut body = vec![0u8; len];
+            reader.read_exact(&mut body).await?;
+            let body_str = String::from_utf8_lossy(&body).to_string();
+            let resp: JsonRpcResponse = serde_json::from_str(&body_str)?;
+            if resp.id == Some(id) {
+                return Ok(resp);
             }
-            let trimmed = header.trim_end_matches('\n').trim_end_matches('\r');
-            if let Some(len_str) = line_strip_prefix("Content-Length: ", trimmed) {
-                let len: usize = len_str
-                    .trim()
-                    .parse()
-                    .map_err(|_| LspError::msg(format!("bad Content-Length: {len_str}")))?;
-                // Read the blank separator line after Content-Length
-                let mut sep = String::new();
-                reader.read_line(&mut sep).await?;
-                // Read body
-                let mut body = vec![0u8; len];
-                reader.read_exact(&mut body).await?;
-                let body_str = String::from_utf8_lossy(&body).to_string();
-                let resp: JsonRpcResponse = serde_json::from_str(&body_str)?;
-                if resp.id == Some(id) {
-                    return Ok(resp);
-                }
-                // Not our response — could be a server notification or response
-                // to another request.  For simplicity we ignore unmatched ids,
-                // but a production client would queue them.
-                debug!(
-                    "Ignoring LSP response with id {:?}, waiting for {id}",
-                    resp.id
-                );
-            }
-            // Otherwise it's a non-Content-Length line, keep reading.
+            debug!(
+                "Ignoring LSP response with id {:?}, waiting for {id}",
+                resp.id
+            );
         }
     }
 }
 
 /// Check if a LSP executable exists in PATH.
 pub fn command_available(cmd: &str) -> bool {
-    command_available_with("which", cmd)
+    crate::detect::which_command(cmd).is_some()
 }
 
+#[cfg(test)]
 fn command_available_with(which: &str, cmd: &str) -> bool {
     std::process::Command::new(which)
         .arg(cmd)
@@ -309,35 +489,44 @@ fn command_available_with(which: &str, cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn read_uri_text(uri: &str) -> Option<String> {
+    let path = crate::detect::path_from_file_uri(uri)?;
+    std::fs::read_to_string(path).ok()
+}
+
 fn take_child_pipe<T>(pipe: Option<T>, name: &str) -> Result<T> {
     pipe.ok_or_else(|| LspError::msg(format!("no {name} on LSP child")))
 }
 
-/// Resolve a language server command from a file extension.
-pub fn language_server_for_extension(ext: &str) -> Option<(&'static str, Vec<&'static str>)> {
-    match ext {
-        "rs" => Some(("rust-analyzer", vec![])),
-        "py" => Some(("pylsp", vec![])),
-        "ts" | "tsx" | "js" | "jsx" => Some(("typescript-language-server", vec!["--stdio"])),
-        "go" => Some(("gopls", vec![])),
-        "c" | "cpp" | "h" | "hpp" | "cc" => Some(("clangd", vec![])),
-        "java" => Some(("jdtls", vec![])),
-        "cs" => Some(("omnisharp", vec!["--languageserver"])),
-        "lua" => Some(("lua-language-server", vec![])),
-        "zig" => Some(("zls", vec![])),
-        "swift" => Some(("sourcekit-lsp", vec![])),
-        #[cfg(test)]
-        "whycodes_lsp_fake" => Some(("python3", vec!["-c", FAKE_LSP_PY, "ok"])),
-        #[cfg(test)]
-        "whycodes_lsp_empty" => Some(("python3", vec!["-c", FAKE_LSP_PY, "empty"])),
-        #[cfg(test)]
-        "whycodes_lsp_failopen" => Some(("python3", vec!["-c", FAKE_LSP_PY, "init_then_eof"])),
-        #[cfg(test)]
-        "whycodes_lsp_err" => Some(("python3", vec!["-c", FAKE_LSP_PY, "fail_after_open"])),
-        #[cfg(test)]
-        "whycodes_lsp_missing" => Some(("whycodes-lsp-missing-bin", vec![])),
-        _ => None,
+fn take_stdio_pair<I, O>(stdin: Option<I>, stdout: Option<O>) -> Result<(I, O)> {
+    Ok((
+        take_child_pipe(stdin, "stdin")?,
+        take_child_pipe(stdout, "stdout")?,
+    ))
+}
+
+fn mark_instant(slot: &Mutex<std::time::Instant>) {
+    if let Ok(mut t) = slot.try_lock() {
+        *t = std::time::Instant::now();
     }
+}
+
+fn idle_since(slot: &Mutex<std::time::Instant>) -> std::time::Duration {
+    slot.try_lock()
+        .map(|t| t.elapsed())
+        .unwrap_or(std::time::Duration::ZERO)
+}
+
+/// Resolve a language server command from a file extension (built-in defaults).
+pub fn language_server_for_extension(ext: &str) -> Option<(String, Vec<String>)> {
+    let settings = crate::config::LspSettings::builtins();
+    let (_, spec) = settings.spec_for_ext(ext)?;
+    Some((spec.command.clone()?, spec.args.clone()))
+}
+
+#[cfg(test)]
+pub(crate) fn language_server_command(spec: &crate::config::LspServerSpec) -> Option<String> {
+    spec.command.clone()
 }
 
 /// Language ID for a file extension.
@@ -369,7 +558,7 @@ pub fn language_id_for_extension(ext: &str) -> &'static str {
 }
 
 #[cfg(test)]
-const FAKE_LSP_PY: &str = r#"
+pub(crate) const FAKE_LSP_PY: &str = r#"
 import json, os, sys
 
 def read_msg():
@@ -493,11 +682,21 @@ while True:
     if method == "initialized" or method == "textDocument/didOpen":
         if method == "initialized" and mode == "init_then_eof":
             break
+        if method == "initialized" and mode == "die_after_initialized":
+            os._exit(0)
         if method == "textDocument/didOpen" and mode == "fail_after_open":
             break
         if method == "initialized" and mode in extras:
             break
         continue
+    if mode == "trunc_req_sep":
+        sys.stdout.buffer.write(b"Content-Length: 2\r\n")
+        sys.stdout.buffer.flush()
+        break
+    if mode == "trunc_req_body":
+        sys.stdout.buffer.write(b"Content-Length: 40\r\n\r\n{}")
+        sys.stdout.buffer.flush()
+        break
     if mid is None:
         continue
     if mode == "hang":
@@ -530,6 +729,25 @@ while True:
             write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
         else:
             write_msg({"jsonrpc": "2.0", "id": mid, "result": [loc]})
+    elif method == "textDocument/typeDefinition" or method == "textDocument/implementation":
+        if mode == "empty":
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
+        else:
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": loc})
+    elif method == "textDocument/documentSymbol":
+        if mode == "empty":
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
+        elif mode == "no_result":
+            write_msg({"jsonrpc": "2.0", "id": mid})
+        else:
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": [{"name": "main", "kind": 12, "range": range0, "selectionRange": range0}]})
+    elif method == "workspace/symbol":
+        if mode == "empty":
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
+        elif mode == "no_result":
+            write_msg({"jsonrpc": "2.0", "id": mid})
+        else:
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": [{"name": "main", "kind": 12, "location": loc}]})
     elif method == "textDocument/diagnostic":
         if mode == "empty":
             write_msg({"jsonrpc": "2.0", "id": mid, "result": []})
@@ -544,12 +762,31 @@ while True:
 "#;
 
 #[cfg(test)]
+pub(crate) fn test_python() -> &'static str {
+    test_python_from(&["python3", "python", "py"], crate::detect::which_command)
+}
+
+#[cfg(test)]
+pub(crate) fn test_python_from(
+    cmds: &[&'static str],
+    available: fn(&str) -> Option<std::path::PathBuf>,
+) -> &'static str {
+    for cmd in cmds {
+        if available(cmd).is_some() {
+            return cmd;
+        }
+    }
+    "python3"
+}
+
+#[cfg(test)]
 pub(crate) async fn start_test_client(mode: &str, spawn_background: bool) -> Result<LspClient> {
     let args = vec!["-c".into(), FAKE_LSP_PY.into(), mode.into()];
+    let py = test_python();
     if spawn_background {
-        LspClient::start_with_reader("python3", &args, "/tmp", "rust").await
+        LspClient::start_with_reader(py, &args, "/tmp", "rust").await
     } else {
-        LspClient::start_without_reader("python3", &args, "/tmp", "rust").await
+        LspClient::start_without_reader(py, &args, "/tmp", "rust").await
     }
 }
 
@@ -558,9 +795,17 @@ async fn consume_stdout<R>(
     diagnostics: Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>,
     cmd_name: String,
 ) where
-    R: tokio::io::AsyncBufRead + Unpin,
+    R: tokio::io::AsyncBufRead + Send + Unpin,
 {
     let mut lock = stdout.lock().await;
+    consume_stdout_inner(&mut *lock, diagnostics, cmd_name).await;
+}
+
+async fn consume_stdout_inner(
+    lock: &mut (dyn tokio::io::AsyncBufRead + Send + Unpin),
+    diagnostics: Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>,
+    cmd_name: String,
+) {
     let mut buf = String::new();
     loop {
         buf.clear();
@@ -630,11 +875,11 @@ pub(crate) fn encode_lsp_frame(body: &str) -> Vec<u8> {
     format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
 }
 
-pub(crate) async fn write_framed<W: AsyncWriteExt + Unpin>(
-    writer: &mut W,
+pub(crate) async fn write_framed(
+    writer: &mut (dyn AsyncWrite + Send + Unpin),
     msg: &serde_json::Value,
 ) -> Result<()> {
-    let body = serde_json::to_string(msg)?;
+    let body = msg.to_string();
     writer.write_all(&encode_lsp_frame(&body)).await?;
     writer.flush().await?;
     Ok(())
@@ -649,14 +894,16 @@ pub(crate) fn parse_hover_result(result: Option<serde_json::Value>) -> Result<Op
 
 pub(crate) fn parse_locations(result: Option<serde_json::Value>) -> Result<Vec<Location>> {
     match result {
-        Some(result) if !result.is_null() => {
-            if result.is_array() {
-                Ok(serde_json::from_value(result)?)
-            } else {
-                Ok(vec![serde_json::from_value(result)?])
-            }
-        }
+        Some(result) if !result.is_null() => parse_location_value(result),
         _ => Ok(vec![]),
+    }
+}
+
+fn parse_location_value(result: serde_json::Value) -> Result<Vec<Location>> {
+    if result.is_array() {
+        Ok(serde_json::from_value(result)?)
+    } else {
+        Ok(vec![serde_json::from_value(result)?])
     }
 }
 

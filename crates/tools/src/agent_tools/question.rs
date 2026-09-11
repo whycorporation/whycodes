@@ -96,7 +96,7 @@ pub fn validate_answers(
                     "answers[{i}]: select at least one option or Other text"
                 ));
             }
-        } else if a.selected.len() > 1 {
+        } else if too_many_single_select(&a.selected) {
             return Err(format!(
                 "answers[{i}]: single-select question got multiple labels"
             ));
@@ -111,6 +111,10 @@ pub fn validate_answers(
         }
     }
     Ok(())
+}
+
+fn too_many_single_select(selected: &[String]) -> bool {
+    selected.len() > 1
 }
 
 /// Parse tool arguments into question specs.
@@ -538,15 +542,23 @@ fn resolve_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> Questio
 
 fn read_line_stdin() -> Result<String, String> {
     #[cfg(test)]
-    if let Some(line) = TEST_STDIN
+    if let Some(line) = take_test_stdin() {
+        return Ok(line);
+    }
+    read_line_from(&mut io::stdin().lock())
+}
+
+#[cfg(test)]
+fn take_test_stdin() -> Option<String> {
+    TEST_STDIN
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .pop_front()
-    {
-        return Ok(line);
-    }
+}
+
+fn read_line_from(reader: &mut impl io::BufRead) -> Result<String, String> {
     let mut line = String::new();
-    io::stdin()
+    reader
         .read_line(&mut line)
         .map_err(|e| format!("Failed to read input: {e}"))?;
     Ok(line.trim().to_string())

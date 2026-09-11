@@ -46,10 +46,10 @@ async fn rewind_echoes_report() {
 
 #[tokio::test]
 async fn defaults_and_parameters() {
-    let c = CheckpointTool;
+    let c = CheckpointTool::default();
     assert_eq!(c.name(), "checkpoint");
     let _ = c.parameters();
-    let r = RewindTool;
+    let r = RewindTool::default();
     assert_eq!(r.name(), "rewind");
     assert!(!r.description().is_empty());
     let _ = r.parameters();

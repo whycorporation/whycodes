@@ -22,12 +22,37 @@ use crate::cell_grid::CellGrid;
 
 /// Copy `text` to the clipboard. Returns true if at least one path succeeded.
 pub fn copy_text(text: &str) -> bool {
+    if let Some(forced) = stub_copy_result() {
+        return forced;
+    }
     let osc = osc52(text);
-    let mut ok = write_osc52(&osc);
+    let mut ok = write_osc52_to(&mut io::stdout().lock(), &osc);
     ok |= try_wl_copy(text);
     ok |= try_xclip(text);
     ok |= try_pbcopy(text);
     ok
+}
+
+thread_local! {
+    static COPY_STUB: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+fn stub_copy_result() -> Option<bool> {
+    COPY_STUB.with(|c| c.get())
+}
+
+/// Force `copy_text` for this thread (unit tests). Production never sets this.
+#[allow(dead_code)]
+pub(crate) fn with_copy_stub<R>(ok: bool, f: impl FnOnce() -> R) -> R {
+    COPY_STUB.with(|c| c.set(Some(ok)));
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            COPY_STUB.with(|c| c.set(None));
+        }
+    }
+    let _reset = Reset;
+    f()
 }
 
 fn osc52(text: &str) -> String {
@@ -36,8 +61,7 @@ fn osc52(text: &str) -> String {
     format!("\x1b]52;c;{b64}\x07\x1b]52;p;{b64}\x07")
 }
 
-fn write_osc52(seq: &str) -> bool {
-    let mut out = io::stdout().lock();
+fn write_osc52_to(out: &mut impl Write, seq: &str) -> bool {
     out.write_all(seq.as_bytes()).is_ok() && out.flush().is_ok()
 }
 
@@ -59,23 +83,31 @@ fn pipe_to(cmd: &[&str], text: &str) -> bool {
         Some((b, a)) => (*b, a),
         None => return false,
     };
-    let mut child = match Command::new(bin)
+    let mut child = match spawn_clipboard_pipe(bin, args) {
+        Some(c) => c,
+        None => return false,
+    };
+    let ok = write_child_stdin(&mut child, text);
+    let status = child.wait().map(|s| s.success()).unwrap_or(false);
+    ok && status
+}
+
+fn spawn_clipboard_pipe(bin: &str, args: &[&str]) -> Option<std::process::Child> {
+    Command::new(bin)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-    {
-        Ok(c) => c,
-        Err(_spawn) => return false,
-    };
-    let ok = child
+        .ok()
+}
+
+fn write_child_stdin(child: &mut std::process::Child, text: &str) -> bool {
+    child
         .stdin
         .as_mut()
         .and_then(|stdin| stdin.write_all(text.as_bytes()).ok())
-        .is_some();
-    let status = child.wait().map(|s| s.success()).unwrap_or(false);
-    ok && status
+        .is_some()
 }
 
 // ── Linear selection geometry ──────────────────────────────────────────

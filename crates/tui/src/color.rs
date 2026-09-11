@@ -299,11 +299,26 @@ fn named_rgb(i: u8) -> (u8, u8, u8) {
 pub struct QuantizingBackend<B> {
     pub(crate) inner: B,
     mode: ColorMode,
+    /// Used when the inner backend cannot report a size (no TTY / ioctl
+    /// ENOENT). Production consoles still prefer the inner size.
+    size_fallback: Option<Size>,
 }
 
 impl<B> QuantizingBackend<B> {
     pub fn new(inner: B, mode: ColorMode) -> Self {
-        Self { inner, mode }
+        Self {
+            inner,
+            mode,
+            size_fallback: None,
+        }
+    }
+
+    pub fn with_size_fallback(inner: B, mode: ColorMode, fallback: Size) -> Self {
+        Self {
+            inner,
+            mode,
+            size_fallback: Some(fallback),
+        }
     }
 }
 
@@ -356,7 +371,13 @@ impl<B: Backend> Backend for QuantizingBackend<B> {
     }
 
     fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
-        self.inner.get_cursor_position()
+        match self.inner.get_cursor_position() {
+            Ok(p) => Ok(p),
+            Err(e) => match self.size_fallback {
+                Some(_) => Ok(Position::ORIGIN),
+                None => Err(e),
+            },
+        }
     }
 
     fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
@@ -372,11 +393,29 @@ impl<B: Backend> Backend for QuantizingBackend<B> {
     }
 
     fn size(&self) -> Result<Size, Self::Error> {
-        self.inner.size()
+        match self.inner.size() {
+            Ok(s) if s.width > 0 && s.height > 0 => Ok(s),
+            other => match self.size_fallback {
+                Some(fb) => Ok(fb),
+                None => other,
+            },
+        }
     }
 
     fn window_size(&mut self) -> Result<WindowSize, Self::Error> {
-        self.inner.window_size()
+        match self.inner.window_size() {
+            Ok(s) if s.columns_rows.width > 0 && s.columns_rows.height > 0 => Ok(s),
+            other => match self.size_fallback {
+                Some(fb) => Ok(WindowSize {
+                    columns_rows: fb,
+                    pixels: Size {
+                        width: 0,
+                        height: 0,
+                    },
+                }),
+                None => other,
+            },
+        }
     }
 
     fn flush(&mut self) -> Result<(), Self::Error> {

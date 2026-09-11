@@ -107,7 +107,7 @@ fn truncate_respects_char_boundary() {
 
 #[test]
 fn remaining_format_and_html_helpers() {
-    let t = WebFetchTool;
+    let t = WebFetchTool::default();
     assert_eq!(t.name(), "webfetch");
     assert!(!t.description().is_empty());
     let _ = t.parameters();
@@ -127,6 +127,31 @@ fn remaining_format_and_html_helpers() {
     let bad_json = format_body("application/json", "{not json");
     assert_eq!(bad_json, "{not json");
     let decoded = decode_basic_entities("&lt;&gt;&quot;&#39;&apos;&nbsp;");
+    let read_err = fetch_read_error("eof");
+    assert!(read_err.is_error);
+    assert!(
+        read_err.content.contains("Error reading response"),
+        "{}",
+        read_err.content
+    );
+    assert!(fetch_bytes_failed("eof").is_error);
+    skip_closed_tag();
+    assert!(next_html_char("").is_none());
+    assert_eq!(next_html_char("ab"), Some('a'));
+    assert_eq!(html_exhausted(), '\0');
+    assert!(
+        fetch_bytes_result("http://x", 200, false, "text/plain", 100, Err("eof".into())).is_error
+    );
+    let ok_body = fetch_bytes_result(
+        "http://x",
+        200,
+        false,
+        "text/plain",
+        100,
+        Ok(b"hello".to_vec()),
+    );
+    assert!(!ok_body.is_error);
+    assert!(ok_body.content.contains("hello"));
     assert!(decoded.contains('<'));
     let short = truncate_chars("abc", 10);
     assert_eq!(short, "abc");
@@ -149,6 +174,8 @@ async fn fetch_connect_error_and_html_fallback() {
 
     let htmlish = format_body("application/octet-stream", "<div>Hi</div>");
     assert!(htmlish.contains("Hi"));
+    assert_eq!(fallback_body("plain", false), normalize_whitespace("plain"));
+    assert!(fallback_body("<p>Hi</p>", true).contains("Hi"));
     let truncated = truncate_chars("héllo", 2);
     assert!(truncated.contains("[truncated]"));
     let unclosed = strip_tag_blocks("<script>alert(1)", &["script"]);

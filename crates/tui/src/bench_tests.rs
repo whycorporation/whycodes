@@ -71,7 +71,60 @@ fn json_is_parseable_and_carries_every_field() {
 fn benchmarking_is_off_without_the_environment_variable() {
     // The variable is not set in the test environment, so this is the
     // normal path: no config, and the loop pays nothing.
-    if std::env::var("WHYCODES_BENCH").is_err() {
-        assert!(config_from_env().is_none());
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let prev = std::env::var_os("WHYCODES_BENCH");
+    let prev_dur = std::env::var_os("WHYCODES_BENCH_DURATION_MS");
+    unsafe {
+        std::env::remove_var("WHYCODES_BENCH");
+        std::env::remove_var("WHYCODES_BENCH_DURATION_MS");
+    }
+    assert!(config_from_env().is_none());
+    unsafe {
+        std::env::set_var("WHYCODES_BENCH", "");
+    }
+    assert!(config_from_env().is_none());
+    restore_env("WHYCODES_BENCH", prev);
+    restore_env("WHYCODES_BENCH_DURATION_MS", prev_dur);
+}
+
+#[test]
+fn config_from_env_writes_results() {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let prev = std::env::var_os("WHYCODES_BENCH");
+    let prev_dur = std::env::var_os("WHYCODES_BENCH_DURATION_MS");
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("bench.json");
+    unsafe {
+        std::env::set_var("WHYCODES_BENCH", &out);
+        std::env::set_var("WHYCODES_BENCH_DURATION_MS", "not-a-number");
+    }
+    let cfg = config_from_env().expect("path is set");
+    assert_eq!(cfg.output, out);
+    assert_eq!(cfg.duration, Duration::ZERO);
+    mark_process_start();
+    ENABLED.store(true, Ordering::Relaxed);
+    DRAWS.store(0, Ordering::Relaxed);
+    FIRST_FRAME_NANOS.store(0, Ordering::Relaxed);
+    record_draw();
+    write_results(&cfg);
+    let json = std::fs::read_to_string(&out).unwrap();
+    assert!(json.contains("first_frame_ms"), "{json}");
+    let m = measure();
+    assert!(m.draws >= 1);
+    write_results(&BenchConfig {
+        output: dir.path().join("missing").join("out.json"),
+        duration: Duration::ZERO,
+    });
+    ENABLED.store(false, Ordering::Relaxed);
+    restore_env("WHYCODES_BENCH", prev);
+    restore_env("WHYCODES_BENCH_DURATION_MS", prev_dur);
+}
+
+fn restore_env(key: &str, prev: Option<std::ffi::OsString>) {
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
     }
 }

@@ -118,6 +118,27 @@ fn render_wraps_long_copy_and_truncates_overflow() {
 }
 
 #[test]
+fn render_skips_when_the_toast_would_leave_the_area() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+    let palette = crate::theme::ThemeName::DefaultDark.palette();
+    let backend = TestBackend::new(20, 8);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let toast = Toast::new(ToastKind::Info, "hello");
+    terminal
+        .draw(|frame| {
+            render(
+                frame,
+                Rect::new(12, 0, 8, 8),
+                std::slice::from_ref(&toast),
+                &palette,
+            );
+        })
+        .expect("draw");
+}
+
+#[test]
 fn wrap_keeps_a_single_word_under_the_limit() {
     assert_eq!(wrap("hello", 10, 2), vec!["hello"]);
     // Whitespace-only collapses like empty.

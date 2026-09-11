@@ -7,8 +7,6 @@ use crate::theme::ThemePalette;
 use crate::tokens::{HOME_LOGO_MARK, layout};
 use crate::ui::scrollbar::{SCROLLBAR_GAP, SCROLLBAR_GUTTER, ScrollbarColors, paint_scrollbar};
 use crate::widgets::wrap::wrap_text;
-#[cfg(test)]
-use ratatui::widgets::Widget;
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -119,6 +117,38 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
         total += h;
     }
     (starts, total)
+}
+
+/// Whether the transcript needs a scrollbar gutter, and the wrap width to paint.
+///
+/// Narrower wrap can grow height. If it still overflows, keep the gutter;
+/// if it now fits, give the column back to the transcript.
+fn session_bar_layout(
+    app: &mut TuiApp,
+    full_width: u16,
+    height: usize,
+) -> (Vec<usize>, usize, u16, bool) {
+    let reserved = SCROLLBAR_GUTTER.saturating_add(SCROLLBAR_GAP);
+    let (starts_full, total_full) = message_row_layout_mut(app, full_width);
+    let mut needs_bar = total_full > height && full_width > reserved;
+    let mut content_width = if needs_bar {
+        full_width.saturating_sub(reserved)
+    } else {
+        full_width
+    };
+    let (starts, total) = if needs_bar && content_width != full_width {
+        let relayout = message_row_layout_mut(app, content_width);
+        if relayout.1 > height {
+            relayout
+        } else {
+            needs_bar = false;
+            content_width = full_width;
+            (starts_full, total_full)
+        }
+    } else {
+        (starts_full, total_full)
+    };
+    (starts, total, content_width, needs_bar)
 }
 
 /// Last user prompt whose first row sits above the viewport (Grok sticky header).
@@ -275,29 +305,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     // When the transcript overflows, reserve a blank gap + the 1-col bar so
     // the solid scrollbar never paints over wrapped text.
     let height = area.height as usize;
-    let full_width = area.width;
-    let reserved = SCROLLBAR_GUTTER.saturating_add(SCROLLBAR_GAP);
-    let (starts_full, total_full) = message_row_layout_mut(app, full_width);
-    let mut needs_bar = total_full > height && area.width > reserved;
-    let mut content_width = if needs_bar {
-        full_width.saturating_sub(reserved)
-    } else {
-        full_width
-    };
-    let (starts, total) = if needs_bar && content_width != full_width {
-        let relayout = message_row_layout_mut(app, content_width);
-        // Narrower wrap can grow height. If it still overflows, keep the
-        // gutter; if it now fits, give the column back to the transcript.
-        if relayout.1 > height {
-            relayout
-        } else {
-            needs_bar = false;
-            content_width = full_width;
-            (starts_full, total_full)
-        }
-    } else {
-        (starts_full, total_full)
-    };
+    let (starts, total, content_width, needs_bar) = session_bar_layout(app, area.width, height);
     let (view_start, view_end) = visible_range(total, height, app.scroll_offset);
 
     // Pin messages to the bottom: empty rows sit above the transcript.
@@ -468,37 +476,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     }
 }
 
-/// Paint chat lines, filling every row so previous-frame glyphs cannot linger.
-///
-/// History: a pure sparse writer (only non-empty spans) left ghost cells after
-/// scroll. Production paint now writes rows directly; this widget remains for
-/// unit tests that stamp a buffer without a full session.
-#[cfg(test)]
-struct SparseLines {
-    lines: Vec<Line<'static>>,
-    bg: ratatui::style::Color,
-}
-
-#[cfg(test)]
-impl Widget for SparseLines {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-        let row = ChatRowPaint {
-            x: area.x,
-            width: area.width,
-            bg: self.bg,
-            caret_style: Style::default(),
-        };
-        for r in 0..area.height {
-            let line = self.lines.get(r as usize);
-            paint_chat_row(buf, area.y + r, &row, line, false);
-        }
-    }
-}
-
-struct ChatRowPaint {
+pub(crate) struct ChatRowPaint {
     x: u16,
     width: u16,
     bg: Color,
@@ -1561,7 +1539,7 @@ fn cut_to_width(s: &str, max_w: usize) -> String {
     out
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CalloutKind {
     Error,
     Warning,
@@ -1798,7 +1776,7 @@ fn tool_header_verb(name: &str, running: bool) -> String {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerbKind {
     File,
     Search,

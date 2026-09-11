@@ -101,6 +101,8 @@ pub struct Agent {
     session_claims: Option<whycodes_core::FileClaimRegistry>,
     /// Swarm mailbox when this agent is a worker (or parent mid-swarm).
     swarm_hub: Option<whycodes_core::SwarmHub>,
+    /// `[lsp]` overlay from config (empty = built-in auto-detect).
+    lsp_overlay: whycodes_tools::LspSettings,
 }
 
 /// Recover from a poisoned mutex instead of aborting (`panic = "abort"` in release).
@@ -343,6 +345,7 @@ impl Agent {
             file_index: None,
             session_claims: None,
             swarm_hub: None,
+            lsp_overlay: whycodes_tools::LspSettings::default(),
         }
     }
 
@@ -375,8 +378,12 @@ impl Agent {
     /// Load shell plugins in place (paint-then-hydrate; avoids `with_plugins` move).
     pub fn hydrate_plugins(&mut self, project_dir: Option<&std::path::Path>) {
         let mut exec = whycodes_tools::executor::ToolExecutor::new();
+        self.apply_lsp_overlay(&mut exec);
         let n = exec.register_config_plugins(project_dir);
-        if n > 0 {
+        if n > 0
+            || !self.lsp_overlay.servers.is_empty()
+            || self.lsp_overlay.idle_timeout_ms.is_some()
+        {
             self.tool_executor = Arc::new(exec);
         }
     }
@@ -502,6 +509,7 @@ impl Agent {
         // Resize ceiling only — keep the same registry so in-flight jobs survive
         // agent switches / re-config.
         self.background.set_max_jobs(self.max_background_jobs);
+        self.lsp_overlay = lsp_overlay_from_config(&config.lsp);
         let sandbox_desc = whycodes_sandbox::describe_backend(&self.sandbox);
         let network_allow = self.network.allowlist.len();
         let network_deny = self.network.denylist.len();
@@ -679,15 +687,19 @@ impl Agent {
 
     /// Like [`Self::with_mcp`] but for an already-owned agent (TUI deferred load).
     pub async fn load_mcp(&mut self, config: &whycodes_config::Config) {
+        self.lsp_overlay = lsp_overlay_from_config(&config.lsp);
         let project = config.general.project_path.as_deref();
         let mut full = ToolExecutor::new();
+        self.apply_lsp_overlay(&mut full);
         let n_plug = full.register_config_plugins(project);
         let n_mcp = if config.mcp_servers.is_empty() {
             0
         } else {
             crate::mcp_load::register_mcp_tools(&mut full, config).await
         };
-        if n_plug > 0 || n_mcp > 0 {
+        let lsp_custom =
+            !self.lsp_overlay.servers.is_empty() || self.lsp_overlay.idle_timeout_ms.is_some();
+        if n_plug > 0 || n_mcp > 0 || lsp_custom {
             self.tool_executor = Arc::new(full);
             log_registered_count(n_plug, "shell plugins registered");
             log_registered_count(n_mcp, "MCP tools registered");
@@ -697,9 +709,17 @@ impl Agent {
     /// Load shell plugins only (when not calling [`Self::with_mcp`]).
     pub fn with_plugins(mut self, project_dir: Option<&std::path::Path>) -> Self {
         let mut exec = ToolExecutor::new();
+        self.apply_lsp_overlay(&mut exec);
         let n = exec.register_config_plugins(project_dir);
         apply_plugin_count(&mut self, exec, n);
         self
+    }
+
+    fn apply_lsp_overlay(&self, exec: &mut ToolExecutor) {
+        if self.lsp_overlay.servers.is_empty() && self.lsp_overlay.idle_timeout_ms.is_none() {
+            return;
+        }
+        exec.configure_lsp(&self.lsp_overlay);
     }
 
     /// Get the system prompt for this agent (includes runtime context such as today's date).
@@ -894,12 +914,41 @@ impl Agent {
     }
 }
 
-fn apply_plugin_count(agent: &mut Agent, exec: ToolExecutor, n: usize) {
-    if n == 0 {
+fn apply_plugin_count(agent: &mut Agent, mut exec: ToolExecutor, n: usize) {
+    agent.apply_lsp_overlay(&mut exec);
+    let lsp_custom =
+        !agent.lsp_overlay.servers.is_empty() || agent.lsp_overlay.idle_timeout_ms.is_some();
+    if n == 0 && !lsp_custom {
         return;
     }
     agent.tool_executor = Arc::new(exec);
     log_registered_count(n, "shell plugins registered");
+}
+
+fn lsp_overlay_from_config(cfg: &whycodes_config::LspConfig) -> whycodes_tools::LspSettings {
+    let (idle_timeout_ms, servers) = cfg.to_runtime_settings();
+    whycodes_tools::LspSettings {
+        idle_timeout_ms,
+        servers: servers
+            .into_iter()
+            .map(|(name, s)| {
+                (
+                    name,
+                    whycodes_tools::LspServerSpec {
+                        command: s.command,
+                        args: s.args,
+                        file_types: s.file_types,
+                        language_id: s.language_id,
+                        root_markers: s.root_markers,
+                        init_options: s.init_options,
+                        settings: s.settings,
+                        disabled: s.disabled,
+                        is_linter: s.is_linter,
+                    },
+                )
+            })
+            .collect(),
+    }
 }
 
 fn log_registered_count(count: usize, message: &'static str) {

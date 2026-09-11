@@ -105,12 +105,7 @@ impl Tool for GitBlameTool {
                     };
                 }
 
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let content = if stdout.is_empty() {
-                    "No blame information available.".to_string()
-                } else {
-                    stdout
-                };
+                let content = blame_stdout(&output.stdout);
 
                 ToolResult {
                     tool_call_id: String::new(),
@@ -120,6 +115,15 @@ impl Tool for GitBlameTool {
             })
             .await
         })
+    }
+}
+
+fn blame_stdout(stdout: &[u8]) -> String {
+    let stdout = String::from_utf8_lossy(stdout).to_string();
+    if stdout.is_empty() {
+        "No blame information available.".to_string()
+    } else {
+        stdout
     }
 }
 

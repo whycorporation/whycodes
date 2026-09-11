@@ -4,6 +4,7 @@ use crate::tool::ToolContext;
 #[test]
 fn tool_search_module_loads() {
     assert!(!module_path!().is_empty());
+    let _ = ToolSearchTool::default();
 }
 
 #[tokio::test]

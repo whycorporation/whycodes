@@ -199,7 +199,25 @@ async fn default_action_is_read() {
 
 #[tokio::test]
 async fn default_constructs() {
-    assert_eq!(ExternalDirectoryTool.name(), "external_directory");
+    assert_eq!(
+        ExternalDirectoryTool::default().name(),
+        "external_directory"
+    );
+    skip_dir_entry("boom", "entry metadata failed; skipping");
+    skip_metadata_failed("boom");
+    skip_entry_failed("boom");
+    assert!(format_dir_entry(Err(std::io::Error::other("gone"))).is_none());
+    assert!(format_dir_meta(Err(std::io::Error::other("gone")), "x").is_none());
+    assert_eq!(entry_type_from_flags(true, false), "d");
+    assert_eq!(entry_type_from_flags(false, true), "l");
+    assert_eq!(entry_type_from_flags(false, false), "-");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let meta = std::fs::metadata(dir.path()).unwrap();
+    assert_eq!(entry_type_label(&meta), "d");
+    let file = dir.path().join("a.txt");
+    std::fs::write(&file, "x").unwrap();
+    let file_meta = std::fs::metadata(&file).unwrap();
+    assert_eq!(entry_type_label(&file_meta), "-");
 }
 
 #[tokio::test]

@@ -2599,6 +2599,46 @@ fn apply_plugin_count_skips_zero_and_replaces_on_hit() {
 }
 
 #[test]
+fn apply_plugin_count_replaces_executor_when_lsp_overlay_is_set() {
+    let mut a = test_agent();
+    a.lsp_overlay = whycodes_tools::LspSettings {
+        idle_timeout_ms: Some(60_000),
+        servers: Default::default(),
+    };
+    let before = Arc::as_ptr(&a.tool_executor);
+    apply_plugin_count(&mut a, ToolExecutor::new(), 0);
+    assert_ne!(Arc::as_ptr(&a.tool_executor), before);
+}
+
+#[test]
+fn with_config_and_hydrate_plugins_applies_lsp_overlay() {
+    let mut config = whycodes_config::Config::default();
+    config.lsp.idle_timeout_ms = Some(12_000);
+    config.lsp.servers.insert(
+        "rust-analyzer".into(),
+        whycodes_config::LspServerConfig {
+            disabled: Some(true),
+            ..Default::default()
+        },
+    );
+    let mut a = test_agent().with_config(&config);
+    let dir = tempfile::tempdir().unwrap();
+    a.hydrate_plugins(Some(dir.path()));
+    assert!(a.tool_executor.get("lsp").is_some());
+}
+
+#[tokio::test]
+async fn load_mcp_replaces_executor_for_lsp_overlay_without_servers() {
+    let mut config = whycodes_config::Config::default();
+    config.lsp.idle_timeout_ms = Some(5_000);
+    let mut a = test_agent();
+    let before = Arc::as_ptr(&a.tool_executor);
+    a.load_mcp(&config).await;
+    assert_ne!(Arc::as_ptr(&a.tool_executor), before);
+    assert!(a.tool_executor.get("lsp").is_some());
+}
+
+#[test]
 fn log_registered_count_skips_zero() {
     log_registered_count(0, "shell plugins registered");
     log_registered_count(3, "MCP tools registered");

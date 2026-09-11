@@ -4,6 +4,7 @@ use crate::tool::ToolContext;
 #[test]
 fn swarm_module_loads() {
     assert!(!module_path!().is_empty());
+    let _ = SwarmTool::default();
 }
 
 #[tokio::test]

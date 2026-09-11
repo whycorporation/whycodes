@@ -68,36 +68,25 @@ pub fn visit_index(
     root: &Path,
     visit: &mut dyn FnMut(&Path, &str, bool, u64) -> bool,
 ) -> Option<()> {
-    if !index.is_ready() {
-        return None;
+    if index_not_ready(index) {
+        return index_cold();
     }
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let primary = index.primary_root();
+    let primary = index.primary_root()?;
     let rel_root = root.strip_prefix(primary).ok()?;
     let prefix = rel_root.to_string_lossy().replace('\\', "/");
     let prefix = prefix.trim_matches('/').to_string();
     let mut keep = true;
     index.visit(&mut |e| {
-        if !keep {
-            return false;
+        if let Err(stop) = index_entry_continue(keep) {
+            return stop;
         }
-        let in_scope = if prefix.is_empty() {
-            true
-        } else {
-            e.rel.len() > prefix.len()
-                && e.rel.starts_with(&prefix)
-                && e.rel.as_bytes()[prefix.len()] == b'/'
-        };
+        let in_scope = entry_in_scope(&prefix, &e.rel);
         if in_scope {
-            let rel = if prefix.is_empty() {
-                e.rel.to_string()
-            } else {
-                e.rel[prefix.len() + 1..].to_string()
-            };
+            let rel = scoped_rel(&prefix, &e.rel);
             let abs = primary.join(&*e.rel);
             if !visit(&abs, &rel, e.is_dir, e.size) {
                 keep = false;
-                return false;
             }
         }
         true
@@ -132,10 +121,15 @@ pub fn is_binary_file(path: &Path) -> bool {
         return false;
     };
     let mut buf = [0u8; BINARY_SNIFF_LEN];
-    match f.read(&mut buf) {
-        Ok(n) => is_binary_bytes(&buf[..n]),
-        Err(_) => false,
-    }
+    sniff_binary_read(f.read(&mut buf), &buf)
+}
+
+fn index_not_ready(index: &whycodes_index::WorkspaceIndex) -> bool {
+    !index.is_ready()
+}
+
+fn visit_stopped(keep: bool) -> bool {
+    !keep
 }
 
 /// Simple `*` glob match against a single path segment or full relative path.
@@ -145,22 +139,115 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
         return true;
     }
     // Fast paths
-    if !pattern.contains('*') {
+    if !pattern.contains('*') && !pattern.contains('[') {
         return pattern == text;
     }
     match glob::Pattern::new(pattern) {
         Ok(p) => p.matches(text),
-        Err(_) => pattern == text,
+        Err(_e) => glob_pattern_invalid(pattern, text),
     }
+}
+
+fn binary_read_failed() -> bool {
+    false
+}
+
+fn sniff_binary_read(result: std::io::Result<usize>, buf: &[u8]) -> bool {
+    match result {
+        Ok(n) => is_binary_bytes(&buf[..n.min(buf.len())]),
+        Err(_e) => binary_read_failed(),
+    }
+}
+
+fn index_cold() -> Option<()> {
+    None
+}
+
+fn visit_halt() -> bool {
+    false
+}
+
+fn continue_index_visit(keep: bool) -> bool {
+    if visit_stopped(keep) {
+        visit_halt();
+        false
+    } else {
+        true
+    }
+}
+
+fn stopped_index_visit() -> bool {
+    false
+}
+
+fn index_visit_stop(keep: bool) -> Option<bool> {
+    if continue_index_visit(keep) {
+        None
+    } else {
+        Some(stopped_index_visit())
+    }
+}
+
+fn index_entry_continue(keep: bool) -> Result<(), bool> {
+    match index_visit_stop(keep) {
+        Some(stop) => Err(stop),
+        None => Ok(()),
+    }
+}
+
+fn entry_in_scope(prefix: &str, rel: &str) -> bool {
+    prefix.is_empty()
+        || (rel.len() > prefix.len()
+            && rel.starts_with(prefix)
+            && rel.as_bytes()[prefix.len()] == b'/')
+}
+
+fn scoped_rel(prefix: &str, rel: &str) -> String {
+    if prefix.is_empty() {
+        rel.to_string()
+    } else {
+        rel[prefix.len() + 1..].to_string()
+    }
+}
+
+fn glob_pattern_invalid(pattern: &str, text: &str) -> bool {
+    glob_match_literal(pattern, text)
+}
+
+fn missing_name_none() -> Vec<String> {
+    Vec::new()
+}
+
+fn similar_want(missing: &Path) -> Option<&str> {
+    missing_file_name(missing)
+}
+
+fn similar_without_name() -> Vec<String> {
+    missing_name_none()
+}
+
+fn similar_parent_name(missing: &Path) -> Result<(&Path, &str), Vec<String>> {
+    let Some(parent) = missing.parent() else {
+        return Err(Vec::new());
+    };
+    let Some(want) = similar_want(missing) else {
+        return Err(similar_without_name());
+    };
+    Ok((parent, want))
+}
+
+fn contains_similar(name: &str, want: &str) -> bool {
+    name.contains(want) || want.contains(name)
+}
+
+fn glob_match_literal(pattern: &str, text: &str) -> bool {
+    pattern == text
 }
 
 /// Suggest similar names in a directory when a path is missing.
 pub fn suggest_similar(missing: &Path, limit: usize) -> Vec<String> {
-    let Some(parent) = missing.parent() else {
-        return Vec::new();
-    };
-    let Some(want) = missing.file_name().and_then(|s| s.to_str()) else {
-        return Vec::new();
+    let Ok((parent, want)) = similar_parent_name(missing) else {
+        return similar_without_name();
     };
     let want_l = want.to_ascii_lowercase();
     let Ok(entries) = fs::read_dir(parent) else {
@@ -173,11 +260,11 @@ pub fn suggest_similar(missing: &Path, limit: usize) -> Vec<String> {
             let name = e.file_name().to_string_lossy().into_owned();
             let name_l = name.to_ascii_lowercase();
             // Prefer prefix / substring matches
-            let score = if name_l == want_l {
+            let score = if names_equal(&name_l, &want_l) {
                 0
             } else if name_l.starts_with(&want_l) || want_l.starts_with(&name_l) {
                 1
-            } else if name_l.contains(&want_l) || want_l.contains(&name_l) {
+            } else if contains_similar(&name_l, &want_l) {
                 2
             } else {
                 // crude edit distance proxy: shared prefix length
@@ -217,10 +304,7 @@ pub fn list_dir_entries(dir: &Path, ignore: &[String]) -> Result<Vec<DirEntryInf
     let mut out = Vec::new();
     for entry in rd.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name == "." || name == ".." {
-            continue;
-        }
-        if ignore.iter().any(|pat| glob_match(pat, &name)) {
+        if !include_dir_name(&name, ignore) {
             continue;
         }
         let path = entry.path();
@@ -313,29 +397,19 @@ pub fn walk_entries(
         .threads(1);
 
     builder.filter_entry(|entry| {
-        if entry.depth() == 0 {
-            return true;
-        }
-        let name = entry.file_name().to_string_lossy();
-        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-        if is_dir { !is_skip_dir(&name) } else { true }
+        keep_walk_filter(
+            entry.depth(),
+            &entry.file_name().to_string_lossy(),
+            entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false),
+        )
     });
 
     let mut truncated = false;
     let mut delivered = 0usize;
     for entry in builder.build() {
-        let Ok(entry) = entry else {
+        let Some((entry, ft)) = accept_walk_entry(entry) else {
             continue;
         };
-        if entry.depth() == 0 {
-            continue;
-        }
-        let Some(ft) = entry.file_type() else {
-            continue;
-        };
-        if ft.is_symlink() {
-            continue;
-        }
         let is_dir = ft.is_dir();
         let path = entry.path();
         let rel = path
@@ -363,6 +437,93 @@ pub fn walk_entries(
 /// Seek-friendly check: file size via metadata.
 pub fn file_len(path: &Path) -> Option<u64> {
     fs::metadata(path).ok().map(|m| m.len())
+}
+
+fn missing_file_name(missing: &Path) -> Option<&str> {
+    missing.file_name().and_then(|s| s.to_str())
+}
+
+fn names_equal(a: &str, b: &str) -> bool {
+    a == b
+}
+
+fn is_dot_or_dotdot(name: &str) -> bool {
+    name == "." || name == ".."
+}
+
+fn walk_entry_ok(
+    entry: Result<ignore::DirEntry, ignore::Error>,
+) -> Result<ignore::DirEntry, ignore::Error> {
+    entry
+}
+
+fn skip_walk_root(depth: usize) -> bool {
+    depth == 0
+}
+
+fn keep_walk_root() -> bool {
+    true
+}
+
+fn keep_walk_filter(depth: usize, name: &str, is_dir: bool) -> bool {
+    if skip_walk_root(depth) {
+        return keep_walk_root();
+    }
+    if is_dir { !is_skip_dir(name) } else { true }
+}
+
+fn accept_walk_entry(
+    entry: Result<ignore::DirEntry, ignore::Error>,
+) -> Option<(ignore::DirEntry, std::fs::FileType)> {
+    let Ok(entry) = walk_entry_ok(entry) else {
+        skip_bad_walk_entry();
+        return None;
+    };
+    if skip_walk_root(entry.depth()) {
+        skip_walk_root_entry();
+        return None;
+    }
+    take_walk_file_type(walk_file_type(&entry)).map(|ft| (entry, ft))
+}
+
+fn take_walk_file_type(ft: Option<std::fs::FileType>) -> Option<std::fs::FileType> {
+    let Some(ft) = ft else {
+        skip_missing_file_type();
+        return None;
+    };
+    keep_non_symlink(ft, ft.is_symlink())
+}
+
+fn keep_non_symlink(ft: std::fs::FileType, is_symlink: bool) -> Option<std::fs::FileType> {
+    if skip_walk_symlink(is_symlink) {
+        None
+    } else {
+        Some(ft)
+    }
+}
+
+fn skip_bad_walk_entry() {}
+
+fn skip_walk_root_entry() {}
+
+fn skip_missing_file_type() {}
+
+fn skip_walk_symlink(is_symlink: bool) -> bool {
+    is_symlink
+}
+
+fn skip_dot_or_dotdot() {}
+
+fn include_dir_name(name: &str, ignore: &[String]) -> bool {
+    if is_dot_or_dotdot(name) {
+        skip_dot_or_dotdot();
+        return false;
+    }
+    !ignore.iter().any(|pat| glob_match(pat, name))
+}
+
+fn walk_file_type(entry: &ignore::DirEntry) -> Option<std::fs::FileType> {
+    entry.file_type()
 }
 
 #[cfg(test)]

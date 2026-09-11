@@ -159,23 +159,24 @@ fn resolve_target(
     header: Option<&str>,
 ) -> Result<String, String> {
     if let Some(h) = header.filter(|s| !s.is_empty() && *s != ".") {
-        let p = Path::new(h);
-        if p.is_absolute() {
-            return Ok(h.to_string());
-        }
-        return Ok(Path::new(working_dir).join(h).to_string_lossy().to_string());
+        return Ok(join_or_abs(working_dir, h));
     }
     if !explicit.is_empty() && explicit != "." {
-        let p = Path::new(explicit);
-        if p.is_absolute() {
-            return Ok(explicit.to_string());
-        }
-        return Ok(Path::new(working_dir)
-            .join(explicit)
-            .to_string_lossy()
-            .to_string());
+        return Ok(join_or_abs(working_dir, explicit));
     }
     Err("Error: 'path' is required when the patch has no +++ / diff --git headers".into())
+}
+
+fn join_or_abs(working_dir: &str, path: &str) -> String {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        path.to_string()
+    } else {
+        Path::new(working_dir)
+            .join(path)
+            .to_string_lossy()
+            .to_string()
+    }
 }
 
 fn apply_files(
@@ -231,29 +232,61 @@ fn apply_to_file(full_path: &str, shown: &str, patch_content: &str) -> ToolResul
     };
 
     match apply_unified_diff(&original, patch_content) {
-        Ok(modified) => match crate::file::atomic::write_atomic(Path::new(full_path), &modified) {
-            Ok(_) => {
-                let hunks = count_hunks(patch_content);
-                ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!(
-                        "Patch applied to `{shown}` ({hunks} hunk{}).",
-                        if hunks == 1 { "" } else { "s" }
-                    ),
-                    is_error: false,
-                }
-            }
-            Err(e) => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Error writing '{shown}': {e}"),
-                is_error: true,
-            },
-        },
+        Ok(modified) => write_patched_file(full_path, shown, patch_content, &modified),
         Err(e) => ToolResult {
             tool_call_id: String::new(),
             content: format!("Failed to apply patch to `{shown}`: {e}"),
             is_error: true,
         },
+    }
+}
+
+fn write_patched_file(
+    full_path: &str,
+    shown: &str,
+    patch_content: &str,
+    modified: &str,
+) -> ToolResult {
+    write_patched_result(
+        crate::file::atomic::write_atomic(Path::new(full_path), modified)
+            .map_err(|e| e.to_string()),
+        shown,
+        patch_content,
+    )
+}
+
+fn write_patched_result(
+    result: Result<(), String>,
+    shown: &str,
+    patch_content: &str,
+) -> ToolResult {
+    match result {
+        Ok(_) => {
+            let hunks = count_hunks(patch_content);
+            ToolResult {
+                tool_call_id: String::new(),
+                content: format!(
+                    "Patch applied to `{shown}` ({hunks} hunk{}).",
+                    if hunks == 1 { "" } else { "s" }
+                ),
+                is_error: false,
+            }
+        }
+        Err(e) => write_patch_error(shown, &e),
+    }
+}
+
+fn write_patch_error(shown: &str, e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Error writing '{shown}': {e}"),
+        is_error: true,
+    }
+}
+
+fn pop_empty_split(lines: &mut Vec<String>) {
+    if lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
     }
 }
 
@@ -266,17 +299,13 @@ fn count_hunks(patch: &str) -> usize {
 /// skipped. Multiple hunks are applied in order against the growing file.
 fn apply_unified_diff(original: &str, patch: &str) -> Result<String, String> {
     let hunks = parse_hunks(patch)?;
-    if hunks.is_empty() {
-        return Err("no @@ hunks in patch".into());
-    }
+    require_hunks(&hunks)?;
 
     let mut lines: Vec<String> = original
         .split_inclusive('\n')
         .map(|s| s.to_string())
         .collect();
-    if lines.last().is_some_and(|l| l.is_empty()) {
-        lines.pop();
-    }
+    pop_empty_split(&mut lines);
     // `split_inclusive` keeps `\n` on every line except a possible last line
     // without terminator. Normalize to content-without-newline + flag.
     let mut file: Vec<(String, bool)> = lines
@@ -319,6 +348,14 @@ enum Op {
     Context(String),
     Remove(String),
     Add(String),
+}
+
+fn require_hunks(hunks: &[Hunk]) -> Result<(), String> {
+    if hunks.is_empty() {
+        Err("no @@ hunks in patch".into())
+    } else {
+        Ok(())
+    }
 }
 
 fn parse_hunks(patch: &str) -> Result<Vec<Hunk>, String> {

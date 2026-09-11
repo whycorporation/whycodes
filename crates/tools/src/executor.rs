@@ -212,6 +212,11 @@ impl ToolExecutor {
         names
     }
 
+    /// Replace the built-in `lsp` tool with a configured overlay.
+    pub fn configure_lsp(&mut self, overlay: &whycodes_lsp::LspSettings) {
+        self.register(Box::new(lsp::LspTool::with_overlay(overlay)));
+    }
+
     /// Load shell plugins from `plugins.toml` then `plugin.json` trees.
     ///
     /// Order (later same `name` wins): global toml → project toml →
@@ -219,39 +224,25 @@ impl ToolExecutor {
     pub fn register_config_plugins(&mut self, project_dir: Option<&std::path::Path>) -> usize {
         let mut by_name = std::collections::BTreeMap::new();
 
-        let toml = match project_dir {
-            Some(dir) => whycodes_skill::PluginRegistry::load_layered(dir).unwrap_or_else(|e| {
-                tracing::debug!(error = %e, "plugins.toml load skipped");
-                whycodes_skill::PluginRegistry::new()
-            }),
-            None => whycodes_skill::PluginRegistry::load_from_config().unwrap_or_else(|e| {
-                tracing::debug!(error = %e, "global plugins.toml load skipped");
-                whycodes_skill::PluginRegistry::new()
-            }),
-        };
+        let toml = load_plugin_toml(project_dir);
         for cfg in toml.plugins {
-            if cfg.name.trim().is_empty() || cfg.command.trim().is_empty() {
-                continue;
+            if let Some(cfg) = keep_plugin_cfg(cfg) {
+                by_name.insert(cfg.name.clone(), cfg);
             }
-            by_name.insert(cfg.name.clone(), cfg);
         }
 
         let mut mgr = whycodes_plugin::PluginManager::new();
         mgr.discover_standard(project_dir);
         for spec in mgr.shell_specs() {
-            if spec.name.trim().is_empty() || spec.command.trim().is_empty() {
-                continue;
+            if let Some(cfg) = keep_plugin_spec(
+                spec.name,
+                spec.command,
+                spec.description,
+                spec.parameters,
+                spec.working_dir,
+            ) {
+                by_name.insert(cfg.name.clone(), cfg);
             }
-            by_name.insert(
-                spec.name.clone(),
-                whycodes_skill::PluginConfig {
-                    name: spec.name,
-                    command: spec.command,
-                    description: spec.description,
-                    parameters: spec.parameters,
-                    working_dir: Some(spec.working_dir.to_string_lossy().into_owned()),
-                },
-            );
         }
 
         let n = by_name.len();
@@ -304,6 +295,52 @@ impl Default for ToolExecutor {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn load_plugin_toml(project_dir: Option<&std::path::Path>) -> whycodes_skill::PluginRegistry {
+    match project_dir {
+        Some(dir) => whycodes_skill::PluginRegistry::load_layered(dir)
+            .unwrap_or_else(|e| skipped_plugin_toml(&e.to_string(), "plugins.toml load skipped")),
+        None => whycodes_skill::PluginRegistry::load_from_config().unwrap_or_else(|e| {
+            skipped_plugin_toml(&e.to_string(), "global plugins.toml load skipped")
+        }),
+    }
+}
+
+fn skipped_plugin_toml(e: &str, msg: &'static str) -> whycodes_skill::PluginRegistry {
+    tracing::debug!(error = %e, "{msg}");
+    whycodes_skill::PluginRegistry::new()
+}
+
+fn skip_empty_plugin_cfg(name: &str, command: &str) -> bool {
+    name.trim().is_empty() || command.trim().is_empty()
+}
+
+fn keep_plugin_cfg(cfg: whycodes_skill::PluginConfig) -> Option<whycodes_skill::PluginConfig> {
+    if skip_empty_plugin_cfg(&cfg.name, &cfg.command) {
+        None
+    } else {
+        Some(cfg)
+    }
+}
+
+fn keep_plugin_spec(
+    name: String,
+    command: String,
+    description: String,
+    parameters: Option<serde_json::Value>,
+    working_dir: std::path::PathBuf,
+) -> Option<whycodes_skill::PluginConfig> {
+    if skip_empty_plugin_cfg(&name, &command) {
+        return None;
+    }
+    Some(whycodes_skill::PluginConfig {
+        name,
+        command,
+        description,
+        parameters,
+        working_dir: Some(working_dir.to_string_lossy().into_owned()),
+    })
 }
 
 #[cfg(test)]

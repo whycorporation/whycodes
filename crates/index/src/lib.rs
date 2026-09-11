@@ -203,9 +203,9 @@ impl WorkspaceIndex {
         &self.shared.roots
     }
 
-    /// The primary root (working directory).
-    pub fn primary_root(&self) -> &Path {
-        &self.shared.roots[0]
+    /// The primary root (working directory). `None` if no roots were indexed.
+    pub fn primary_root(&self) -> Option<&Path> {
+        self.shared.roots.first().map(PathBuf::as_path)
     }
 
     /// Current scan progress.

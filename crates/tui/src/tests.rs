@@ -379,6 +379,49 @@ fn test_thinking_lifecycle_finish_and_elapsed() {
 }
 
 #[test]
+fn thinking_block_delta_snapshot_retry_and_caps() {
+    use crate::app::{
+        THINKING_EXPANDED_MAX_LINES, THINKING_LIVE_TAIL_LINES, THINKING_MAX_CHARS, ThinkingBlock,
+    };
+    let mut tb = ThinkingBlock::new("");
+    tb.push_delta("");
+    assert!(tb.text.is_empty());
+    tb.push_delta("hello");
+    tb.push_delta("hello!");
+    assert_eq!(tb.text, "hello!");
+    tb.push_delta("!");
+    assert_eq!(tb.text, "hello!");
+    tb.push_delta(" more");
+    assert_eq!(tb.text, "hello! more");
+    assert!(tb.header_label().starts_with("Thinking"));
+    assert!(tb.show_body());
+    assert!(!tb.is_truncated_live());
+
+    let live: String = (0..=THINKING_LIVE_TAIL_LINES)
+        .map(|i| format!("L{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let live_tb = ThinkingBlock::new(live);
+    assert!(live_tb.is_truncated_live());
+    assert_eq!(live_tb.body_lines().len(), THINKING_LIVE_TAIL_LINES);
+
+    let expanded: String = (0..=THINKING_EXPANDED_MAX_LINES)
+        .map(|i| format!("E{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut exp = ThinkingBlock::finished(expanded);
+    exp.collapsed = false;
+    assert!(exp.is_truncated_expanded());
+    assert_eq!(exp.body_lines().len(), THINKING_EXPANDED_MAX_LINES);
+    assert!(exp.header_label().starts_with("Thought for "));
+
+    let mut cap = ThinkingBlock::new("x".repeat(THINKING_MAX_CHARS));
+    cap.push_delta("overflow");
+    assert!(cap.text.len() <= THINKING_MAX_CHARS + "…".len());
+    assert!(cap.text.ends_with('…') || cap.text.len() >= THINKING_MAX_CHARS);
+}
+
+#[test]
 fn test_turn_timing_stamps_assistant_duration() {
     use crate::app::format_elapsed_ms;
     use std::thread;
@@ -2169,13 +2212,26 @@ fn user_message_preserves_newlines_in_panel() {
     assert!(rows >= 3, "expected at least 3 rows, got {rows}");
 }
 
+fn hang_git_cmd() -> std::process::Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", "ping", "-n", "3", "127.0.0.1", ">", "NUL"]);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("2");
+        cmd
+    }
+}
+
 #[test]
 fn git_output_timeout_kills_a_sleeping_child() {
     let start = std::time::Instant::now();
-    let out = crate::app::git_output_timeout(
-        std::process::Command::new("sleep").arg("2"),
-        std::time::Duration::from_millis(80),
-    );
+    let out =
+        crate::app::git_output_timeout(&mut hang_git_cmd(), std::time::Duration::from_millis(80));
     assert!(out.is_none(), "sleep must not outlast the cap");
     assert!(
         start.elapsed() < std::time::Duration::from_millis(800),
@@ -2400,4 +2456,62 @@ fn tool_and_thinking_toggles_update_selected_message() {
     app.selected_msg = Some(1);
     app.toggle_selected_thinking();
     assert!(app.messages[1].results_expanded);
+}
+
+#[test]
+fn chat_messages_from_session_covers_system_tool_image_redacted() {
+    use crate::app::{ChatRole, chat_messages_from_session};
+    use whycodes_core::types::{ContentBlock, ImageSource, Message, MessageContent, Role};
+    use whycodes_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.messages.push(Message {
+        role: Role::System,
+        content: MessageContent::Text("note".into()),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    });
+    session.messages.push(Message {
+        role: Role::Tool,
+        content: MessageContent::Blocks(vec![
+            ContentBlock::Text {
+                text: "orphan".into(),
+            },
+            ContentBlock::ToolResult {
+                tool_use_id: "missing".into(),
+                content: "folded?".into(),
+                is_error: None,
+            },
+        ]),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    });
+    session.add_assistant_message(vec![
+        ContentBlock::Image {
+            source: ImageSource::Url {
+                url: "https://ex.com/a.png".into(),
+            },
+        },
+        ContentBlock::Image {
+            source: ImageSource::Base64 {
+                media_type: "image/png".into(),
+                data: "xxxx".into(),
+            },
+        },
+        ContentBlock::RedactedThinking {
+            data: "hidden".into(),
+        },
+        ContentBlock::Text {
+            text: "done".into(),
+        },
+    ]);
+    let msgs = chat_messages_from_session(&session);
+    assert!(msgs.iter().any(|m| m.role == ChatRole::System));
+    assert!(msgs.iter().any(|m| m.role == ChatRole::Tool));
+    assert!(
+        msgs.iter()
+            .any(|m| m.role == ChatRole::Assistant && m.content.contains("done"))
+    );
 }

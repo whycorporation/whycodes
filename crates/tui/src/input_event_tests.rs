@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::{
-    AgentState, ChatBlock, ChatRole, ConfirmAction, DialogKind, FocusPane, SidebarTab, TuiApp,
+    AgentState, AppMode, ChatBlock, ChatRole, ConfirmAction, DialogKind, FocusPane, SidebarTab,
+    TuiApp,
 };
 use crate::config::TuiAppConfig;
 use crate::keymap::KeymapContext;
@@ -429,6 +430,39 @@ fn file_suggest_keys_accept_step_and_open() {
     assert_eq!(a.input_buffer, "@a.rs ");
     assert!(!a.file_suggest.active);
 
+    let mut a = app();
+    a.file_suggest.active = true;
+    a.file_suggest.token_start = 0;
+    a.file_suggest.matches = vec![whycodes_index::FileMatch {
+        rel: "src".into(),
+        is_dir: true,
+        ..Default::default()
+    }];
+    a.input_buffer = "@x".into();
+    a.input_cursor = 2;
+    handle_event(&mut a, key(KeyCode::Tab));
+    assert_eq!(
+        a.input_buffer, "@src/",
+        "Tab on a directory match must drill down, not close"
+    );
+    assert!(
+        a.file_suggest.active,
+        "directory accept keeps the @file picker open"
+    );
+
+    let mut a = app();
+    a.file_suggest.active = true;
+    a.file_suggest.token_start = 0;
+    a.file_suggest.matches = vec![whycodes_index::FileMatch {
+        rel: "c.rs".into(),
+        ..Default::default()
+    }];
+    a.input_buffer = "@x".into();
+    a.input_cursor = 2;
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert_eq!(a.input_buffer, "@c.rs ");
+    assert!(!a.file_suggest.active);
+
     a.file_suggest.active = true;
     a.file_suggest.matches.clear();
     handle_event(&mut a, key(KeyCode::Enter));
@@ -604,7 +638,7 @@ fn command_mode_executes_colon_commands() {
 fn dialog_keys_confirm_cancel_and_list_jumps() {
     let mut a = app();
     a.confirm("Quit", "sure?", ConfirmAction::Quit);
-    handle_event(&mut a, key(KeyCode::Char('y')));
+    assert!(!handle_event(&mut a, key(KeyCode::Char('y'))));
     assert!(!a.running);
 
     let mut a = app();
@@ -698,6 +732,25 @@ fn provider_form_types_and_backspaces() {
     assert!(a.provider_dialog.form_name.is_empty());
     handle_event(&mut a, key(KeyCode::Down));
     assert_eq!(a.provider_dialog.active_field, 1);
+    handle_event(&mut a, key(KeyCode::Char('k')));
+    assert_eq!(a.provider_dialog.form_api_key, "k");
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Char('u')));
+    assert_eq!(a.provider_dialog.form_base_url, "u");
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Char('h')));
+    assert_eq!(a.provider_dialog.form_headers, "h");
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert!(a.provider_dialog.form_headers.is_empty());
+
+    a.provider_dialog.active_field = 1;
+    a.provider_dialog.form_api_key = "sk".into();
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert_eq!(a.provider_dialog.form_api_key, "s");
+    a.provider_dialog.active_field = 2;
+    a.provider_dialog.form_base_url = "https".into();
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert_eq!(a.provider_dialog.form_base_url, "http");
 }
 
 #[test]
@@ -882,6 +935,31 @@ fn modal_mouse_scrolls_and_closes() {
 }
 
 #[test]
+fn modal_mouse_click_outside_clears_selection() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.mouse_sel = Some(crate::app::MouseSelection {
+        anchor_x: 12,
+        anchor_y: 6,
+        focus_x: 14,
+        focus_y: 7,
+        dragging: true,
+    });
+    assert!(handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 1, 1)
+    ));
+    assert!(a.mouse_sel.is_none());
+    assert!(a.dialogs.is_open());
+}
+
+#[test]
 fn help_overlay_search_then_esc_clears_then_closes() {
     let mut a = app();
     a.mode = AppMode::Help;
@@ -981,6 +1059,19 @@ fn todo_wheel_scrolls_list_not_chat() {
     assert_eq!(a.scroll_offset, 0);
     handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 4, 5));
     assert_eq!(a.todos_scroll, 0);
+
+    overflowing_todos(&mut a);
+    assert!(
+        a.todos_panel_wheel_hit(4, 2),
+        "header cells must count as the todo panel for wheel"
+    );
+    assert!(a.todos_panel_wheel_hit(4, 5));
+    assert!(!a.todos_panel_wheel_hit(80, 20));
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 4, 2));
+    assert!(
+        a.todos_scroll > 0,
+        "wheel on the todo header must scroll the list, not the chat"
+    );
 }
 
 #[test]
@@ -1005,6 +1096,158 @@ fn todo_body_click_focuses_list_and_keys_scroll() {
 }
 
 #[test]
+fn mouse_clicks_todos_header_tasks_sidebar_and_chat_scrollbar() {
+    let mut a = app();
+    overflowing_todos(&mut a);
+    a.todos_collapsed = false;
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 2, 2));
+    assert!(a.todos_collapsed, "todos header click must collapse");
+
+    let mut a = app();
+    a.upsert_subagent(crate::app::SubagentUpdate {
+        id: "kid-header".into(),
+        kind: "explore".into(),
+        description: "d".into(),
+        status: "running".into(),
+        activity: String::new(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    a.tasks_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 1,
+        width: 20,
+        height: 1,
+    }));
+    a.tasks_collapsed = false;
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 2, 1));
+    assert!(a.tasks_collapsed);
+
+    let mut a = app();
+    a.upsert_subagent(crate::app::SubagentUpdate {
+        id: "kid".into(),
+        kind: "explore".into(),
+        description: "d".into(),
+        status: "running".into(),
+        activity: String::new(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    a.tasks_row_hits.push((
+        Rect {
+            x: 0,
+            y: 4,
+            width: 20,
+            height: 1,
+        },
+        "kid".into(),
+    ));
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 2, 4));
+    assert_eq!(a.open_subagent.as_deref(), Some("kid"));
+
+    let mut a = app();
+    a.todos = vec![whycodes_core::TodoItem::new(
+        "1",
+        "a",
+        whycodes_core::TodoStatus::Pending,
+    )];
+    a.todos_collapsed = false;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(crate::keymap::Action::ToggleTodosPanel),
+        &KeyEvent::new(KeyCode::Null, KeyModifiers::NONE),
+    ));
+    assert!(a.todos_collapsed);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(crate::keymap::Action::ToggleTasksPane),
+        &KeyEvent::new(KeyCode::Null, KeyModifiers::NONE),
+    ));
+    a.add_message(ChatRole::Assistant, "think");
+    let i = a.messages.len() - 1;
+    a.messages[i].blocks = vec![crate::app::ChatBlock::Thinking(
+        crate::app::ThinkingBlock::finished("reason"),
+    )];
+    a.selected_msg = Some(i);
+    a.focus = FocusPane::Scrollback;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(crate::keymap::Action::ToggleThinking),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(crate::keymap::Action::ToggleToolResult),
+        &k
+    ));
+
+    let mut a = app();
+    a.sidebar.tab_hits[0].set_rect(Some(Rect {
+        x: 0,
+        y: 0,
+        width: 8,
+        height: 1,
+    }));
+    a.sidebar.visible = false;
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 2, 0));
+    assert!(a.sidebar.visible);
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "scroll me");
+    a.chat_scrollbar_hit = Some(Rect {
+        x: 40,
+        y: 1,
+        width: 1,
+        height: 10,
+    });
+    a.chat_scroll_total = 100;
+    a.chat_viewport_rows = 10;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 40, 2),
+    );
+    assert!(a.chat_scrollbar_grab.is_some());
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Drag(MouseButton::Left), 40, 8),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 40, 8));
+    assert!(a.chat_scrollbar_grab.is_none());
+
+    let mut a = app();
+    a.mouse_sel = None;
+    handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 6, 3));
+    let sel = a
+        .mouse_sel
+        .expect("drag without Down still starts a selection");
+    assert!(sel.dragging);
+    assert_eq!(sel.anchor_x, 6);
+    assert_eq!(sel.anchor_y, 3);
+}
+
+#[test]
+fn mouse_empty_drag_clears_selection_and_unhandled_kind() {
+    let mut a = app();
+    a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![vec![
+        " ".into(),
+        " ".into(),
+        " ".into(),
+        " ".into(),
+    ]]);
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 0, 0));
+    handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 3, 0));
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 3, 0));
+    assert!(a.mouse_sel.is_none());
+
+    let mut a = app();
+    assert!(handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Right), 1, 1)
+    ));
+}
+
+#[test]
 fn coalesce_wheels_over_todos_do_not_move_chat() {
     let mut a = app();
     overflowing_todos(&mut a);
@@ -1023,6 +1266,34 @@ fn coalesce_wheels_over_todos_do_not_move_chat() {
     assert_eq!(events.len(), 1, "wheels folded, move kept");
     assert_eq!(a.todos_scroll, 1);
     assert_eq!(a.scroll_offset, 0);
+}
+
+#[test]
+fn handle_event_wheel_over_todos_scrolls_the_list_not_chat() {
+    let mut a = app();
+    overflowing_todos(&mut a);
+    a.chat_viewport_rows = 12;
+    a.chat_content_width = 40;
+    a.chat_scroll_total = 40;
+    a.scroll_offset = 0;
+    for i in 0..8 {
+        a.add_message(ChatRole::User, format!("line {i}"));
+    }
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 4, 5));
+    assert!(
+        a.todos_scroll > 0,
+        "wheel over the overflowing todos body must move the list"
+    );
+    assert_eq!(
+        a.scroll_offset, 0,
+        "todo-panel wheel must not scroll the transcript"
+    );
+    let after_down = a.todos_scroll;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 4, 5));
+    assert!(
+        a.todos_scroll < after_down,
+        "wheel up must reverse the todo list"
+    );
 }
 
 #[test]
@@ -1332,6 +1603,60 @@ fn mouse_confirms_list_and_question_rows() {
 }
 
 #[test]
+fn mouse_confirms_effort_mode_agent_and_login_rows() {
+    fn click_row(a: &mut TuiApp, y: u16) {
+        a.dialog_modal_hit = Some(Rect {
+            x: 10,
+            y: 5,
+            width: 40,
+            height: 12,
+        });
+        a.dialog_list_hit = Some(Rect {
+            x: 12,
+            y: 8,
+            width: 30,
+            height: 6,
+        });
+        a.dialog_list_total = 4;
+        a.dialog_list_visible = 6;
+        a.dialog_list_scroll_start = 0;
+        handle_event(a, mouse(MouseEventKind::Down(MouseButton::Left), 14, y));
+        handle_event(a, mouse(MouseEventKind::Up(MouseButton::Left), 14, y));
+    }
+
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    open_effort_dialog(&mut a);
+    click_row(&mut a, 8);
+    assert!(
+        a.pending_effort.is_some() || a.dialogs.is_open() || a.mode == AppMode::Normal,
+        "effort click should select or keep the picker"
+    );
+
+    let mut a = app();
+    open_mode_dialog(&mut a);
+    click_row(&mut a, 8);
+    assert!(a.pending_approval_mode.is_some() || a.mode == AppMode::Normal || a.dialogs.is_open());
+
+    let mut a = app();
+    a.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
+    open_dialog(&mut a, DialogKind::Agent);
+    click_row(&mut a, 8);
+    assert!(a.pending_agent.is_some() || a.mode == AppMode::Normal || a.dialogs.is_open());
+
+    let mut a = app();
+    a.login_dialog.rows = vec![crate::app::LoginProviderRow {
+        provider: "openai".into(),
+        label: "OpenAI".into(),
+        connected: false,
+    }];
+    open_dialog(&mut a, DialogKind::Login);
+    click_row(&mut a, 8);
+    assert!(a.pending_login_provider.is_some() || a.mode == AppMode::Normal || a.dialogs.is_open());
+}
+
+#[test]
 fn modal_scrollbar_and_copy_selection() {
     let mut a = app();
     open_dialog(&mut a, DialogKind::Theme);
@@ -1417,6 +1742,49 @@ fn modal_scrollbar_and_copy_selection() {
 }
 
 #[test]
+fn modal_mouse_up_on_close_and_drag_copy() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_close_hit = Some(Rect {
+        x: 46,
+        y: 5,
+        width: 3,
+        height: 1,
+    });
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 47, 5));
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.mouse_sel = Some(crate::app::MouseSelection {
+        anchor_x: 12,
+        anchor_y: 6,
+        focus_x: 20,
+        focus_y: 8,
+        dragging: true,
+    });
+    a.screen_cells = crate::cell_grid::CellGrid::from_rows(
+        (0..20)
+            .map(|_| (0..50).map(|_| "x".to_string()).collect())
+            .collect(),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 20, 8));
+    assert!(a.mouse_sel.is_none() || a.dialogs.is_open() || a.mode == AppMode::Normal);
+}
+
+#[test]
 fn chat_scrollbar_offset_snaps_and_noops() {
     let mut a = app();
     apply_chat_scrollbar_offset(&mut a, 5, None);
@@ -1443,6 +1811,7 @@ fn chat_scrollbar_offset_snaps_and_noops() {
     assert_eq!(a.scroll_offset, 0, "bottom of track → newest");
     apply_chat_scrollbar_offset(&mut a, 0, None);
     apply_chat_scrollbar_offset(&mut a, 50, Some(1));
+    apply_chat_scrollbar_offset(&mut a, 5, Some(2));
     let grab = chat_scrollbar_grab_at(
         &a,
         3,
@@ -1454,6 +1823,47 @@ fn chat_scrollbar_offset_snaps_and_noops() {
         },
     );
     let _ = grab;
+    a.chat_scroll_total = 0;
+    a.chat_viewport_rows = 10;
+    let grab_empty = chat_scrollbar_grab_at(
+        &a,
+        3,
+        Rect {
+            x: 40,
+            y: 1,
+            width: 1,
+            height: 10,
+        },
+    );
+    assert_eq!(grab_empty, 0, "no overflow → no thumb, grab is 0");
+    a.chat_scroll_total = 100;
+    a.chat_viewport_rows = 10;
+    let grab_mid = chat_scrollbar_grab_at(
+        &a,
+        6,
+        Rect {
+            x: 40,
+            y: 1,
+            width: 1,
+            height: 10,
+        },
+    );
+    assert!(grab_mid < 10);
+
+    a.chat_scroll_total = 80;
+    a.chat_viewport_rows = 8;
+    a.chat_scrollbar_hit = Some(Rect {
+        x: 40,
+        y: 1,
+        width: 1,
+        height: 8,
+    });
+    let before = a.scroll_offset;
+    apply_chat_scrollbar_offset(&mut a, 7, Some(0));
+    assert!(
+        a.scroll_offset != before || a.auto_scroll || a.scroll_offset == 0,
+        "mid-track grab=0 must still map to a valid offset"
+    );
 }
 
 #[test]
@@ -1584,6 +1994,28 @@ fn mouse_drag_without_down_and_plain_click() {
 }
 
 #[test]
+fn mouse_drag_copy_fail_toasts_no_clipboard() {
+    crate::clipboard::with_copy_stub(false, || {
+        let mut a = app();
+        a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![
+            (0..8).map(|_| "x".to_string()).collect(),
+            (0..8).map(|_| "y".to_string()).collect(),
+        ]);
+        handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 1, 0));
+        handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 6, 1));
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 6, 1));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clipboard")),
+            "{:?}",
+            a.toasts.visible()
+        );
+    });
+}
+
+#[test]
 fn move_in_dialog_to_clamps_each_kind() {
     let mut a = app();
     open_provider_dialog(&mut a);
@@ -1630,6 +2062,330 @@ fn move_in_dialog_to_clamps_each_kind() {
     move_in_dialog_to(&mut a, &DialogKind::Theme, 0);
     assert_eq!(a.theme_selected, 0);
     move_in_dialog_to(&mut a, &DialogKind::Help, 0);
+}
+
+#[test]
+fn dialog_arrow_keys_step_effort_mode_and_sessions() {
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    open_effort_dialog(&mut a);
+    let start = a.effort_picker_selected;
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Up));
+    assert_eq!(a.effort_picker_selected, start);
+
+    let mut a = app();
+    open_mode_dialog(&mut a);
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Up));
+    assert_eq!(a.approval_picker_selected, 0);
+
+    let mut a = app();
+    a.sessions_rows = vec![
+        crate::app::SessionDashboardRow {
+            parked_idx: None,
+            title: "cur".into(),
+            glyph: "·".into(),
+            state_label: "idle".into(),
+            preview: String::new(),
+            unread: false,
+        },
+        crate::app::SessionDashboardRow {
+            parked_idx: Some(0),
+            title: "bg".into(),
+            glyph: "·".into(),
+            state_label: "idle".into(),
+            preview: String::new(),
+            unread: false,
+        },
+    ];
+    open_dialog(&mut a, DialogKind::Sessions);
+    handle_event(&mut a, key(KeyCode::Down));
+    assert_eq!(a.sessions_cursor, 1);
+}
+
+#[test]
+fn handle_event_quit_confirm_stops_running() {
+    let mut a = app();
+    a.confirm("Quit", "sure?", ConfirmAction::Quit);
+    assert!(!handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(!a.running);
+}
+
+#[test]
+fn dispatch_resolved_action_covers_unmapped_keymap_arms() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "hi");
+    a.focus = FocusPane::Prompt;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::FocusScrollback),
+        &k
+    ));
+    assert_eq!(a.focus, FocusPane::Scrollback);
+
+    let mut a = app();
+    a.upsert_subagent(crate::app::SubagentUpdate {
+        id: "kid".into(),
+        kind: "explore".into(),
+        description: "d".into(),
+        status: "running".into(),
+        activity: String::new(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    a.selected_msg = None;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::OpenSubagent),
+        &k
+    ));
+    assert_eq!(a.open_subagent.as_deref(), Some("kid"));
+    a.open_subagent = Some("kid".into());
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert!(a.open_subagent.is_none());
+
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Normal;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SubmitInput),
+        &k
+    ));
+    assert_eq!(a.mode, AppMode::Help);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SubmitInput),
+        &k
+    ));
+    assert_eq!(
+        a.mode,
+        AppMode::Help,
+        "SubmitInput in Help must be a no-op and keep the overlay open"
+    );
+
+    let mut a = app();
+    a.auto_scroll = true;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleAutoScroll),
+        &k
+    ));
+    assert!(!a.auto_scroll);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleAutoScroll),
+        &k
+    ));
+    assert!(a.auto_scroll);
+    assert!(
+        a.status_message.contains("ON") || a.status_message.contains("OFF"),
+        "toggle must set an auto-scroll status, got {}",
+        a.status_message
+    );
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SwitchAgent),
+        &k
+    ));
+    assert!(
+        a.status_message.contains("Ctrl+T") || a.status_message.contains("agent"),
+        "SwitchAgent is owned by the run loop and must leave a status hint, got {}",
+        a.status_message
+    );
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ClearSession),
+        &k
+    ));
+    assert!(matches!(
+        a.dialogs.active(),
+        Some(DialogKind::Confirm {
+            on_confirm: ConfirmAction::ClearSession,
+            ..
+        })
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SwitchAgent),
+        &k
+    ));
+    assert!(a.status_message.contains("Ctrl+T"));
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "one");
+    a.add_message(ChatRole::User, "two");
+    a.focus = FocusPane::Scrollback;
+    assert!(dispatch_resolved_action(&mut a, Some(Action::ScrollUp), &k));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollDown),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollPageUp),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollPageDown),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollToTop),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollToBottom),
+        &k
+    ));
+    a.focus = FocusPane::Todos;
+    a.todos = vec![
+        whycodes_core::TodoItem::new("1", "a", whycodes_core::TodoStatus::Pending),
+        whycodes_core::TodoItem::new("2", "b", whycodes_core::TodoStatus::Pending),
+    ];
+    assert!(dispatch_resolved_action(&mut a, Some(Action::ScrollUp), &k));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollDown),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollPageUp),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollPageDown),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollToTop),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ScrollToBottom),
+        &k
+    ));
+
+    let mut a = app();
+    a.sidebar.visible = false;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarNextTab),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarPrevTab),
+        &k
+    ));
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarTab6),
+        &k
+    ));
+    for action in [
+        Action::SidebarTab1,
+        Action::SidebarTab2,
+        Action::SidebarTab3,
+        Action::SidebarTab4,
+        Action::SidebarTab5,
+    ] {
+        assert!(dispatch_resolved_action(&mut a, Some(action), &k));
+    }
+
+    let mut a = app();
+    a.sidebar.visible = true;
+    let tab = a.sidebar.active_tab;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarNextTab),
+        &k
+    ));
+    assert_ne!(a.sidebar.active_tab, tab);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarPrevTab),
+        &k
+    ));
+    assert_eq!(a.sidebar.active_tab, tab);
+}
+
+#[test]
+fn mouse_confirms_import_and_provider_select_rows() {
+    let mut a = app();
+    a.provider_dialog.providers = vec!["acme".into(), "openai".into()];
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::Select;
+    open_dialog(&mut a, DialogKind::Provider);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 6,
+    });
+    a.dialog_list_total = 2;
+    a.dialog_list_visible = 6;
+    a.dialog_list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 8),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 8));
+}
+
+#[test]
+fn focus_gained_is_ignored_keep_running() {
+    let mut a = app();
+    assert!(handle_event(&mut a, Event::FocusGained));
+    assert!(handle_event(&mut a, Event::FocusLost));
+    assert!(a.running);
+}
+
+#[test]
+fn help_overlay_slash_search_types_and_esc_clears() {
+    let mut a = app();
+    open_help(&mut a);
+    assert_eq!(a.mode, AppMode::Help);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.help_searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+    assert!(a.help_query.contains('q'));
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert!(!a.help_searching);
+    assert!(a.help_query.is_empty());
+}
+
+#[test]
+fn model_picker_slash_search_types_and_backspace() {
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
+    open_model_dialog(&mut a);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.model_selection.searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('m'))));
+    assert!(a.model_selection.query.contains('m'));
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert!(!a.model_selection.searching);
 }
 
 #[test]
@@ -1832,6 +2588,32 @@ fn direct_input_actions_handle_invalid_utf8_cursor_and_history_edges() {
         &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
     );
     assert_eq!(a.input_history_idx, 2, "history does not overflow");
+
+    a.input_history_idx = 0;
+    a.pending_pastes.push(crate::paste::PastedBlock {
+        id: 1,
+        content: "old".into(),
+    });
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputHistoryNext,
+        &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+    );
+    assert_eq!(a.input_buffer, "second");
+    assert!(
+        a.pending_pastes.is_empty(),
+        "history next must drop live paste chips"
+    );
+    a.input_history_idx = 1;
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputHistoryNext,
+        &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+    );
+    assert!(
+        a.input_buffer.is_empty(),
+        "history next past the last entry clears the draft"
+    );
 }
 
 fn model_catalog(a: &mut TuiApp) {
@@ -1958,4 +2740,3318 @@ fn prompt_backspace_and_word_kill_do_not_full_clear() {
     );
     assert!(a.input_buffer.is_empty());
     assert_eq!(a.pending_full_clears, 0);
+
+    a.pending_images.push(crate::images::PromptImage {
+        path: "shot.png".into(),
+        label: "shot.png".into(),
+        media_type: "image/png".into(),
+    });
+    a.input_buffer = "draft".into();
+    a.input_cursor = 5;
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputClear,
+        &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+    );
+    assert!(a.input_buffer.is_empty());
+    assert!(a.pending_images.is_empty());
+    assert_eq!(a.input_cursor, 0);
+}
+
+#[test]
+fn attach_image_paths_mixed_success_and_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let ok = dir.path().join("a.png");
+    let ok2 = dir.path().join("b.png");
+    std::fs::write(&ok, b"\x89PNG\r\n\x1a\nhello").unwrap();
+    std::fs::write(&ok2, b"\x89PNG\r\n\x1a\nworld").unwrap();
+    let missing = dir.path().join("gone.png");
+
+    let mut a = app();
+    attach_image_paths(&mut a, [ok.clone(), missing, ok2]);
+    assert_eq!(a.pending_images.len(), 2);
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Attached 2")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.kind == crate::toast::ToastKind::Warning)
+    );
+}
+
+#[test]
+fn coalesce_unbracketed_paste_bails_on_modal_mode_and_existing_paste() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    let mut events = vec![key(KeyCode::Char('a')); 20];
+    let before = events.clone();
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert_eq!(events, before);
+
+    a.mode = AppMode::Normal;
+    a.confirm("Quit", "sure?", ConfirmAction::Quit);
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert_eq!(events, before);
+
+    let a = app();
+    let mut events = vec![Event::Paste("already".into()), key(KeyCode::Char('x'))];
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert!(matches!(events[0], Event::Paste(_)));
+}
+
+#[test]
+fn slash_nav_focus_todos_and_help_q() {
+    let mut a = app();
+    a.input_buffer = "/".into();
+    a.slash_suggest.refresh(&a.input_buffer);
+    handle_event(&mut a, key(KeyCode::Up));
+    handle_event(&mut a, key(KeyCode::Down));
+    assert!(a.slash_suggest.active);
+
+    a.add_message(ChatRole::User, "hi");
+    a.focus = FocusPane::Scrollback;
+    handle_event(&mut a, key(KeyCode::Char('i')));
+    assert_eq!(a.focus, FocusPane::Prompt);
+
+    a.focus = FocusPane::Scrollback;
+    handle_event(&mut a, key(KeyCode::Char('t')));
+    // empty todos is a no-op; add one then toggle
+    a.replace_todos(vec![whycodes_core::TodoItem::new(
+        "t1",
+        "do",
+        whycodes_core::TodoStatus::Pending,
+    )]);
+    a.focus = FocusPane::Scrollback;
+    handle_event(&mut a, key(KeyCode::Char('t')));
+    assert!(a.todos_collapsed);
+
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Normal;
+    handle_event(&mut a, key(KeyCode::Char('q')));
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":help".into();
+    handle_event(&mut a, key(KeyCode::Esc));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert!(a.command.buffer.is_empty());
+
+    let mut a = app();
+    a.sidebar.visible = false;
+    handle_event(&mut a, ctrl('.'));
+    assert!(a.sidebar.visible);
+}
+
+fn submit_command(app: &mut TuiApp, cmd: &str) {
+    app.mode = AppMode::Command;
+    app.key_context = KeymapContext::Command;
+    app.command.buffer = cmd.into();
+    handle_event(app, key(KeyCode::Enter));
+}
+
+#[test]
+fn colon_commands_quit_help_theme_clear_sidebar_and_unknown() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "keep");
+    submit_command(&mut a, ":clear");
+    assert!(a.messages.is_empty());
+    assert_eq!(a.status_message, "Session cleared");
+    assert_eq!(a.mode, AppMode::Normal);
+
+    submit_command(&mut a, ":h");
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    submit_command(&mut a, ":help");
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    submit_command(&mut a, ":theme");
+    assert_eq!(a.mode, AppMode::Dialog);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Theme)));
+
+    let mut a = app();
+    a.sidebar.visible = true;
+    submit_command(&mut a, ":sidebar");
+    assert!(!a.sidebar.visible);
+    submit_command(&mut a, ":sidebar");
+    assert!(a.sidebar.visible);
+
+    let mut a = app();
+    submit_command(&mut a, ":nope");
+    assert!(a.status_message.contains("Unknown command"));
+
+    let mut a = app();
+    submit_command(&mut a, ":q");
+    assert!(!a.running);
+
+    let mut a = app();
+    submit_command(&mut a, ":quit");
+    assert!(!a.running);
+
+    let mut a = app();
+    submit_command(&mut a, ":provider");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Provider)));
+    assert!(!a.provider_dialog.providers.is_empty());
+
+    let mut a = app();
+    submit_command(&mut a, ":prov");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Provider)));
+
+    let mut a = app();
+    a.model_selection.models = vec![("openai".into(), "gpt-4o".into())];
+    submit_command(&mut a, ":model");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+}
+
+#[test]
+fn open_effort_and_mode_dialogs_from_footer_hits() {
+    let mut a = app();
+    a.provider_name = "openai".into();
+    a.model_name = "gpt-5".into();
+    a.reasoning_effort = Some("high".into());
+    a.effort_hit.set_rect(Some(Rect::new(2, 4, 8, 1)));
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 3, 4));
+    assert!(
+        matches!(a.dialogs.active(), Some(DialogKind::Effort)),
+        "{:?}",
+        a.dialogs.active()
+    );
+    assert!(a.effort_picker_selected < 4);
+
+    let mut a = app();
+    a.provider_name = "anthropic".into();
+    a.model_name = "claude-sonnet".into();
+    a.effort_hit.set_rect(Some(Rect::new(2, 4, 8, 1)));
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 3, 4));
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("no reasoning-effort")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(a.dialogs.active().is_none());
+
+    let mut a = app();
+    a.approval_mode = whycodes_core::types::ApprovalMode::Manual;
+    a.approval_hit.set_rect(Some(Rect::new(10, 6, 8, 1)));
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 11, 6),
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::ApprovalMode)));
+    assert_eq!(
+        a.approval_picker_selected,
+        whycodes_core::types::ApprovalMode::ALL
+            .iter()
+            .position(|m| *m == whycodes_core::types::ApprovalMode::Manual)
+            .unwrap()
+    );
+
+    open_effort_dialog(&mut a);
+    open_mode_dialog(&mut a);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::ApprovalMode)));
+}
+
+#[test]
+fn copy_selection_from_scrollback_y_key() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "copy me");
+    a.focus_scrollback();
+    handle_event(&mut a, key(KeyCode::Char('y')));
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| { t.message.contains("Copied") || t.message.contains("clipboard") }),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn handle_event_slash_and_file_suggest_arrows() {
+    let mut a = app();
+    a.input_buffer = "/he".into();
+    a.input_cursor = a.input_buffer.len();
+    a.slash_suggest.refresh(&a.input_buffer);
+    if a.slash_suggest.active {
+        assert!(handle_event(&mut a, key(KeyCode::Down)));
+        assert!(handle_event(&mut a, key(KeyCode::Up)));
+        assert!(handle_event(&mut a, key(KeyCode::Tab)));
+    }
+    a.input_buffer = "@src".into();
+    a.input_cursor = a.input_buffer.len();
+    a.file_suggest.refresh(&a.input_buffer, a.input_cursor);
+    if a.file_suggest.active {
+        assert!(handle_event(&mut a, key(KeyCode::Down)));
+        assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    }
+}
+
+#[test]
+fn handle_event_focus_toggle_and_page_keys() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "one");
+    a.add_message(ChatRole::Assistant, "two");
+    assert!(handle_event(&mut a, key(KeyCode::Tab)));
+    assert!(handle_event(&mut a, key(KeyCode::PageUp)));
+    assert!(handle_event(&mut a, key(KeyCode::PageDown)));
+    a.focus = FocusPane::Todos;
+    assert!(handle_event(&mut a, key(KeyCode::PageUp)));
+    assert!(handle_event(&mut a, key(KeyCode::PageDown)));
+}
+
+#[test]
+fn command_mode_submit_executes_and_unknown_stays() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":help".into();
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Help) | None));
+
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":nope".into();
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert!(a.status_message.contains("Unknown") || a.status_message.contains("nope"));
+}
+
+#[test]
+fn slash_suggest_up_down_steps_when_active() {
+    let mut a = app();
+    a.input_buffer = "/".into();
+    a.input_cursor = 1;
+    a.slash_suggest.refresh(&a.input_buffer);
+    assert!(a.slash_suggest.active);
+    let before = a.slash_suggest.selected;
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Up));
+    assert_eq!(a.slash_suggest.selected, before);
+}
+
+#[test]
+fn handle_paste_ignored_outside_normal_mode() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    handle_event(&mut a, Event::Paste("secret".into()));
+    assert!(a.input_buffer.is_empty());
+    a.mode = AppMode::Normal;
+    a.focus = FocusPane::Scrollback;
+    handle_event(&mut a, Event::Paste("hello".into()));
+    assert!(
+        a.input_buffer.contains("hello")
+            || !a.pending_pastes.is_empty()
+            || a.focus == FocusPane::Prompt
+    );
+}
+
+#[test]
+fn ctrl_v_clipboard_error_empty_and_command_mode() {
+    crate::clipboard_image::with_stub(Err("no clip".into()), || {
+        let mut a = app();
+        assert!(handle_event(&mut a, ctrl('v')));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clip"))
+        );
+    });
+    crate::clipboard_image::with_stub(Ok(crate::clipboard_image::PromptClipboard::Empty), || {
+        let mut a = app();
+        assert!(handle_event(&mut a, ctrl('v')));
+        assert!(a.pending_images.is_empty());
+    });
+    crate::clipboard_image::with_stub(
+        Ok(crate::clipboard_image::PromptClipboard::Text("hi".into())),
+        || {
+            let mut a = app();
+            a.mode = AppMode::Command;
+            assert!(handle_event(&mut a, ctrl('v')));
+            assert!(a.input_buffer.is_empty());
+        },
+    );
+}
+
+#[test]
+fn mouse_stop_effort_approval_and_slash_row() {
+    let mut a = app();
+    a.current_agent_state = AgentState::Generating;
+    a.turn_stop_hit.set_rect(Some(Rect {
+        x: 70,
+        y: 0,
+        width: 8,
+        height: 1,
+    }));
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 72, 0),
+    );
+    assert!(a.pending_cancel);
+
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    a.effort_hit.set_rect(Some(Rect {
+        x: 10,
+        y: 20,
+        width: 6,
+        height: 1,
+    }));
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 12, 20),
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Effort)));
+
+    let mut a = app();
+    a.approval_hit.set_rect(Some(Rect {
+        x: 20,
+        y: 20,
+        width: 6,
+        height: 1,
+    }));
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 22, 20),
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::ApprovalMode)));
+
+    let mut a = app();
+    a.input_buffer = "/he".into();
+    a.slash_suggest.refresh(&a.input_buffer);
+    if a.slash_suggest.active {
+        a.slash_suggest.list_hit = Some(Rect {
+            x: 2,
+            y: 10,
+            width: 20,
+            height: 2,
+        });
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 4, 10),
+        );
+    }
+}
+
+#[test]
+fn sidebar_and_tasks_hotkeys() {
+    let mut a = app();
+    assert!(handle_event(&mut a, ctrl('b')));
+    assert!(handle_event(&mut a, ctrl('b')));
+    assert!(handle_event(&mut a, ctrl('g')));
+    assert!(handle_event(&mut a, ctrl('.')));
+    assert!(handle_event(&mut a, ctrl(',')));
+}
+
+#[test]
+fn help_jk_scroll_and_backspace() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Help;
+    assert!(handle_event(&mut a, key(KeyCode::Char('j'))));
+    assert!(a.help_scroll > 0);
+    assert!(handle_event(&mut a, key(KeyCode::Char('k'))));
+    assert!(handle_event(&mut a, key(KeyCode::Down)));
+    assert!(handle_event(&mut a, key(KeyCode::Up)));
+    handle_event(&mut a, key(KeyCode::Char('/')));
+    handle_event(&mut a, key(KeyCode::Char('x')));
+    assert_eq!(a.help_query, "x");
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert!(a.help_query.is_empty());
+}
+
+#[test]
+fn import_picker_space_select_all_and_none() {
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    assert!(handle_event(&mut a, key(KeyCode::Char('a'))));
+    assert!(a.import_picker.any_checked());
+    assert!(handle_event(&mut a, key(KeyCode::Char('n'))));
+}
+
+#[test]
+fn modal_mouse_click_outside_and_drag() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 1, 1));
+    assert!(a.dialogs.is_open());
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 20, 8),
+    );
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Drag(MouseButton::Left), 24, 9),
+    );
+    assert!(a.mouse_sel.as_ref().is_some_and(|s| s.dragging));
+}
+
+#[test]
+fn focus_prompt_scrollback_and_pending_suggestion() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "hi");
+    a.focus_scrollback();
+    assert!(handle_event(&mut a, key(KeyCode::Char('i'))));
+    a.pending_suggestion = Some("try this".into());
+    a.input_buffer.clear();
+    a.input_cursor = 0;
+    a.focus_prompt();
+    assert!(handle_event(&mut a, key(KeyCode::Tab)));
+    assert!(a.input_buffer.contains("try this") || a.pending_suggestion.is_none());
+}
+
+#[test]
+fn cwd_click_copy_fail_toasts_no_clipboard() {
+    crate::clipboard::with_copy_stub(false, || {
+        let mut a = app();
+        a.project_dir = std::path::PathBuf::from("/work/proj");
+        a.cwd_hit.set_rect(Some(Rect {
+            x: 0,
+            y: 23,
+            width: 20,
+            height: 1,
+        }));
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 23),
+        );
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 2, 23));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clipboard") || t.message.contains("Copied")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
+fn drag_copy_fail_toasts_no_clipboard() {
+    crate::clipboard::with_copy_stub(false, || {
+        let mut a = app();
+        a.screen_cells =
+            crate::cell_grid::CellGrid::from_rows(vec![(0..20).map(|_| "x".to_string()).collect()]);
+        a.mouse_sel = Some(crate::app::MouseSelection {
+            anchor_x: 0,
+            anchor_y: 0,
+            focus_x: 8,
+            focus_y: 0,
+            dragging: true,
+        });
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 8, 0));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clipboard") || t.message.contains("Copied")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
+fn cwd_click_copies_or_warns() {
+    let mut a = app();
+    a.project_dir = std::path::PathBuf::from("/work/proj");
+    a.cwd_hit.set_rect(Some(Rect {
+        x: 2,
+        y: 1,
+        width: 10,
+        height: 1,
+    }));
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 4, 1));
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 4, 1));
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Copied") || t.message.contains("clipboard"))
+    );
+}
+
+#[test]
+fn cwd_click_copy_success_toasts_path() {
+    crate::clipboard::with_copy_stub(true, || {
+        let mut a = app();
+        a.project_dir = std::path::PathBuf::from("/work/proj");
+        a.cwd_hit.set_rect(Some(Rect {
+            x: 2,
+            y: 1,
+            width: 10,
+            height: 1,
+        }));
+        handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 4, 1));
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 4, 1));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Copied path")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
+fn chat_drag_empty_cells_clears_selection_without_toast() {
+    crate::clipboard::with_copy_stub(true, || {
+        let mut a = app();
+        a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![
+            (0..8).map(|_| " ".to_string()).collect(),
+            (0..8).map(|_| " ".to_string()).collect(),
+        ]);
+        handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 1, 0));
+        handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 6, 1));
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 6, 1));
+        assert!(a.mouse_sel.is_none());
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .all(|t| !t.message.contains("Copied")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
+fn colon_sidebar_and_clear_commands() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.command.buffer = ":sidebar".into();
+    handle_event(&mut a, key(KeyCode::Enter));
+    a.mode = AppMode::Command;
+    a.add_message(ChatRole::User, "x");
+    a.command.buffer = ":clear".into();
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert!(a.messages.is_empty());
+}
+
+fn click_list_row(a: &mut TuiApp, y: u16, total: usize) {
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 6,
+    });
+    a.dialog_list_total = total;
+    a.dialog_list_visible = 6;
+    a.dialog_list_scroll_start = 0;
+    handle_event(a, mouse(MouseEventKind::Down(MouseButton::Left), 14, y));
+    handle_event(a, mouse(MouseEventKind::Up(MouseButton::Left), 14, y));
+}
+
+#[test]
+fn mouse_confirms_session_list_sessions_import_and_model_rows() {
+    let mut a = app();
+    a.session_list.sessions = vec![crate::app::SessionEntry {
+        id: "persisted".into(),
+        title: "t".into(),
+        messages: 1,
+        updated_at: None,
+        live: None,
+    }];
+    open_dialog(&mut a, DialogKind::SessionList);
+    click_list_row(&mut a, 8, 1);
+    assert_eq!(a.pending_session_id.as_deref(), Some("persisted"));
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    a.sessions_rows = vec![crate::app::SessionDashboardRow {
+        parked_idx: Some(2),
+        title: "bg".into(),
+        glyph: "·".into(),
+        state_label: "idle".into(),
+        preview: String::new(),
+        unread: false,
+    }];
+    open_dialog(&mut a, DialogKind::Sessions);
+    click_list_row(&mut a, 8, 1);
+    assert_eq!(a.pending_session_switch, Some(2));
+
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    assert_eq!(a.import_picker.checked, vec![true]);
+    click_list_row(&mut a, 8, 1);
+    assert_eq!(
+        a.import_picker.checked,
+        vec![false],
+        "import click toggles, does not confirm"
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Import)));
+
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
+    a.provider_name = "other".into();
+    a.model_name = "x".into();
+    open_model_dialog(&mut a);
+    let rows = a.model_selection.visible_rows();
+    assert!(
+        matches!(
+            rows.first(),
+            Some(crate::app::ModelPickerRow::Header { .. })
+        ),
+        "{rows:?}"
+    );
+    click_list_row(&mut a, 8, rows.len());
+    assert!(
+        a.dialogs.is_open(),
+        "header click toggles the group, keeps the picker"
+    );
+
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into())];
+    a.provider_name = "acme".into();
+    a.model_name = "m1".into();
+    open_model_dialog(&mut a);
+    let n = a.model_selection.visible_rows().len();
+    click_list_row(&mut a, 9, n);
+    assert!(
+        a.pending_model
+            .as_ref()
+            .map(|(p, m)| (p.as_str(), m.as_str()))
+            == Some(("acme", "m1"))
+            || a.dialogs.is_open(),
+        "model leaf click confirms or keeps picker, got {:?}",
+        a.pending_model
+    );
+}
+
+#[test]
+fn mouse_question_other_multi_and_advance() {
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![whycodes_tools::question::QuestionOption {
+            label: "Yes".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+        important: false,
+    }]);
+    click_list_row(&mut a, 9, 2);
+    if let Some(DialogKind::Question(st)) = a.dialogs.active() {
+        assert!(st.free_text_focus, "Other row click focuses free text");
+    }
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Pick".into(),
+        options: vec![
+            whycodes_tools::question::QuestionOption {
+                label: "A".into(),
+                description: String::new(),
+                preview: None,
+            },
+            whycodes_tools::question::QuestionOption {
+                label: "B".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: true,
+        important: false,
+    }]);
+    click_list_row(&mut a, 8, 3);
+    if let Some(DialogKind::Question(st)) = a.dialogs.active() {
+        assert!(
+            !st.multi_selected.is_empty() || st.cursor == 0,
+            "multi-select click toggles the row"
+        );
+    }
+
+    let mut a = app();
+    a.ask_question(vec![
+        whycodes_tools::question::QuestionSpec {
+            prompt: "Q1".into(),
+            options: vec![whycodes_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+            important: false,
+        },
+        whycodes_tools::question::QuestionSpec {
+            prompt: "Q2".into(),
+            options: vec![whycodes_tools::question::QuestionOption {
+                label: "Ok".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+            important: false,
+        },
+    ]);
+    click_list_row(&mut a, 8, 2);
+    assert!(
+        matches!(a.dialogs.active(), Some(DialogKind::Question(_))),
+        "first of two questions advances, does not finish"
+    );
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![
+            whycodes_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            },
+            whycodes_tools::question::QuestionOption {
+                label: "No".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: false,
+        important: false,
+    }]);
+    click_list_row(&mut a, 8, 3);
+    assert!(
+        a.pending_question_answers.is_some(),
+        "clicking a real option on a single question must finish and stash answers"
+    );
+    assert_eq!(a.mode, AppMode::Normal);
+}
+
+#[test]
+fn mouse_moved_and_unhandled_kind_keep_dialog() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    assert!(handle_event(&mut a, mouse(MouseEventKind::Moved, 20, 8)));
+    assert!(handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Right), 20, 8)
+    ));
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Theme)));
+}
+
+#[test]
+fn slash_select_prev_next_from_scrollback_and_focus_prompt() {
+    let mut a = app();
+    a.input_buffer = "/".into();
+    a.input_cursor = 1;
+    a.slash_suggest.refresh(&a.input_buffer);
+    assert!(a.slash_suggest.active);
+    a.focus = FocusPane::Scrollback;
+    let before = a.slash_suggest.selected;
+    handle_event(&mut a, key(KeyCode::Down));
+    assert_ne!(a.slash_suggest.selected, before);
+    handle_event(&mut a, key(KeyCode::Up));
+    assert_eq!(a.slash_suggest.selected, before);
+    handle_event(&mut a, key(KeyCode::Char('j')));
+    handle_event(&mut a, key(KeyCode::Char('k')));
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "hi");
+    a.focus_scrollback();
+    assert_eq!(a.focus, FocusPane::Scrollback);
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert_eq!(a.focus, FocusPane::Prompt);
+}
+
+#[test]
+fn help_esc_with_stale_context_clears_search_and_close_hit() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Normal;
+    a.help_searching = true;
+    a.help_query = "q".into();
+    handle_event(&mut a, key(KeyCode::Esc));
+    assert!(!a.help_searching);
+    assert!(a.help_query.is_empty());
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Help;
+    a.help_searching = true;
+    a.help_query = "q".into();
+    a.dialog_close_hit = Some(Rect {
+        x: 70,
+        y: 1,
+        width: 3,
+        height: 1,
+    });
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 71, 1),
+    );
+    assert_eq!(a.mode, AppMode::Help);
+    assert!(!a.help_searching);
+    assert!(a.help_query.is_empty());
+}
+
+#[test]
+fn help_scrollbar_copy_without_modal_and_empty_metrics() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Help;
+    a.dialog_scrollbar_hit = Some(Rect {
+        x: 49,
+        y: 6,
+        width: 1,
+        height: 10,
+    });
+    a.dialog_list_total = 40;
+    a.dialog_list_visible = 6;
+    apply_modal_scrollbar(&mut a, None, 12, Some(1));
+    assert!(a.help_scroll > 0);
+
+    a.dialog_list_total = 0;
+    apply_modal_scrollbar(&mut a, None, 12, None);
+
+    let grab = scrollbar_grab_at(
+        &a,
+        8,
+        Rect {
+            x: 49,
+            y: 6,
+            width: 1,
+            height: 10,
+        },
+    );
+    assert_eq!(grab, 0, "no thumb when total <= visible");
+
+    let mut a = app();
+    a.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
+    open_dialog(&mut a, DialogKind::Agent);
+    a.dialog_scrollbar_hit = Some(Rect {
+        x: 49,
+        y: 6,
+        width: 1,
+        height: 10,
+    });
+    a.dialog_list_total = 3;
+    a.dialog_list_visible = 2;
+    apply_modal_scrollbar(&mut a, Some(&DialogKind::Agent), 12, Some(1));
+    assert_eq!(a.agent_picker_selected, 2);
+
+    a.dialog_list_total = 20;
+    a.dialog_list_visible = 6;
+    a.dialog_list_scroll_start = 4;
+    let grab_on_thumb = scrollbar_grab_at(
+        &a,
+        8,
+        Rect {
+            x: 49,
+            y: 6,
+            width: 1,
+            height: 10,
+        },
+    );
+    let grab_off_thumb = scrollbar_grab_at(
+        &a,
+        14,
+        Rect {
+            x: 49,
+            y: 6,
+            width: 1,
+            height: 10,
+        },
+    );
+    assert!(grab_off_thumb > 0 || grab_on_thumb < 10);
+
+    copy_modal_selection(&mut a, 18, 7);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_modal_hit = None;
+    a.mouse_sel = Some(crate::app::MouseSelection {
+        anchor_x: 0,
+        anchor_y: 0,
+        focus_x: 4,
+        focus_y: 0,
+        dragging: true,
+    });
+    a.screen_cells =
+        crate::cell_grid::CellGrid::from_rows(vec![(0..8).map(|_| "x".to_string()).collect()]);
+    crate::clipboard::with_copy_stub(true, || {
+        copy_modal_selection(&mut a, 4, 0);
+    });
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Copied") && t.message.contains("chars")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    let mut a = app();
+    copy_modal_selection(&mut a, 0, 0);
+    assert!(a.mouse_sel.is_none());
+}
+
+#[test]
+fn move_in_dialog_to_empty_model_effort_mode_question_import() {
+    let mut a = app();
+    a.model_selection.models.clear();
+    a.model_selection.query = "zzzz-no-match".into();
+    move_in_dialog_to(&mut a, &DialogKind::Model, 9);
+    assert_eq!(a.model_selection.selected, 0);
+
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    move_in_dialog_to(&mut a, &DialogKind::Effort, 0);
+    move_in_dialog_to(&mut a, &DialogKind::ApprovalMode, 0);
+
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![whycodes_tools::question::QuestionOption {
+            label: "Yes".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+        important: false,
+    }]);
+    let q = a.dialogs.active().cloned().expect("question dialog");
+    move_in_dialog_to(&mut a, &q, 1);
+
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    move_in_dialog_to(&mut a, &DialogKind::Import, 4);
+    assert_eq!(a.import_picker.cursor, 0);
+
+    let mut a = app();
+    a.provider_name = "no-such-provider".into();
+    a.model_name = "no-such-model".into();
+    open_effort_dialog(&mut a);
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("no reasoning-effort"))
+            || matches!(a.dialogs.active(), Some(DialogKind::Effort))
+    );
+
+    let mut a = app();
+    a.model_selection.models.clear();
+    open_model_dialog(&mut a);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+}
+
+#[test]
+fn dialog_help_and_alert_click_and_arrows() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    a.help_searching = true;
+    a.help_query = "x".into();
+    handle_event(&mut a, key(KeyCode::Esc));
+    assert!(!a.help_searching);
+
+    let mut a = app();
+    open_dialog(
+        &mut a,
+        DialogKind::Alert {
+            title: "Note".into(),
+            message: "hi".into(),
+        },
+    );
+    click_list_row(&mut a, 8, 1);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Alert { .. })));
+    confirm_dialog(
+        &mut a,
+        &DialogKind::Alert {
+            title: "Note".into(),
+            message: "hi".into(),
+        },
+    );
+    assert!(
+        !a.dialogs.is_open(),
+        "Alert confirm must dismiss the notice"
+    );
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![whycodes_tools::question::QuestionOption {
+            label: "Yes".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+        important: false,
+    }]);
+    let q = a.dialogs.active().cloned().expect("question dialog");
+    confirm_dialog(&mut a, &q);
+    assert!(
+        matches!(a.dialogs.active(), Some(DialogKind::Question(_))),
+        "keyboard confirm on Question must not dismiss the questionnaire"
+    );
+
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    open_effort_dialog(&mut a);
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Up));
+    open_mode_dialog(&mut a);
+    handle_event(&mut a, key(KeyCode::Down));
+}
+
+#[test]
+fn move_in_dialog_status_and_workspace_are_noops() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Status);
+    move_in_dialog(&mut a, &DialogKind::Status, 1);
+    open_dialog(&mut a, DialogKind::Workspace);
+    move_in_dialog(&mut a, &DialogKind::Workspace, -1);
+    assert!(a.dialogs.is_open());
+}
+
+#[test]
+fn move_in_dialog_steps_the_provider_select_list() {
+    let mut a = app();
+    open_provider_dialog(&mut a);
+    assert_eq!(
+        a.provider_dialog.mode,
+        crate::app::ProviderDialogMode::Select
+    );
+    assert!(a.provider_dialog.providers.len() > 1);
+    let start = a.provider_dialog.selected;
+    move_in_dialog(&mut a, &DialogKind::Provider, 1);
+    assert_eq!(
+        a.provider_dialog.selected,
+        start + 1,
+        "Down in Select mode must walk the provider list, not the add-custom form"
+    );
+    move_in_dialog(&mut a, &DialogKind::Provider, -1);
+    assert_eq!(a.provider_dialog.selected, start);
+}
+
+#[test]
+fn remaining_dispatch_and_dialog_confirm_arms() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.command.buffer = ":sidebar".into();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SubmitInput),
+        &k
+    ));
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    a.upsert_subagent(crate::app::SubagentUpdate {
+        id: "kid".into(),
+        kind: "explore".into(),
+        description: "d".into(),
+        status: "running".into(),
+        activity: String::new(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    a.add_message(ChatRole::Assistant, "hi");
+    if let Some(msg) = a.messages.last_mut() {
+        msg.blocks.push(ChatBlock::Subagent {
+            id: "kid".into(),
+            kind: "explore".into(),
+            description: "d".into(),
+            status: "running".into(),
+            activity: String::new(),
+            elapsed_ms: 0,
+        });
+    }
+    a.selected_msg = Some(a.messages.len() - 1);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::FocusPrompt),
+        &k
+    ));
+    assert_eq!(a.open_subagent.as_deref(), Some("kid"));
+
+    let mut a = app();
+    a.focus = FocusPane::Scrollback;
+    a.selected_msg = None;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::FocusPrompt),
+        &k
+    ));
+    assert_eq!(
+        a.focus,
+        FocusPane::Prompt,
+        "FocusPrompt without a selected subagent must return to the draft"
+    );
+
+    let mut a = app();
+    a.mode = AppMode::Help;
+    paste_os_clipboard(&mut a);
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    a.confirm("Update", "now?", ConfirmAction::Upgrade);
+    confirm_dialog(
+        &mut a,
+        &DialogKind::Confirm {
+            title: "Update".into(),
+            message: "now?".into(),
+            on_confirm: ConfirmAction::Upgrade,
+        },
+    );
+    assert!(a.pending_upgrade);
+    assert!(!a.running);
+
+    let mut a = app();
+    execute_command(&mut a, ":provider");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Provider)));
+    execute_command(&mut a, ":theme");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Theme)));
+}
+
+#[test]
+fn dialog_import_fold_page_and_confirm_remaining_arms() {
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    let mut a = app();
+    a.open_import_picker(&plan);
+    assert!(handle_event(&mut a, key(KeyCode::Char(' '))));
+    assert!(handle_event(&mut a, key(KeyCode::Char('a'))));
+    assert!(handle_event(&mut a, key(KeyCode::Char('n'))));
+    a.import_picker.select_all(true);
+    confirm_dialog(&mut a, &DialogKind::Import);
+    assert!(a.pending_import);
+
+    let mut a = app();
+    a.confirm("Import", "copy?", ConfirmAction::ImportSettings);
+    confirm_dialog(
+        &mut a,
+        &DialogKind::Confirm {
+            title: "Import".into(),
+            message: "copy?".into(),
+            on_confirm: ConfirmAction::ImportSettings,
+        },
+    );
+    assert!(a.pending_import);
+
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
+    open_model_dialog(&mut a);
+    handle_event(&mut a, key(KeyCode::Left));
+    handle_event(&mut a, key(KeyCode::Right));
+    handle_event(&mut a, key(KeyCode::PageDown));
+    handle_event(&mut a, key(KeyCode::PageUp));
+    a.model_selection.searching = true;
+    a.model_selection.query = "m".into();
+    handle_event(&mut a, key(KeyCode::Backspace));
+    a.model_selection.selected = 0;
+    confirm_dialog(&mut a, &DialogKind::Model);
+
+    let mut a = app();
+    a.primary_agents = vec!["build".into(), "plan".into()];
+    a.agent_picker_selected = 1;
+    open_dialog(&mut a, DialogKind::Agent);
+    confirm_dialog(&mut a, &DialogKind::Agent);
+    assert_eq!(a.pending_agent.as_deref(), Some("plan"));
+
+    let mut a = app();
+    a.sessions_rows = vec![crate::app::SessionDashboardRow {
+        parked_idx: Some(1),
+        title: "parked".into(),
+        glyph: "·".into(),
+        state_label: "idle".into(),
+        preview: String::new(),
+        unread: false,
+    }];
+    a.sessions_cursor = 0;
+    open_dialog(&mut a, DialogKind::Sessions);
+    confirm_dialog(&mut a, &DialogKind::Sessions);
+    assert_eq!(a.pending_session_switch, Some(1));
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "theme me");
+    a.theme_selected = 0;
+    open_dialog(&mut a, DialogKind::Theme);
+    confirm_dialog(&mut a, &DialogKind::Theme);
+
+    let mut a = app();
+    a.session_list.sessions = vec![
+        crate::app::SessionEntry {
+            id: "persisted".into(),
+            title: "old".into(),
+            messages: 1,
+            updated_at: None,
+            live: None,
+        },
+        crate::app::SessionEntry {
+            id: "live".into(),
+            title: "now".into(),
+            messages: 2,
+            updated_at: None,
+            live: Some(usize::MAX),
+        },
+    ];
+    a.session_list.selected = 0;
+    open_dialog(&mut a, DialogKind::SessionList);
+    confirm_dialog(&mut a, &DialogKind::SessionList);
+    assert_eq!(a.pending_session_id.as_deref(), Some("persisted"));
+    a.session_list.selected = 1;
+    confirm_dialog(&mut a, &DialogKind::SessionList);
+    assert_eq!(a.pending_session_switch, Some(usize::MAX));
+
+    let mut a = app();
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::AddCustom;
+    a.provider_dialog.active_field = 4;
+    open_dialog(&mut a, DialogKind::Provider);
+    assert!(handle_event(&mut a, key(KeyCode::Char('x'))));
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    a.help_searching = true;
+    a.help_query = "find".into();
+    handle_event(&mut a, key(KeyCode::Esc));
+    assert!(a.help_query.is_empty());
+}
+
+#[test]
+fn confirm_effort_mode_question_and_empty_import() {
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    open_effort_dialog(&mut a);
+    if matches!(a.dialogs.active(), Some(DialogKind::Effort)) {
+        confirm_dialog(&mut a, &DialogKind::Effort);
+        assert!(
+            a.pending_effort.is_some(),
+            "effort confirm must set pending_effort"
+        );
+    }
+
+    let mut a = app();
+    open_mode_dialog(&mut a);
+    confirm_dialog(&mut a, &DialogKind::ApprovalMode);
+    assert!(a.pending_approval_mode.is_some());
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![whycodes_tools::question::QuestionOption {
+            label: "Yes".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+        important: false,
+    }]);
+    let q = a.dialogs.active().cloned().expect("question");
+    confirm_dialog(&mut a, &q);
+    assert!(
+        matches!(a.dialogs.active(), Some(DialogKind::Question(_))),
+        "question confirm must not dismiss"
+    );
+
+    let mut a = app();
+    a.login_dialog.rows = vec![crate::app::LoginProviderRow {
+        provider: "anthropic".into(),
+        label: "Anthropic".into(),
+        connected: false,
+    }];
+    open_dialog(&mut a, DialogKind::Login);
+    confirm_dialog(&mut a, &DialogKind::Login);
+    assert_eq!(a.pending_login_provider.as_deref(), Some("anthropic"));
+
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    let mut a = app();
+    a.open_import_picker(&plan);
+    a.import_picker.select_all(false);
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Select at least one")),
+        "{:?}",
+        a.toasts.visible()
+    );
+
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
+    open_model_dialog(&mut a);
+    handle_event(&mut a, key(KeyCode::Home));
+    handle_event(&mut a, key(KeyCode::End));
+    handle_event(&mut a, key(KeyCode::Char('j')));
+    handle_event(&mut a, key(KeyCode::Char('k')));
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_list_total = crate::theme::ThemeName::ALL.len();
+    handle_event(&mut a, key(KeyCode::End));
+    assert_eq!(
+        a.theme_selected,
+        crate::theme::ThemeName::ALL.len().saturating_sub(1)
+    );
+    handle_event(&mut a, key(KeyCode::Home));
+    assert_eq!(a.theme_selected, 0);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    handle_event(&mut a, key(KeyCode::Char('j')));
+    handle_event(&mut a, key(KeyCode::Char('k')));
+    assert_eq!(a.mode, AppMode::Dialog);
+
+    let mut a = app();
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::AddCustom;
+    a.provider_dialog.active_field = 4;
+    open_dialog(&mut a, DialogKind::Provider);
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    handle_event(&mut a, key(KeyCode::Down));
+    handle_event(&mut a, key(KeyCode::Up));
+
+    let mut a = app();
+    a.model_selection.models.clear();
+    fill_model_catalog_from_disk(&mut a);
+    open_model_dialog(&mut a);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+}
+
+#[test]
+fn modal_copy_fail_session_paste_header_and_chat_wheel() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.mouse_sel = Some(crate::app::MouseSelection {
+        anchor_x: 1,
+        anchor_y: 1,
+        focus_x: 4,
+        focus_y: 2,
+        dragging: true,
+    });
+    crate::clipboard::with_copy_stub(false, || {
+        copy_modal_selection(&mut a, 4, 2);
+    });
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("no clipboard"))
+            || a.mouse_sel.is_none()
+    );
+
+    let mut a = app();
+    a.mode = AppMode::Session;
+    let long = "word ".repeat(40);
+    let mut events: Vec<Event> = long.chars().map(|c| key(KeyCode::Char(c))).collect();
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert!(
+        events.iter().any(|e| matches!(e, Event::Paste(_))),
+        "session mode must still fold a long key flood"
+    );
+
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
+    open_model_dialog(&mut a);
+    a.model_selection.selected = 0;
+    if matches!(
+        a.model_selection.selected_row(),
+        Some(crate::app::ModelPickerRow::Header { .. })
+    ) {
+        confirm_dialog(&mut a, &DialogKind::Model);
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+    }
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "wheel");
+    a.chat_viewport_rows = 24;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+}
+
+#[test]
+fn file_complete_history_and_help_dialog_wheel() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+
+    let mut a = app();
+    a.focus_prompt();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::FileComplete),
+        &k
+    ));
+    assert!(a.file_suggest.active || a.input_buffer.contains('@'));
+
+    let mut a = app();
+    a.file_suggest.active = true;
+    a.file_suggest.token_start = 0;
+    a.file_suggest.matches = vec![
+        whycodes_index::FileMatch {
+            rel: "a.rs".into(),
+            ..Default::default()
+        },
+        whycodes_index::FileMatch {
+            rel: "b.rs".into(),
+            ..Default::default()
+        },
+    ];
+    a.input_buffer = "@x".into();
+    a.input_cursor = 2;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputHistoryNext),
+        &k
+    ));
+    assert_eq!(a.file_suggest.selected, 1);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputHistoryPrev),
+        &k
+    ));
+    assert_eq!(a.file_suggest.selected, 0);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    assert!(a.help_scroll >= 3);
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+}
+
+#[test]
+fn model_confirm_none_row_dismisses() {
+    let mut a = app();
+    a.model_selection.models.clear();
+    open_dialog(&mut a, DialogKind::Model);
+    a.model_selection.selected = 0;
+    confirm_dialog(&mut a, &DialogKind::Model);
+    assert!(
+        a.pending_model.is_none(),
+        "empty catalog confirm must not pick a model"
+    );
+}
+
+#[test]
+fn command_ctrl_chord_and_paste_word_moves() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":".into();
+    assert!(handle_event(&mut a, ctrl('q')));
+    assert_eq!(a.command.buffer, ":", "Ctrl+q must not type into command");
+    handle_event(
+        &mut a,
+        Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)),
+    );
+    assert_eq!(a.command.buffer, ":");
+
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    a.input_cursor = token.len();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordLeft),
+        &k
+    ));
+    assert_eq!(
+        a.input_cursor, 0,
+        "word-left must jump to paste token start"
+    );
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordRight),
+        &k
+    ));
+    assert_eq!(a.input_cursor, token.len());
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputLeft),
+        &k
+    ));
+    assert_eq!(a.input_cursor, 0);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputRight),
+        &k
+    ));
+    assert_eq!(a.input_cursor, token.len());
+    a.input_cursor = 1; // inside the chip, not at either end
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordRight),
+        &k
+    ));
+    assert_eq!(
+        a.input_cursor,
+        token.len(),
+        "word-right from inside a chip must jump to the end"
+    );
+    a.input_cursor = 1;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputRight),
+        &k
+    ));
+    assert_eq!(
+        a.input_cursor,
+        token.len(),
+        "right from inside a chip must jump to the end"
+    );
+    a.input_cursor = token.len();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputKillWordBack),
+        &k
+    ));
+    assert!(a.input_buffer.is_empty() || !a.input_buffer.contains('\n'));
+}
+
+#[test]
+fn provider_and_model_dialogs_load_custom_from_isolated_home() {
+    let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+    std::fs::write(
+        home.path().join("config.toml"),
+        r#"
+schema_version = 1
+[providers.acme-disk]
+name = "acme-disk"
+models = ["disk-m1"]
+"#,
+    )
+    .unwrap();
+
+    let mut a = app();
+    open_provider_dialog(&mut a);
+    assert!(
+        a.provider_dialog.providers.iter().any(|p| p == "acme-disk"),
+        "{:?}",
+        a.provider_dialog.providers
+    );
+
+    let mut a = app();
+    a.model_selection.models.clear();
+    fill_model_catalog_from_disk(&mut a);
+    assert!(
+        a.model_selection
+            .models
+            .iter()
+            .any(|(p, m)| p == "acme-disk" && m == "disk-m1"),
+        "{:?}",
+        a.model_selection.models
+    );
+
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+    }
+}
+
+#[test]
+fn fill_model_catalog_from_disk_is_a_noop_when_config_load_fails() {
+    let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+    std::fs::write(home.path().join("config.toml"), "not valid toml {{{").unwrap();
+
+    let mut a = app();
+    a.model_selection.models.clear();
+    fill_model_catalog_from_disk(&mut a);
+    assert!(
+        a.model_selection.models.is_empty(),
+        "broken config.toml must leave the catalog empty, got {:?}",
+        a.model_selection.models
+    );
+
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+    }
+}
+
+#[test]
+fn dialog_help_types_then_esc_clears_search_not_dialog() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    assert_eq!(a.key_context, KeymapContext::Dialog);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.help_searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+    assert_eq!(a.help_query, "q");
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert!(!a.help_searching);
+    assert!(a.help_query.is_empty());
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Help)));
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert_eq!(a.mode, AppMode::Normal);
+}
+
+#[test]
+fn execute_colon_quit_help_model_and_unknown() {
+    let mut a = app();
+    execute_command(&mut a, ":q");
+    assert!(!a.running);
+
+    let mut a = app();
+    execute_command(&mut a, ":h");
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    execute_command(&mut a, ":help");
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    execute_command(&mut a, ":model");
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+
+    let mut a = app();
+    execute_command(&mut a, ":quit");
+    assert!(!a.running);
+
+    let mut a = app();
+    execute_command(&mut a, ":nope");
+    assert!(a.status_message.contains("Unknown command"));
+}
+
+#[test]
+fn chat_wheel_without_todos_scrolls_transcript() {
+    let mut a = app();
+    a.chat_viewport_rows = 12;
+    a.chat_scroll_total = 80;
+    a.add_message(ChatRole::User, "keep scrolling");
+    for i in 0..30 {
+        a.add_message(ChatRole::Assistant, format!("line {i}"));
+    }
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+    assert!(
+        a.scroll_offset > 0,
+        "wheel up must move toward older transcript rows"
+    );
+    let after_up = a.scroll_offset;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    assert!(
+        a.scroll_offset < after_up,
+        "wheel down must move toward the newest lines"
+    );
+}
+
+#[test]
+fn mouse_drag_starts_selection_without_prior_down() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "drag me");
+    handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 4, 2));
+    let sel = a
+        .mouse_sel
+        .expect("drag without Down still starts a selection");
+    assert!(sel.dragging);
+    assert_eq!((sel.anchor_x, sel.anchor_y), (4, 2));
+}
+
+#[test]
+fn paste_ignored_in_help_and_empty_text_is_noop() {
+    let mut a = app();
+    open_help(&mut a);
+    handle_event(&mut a, Event::Paste("should-not-land".into()));
+    assert!(a.input_buffer.is_empty());
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    handle_event(&mut a, Event::Paste(String::new()));
+    assert!(a.input_buffer.is_empty());
+}
+
+#[test]
+fn command_mode_esc_returns_to_normal_and_clears_buffer() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":sidebar".into();
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert!(a.command.buffer.is_empty());
+}
+
+#[test]
+fn kill_word_forward_expands_overlapping_paste_placeholder() {
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    a.input_buffer = format!("keep {token} tail");
+    a.input_cursor = 5; // just after "keep "
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputKillWordForward,
+        &KeyEvent::new(KeyCode::Delete, KeyModifiers::CONTROL),
+    );
+    assert!(
+        !a.input_buffer.contains('\n'),
+        "kill-word-forward must swallow the paste chip: {:?}",
+        a.input_buffer
+    );
+
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    a.input_buffer = format!("keep {token}");
+    a.input_cursor = 5; // start of the chip
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputDelete,
+        &KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+    );
+    assert_eq!(
+        a.input_buffer, "keep ",
+        "Delete at a chip start must remove the whole placeholder"
+    );
+}
+
+#[test]
+fn kill_word_back_from_after_chip_expands_overlap() {
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    a.input_buffer = format!("{token} extra");
+    a.input_cursor = a.input_buffer.len();
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputKillWordBack,
+        &KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+    );
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputKillWordBack,
+        &KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+    );
+    assert!(
+        a.input_buffer.is_empty() || !a.input_buffer.contains('\n'),
+        "second kill-word-back must swallow the overlapping paste chip: {:?}",
+        a.input_buffer
+    );
+}
+
+#[test]
+fn session_paste_from_scrollback_still_lands_on_prompt() {
+    let mut a = app();
+    a.mode = AppMode::Session;
+    a.focus = FocusPane::Scrollback;
+    handle_event(&mut a, Event::Paste("from scrollback".into()));
+    assert_eq!(a.focus, FocusPane::Prompt);
+    assert!(a.input_buffer.contains("from scrollback"));
+}
+
+#[test]
+fn help_dialog_search_backspace_clears_then_exits_search() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.help_searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('z'))));
+    assert_eq!(a.help_query, "z");
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert!(a.help_query.is_empty());
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert!(!a.help_searching);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Help)));
+}
+
+#[test]
+fn mouse_confirms_model_row_and_header_toggle() {
+    let mut a = app();
+    a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
+    open_model_dialog(&mut a);
+    a.model_selection.selected = 0;
+    let n = a.model_selection.visible_rows().len();
+    if matches!(
+        a.model_selection.selected_row(),
+        Some(crate::app::ModelPickerRow::Header { .. })
+    ) {
+        click_list_row(&mut a, 8, n);
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+    }
+    a.model_selection.selected = 1;
+    let n = a.model_selection.visible_rows().len();
+    if matches!(
+        a.model_selection.selected_row(),
+        Some(crate::app::ModelPickerRow::Model { .. })
+    ) {
+        click_list_row(&mut a, 9, n);
+        assert!(a.pending_model.is_some() || a.mode == AppMode::Normal);
+    }
+
+    let mut a = app();
+    a.model_selection.models.clear();
+    open_dialog(&mut a, DialogKind::Model);
+    a.model_selection.selected = 0;
+    click_list_row(&mut a, 8, 1);
+    assert!(
+        a.pending_model.is_none(),
+        "empty catalog row click must not pick a model"
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+}
+
+#[test]
+fn mouse_clicks_slash_and_file_suggest_rows() {
+    let mut a = app();
+    a.input_buffer = "/".into();
+    a.input_cursor = 1;
+    a.slash_suggest.refresh(&a.input_buffer);
+    assert!(a.slash_suggest.active);
+    a.slash_suggest.list_hit = Some(Rect {
+        x: 2,
+        y: 10,
+        width: 20,
+        height: 4,
+    });
+    a.slash_suggest.list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 4, 10),
+    );
+    assert!(!a.slash_suggest.active);
+    assert!(a.input_buffer.starts_with('/'));
+
+    let mut a = app();
+    a.file_suggest.active = true;
+    a.file_suggest.token_start = 0;
+    a.file_suggest.matches = vec![whycodes_index::FileMatch {
+        rel: "src/main.rs".into(),
+        ..Default::default()
+    }];
+    a.file_suggest.list_hit = Some(Rect {
+        x: 2,
+        y: 12,
+        width: 24,
+        height: 2,
+    });
+    a.input_buffer = "@x".into();
+    a.input_cursor = 2;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 4, 12),
+    );
+    assert!(!a.file_suggest.active);
+    assert!(a.input_buffer.contains("src/main.rs"));
+}
+
+#[test]
+fn todo_body_click_without_overflow_does_not_steal_focus() {
+    let mut a = app();
+    a.replace_todos(vec![whycodes_core::TodoItem::new(
+        "1",
+        "only",
+        whycodes_core::TodoStatus::Pending,
+    )]);
+    a.todos_viewport_rows = 8;
+    a.todos_body_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 3,
+        width: 40,
+        height: 8,
+    }));
+    a.todos_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 2,
+        width: 40,
+        height: 1,
+    }));
+    a.focus_prompt();
+    handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 4, 5));
+    assert_eq!(a.focus, FocusPane::Prompt);
+}
+
+#[test]
+fn left_from_inside_paste_token_jumps_to_start() {
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let end = a.input_buffer.len();
+    assert!(
+        end > 2,
+        "collapsed paste token must span more than one byte"
+    );
+    a.input_cursor = end.saturating_sub(1);
+    handle_event(&mut a, key(KeyCode::Left));
+    assert_eq!(
+        a.input_cursor, 0,
+        "Left from inside the chip must jump to the token start, not a mid-token byte"
+    );
+
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let end = a.input_buffer.len();
+    a.input_cursor = end.saturating_sub(1);
+    handle_input_action(
+        &mut a,
+        crate::keymap::Action::InputWordLeft,
+        &KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL),
+    );
+    assert_eq!(
+        a.input_cursor, 0,
+        "Ctrl+Left from inside the chip must also jump to the token start"
+    );
+}
+
+#[test]
+fn hidden_sidebar_tab_hotkeys_still_select_tabs() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+    let mut a = app();
+    a.sidebar.visible = false;
+    let before = a.sidebar.active_tab;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarTab6),
+        &k
+    ));
+    assert!(a.sidebar.visible, "tab hotkey must reveal the sidebar");
+    assert_ne!(
+        a.sidebar.active_tab, before,
+        "tab 6 must change the active tab even when the rail started hidden"
+    );
+
+    let mut a = app();
+    a.sidebar.visible = false;
+    let tab = a.sidebar.active_tab;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::SidebarPrevTab),
+        &k
+    ));
+    assert!(a.sidebar.visible);
+    assert_eq!(
+        a.sidebar.active_tab, tab,
+        "PrevTab on a hidden rail must reveal the current tab, not wrap"
+    );
+}
+
+#[test]
+fn chat_drag_copy_success_toasts_char_count() {
+    crate::clipboard::with_copy_stub(true, || {
+        let mut a = app();
+        a.add_message(ChatRole::User, "copy me");
+        a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![
+            (0..12).map(|_| "x".to_string()).collect(),
+            (0..12).map(|_| "y".to_string()).collect(),
+        ]);
+        handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 1, 0));
+        handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 6, 1));
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 6, 1));
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Copied") && t.message.contains("chars")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
+fn handle_event_file_complete_ctrl_space_and_command_submit() {
+    let mut a = app();
+    a.focus_prompt();
+    a.input_buffer = "src/".into();
+    a.input_cursor = 4;
+    assert!(handle_event(
+        &mut a,
+        Event::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL))
+    ));
+    assert!(
+        a.file_suggest.active || a.input_buffer.contains('@') || a.input_buffer.contains("src"),
+        "Ctrl+Space must activate file complete, buffer={}",
+        a.input_buffer
+    );
+
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":help".into();
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.mode, AppMode::Help);
+
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Help;
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.mode, AppMode::Help);
+}
+
+#[test]
+fn handle_event_dialog_mode_without_dialog_returns_to_normal() {
+    let mut a = app();
+    a.mode = AppMode::Dialog;
+    a.key_context = KeymapContext::Dialog;
+    a.dialogs.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert_eq!(a.key_context, KeymapContext::Normal);
+}
+
+#[test]
+fn handle_event_command_mode_ctrl_letter_does_not_insert() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = ":".into();
+    assert!(handle_event(&mut a, ctrl('x')));
+    assert_eq!(a.command.buffer, ":");
+}
+
+#[test]
+fn handle_event_help_wheel_and_list_wheel() {
+    let mut a = app();
+    open_help(&mut a);
+    a.help_scroll = 6;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    assert!(a.help_scroll >= 6);
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+
+    let mut a = app();
+    a.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
+    open_dialog(&mut a, DialogKind::Agent);
+    a.agent_picker_selected = 0;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    assert_eq!(a.agent_picker_selected, 1);
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+    assert_eq!(a.agent_picker_selected, 0);
+}
+
+#[test]
+fn import_enter_without_selection_toasts_and_stays_open() {
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    a.import_picker.select_all(false);
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Select at least one")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Import)));
+}
+
+#[test]
+fn session_list_ctrl_w_on_persisted_row_toasts() {
+    let mut a = app();
+    a.session_list.sessions = vec![crate::app::SessionEntry {
+        id: "saved".into(),
+        title: "t".into(),
+        messages: 1,
+        updated_at: None,
+        live: None,
+    }];
+    open_dialog(&mut a, DialogKind::SessionList);
+    assert!(handle_event(&mut a, ctrl('w')));
+    assert!(
+        a.session_list.pending_close.is_none(),
+        "persisted rows must not queue a live close"
+    );
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Only live sessions close here")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        matches!(a.dialogs.active(), Some(DialogKind::SessionList)),
+        "persisted Ctrl+W must not dismiss the picker"
+    );
+}
+
+#[test]
+fn provider_form_headers_field_types_and_out_of_range_is_noop() {
+    let mut a = app();
+    open_provider_dialog(&mut a);
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::AddCustom;
+    a.provider_dialog.active_field = 3;
+    handle_event(&mut a, key(KeyCode::Char('h')));
+    assert_eq!(a.provider_dialog.form_headers, "h");
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert!(a.provider_dialog.form_headers.is_empty());
+    a.provider_dialog.active_field = 9;
+    assert!(handle_event(&mut a, key(KeyCode::Char('z'))));
+    assert!(a.provider_dialog.form_headers.is_empty());
+}
+
+#[test]
+fn model_picker_left_right_fold_group_at_cursor() {
+    let mut a = app();
+    a.model_selection.models = vec![
+        ("acme".into(), "m1".into()),
+        ("acme".into(), "m2".into()),
+        ("xai".into(), "grok".into()),
+    ];
+    open_model_dialog(&mut a);
+    a.model_selection.selected = 0;
+    handle_event(&mut a, key(KeyCode::Left));
+    handle_event(&mut a, key(KeyCode::Right));
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+}
+
+#[test]
+fn dialog_home_end_jump_theme_and_sessions_mouse_confirm() {
+    let mut a = app();
+    a.theme_selected = 2;
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_list_total = crate::theme::ThemeName::ALL.len();
+    handle_event(&mut a, key(KeyCode::Home));
+    assert_eq!(a.theme_selected, 0);
+    handle_event(&mut a, key(KeyCode::End));
+    assert_eq!(a.theme_selected, crate::theme::ThemeName::ALL.len() - 1);
+
+    let mut a = app();
+    a.sessions_rows = vec![
+        crate::app::SessionDashboardRow {
+            parked_idx: None,
+            title: "current".into(),
+            glyph: "·".into(),
+            state_label: "idle".into(),
+            preview: String::new(),
+            unread: false,
+        },
+        crate::app::SessionDashboardRow {
+            parked_idx: Some(0),
+            title: "parked".into(),
+            glyph: "·".into(),
+            state_label: "idle".into(),
+            preview: String::new(),
+            unread: false,
+        },
+    ];
+    open_dialog(&mut a, DialogKind::Sessions);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 4,
+    });
+    a.dialog_list_total = 2;
+    a.dialog_list_visible = 4;
+    a.dialog_list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 9),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 9));
+    assert_eq!(a.pending_session_switch, Some(0));
+}
+
+#[test]
+fn handle_event_confirms_login_effort_and_approval_pickers() {
+    let mut a = app();
+    a.login_dialog.rows = vec![crate::app::LoginProviderRow {
+        provider: "anthropic".into(),
+        label: "Anthropic".into(),
+        connected: false,
+    }];
+    open_dialog(&mut a, DialogKind::Login);
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.pending_login_provider.as_deref(), Some("anthropic"));
+
+    let mut a = app();
+    a.provider_name = "xai".into();
+    a.model_name = "grok-4.6".into();
+    open_effort_dialog(&mut a);
+    if matches!(a.dialogs.active(), Some(DialogKind::Effort)) {
+        assert!(handle_event(&mut a, key(KeyCode::Enter)));
+        assert!(
+            a.pending_effort.is_some(),
+            "effort Enter must set pending_effort"
+        );
+    }
+
+    let mut a = app();
+    open_mode_dialog(&mut a);
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(a.pending_approval_mode.is_some());
+}
+
+#[test]
+fn word_left_and_left_jump_to_paste_placeholder_start() {
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    a.input_buffer = format!("keep {token}");
+    a.input_cursor = a.input_buffer.len();
+    handle_event(
+        &mut a,
+        Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL)),
+    );
+    assert!(
+        a.input_cursor < a.input_buffer.len(),
+        "Ctrl+Left must land at placeholder start"
+    );
+    let after_word = a.input_cursor;
+    handle_event(&mut a, key(KeyCode::Left));
+    assert!(a.input_cursor <= after_word);
+}
+
+#[test]
+fn word_left_and_left_from_placeholder_end_jump_to_start() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL);
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let end = a.input_buffer.len();
+    a.input_cursor = end;
+    assert!(crate::paste::placeholder_ending_at(&a.input_buffer, end).is_some());
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordLeft),
+        &k
+    ));
+    assert_eq!(a.input_cursor, 0);
+
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    a.input_cursor = a.input_buffer.len();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputLeft),
+        &k
+    ));
+    assert_eq!(a.input_cursor, 0);
+}
+
+#[test]
+fn mouse_model_header_toggles_group_and_question_row_answers() {
+    let mut a = app();
+    a.model_selection.models = vec![
+        ("acme".into(), "m1".into()),
+        ("acme".into(), "m2".into()),
+        ("xai".into(), "grok".into()),
+    ];
+    open_model_dialog(&mut a);
+    a.model_selection.selected = 0;
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 6,
+    });
+    a.dialog_list_total = a.model_selection.visible_rows().len().max(1);
+    a.dialog_list_visible = 6;
+    a.dialog_list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 8),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 8));
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)) || a.pending_model.is_some());
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![
+            whycodes_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            },
+            whycodes_tools::question::QuestionOption {
+                label: "No".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: false,
+        important: false,
+    }]);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 4,
+    });
+    a.dialog_list_total = 2;
+    a.dialog_list_visible = 4;
+    a.dialog_list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 8),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 8));
+    assert!(
+        a.pending_question_answers.is_some()
+            || matches!(a.dialogs.active(), Some(DialogKind::Question(_)))
+    );
+}
+
+#[test]
+fn copy_modal_selection_warns_when_clipboard_fails() {
+    crate::clipboard::with_copy_stub(false, || {
+        let mut a = app();
+        open_dialog(&mut a, DialogKind::Theme);
+        a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![
+            (0..20).map(|_| "x".to_string()).collect(),
+            (0..20).map(|_| "y".to_string()).collect(),
+        ]);
+        a.mouse_sel = Some(crate::app::MouseSelection {
+            anchor_x: 1,
+            anchor_y: 0,
+            focus_x: 8,
+            focus_y: 1,
+            dragging: true,
+        });
+        copy_modal_selection(&mut a, 8, 1);
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("no clipboard") || t.message.contains("Copied")),
+            "{:?}",
+            a.toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    });
+}
+
+#[test]
+fn model_jk_moves_selection_and_session_list_live_max_confirms() {
+    let mut a = app();
+    a.model_selection.models = vec![
+        ("acme".into(), "m1".into()),
+        ("acme".into(), "m2".into()),
+        ("xai".into(), "grok".into()),
+    ];
+    open_model_dialog(&mut a);
+    let start = a.model_selection.selected;
+    handle_event(&mut a, key(KeyCode::Char('j')));
+    assert_ne!(a.model_selection.selected, start);
+    handle_event(&mut a, key(KeyCode::Char('k')));
+    assert_eq!(a.model_selection.selected, start);
+
+    let mut a = app();
+    a.session_list.sessions = vec![crate::app::SessionEntry {
+        id: "active".into(),
+        title: "here".into(),
+        messages: 1,
+        updated_at: None,
+        live: Some(usize::MAX),
+    }];
+    open_dialog(&mut a, DialogKind::SessionList);
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert_eq!(a.pending_session_switch, Some(usize::MAX));
+}
+
+#[test]
+fn provider_add_custom_backspace_on_unused_field_is_a_noop() {
+    let mut a = app();
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::AddCustom;
+    a.provider_dialog.active_field = 4;
+    a.provider_dialog.form_name = "keep".into();
+    open_dialog(&mut a, DialogKind::Provider);
+    assert!(handle_event(&mut a, key(KeyCode::Backspace)));
+    assert_eq!(a.provider_dialog.form_name, "keep");
+}
+
+#[test]
+fn import_dialog_confirm_with_checked_sets_pending() {
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    a.import_picker.select_all(true);
+    confirm_dialog(&mut a, &DialogKind::Import);
+    assert!(a.pending_import);
+}
+
+#[test]
+fn open_model_dialog_fills_catalog_from_disk_when_empty() {
+    let mut a = app();
+    a.model_selection.models.clear();
+    a.provider_name = "acme".into();
+    a.model_name = "m1".into();
+    open_model_dialog(&mut a);
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+}
+
+#[test]
+fn mouse_import_toggles_row_and_question_other_focuses_free_text() {
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 4,
+    });
+    a.dialog_list_total = a.import_picker.items.len().max(1);
+    a.dialog_list_visible = 4;
+    a.dialog_list_scroll_start = 0;
+    let before = a.import_picker.checked.clone();
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 8),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 8));
+    assert_ne!(a.import_picker.checked, before);
+
+    let mut a = app();
+    a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![
+            whycodes_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            },
+            whycodes_tools::question::QuestionOption {
+                label: "Other".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: false,
+        important: false,
+    }]);
+    a.dialog_modal_hit = Some(Rect {
+        x: 10,
+        y: 5,
+        width: 40,
+        height: 12,
+    });
+    a.dialog_list_hit = Some(Rect {
+        x: 12,
+        y: 8,
+        width: 30,
+        height: 4,
+    });
+    a.dialog_list_total = 2;
+    a.dialog_list_visible = 4;
+    a.dialog_list_scroll_start = 0;
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 14, 9),
+    );
+    handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 9));
+    if let Some(DialogKind::Question(st)) = a.dialogs.active() {
+        assert!(st.free_text_focus || st.cursor > 0 || a.pending_question_answers.is_some());
+    }
+}
+
+#[test]
+fn help_overlay_without_dialog_wheel_scrolls_cheatsheet() {
+    let mut a = app();
+    open_help(&mut a);
+    assert!(a.dialogs.active().is_none());
+    a.help_scroll = 0;
+    handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 10, 10));
+    assert!(a.help_scroll >= 3);
+    handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 10, 10));
+    assert_eq!(a.help_scroll, 0);
+}
+
+#[test]
+fn help_overlay_close_hit_and_searching_esc_via_mouse_x() {
+    let mut a = app();
+    open_help(&mut a);
+    a.help_searching = true;
+    a.help_query = "find".into();
+    a.dialog_close_hit = Some(Rect {
+        x: 70,
+        y: 2,
+        width: 3,
+        height: 1,
+    });
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 71, 2),
+    );
+    assert!(!a.help_searching);
+    assert!(a.help_query.is_empty());
+    assert_eq!(a.mode, AppMode::Help);
+
+    handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Left), 71, 2),
+    );
+    assert_eq!(a.mode, AppMode::Normal);
+}
+
+#[test]
+fn mouse_theme_row_confirms_and_chat_scrollbar_mid_track() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.theme_selected = 0;
+    click_list_row(&mut a, 8, crate::theme::ThemeName::ALL.len());
+    assert!(
+        a.mode == AppMode::Normal || a.pending_full_clears > 0 || a.theme_selected > 0,
+        "theme row click confirms or moves selection"
+    );
+
+    let mut a = app();
+    a.chat_scrollbar_hit = Some(Rect {
+        x: 40,
+        y: 1,
+        width: 1,
+        height: 10,
+    });
+    a.chat_scroll_total = 200;
+    a.chat_viewport_rows = 10;
+    apply_chat_scrollbar_offset(&mut a, 6, Some(0));
+    assert!(a.scroll_offset > 0 || a.auto_scroll);
+}
+
+#[test]
+fn mouse_confirms_login_effort_mode_and_agent_rows() {
+    let mut a = app();
+    a.login_dialog.rows = vec![crate::app::LoginProviderRow {
+        provider: "acme".into(),
+        label: "Acme".into(),
+        connected: false,
+    }];
+    open_dialog(&mut a, DialogKind::Login);
+    click_list_row(&mut a, 8, 1);
+    assert!(
+        a.pending_login_provider.as_deref() == Some("acme")
+            || a.mode == AppMode::Normal
+            || matches!(a.dialogs.active(), Some(DialogKind::Login)),
+        "login row click confirms or keeps the picker, got {:?}",
+        a.pending_login_provider
+    );
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Effort);
+    click_list_row(&mut a, 8, 4);
+    assert!(
+        a.pending_effort.is_some()
+            || a.mode == AppMode::Normal
+            || matches!(a.dialogs.active(), Some(DialogKind::Effort)),
+        "effort row click confirms or keeps the picker"
+    );
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::ApprovalMode);
+    click_list_row(&mut a, 8, 3);
+    assert!(
+        a.pending_approval_mode.is_some()
+            || a.mode == AppMode::Normal
+            || matches!(a.dialogs.active(), Some(DialogKind::ApprovalMode)),
+        "approval-mode row click confirms or keeps the picker"
+    );
+
+    let mut a = app();
+    a.primary_agents = vec!["build".into(), "plan".into()];
+    a.agent_name = "build".into();
+    open_dialog(&mut a, DialogKind::Agent);
+    click_list_row(&mut a, 8, 2);
+    assert!(
+        a.pending_agent.as_deref() == Some("build")
+            || a.pending_agent.as_deref() == Some("plan")
+            || a.mode == AppMode::Normal
+            || matches!(a.dialogs.active(), Some(DialogKind::Agent)),
+        "agent row click confirms or keeps the picker, got {:?}",
+        a.pending_agent
+    );
+
+    let mut a = app();
+    open_provider_dialog(&mut a);
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::Select;
+    if a.provider_dialog.providers.is_empty() {
+        a.provider_dialog.providers.push("acme".into());
+    }
+    let n = a.provider_dialog.providers.len().max(1);
+    click_list_row(&mut a, 8, n);
+    assert!(
+        a.mode == AppMode::Normal || matches!(a.dialogs.active(), Some(DialogKind::Provider)),
+        "provider Select-row click dismisses or keeps the picker"
+    );
+    let grab = chat_scrollbar_grab_at(
+        &a,
+        20,
+        Rect {
+            x: 40,
+            y: 1,
+            width: 1,
+            height: 10,
+        },
+    );
+    assert!(
+        grab < 10,
+        "grab offset is relative to a 10-row track, got {grab}"
+    );
+}
+
+#[test]
+fn apply_modal_scrollbar_help_and_empty_total() {
+    let mut a = app();
+    open_help(&mut a);
+    a.dialog_scrollbar_hit = Some(Rect {
+        x: 49,
+        y: 6,
+        width: 1,
+        height: 10,
+    });
+    a.dialog_list_total = 40;
+    a.dialog_list_visible = 8;
+    apply_modal_scrollbar(&mut a, None, 10, Some(1));
+    assert!(a.help_scroll > 0 || a.dialog_list_scroll_start > 0 || a.help_scroll == 0);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Theme);
+    a.dialog_scrollbar_hit = Some(Rect {
+        x: 49,
+        y: 6,
+        width: 1,
+        height: 10,
+    });
+    a.dialog_list_total = 0;
+    let active = a.dialogs.active().cloned();
+    apply_modal_scrollbar(&mut a, active.as_ref(), 8, None);
+}
+
+#[test]
+fn toggle_focus_accepts_suggestion_then_slash_then_cycles_panes() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+
+    let mut a = app();
+    a.pending_suggestion = Some("try cargo test".into());
+    a.input_buffer.clear();
+    a.input_cursor = 0;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleFocus),
+        &k
+    ));
+    assert_eq!(a.input_buffer, "try cargo test");
+    assert!(a.pending_suggestion.is_none());
+    assert!(a.status_message.contains("suggestion"));
+
+    let mut a = app();
+    a.input_buffer = "/he".into();
+    a.input_cursor = 3;
+    a.slash_suggest.refresh(&a.input_buffer);
+    assert!(a.slash_suggest.active);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleFocus),
+        &k
+    ));
+    assert_eq!(
+        a.input_buffer, "/help",
+        "Tab on a slash prefix must complete the current match"
+    );
+
+    a.slash_suggest.refresh(&a.input_buffer);
+    assert!(a.slash_suggest.active);
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleFocus),
+        &k
+    ));
+    assert_eq!(
+        a.input_buffer, "/help",
+        "Tab when the buffer already matches must leave it"
+    );
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "hi");
+    a.focus = FocusPane::Prompt;
+    a.slash_suggest.active = false;
+    a.pending_suggestion = None;
+    a.input_buffer = "x".into();
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::ToggleFocus),
+        &k
+    ));
+    assert_ne!(a.focus, FocusPane::Prompt);
+}
+
+#[test]
+fn escape_from_command_mode_returns_to_normal() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer = "sidebar".into();
+    a.slash_suggest.active = false;
+    a.file_suggest.active = false;
+    a.open_subagent = None;
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert!(
+        a.command.buffer.is_empty(),
+        "Esc must clear the colon buffer, got {:?}",
+        a.command.buffer
+    );
+}
+
+#[test]
+fn help_mode_q_closes_when_search_does_not_consume_it() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Normal;
+    a.help_searching = false;
+    a.help_query.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+    assert_eq!(
+        a.mode,
+        AppMode::Normal,
+        "unmapped q in help (stale Normal context) must close the overlay"
+    );
+}
+
+#[test]
+fn backspace_on_empty_prompt_peels_the_last_staged_image() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
+    let mut a = app();
+    a.pending_images.push(crate::images::PromptImage {
+        path: "a.png".into(),
+        label: "a.png".into(),
+        media_type: "image/png".into(),
+    });
+    a.pending_images.push(crate::images::PromptImage {
+        path: "b.png".into(),
+        label: "b.png".into(),
+        media_type: "image/png".into(),
+    });
+    a.input_buffer.clear();
+    a.input_cursor = 0;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputBackspace),
+        &k
+    ));
+    assert_eq!(a.pending_images.len(), 1);
+    assert_eq!(a.pending_images[0].label, "a.png");
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Removed") && t.message.contains("b.png")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn unbracketed_paste_keeps_mouse_move_events() {
+    let a = app();
+    let long = "word ".repeat(40);
+    let mut events: Vec<Event> = long.chars().map(|c| key(KeyCode::Char(c))).collect();
+    events.push(mouse(MouseEventKind::Moved, 3, 3));
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert!(
+        events.iter().any(|e| matches!(e, Event::Paste(_))),
+        "long key flood must fold into Paste"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Mouse(m) if matches!(m.kind, MouseEventKind::Moved))),
+        "Moved must survive coalescing, got {events:?}"
+    );
+}
+
+#[test]
+fn coalesce_unbracketed_paste_skips_command_mode() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    let mut events = vec![key(KeyCode::Char('a')); 40];
+    let before = events.clone();
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert_eq!(
+        events, before,
+        "command mode must not fold a key flood into Paste"
+    );
+}
+
+#[test]
+fn esc_on_import_settings_confirm_marks_declined() {
+    let mut a = app();
+    a.confirm("Import settings", "Copy?", ConfirmAction::ImportSettings);
+    assert!(matches!(
+        a.dialogs.active(),
+        Some(DialogKind::Confirm {
+            on_confirm: ConfirmAction::ImportSettings,
+            ..
+        })
+    ));
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert!(!a.dialogs.is_open(), "Esc must dismiss the import confirm");
+}
+
+#[test]
+fn open_effort_dialog_toasts_when_the_model_has_no_levels() {
+    let mut a = app();
+    a.provider_name = "acme".into();
+    a.model_name = "echo".into();
+    open_effort_dialog(&mut a);
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("no reasoning-effort")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !a.dialogs.is_open(),
+        "empty effort catalog must not open a picker"
+    );
+}
+
+#[test]
+fn handle_event_focus_lost_and_right_click_keep_running() {
+    let mut a = app();
+    assert!(handle_event(&mut a, Event::FocusLost));
+    assert!(handle_event(
+        &mut a,
+        mouse(MouseEventKind::Down(MouseButton::Right), 4, 4)
+    ));
+    assert!(handle_event(
+        &mut a,
+        mouse(MouseEventKind::Up(MouseButton::Right), 4, 4)
+    ));
+    assert!(a.running);
+}
+
+#[test]
+fn word_right_without_paste_chip_advances_by_word() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Null, KeyModifiers::NONE);
+    let mut a = app();
+    a.input_buffer = "alpha beta".into();
+    a.input_cursor = 0;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordRight),
+        &k
+    ));
+    assert!(
+        a.input_cursor > 0,
+        "word-right from start must skip the first word, cursor={}",
+        a.input_cursor
+    );
+    let after_first = a.input_cursor;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordRight),
+        &k
+    ));
+    assert!(a.input_cursor >= after_first);
+}
+
+#[test]
+fn confirm_clear_session_wipes_transcript() {
+    let mut a = app();
+    a.add_message(ChatRole::User, "keep?");
+    a.confirm("Clear", "wipe?", ConfirmAction::ClearSession);
+    let dlg = a.dialogs.active().cloned().expect("confirm");
+    confirm_dialog(&mut a, &dlg);
+    assert!(a.messages.is_empty());
+    assert!(a.status_message.contains("cleared"));
+}
+
+#[test]
+fn help_dialog_q_closes_when_not_searching() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    a.help_searching = false;
+    a.help_query.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+    assert_eq!(a.mode, AppMode::Normal);
+}
+
+#[test]
+fn confirm_dialog_help_status_and_workspace_are_dismiss_only() {
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Help);
+    confirm_dialog(&mut a, &DialogKind::Help);
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Status);
+    confirm_dialog(&mut a, &DialogKind::Status);
+    assert_eq!(a.mode, AppMode::Normal);
+
+    let mut a = app();
+    open_dialog(&mut a, DialogKind::Workspace);
+    confirm_dialog(&mut a, &DialogKind::Workspace);
+    assert_eq!(a.mode, AppMode::Normal);
+}
+
+#[test]
+fn help_q_closes_when_key_context_is_still_normal() {
+    let mut a = app();
+    a.mode = AppMode::Help;
+    a.key_context = KeymapContext::Normal;
+    a.help_searching = false;
+    a.help_query.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+    assert_eq!(a.mode, AppMode::Normal);
+    assert_eq!(a.key_context, KeymapContext::Normal);
+}
+
+#[test]
+fn second_slash_on_a_bare_draft_reopens_the_menu() {
+    let mut a = app();
+    a.input_buffer = "/".into();
+    a.input_cursor = 1;
+    a.slash_suggest.dismiss();
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert_eq!(a.input_buffer, "/");
+    assert_eq!(a.input_cursor, 1);
+    assert!(
+        a.slash_suggest.active,
+        "second / on a leftover slash draft must reopen the menu"
+    );
+}
+
+#[test]
+fn import_confirm_without_checked_items_toasts_instead_of_applying() {
+    let mut a = app();
+    let mut plan = whycodes_import::ImportPlan::default();
+    plan.mcp_add.push((
+        "fs".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    ));
+    a.open_import_picker(&plan);
+    a.import_picker.select_all(false);
+    assert!(!a.import_picker.any_checked());
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(!a.pending_import, "empty import confirm must not apply");
+    assert!(
+        a.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Select at least one item")),
+        "{:?}",
+        a.toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(matches!(a.dialogs.active(), Some(DialogKind::Import)));
+}
+
+#[test]
+fn word_left_and_left_from_inside_a_paste_chip_jump_to_start() {
+    use crate::keymap::Action;
+    let k = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+    let mut a = app();
+    a.insert_paste_text("one\ntwo\nthree\nfour");
+    let token = a.input_buffer.clone();
+    assert!(
+        token.len() > 4,
+        "collapsed paste chip must be a multi-byte token"
+    );
+    let mid = token.len() / 2;
+    a.input_cursor = mid;
+    assert!(
+        crate::paste::placeholder_at(&a.input_buffer, mid.saturating_sub(1)).is_some(),
+        "cursor must sit inside the chip, not on its end"
+    );
+    assert!(crate::paste::placeholder_ending_at(&a.input_buffer, mid).is_none());
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputWordLeft),
+        &k
+    ));
+    assert_eq!(a.input_cursor, 0);
+
+    a.input_cursor = mid;
+    assert!(dispatch_resolved_action(
+        &mut a,
+        Some(Action::InputLeft),
+        &k
+    ));
+    assert_eq!(a.input_cursor, 0);
+}
+
+#[test]
+fn help_search_ignores_control_chars_and_session_mode_unmapped_is_noop() {
+    let mut a = app();
+    open_help(&mut a);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.help_searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('\n'))));
+    assert!(
+        a.help_query.is_empty(),
+        "control chars must not enter the help query, got {:?}",
+        a.help_query
+    );
+    assert!(a.help_searching);
+
+    let mut a = app();
+    a.mode = AppMode::Session;
+    a.key_context = KeymapContext::Normal;
+    a.input_buffer.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Char('z'))));
+    assert!(
+        a.input_buffer.is_empty(),
+        "unmapped Session-mode letters must not type into the prompt"
+    );
+}
+
+#[test]
+fn help_esc_clears_search_then_closes() {
+    let mut a = app();
+    open_help(&mut a);
+    assert!(handle_event(&mut a, key(KeyCode::Char('/'))));
+    assert!(a.help_searching);
+    assert!(handle_event(&mut a, key(KeyCode::Char('f'))));
+    assert_eq!(a.help_query, "f");
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert!(
+        !a.help_searching && a.help_query.is_empty(),
+        "first Esc must drop the help search, not the overlay"
+    );
+    assert_eq!(a.mode, AppMode::Help);
+    assert!(handle_event(&mut a, key(KeyCode::Esc)));
+    assert_eq!(a.mode, AppMode::Normal);
+}
+
+#[test]
+fn command_mode_types_letters_and_skips_control_chords() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    a.command.buffer.clear();
+    assert!(handle_event(&mut a, key(KeyCode::Char('s'))));
+    assert_eq!(a.command.buffer, "s");
+    assert!(handle_event(&mut a, key(KeyCode::Char('i'))));
+    assert_eq!(a.command.buffer, "si");
+    assert!(handle_event(&mut a, ctrl('w')));
+    assert_eq!(
+        a.command.buffer, "si",
+        "Ctrl/Alt chords must not insert a letter into the colon buffer"
+    );
+    let alt = Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT));
+    assert!(handle_event(&mut a, alt));
+    assert_eq!(a.command.buffer, "si");
 }

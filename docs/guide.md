@@ -319,6 +319,24 @@ model answers instead of over-eager edits. Set
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
 
+`lsp` talks to language servers already on PATH (or in project-local bins:
+`node_modules/.bin`, `.venv`). It auto-detects from cwd markers such as
+`Cargo.toml` / `package.json` / `go.mod`. Actions: `diagnostics`, `hover`,
+`definition`, `references`, `type_definition`, `implementation`, `symbols`.
+Override or disable a server in `config.toml`:
+
+```toml
+[lsp]
+idle_timeout_ms = 300000
+
+[lsp.servers.pylsp]
+disabled = true
+
+[lsp.servers.pyright]
+command = "pyright-langserver"
+args = ["--stdio"]
+```
+
 `browser` drives a local Chromium/Chrome via CDP (`status`, `open`, `snapshot`,
 `click`, `type`, `wait`, `screenshot`, `close`). It is **not** in the core
 profile (`tool_search` or `session.tool_profile = "full"`). Permission

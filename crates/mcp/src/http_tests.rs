@@ -222,6 +222,34 @@ fn remaining_until_zero_and_nonzero() {
 }
 
 #[tokio::test]
+async fn transport_error_helpers_format_messages() {
+    async fn reqwest_err() -> reqwest::Error {
+        reqwest::Client::new()
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .unwrap_err()
+    }
+    let err = http_client_build_failed(reqwest_err().await).to_string();
+    assert!(err.contains("failed to build HTTP client"), "{err}");
+    let err = sse_body_read_failed(reqwest_err().await).to_string();
+    assert!(err.contains("failed to read SSE response body"), "{err}");
+    let err = sse_post_failed("http://example.test/mcp", reqwest_err().await).to_string();
+    assert!(
+        err.contains("HTTP POST to http://example.test/mcp failed"),
+        "{err}"
+    );
+    let elapsed = tokio::time::timeout(Duration::from_nanos(1), std::future::pending::<()>())
+        .await
+        .unwrap_err();
+    let err = sse_endpoint_wait_timeout(elapsed).to_string();
+    assert!(
+        err.contains("timed out waiting for SSE endpoint event"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
 async fn wait_for_response_filters_events_and_times_out() {
     let (tx, rx) = mpsc::unbounded_channel();
     let mut t = LegacySseTransport::from_rx_for_test(rx);
@@ -482,6 +510,19 @@ async fn legacy_sse_covers_endpoint_wait_and_post_paths() {
         let stream = async_stream::stream! {
             match mode {
                 "none" => {}
+                "error" => {
+                    yield Ok::<_, std::io::Error>("event: ping\ndata: keep\n\n".to_string());
+                    yield Err(std::io::Error::other("boom"));
+                    return;
+                }
+                "error-after-endpoint" => {
+                    yield Ok::<_, std::io::Error>(
+                        "event: endpoint\ndata: /messages\n\n".to_string(),
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                    yield Err(std::io::Error::other("boom"));
+                    return;
+                }
                 "nameless" => {
                     yield Ok::<_, std::io::Error>("data: /messages\n\n".to_string());
                 }
@@ -493,8 +534,10 @@ async fn legacy_sse_covers_endpoint_wait_and_post_paths() {
                     yield Ok::<_, std::io::Error>("event: endpoint\ndata: /messages\n\n".to_string());
                 }
             }
-            while let Some(msg) = rx.recv().await {
-                yield Ok::<_, std::io::Error>(msg);
+            if mode != "none" && mode != "error" && mode != "error-after-endpoint" {
+                while let Some(msg) = rx.recv().await {
+                    yield Ok::<_, std::io::Error>(msg);
+                }
             }
         };
         Response::builder()
@@ -615,7 +658,8 @@ async fn legacy_sse_covers_endpoint_wait_and_post_paths() {
 
     let addr =
         spawn_app(Router::new().route("/sse", get(|| async { StatusCode::NOT_FOUND }))).await;
-    let err = LegacySseTransport::connect(format!("http://{addr}/sse"), &HashMap::new())
+    let url = format!("http://{addr}/sse");
+    let err = LegacySseTransport::connect(&url, &HashMap::new())
         .await
         .err()
         .expect("404 SSE should fail")
@@ -623,7 +667,8 @@ async fn legacy_sse_covers_endpoint_wait_and_post_paths() {
     assert!(err.contains("SSE connect failed"), "{err}");
 
     let (addr, _) = spawn_sse("none").await;
-    let err = LegacySseTransport::connect(format!("http://{addr}/sse"), &HashMap::new())
+    let url = format!("http://{addr}/sse");
+    let err = LegacySseTransport::connect(&url, &HashMap::new())
         .await
         .err()
         .expect("missing endpoint should fail")
@@ -633,8 +678,38 @@ async fn legacy_sse_covers_endpoint_wait_and_post_paths() {
         "{err}"
     );
 
+    let (addr, _) = spawn_sse("error").await;
+    let url = format!("http://{addr}/sse");
+    let err = LegacySseTransport::connect(&url, &HashMap::new())
+        .await
+        .err()
+        .expect("errored SSE stream should fail")
+        .to_string();
+    assert!(
+        err.contains("SSE stream closed") || err.contains("timed out") || err.contains("SSE GET"),
+        "{err}"
+    );
+
+    let (addr, _) = spawn_sse("error-after-endpoint").await;
+    let url = format!("http://{addr}/sse");
+    match LegacySseTransport::connect(&url, &HashMap::new()).await {
+        Ok(mut t) => {
+            let _ = t.send_request("json", None).await;
+        }
+        Err(e) => {
+            let err = e.to_string();
+            assert!(
+                err.contains("SSE stream closed")
+                    || err.contains("timed out")
+                    || err.contains("SSE GET"),
+                "{err}"
+            );
+        }
+    }
+
     let (addr, _) = spawn_sse("nameless").await;
-    let mut t = LegacySseTransport::connect(format!("http://{addr}/sse"), &HashMap::new())
+    let url = format!("http://{addr}/sse");
+    let mut t = LegacySseTransport::connect(&url, &HashMap::new())
         .await
         .unwrap();
     let via = t.send_request("json", None).await.unwrap();
@@ -666,7 +741,8 @@ async fn legacy_sse_covers_endpoint_wait_and_post_paths() {
     assert!(err.contains("MCP SSE POST error"), "{err}");
 
     let (addr, _) = spawn_sse("ignore-then-endpoint").await;
-    let mut t = LegacySseTransport::connect(format!("http://{addr}/sse"), &HashMap::new())
+    let url = format!("http://{addr}/sse");
+    let mut t = LegacySseTransport::connect(&url, &HashMap::new())
         .await
         .unwrap();
     let via = t.send_request("accepted", None).await.unwrap();
@@ -678,10 +754,47 @@ async fn legacy_sse_covers_endpoint_wait_and_post_paths() {
     );
     let mut dead = {
         let (addr, _) = spawn_sse("ignore-then-endpoint").await;
-        LegacySseTransport::connect(format!("http://{addr}/sse"), &HashMap::new())
+        let url = format!("http://{addr}/sse");
+        LegacySseTransport::connect(&url, &HashMap::new())
             .await
             .unwrap()
     };
     let _ = dead.send_request("accepted", None).await;
     let _ = dead.send_notification("n", None).await;
+
+    let (tx, rx) = mpsc::unbounded_channel();
+    drop(rx);
+    let mut parser = SseParser::new();
+    assert!(!handle_sse_chunk(
+        &mut parser,
+        &tx,
+        Ok(b"event: endpoint\ndata: /messages\n\n".as_slice()),
+    ));
+
+    let (tx, rx) = mpsc::unbounded_channel();
+    let mut parser = SseParser::new();
+    assert!(!handle_sse_chunk(&mut parser, &tx, Err("boom".into()),));
+    drop(rx);
+
+    let mut dead_notify = LegacySseTransport::from_rx_for_test({
+        let (_tx, rx) = mpsc::unbounded_channel();
+        rx
+    });
+    let err = dead_notify
+        .send_notification("n", None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("HTTP POST notification"), "{err}");
+
+    let mut dead_req = LegacySseTransport::from_rx_for_test({
+        let (_tx, rx) = mpsc::unbounded_channel();
+        rx
+    });
+    let err = dead_req
+        .send_request("ping", None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("HTTP POST"), "{err}");
 }

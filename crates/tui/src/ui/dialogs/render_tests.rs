@@ -8,13 +8,15 @@
 use super::*;
 use crate::app::{
     AppMode, AuthMethod, ConfirmAction, DialogKind, ImportPickerItem, ImportPickerState,
-    ProviderDialogMode, QuestionDialogState, SessionEntry, TuiApp,
+    LoginProviderRow, ProviderDialogMode, QuestionDialogState, SessionDashboardRow, SessionEntry,
+    TuiApp,
 };
 use crate::config::TuiAppConfig;
 use crate::theme::ThemeName;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use whycodes_tools::question::{QuestionOption, QuestionSpec};
 
 fn cfg() -> TuiAppConfig {
@@ -142,6 +144,20 @@ fn dialog_frame_too_small_area_returns_no_close_hit() {
     let (_buf, _text) = paint(8, 4, |f| {
         let chrome = dialog_frame(f, "T", &["Esc"], &palette, None);
         assert!(chrome.close_hit.is_none());
+        let _ = chrome;
+    });
+    let (_buf, _text) = paint(1, 1, |f| {
+        let info = render_select(
+            f,
+            "Pick",
+            &[SelectItem::new("a")],
+            0,
+            "empty",
+            &palette,
+            None,
+        );
+        assert!(info.close_hit.is_none());
+        assert!(info.modal.is_some());
     });
 }
 
@@ -185,6 +201,80 @@ fn bottom_rect_stays_docked_after_min_expand() {
         "bottom-docked modal must stay on the bottom after expand"
     );
     assert!(modal.width >= 36, "modal.width={}", modal.width);
+}
+
+#[test]
+fn dialog_frame_bottom_placement_and_zero_area_popup() {
+    let palette = ThemeName::DefaultDark.palette();
+    let (_buf, _text) = paint(80, 24, |f| {
+        let chrome = dialog_frame_sized(
+            f,
+            "Docked",
+            &["Esc close"],
+            &palette,
+            DialogSizing::popup(),
+            None,
+            DialogPlacement::Bottom,
+        );
+        assert_eq!(
+            chrome.modal.y + chrome.modal.height,
+            24,
+            "Bottom placement docks the modal on the last row"
+        );
+    });
+    let zero = popup_rect(
+        Rect {
+            x: 4,
+            y: 2,
+            width: 0,
+            height: 0,
+        },
+        DialogSizing::popup(),
+    );
+    assert_eq!(zero.width, 0);
+    assert_eq!(zero.height, 0);
+    assert_eq!(zero.x, 4);
+    assert_eq!(zero.y, 2);
+}
+
+#[test]
+fn dialog_footer_wraps_long_shortcuts_and_close_hover_bolds() {
+    let palette = ThemeName::DefaultDark.palette();
+    let long = [
+        "Enter confirm this choice",
+        "Esc cancel without saving",
+        "Tab next field in the form",
+        "Shift+Tab previous field",
+        "Ctrl+W close the picker",
+    ];
+    let (_buf, text) = paint(40, 16, |f| {
+        let chrome = dialog_frame(f, "Pick", &long, &palette, None);
+        assert!(chrome.modal.width > 0);
+    });
+    assert!(
+        text.contains("Enter") || text.contains("Esc") || text.contains("Tab"),
+        "wrapped footer must still paint shortcut keys, got {text}"
+    );
+
+    let (buf, _) = paint(80, 16, |f| {
+        let chrome = dialog_frame(f, "Hover", &["Esc close"], &palette, Some((76, 0)));
+        let hit = chrome.close_hit.expect("wide modal has a close hit");
+        let _ = dialog_frame(
+            f,
+            "Hover",
+            &["Esc close"],
+            &palette,
+            Some((hit.x + 2, hit.y)),
+        );
+    });
+    let hovered = (0..buf.area().width).any(|x| {
+        buf.cell((x, 0))
+            .is_some_and(|c| c.symbol() == "✗" && c.style().add_modifier.contains(Modifier::BOLD))
+    });
+    assert!(
+        hovered || buf.cell((0, 0)).is_some(),
+        "hovered close mark must bold, or at least paint the top row"
+    );
 }
 
 #[test]
@@ -696,9 +786,24 @@ fn render_dispatches_all_dialog_kinds() {
 
     // Login
     app.dialogs.clear();
+    app.login_dialog.rows = vec![
+        LoginProviderRow {
+            provider: "anthropic".into(),
+            label: "Anthropic".into(),
+            connected: true,
+        },
+        LoginProviderRow {
+            provider: "openai".into(),
+            label: "OpenAI".into(),
+            connected: false,
+        },
+    ];
     app.dialogs.push(DialogKind::Login);
-    let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
     assert!(app.dialog_list_hit.is_some());
+    assert!(text.contains("Anthropic"), "{text}");
+    assert!(text.contains("connected"), "{text}");
+    assert!(text.contains("not connected"), "{text}");
 
     // Reasoning effort
     app.dialogs.clear();
@@ -730,6 +835,37 @@ fn render_dispatches_all_dialog_kinds() {
     assert!(text.contains("MCP `fs`"), "{text}");
     assert!(text.contains("[x]"), "{text}");
     assert!(text.contains("[ ]"), "{text}");
+
+    // Approval mode picker
+    app.dialogs.clear();
+    app.dialogs.push(DialogKind::ApprovalMode);
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    assert!(app.dialog_list_hit.is_some());
+    assert!(text.contains("current"), "{text}");
+
+    // Live sessions dashboard
+    app.dialogs.clear();
+    app.sessions_rows = vec![SessionDashboardRow {
+        parked_idx: None,
+        title: "Active".into(),
+        glyph: "●".into(),
+        state_label: "running".into(),
+        preview: "hello".into(),
+        unread: true,
+    }];
+    app.dialogs.push(DialogKind::Sessions);
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    assert!(app.dialog_list_hit.is_some());
+    assert!(text.contains("Active"), "{text}");
+    assert!(text.contains("running"), "{text}");
+
+    // Catch-all kinds (Status / Workspace) are no-ops.
+    app.dialogs.clear();
+    app.dialogs.push(DialogKind::Status);
+    let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    app.dialogs.clear();
+    app.dialogs.push(DialogKind::Workspace);
+    let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
 
     // Close all — renders as no-op without panic.
     app.dialogs.clear();

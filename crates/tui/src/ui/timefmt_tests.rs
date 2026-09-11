@@ -50,3 +50,13 @@ fn relative_yesterday() {
     let y = local(2026, 8, 14, 9, 5).with_timezone(&chrono::Utc);
     assert_eq!(format_relative_at(y, now), "Yesterday, 09:05");
 }
+
+#[test]
+fn relative_falls_back_to_absolute_after_a_day() {
+    let now = local(2026, 8, 15, 16, 0);
+    let older = local(2026, 8, 1, 9, 5).with_timezone(&chrono::Utc);
+    let s = format_relative_at(older, now);
+    assert!(s.contains("1"), "{s}");
+    assert!(s.ends_with("09:05"), "{s}");
+    let _ = format_relative(older);
+}

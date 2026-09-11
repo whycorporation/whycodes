@@ -15,7 +15,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use crate::images::{MAX_IMAGE_BYTES, resolve_image_path};
+use crate::images::MAX_IMAGE_BYTES;
+#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
+use crate::images::resolve_image_path;
 
 const TIMEOUT: Duration = Duration::from_millis(1500);
 
@@ -148,25 +150,36 @@ fn prune_old_clipboard_images(dir: &Path) {
     };
     let cutoff = std::time::SystemTime::now() - Duration::from_secs(24 * 60 * 60);
     for entry in entries {
-        let Ok(entry) = entry else {
-            continue;
-        };
-        let path = entry.path();
-        let Ok(meta) = entry.metadata() else {
-            continue;
-        };
-        let Ok(modified) = meta.modified() else {
-            continue;
-        };
-        if modified < cutoff
-            && let Err(error) = std::fs::remove_file(&path)
-        {
-            tracing::debug!(
-                %error,
-                path = %path.display(),
-                "prune old clipboard image"
-            );
-        }
+        prune_clipboard_dir_entry(entry, cutoff);
+    }
+}
+
+fn prune_clipboard_dir_entry(entry: io::Result<std::fs::DirEntry>, cutoff: std::time::SystemTime) {
+    let Ok(entry) = entry else {
+        return;
+    };
+    prune_clipboard_path(&entry.path(), entry.metadata(), cutoff);
+}
+
+fn prune_clipboard_path(
+    path: &Path,
+    meta: io::Result<std::fs::Metadata>,
+    cutoff: std::time::SystemTime,
+) {
+    let Ok(meta) = meta else {
+        return;
+    };
+    let Ok(modified) = meta.modified() else {
+        return;
+    };
+    if modified < cutoff
+        && let Err(error) = std::fs::remove_file(path)
+    {
+        tracing::debug!(
+            %error,
+            path = %path.display(),
+            "prune old clipboard image"
+        );
     }
 }
 
@@ -186,11 +199,11 @@ pub fn read_for_prompt() -> Result<PromptClipboard, String> {
 fn read_os_image() -> Result<PromptClipboard, String> {
     #[cfg(target_os = "macos")]
     {
-        return read_macos_image();
+        read_macos_image()
     }
     #[cfg(target_os = "windows")]
     {
-        return read_windows_image();
+        read_windows_image()
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -344,46 +357,60 @@ fn read_windows_image() -> Result<PromptClipboard, String> {
         STASH_SEQ.fetch_add(1, Ordering::Relaxed)
     ));
     let dest_str = dest.to_string_lossy().replace('\'', "''");
-    let script = format!(
-        "Add-Type -AssemblyName System.Windows.Forms; \
-         Add-Type -AssemblyName System.Drawing; \
-         $img = [System.Windows.Forms.Clipboard]::GetImage(); \
-         if ($null -eq $img) {{ exit 2 }}; \
-         $img.Save('{dest_str}', [System.Drawing.Imaging.ImageFormat]::Png)"
-    );
+    let script = windows_clipboard_script(&dest_str);
     let result = command_status(
         "powershell",
         &["-NoProfile", "-STA", "-Command", &script],
         TIMEOUT,
     );
+    finish_windows_clipboard(dest, result)
+}
+
+/// PowerShell snippet that dumps the clipboard bitmap to `dest`. Compiled on
+/// Windows and in tests so tests can drive the script without a pasteboard.
+#[cfg(any(windows, test))]
+fn windows_clipboard_script(dest: &str) -> String {
+    format!(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         Add-Type -AssemblyName System.Drawing; \
+         $img = [System.Windows.Forms.Clipboard]::GetImage(); \
+         if ($null -eq $img) {{ exit 2 }}; \
+         $img.Save('{dest}', [System.Drawing.Imaging.ImageFormat]::Png)"
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn finish_windows_clipboard(
+    dest: PathBuf,
+    result: Result<(), RunErr>,
+) -> Result<PromptClipboard, String> {
     match result {
-        Ok(()) => {
-            let bytes = match std::fs::read(&dest) {
-                Ok(b) => b,
-                Err(e) => {
-                    cleanup_temp(&dest);
-                    return Err(format!("read clipboard temp: {e}"));
-                }
-            };
-            cleanup_temp(&dest);
-            bytes_to_prompt(Ok(bytes))
+        Ok(()) => finish_windows_saved_image(&dest),
+        Err(e) => windows_clipboard_run_err(&dest, e),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn finish_windows_saved_image(dest: &Path) -> Result<PromptClipboard, String> {
+    let bytes = match std::fs::read(dest) {
+        Ok(b) => b,
+        Err(e) => {
+            cleanup_temp(dest);
+            return Err(format!("read clipboard temp: {e}"));
         }
-        Err(RunErr::Exit) | Err(RunErr::Timeout) => {
-            cleanup_temp(&dest);
-            Ok(PromptClipboard::Empty)
-        }
-        Err(RunErr::NotFound) => {
-            cleanup_temp(&dest);
-            Err("PowerShell is required to paste images from the clipboard".into())
-        }
-        Err(RunErr::TooLarge) => {
-            cleanup_temp(&dest);
-            Err("clipboard image is too large".into())
-        }
-        Err(RunErr::Io(e)) => {
-            cleanup_temp(&dest);
-            Err(e)
-        }
+    };
+    cleanup_temp(dest);
+    bytes_to_prompt(Ok(bytes))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_clipboard_run_err(dest: &Path, err: RunErr) -> Result<PromptClipboard, String> {
+    cleanup_temp(dest);
+    match err {
+        RunErr::Exit | RunErr::Timeout => Ok(PromptClipboard::Empty),
+        RunErr::NotFound => Err("PowerShell is required to paste images from the clipboard".into()),
+        RunErr::TooLarge => Err("clipboard image is too large".into()),
+        RunErr::Io(e) => Err(e),
     }
 }
 
@@ -396,6 +423,7 @@ fn cleanup_temp(path: &Path) {
     }
 }
 
+#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
 fn first_image_mime<'a, I>(types: I) -> Option<&'static str>
 where
     I: IntoIterator<Item = &'a str>,
@@ -426,6 +454,7 @@ where
 
 /// `text/uri-list`: comments (`#`) skipped; `file://` and raw paths kept when
 /// they resolve to an existing image.
+#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
 pub(crate) fn parse_uri_list(data: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for line in data.lines() {
@@ -463,6 +492,32 @@ fn bytes_to_prompt(result: Result<Vec<u8>, RunErr>) -> Result<PromptClipboard, S
     }
 }
 
+fn classify_command_output(output: io::Result<std::process::Output>) -> Result<Vec<u8>, RunErr> {
+    match output {
+        Ok(out) => classify_stdout(out.stdout, out.status.success()),
+        Err(e) => Err(classify_spawn_err(e)),
+    }
+}
+
+fn classify_stdout(stdout: Vec<u8>, success: bool) -> Result<Vec<u8>, RunErr> {
+    if (stdout.len() as u64) > MAX_IMAGE_BYTES {
+        return Err(RunErr::TooLarge);
+    }
+    if success {
+        Ok(stdout)
+    } else {
+        Err(RunErr::Exit)
+    }
+}
+
+fn classify_spawn_err(e: io::Error) -> RunErr {
+    if e.kind() == io::ErrorKind::NotFound {
+        RunErr::NotFound
+    } else {
+        RunErr::Io(e.to_string())
+    }
+}
+
 fn send_run(tx: mpsc::Sender<Result<Vec<u8>, RunErr>>, value: Result<Vec<u8>, RunErr>) {
     if let Err(error) = tx.send(value) {
         tracing::debug!(?error, "clipboard paste: result receiver dropped");
@@ -480,21 +535,7 @@ fn command_stdout(bin: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .output();
-        match output {
-            Ok(out) => {
-                if (out.stdout.len() as u64) > MAX_IMAGE_BYTES {
-                    send_run(tx, Err(RunErr::TooLarge));
-                    return;
-                }
-                if out.status.success() {
-                    send_run(tx, Ok(out.stdout));
-                } else {
-                    send_run(tx, Err(RunErr::Exit));
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => send_run(tx, Err(RunErr::NotFound)),
-            Err(e) => send_run(tx, Err(RunErr::Io(e.to_string()))),
-        }
+        send_run(tx, classify_command_output(output));
     });
     match rx.recv_timeout(timeout) {
         Ok(r) => r,

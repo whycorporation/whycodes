@@ -36,7 +36,7 @@ pub struct LaunchOptions {
 impl Default for LaunchOptions {
     fn default() -> Self {
         Self {
-            working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            working_dir: working_dir_from(std::env::current_dir()),
             port: None,
             binary: None,
             startup_timeout: Duration::from_secs(15),
@@ -44,6 +44,10 @@ impl Default for LaunchOptions {
             home: None,
         }
     }
+}
+
+fn working_dir_from(cwd: std::io::Result<PathBuf>) -> PathBuf {
+    cwd.unwrap_or_else(|_| PathBuf::from("."))
 }
 
 /// Options for [`WhyCodesClient::run`].
@@ -68,8 +72,8 @@ pub struct WhyCodesClient {
 
 impl WhyCodesClient {
     /// Attach to an already-running daemon (`whycodes serve`).
-    pub async fn connect(base: impl AsRef<str>) -> Result<Self, SdkError> {
-        let base = normalize_base(base.as_ref());
+    pub async fn connect(base: &str) -> Result<Self, SdkError> {
+        let base = normalize_base(base);
         let http = http_client()?;
         let client = Self {
             base,
@@ -82,9 +86,9 @@ impl WhyCodesClient {
     }
 
     #[cfg(test)]
-    pub(crate) fn unconnected(base: impl AsRef<str>, http: reqwest::Client) -> Self {
+    pub(crate) fn unconnected(base: &str, http: reqwest::Client) -> Self {
         Self {
-            base: normalize_base(base.as_ref()),
+            base: normalize_base(base),
             http,
             child: None,
             _home: None,
@@ -104,13 +108,19 @@ impl WhyCodesClient {
     pub async fn launch(opts: LaunchOptions) -> Result<Self, SdkError> {
         let prepared = prepare_launch(&opts)?;
         let mut cmd = launch_command(&prepared, &opts);
-        let child = cmd.spawn().map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             SdkError::with_source(
                 ErrorCode::ServeNotFound,
-                format!("could not execute {}: {e}", prepared.binary.display()),
+                &format!("could not execute {}: {e}", prepared.binary.display()),
                 e,
             )
         })?;
+        if let Some(err) = missing_spawned_binary(
+            poll_child_exit(Some(&mut child)).is_some(),
+            &prepared.binary,
+        ) {
+            return Err(err);
+        }
         let port = prepared.port;
         let held_home = prepared.held_home;
 
@@ -125,13 +135,7 @@ impl WhyCodesClient {
 
         let deadline = Instant::now() + opts.startup_timeout;
         loop {
-            let child_status = match client.child.as_mut() {
-                Some(child) => match child.try_wait() {
-                    Ok(Some(status)) => Some(status.to_string()),
-                    _ => None,
-                },
-                None => None,
-            };
+            let child_status = poll_child_exit(client.child.as_mut());
             let handshake = client.handshake().await.map(|_| ());
             match launch_poll(
                 Instant::now(),
@@ -170,13 +174,10 @@ impl WhyCodesClient {
         Ok(body.sessions)
     }
 
-    pub async fn create_session(
-        &self,
-        project: Option<impl Into<String>>,
-    ) -> Result<SessionInfo, SdkError> {
+    pub async fn create_session(&self, project: Option<&str>) -> Result<SessionInfo, SdkError> {
         let url = format!("{}/v1/sessions", self.base);
         let req = CreateSessionRequest {
-            project: project.map(Into::into),
+            project: project.map(str::to_string),
             persist: Some(true),
         };
         let res = self.http.post(&url).json(&req).send().await?;
@@ -192,7 +193,7 @@ impl WhyCodesClient {
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SdkError::new(
                 ErrorCode::UnknownSession,
-                format!("session {id} not found"),
+                &format!("session {id} not found"),
             ));
         }
         if !res.status().is_success() {
@@ -215,7 +216,7 @@ impl WhyCodesClient {
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SdkError::new(
                 ErrorCode::UnknownSession,
-                format!("session {session_id} not found"),
+                &format!("session {session_id} not found"),
             ));
         }
         if !res.status().is_success() {
@@ -244,19 +245,19 @@ impl WhyCodesClient {
     pub async fn set_model(
         &self,
         session_id: &str,
-        provider: impl Into<String>,
-        model: impl Into<String>,
+        provider: &str,
+        model: &str,
     ) -> Result<(), SdkError> {
         let url = format!("{}/v1/sessions/{session_id}/model", self.base);
         let req = SetModelRequest {
-            provider: provider.into(),
-            model: model.into(),
+            provider: provider.to_string(),
+            model: model.to_string(),
         };
         let res = self.http.post(&url).json(&req).send().await?;
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SdkError::new(
                 ErrorCode::UnknownSession,
-                format!("session {session_id} not found"),
+                &format!("session {session_id} not found"),
             ));
         }
         if !res.status().is_success() {
@@ -268,17 +269,17 @@ impl WhyCodesClient {
     pub async fn rename_session(
         &self,
         session_id: &str,
-        title: impl Into<String>,
+        title: &str,
     ) -> Result<SessionInfo, SdkError> {
         let url = format!("{}/v1/sessions/{session_id}/rename", self.base);
         let req = RenameRequest {
-            title: title.into(),
+            title: title.to_string(),
         };
         let res = self.http.post(&url).json(&req).send().await?;
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SdkError::new(
                 ErrorCode::UnknownSession,
-                format!("session {session_id} not found"),
+                &format!("session {session_id} not found"),
             ));
         }
         if !res.status().is_success() {
@@ -294,7 +295,7 @@ impl WhyCodesClient {
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SdkError::new(
                 ErrorCode::UnknownSession,
-                format!("session {session_id} not found"),
+                &format!("session {session_id} not found"),
             ));
         }
         if !res.status().is_success() {
@@ -314,7 +315,7 @@ impl WhyCodesClient {
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SdkError::new(
                 ErrorCode::UnknownSession,
-                format!("session {session_id} not found"),
+                &format!("session {session_id} not found"),
             ));
         }
         if !res.status().is_success() {
@@ -326,13 +327,13 @@ impl WhyCodesClient {
     pub async fn respond_to_question(
         &self,
         session_id: &str,
-        request_id: impl Into<String>,
+        request_id: &str,
         answers: Option<Vec<whycodes_protocol::sdk::QuestionAnswerWire>>,
         cancelled: bool,
     ) -> Result<(), SdkError> {
         let url = format!("{}/v1/sessions/{session_id}/question", self.base);
         let req = QuestionResponse {
-            request_id: request_id.into(),
+            request_id: request_id.to_string(),
             answers,
             cancelled: Some(cancelled),
         };
@@ -355,7 +356,7 @@ impl WhyCodesClient {
     pub async fn run(
         &self,
         session_id: &str,
-        message: impl Into<String>,
+        message: &str,
         mut opts: RunOptions,
     ) -> Result<TurnResult, SdkError> {
         if opts.auto_approve.is_none() {
@@ -403,7 +404,7 @@ impl WhyCodesClient {
                     }
                 }
                 SdkEvent::Error { code, message } => {
-                    last_error = Some(SdkError::new(code, message));
+                    last_error = Some(SdkError::new(code, &message));
                 }
                 _ => {}
             }
@@ -424,12 +425,12 @@ impl WhyCodesClient {
     pub async fn run_events(
         &self,
         session_id: &str,
-        message: impl Into<String>,
+        message: &str,
         opts: RunOptions,
     ) -> Result<EventStream, SdkError> {
         let url = format!("{}/v1/sessions/{session_id}/run", self.base);
         let req = RunRequest {
-            message: message.into(),
+            message: message.to_string(),
             provider: opts.provider,
             model: opts.model,
             max_turns: opts.max_turns,
@@ -439,7 +440,7 @@ impl WhyCodesClient {
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SdkError::new(
                 ErrorCode::UnknownSession,
-                format!("session {session_id} not found"),
+                &format!("session {session_id} not found"),
             ));
         }
         if res.status() == reqwest::StatusCode::BAD_REQUEST {
@@ -459,12 +460,12 @@ impl WhyCodesClient {
     pub async fn respond_to_permission(
         &self,
         session_id: &str,
-        request_id: impl Into<String>,
+        request_id: &str,
         decision: PermissionDecision,
     ) -> Result<(), SdkError> {
         let url = format!("{}/v1/sessions/{session_id}/permission", self.base);
         let req = PermissionResponse {
-            request_id: request_id.into(),
+            request_id: request_id.to_string(),
             decision,
         };
         let res = self.http.post(&url).json(&req).send().await?;
@@ -486,26 +487,24 @@ impl WhyCodesClient {
     pub async fn run_structured(
         &self,
         session_id: &str,
-        message: impl Into<String>,
+        message: &str,
         schema: serde_json::Value,
         opts: RunOptions,
         max_retries: Option<u32>,
     ) -> Result<StructuredResult, SdkError> {
         if let Err(e) = validate_schema(&schema) {
-            return Err(SdkError::new(ErrorCode::StructuredSchemaInvalid, e));
+            return Err(SdkError::new(ErrorCode::StructuredSchemaInvalid, &e));
         }
         let retries = max_retries.unwrap_or(2);
-        let schema_txt =
-            serde_json::to_string_pretty(&schema).unwrap_or_else(|_| schema.to_string());
+        let schema_txt = schema_text(&schema);
         let mut prompt = format!(
-            "{}\n\nReply with a single JSON value that validates against this schema. \
-             No markdown, no commentary.\n{schema_txt}",
-            message.into()
+            "{message}\n\nReply with a single JSON value that validates against this schema. \
+             No markdown, no commentary.\n{schema_txt}"
         );
         let mut attempts = Vec::new();
         let mut i = 0;
         loop {
-            let turn = self.run(session_id, prompt.clone(), opts.clone()).await?;
+            let turn = self.run(session_id, &prompt, opts.clone()).await?;
             match extract_json(&turn.text) {
                 Ok(data) => {
                     let errors = validate_instance(&schema, &data);
@@ -521,7 +520,7 @@ impl WhyCodesClient {
                     if i == retries {
                         return Err(SdkError::new(
                             ErrorCode::StructuredOutputInvalid,
-                            errors.join("; "),
+                            &errors.join("; "),
                         ));
                     }
                     prompt = format!(
@@ -537,7 +536,7 @@ impl WhyCodesClient {
                         errors: vec![e.clone()],
                     });
                     if i == retries {
-                        return Err(SdkError::new(ErrorCode::StructuredOutputInvalid, e));
+                        return Err(SdkError::new(ErrorCode::StructuredOutputInvalid, &e));
                     }
                     prompt = format!(
                         "Your previous reply was not parseable JSON ({e}). \
@@ -556,7 +555,7 @@ impl WhyCodesClient {
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SdkError::new(
                 ErrorCode::UnknownSession,
-                format!("no in-flight run for {session_id}"),
+                &format!("no in-flight run for {session_id}"),
             ));
         }
         if !res.status().is_success() {
@@ -577,7 +576,7 @@ impl WhyCodesClient {
             if e.is_connect() {
                 SdkError::with_source(
                     ErrorCode::Disconnected,
-                    format!("cannot reach {}: {e}", self.base),
+                    &format!("cannot reach {}: {e}", self.base),
                     e,
                 )
             } else {
@@ -587,7 +586,7 @@ impl WhyCodesClient {
         if res.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(SdkError::new(
                 ErrorCode::UnsupportedVersion,
-                format!(
+                &format!(
                     "{} has no /v1/health — upgrade whycodes serve (need protocol {PROTOCOL_MAJOR})",
                     self.base
                 ),
@@ -600,7 +599,7 @@ impl WhyCodesClient {
         if hs.protocol != PROTOCOL_MAJOR {
             return Err(SdkError::new(
                 ErrorCode::UnsupportedVersion,
-                format!(
+                &format!(
                     "daemon speaks protocol {}, client speaks {PROTOCOL_MAJOR}",
                     hs.protocol
                 ),
@@ -611,22 +610,16 @@ impl WhyCodesClient {
 
     async fn kill_child(&mut self) {
         if let Some(mut child) = self.child.take() {
-            if let Err(_kill) = child.kill().await {
-                // Best-effort teardown of a launched daemon.
-            }
-            if let Err(_wait) = child.wait().await {
-                // Process already gone.
-            }
+            let _kill = child.kill().await;
+            let _wait = child.wait().await;
         }
     }
 }
 
 impl Drop for WhyCodesClient {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.take()
-            && let Err(_kill) = child.start_kill()
-        {
-            // Drop cannot await a graceful wait.
+        if let Some(mut child) = self.child.take() {
+            let _kill = child.start_kill();
         }
     }
 }
@@ -660,7 +653,7 @@ impl futures::Stream for EventStream {
                     Err(e) => {
                         return Poll::Ready(Some(Err(SdkError::with_source(
                             ErrorCode::Internal,
-                            format!("bad event: {e}"),
+                            &format!("bad event: {e}"),
                             e,
                         ))));
                     }
@@ -701,12 +694,27 @@ fn pop_sse_data(buf: &mut String) -> Option<String> {
     if data.is_empty() { None } else { Some(data) }
 }
 
+fn http_client_failed(e: reqwest::Error) -> SdkError {
+    SdkError::with_source(ErrorCode::Internal, "http client", e)
+}
+
 fn http_client() -> Result<reqwest::Client, SdkError> {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(600))
         .build()
-        .map_err(|e| SdkError::with_source(ErrorCode::Internal, "http client", e))
+        .map_err(http_client_failed)
+}
+
+fn schema_text(schema: &serde_json::Value) -> String {
+    schema_text_from(serde_json::to_string_pretty(schema), schema)
+}
+
+fn schema_text_from(
+    pretty: std::result::Result<String, serde_json::Error>,
+    schema: &serde_json::Value,
+) -> String {
+    pretty.unwrap_or_else(|_| schema.to_string())
 }
 
 pub(crate) fn normalize_base(addr: &str) -> String {
@@ -776,13 +784,20 @@ pub(crate) fn ephemeral_port_for_test() -> u16 {
     ephemeral_port().expect("ephemeral port")
 }
 
+fn ephemeral_bind_failed(e: std::io::Error) -> SdkError {
+    SdkError::with_source(ErrorCode::StartupFailed, "bind ephemeral port", e)
+}
+
+fn ephemeral_addr_failed(e: std::io::Error) -> SdkError {
+    SdkError::with_source(ErrorCode::StartupFailed, "ephemeral port", e)
+}
+
 fn ephemeral_port() -> Result<u16, SdkError> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| SdkError::with_source(ErrorCode::StartupFailed, "bind ephemeral port", e))?;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(ephemeral_bind_failed)?;
     listener
         .local_addr()
         .map(|a| a.port())
-        .map_err(|e| SdkError::with_source(ErrorCode::StartupFailed, "ephemeral port", e))
+        .map_err(ephemeral_addr_failed)
 }
 
 const STRIPPED_LOGIN_KEYS: &[&str] = &[
@@ -803,6 +818,35 @@ struct PreparedLaunch {
     held_home: Option<tempfile::TempDir>,
 }
 
+/// Some Linux hosts spawn a missing absolute path as Ok; the child then
+/// exits 127 immediately. Treat that as ServeNotFound, not a crash.
+fn missing_spawned_binary(child_exited: bool, binary: &Path) -> Option<SdkError> {
+    if child_exited && !binary.is_file() {
+        Some(SdkError::new(
+            ErrorCode::ServeNotFound,
+            &format!("could not execute {}: not found", binary.display()),
+        ))
+    } else {
+        None
+    }
+}
+
+fn poll_child_exit(child: Option<&mut Child>) -> Option<String> {
+    let child = child?;
+    match child.try_wait() {
+        Ok(Some(status)) => Some(status.to_string()),
+        _ => None,
+    }
+}
+
+fn create_temp_home() -> std::io::Result<tempfile::TempDir> {
+    #[cfg(test)]
+    if std::env::var_os("WHYCODES_TEST_TEMPDIR_FAIL").is_some() {
+        return Err(std::io::Error::other("injected tempdir failure"));
+    }
+    tempfile::tempdir()
+}
+
 fn prepare_launch(opts: &LaunchOptions) -> Result<PreparedLaunch, SdkError> {
     let port = match opts.port {
         Some(p) => p,
@@ -817,7 +861,7 @@ fn prepare_launch(opts: &LaunchOptions) -> Result<PreparedLaunch, SdkError> {
             })?;
             (Some(p), None)
         } else {
-            let tmp = tempfile::tempdir().map_err(|e| {
+            let tmp = create_temp_home().map_err(|e| {
                 SdkError::with_source(ErrorCode::StartupFailed, "temp WHYCODES_HOME", e)
             })?;
             let path = tmp.path().to_path_buf();
@@ -872,13 +916,13 @@ fn launch_poll(
     if now >= deadline {
         return LaunchPoll::Failed(SdkError::new(
             ErrorCode::StartupTimeout,
-            format!("daemon at {base} did not become healthy in {timeout:?}."),
+            &format!("daemon at {base} did not become healthy in {timeout:?}."),
         ));
     }
     if let Some(status) = child_exited {
         return LaunchPoll::Failed(SdkError::new(
             ErrorCode::StartupFailed,
-            format!("whycodes serve exited ({status})."),
+            &format!("whycodes serve exited ({status})."),
         ));
     }
     match handshake {
@@ -892,7 +936,7 @@ fn attach_stderr(err: SdkError, stderr: &str) -> SdkError {
     if stderr.is_empty() {
         err
     } else {
-        SdkError::new(err.code, format!("{} {stderr}", err.message))
+        SdkError::new(err.code, &format!("{} {stderr}", err.message))
     }
 }
 
@@ -906,7 +950,7 @@ fn status_error(status: reqwest::StatusCode, what: &str) -> SdkError {
     } else {
         ErrorCode::Internal
     };
-    SdkError::new(code, format!("{what} failed: {status}"))
+    SdkError::new(code, &format!("{what} failed: {status}"))
 }
 
 async fn take_stderr(child: &mut Option<Child>) -> String {
@@ -917,13 +961,9 @@ async fn take_stderr(child: &mut Option<Child>) -> String {
         return String::new();
     };
     // A live child holds the pipe open; kill it so `read_to_end` can finish.
-    if let Err(_kill) = child.start_kill() {
-        // Best-effort teardown of a launched daemon.
-    }
+    let _kill = child.start_kill();
     let mut buf = Vec::new();
-    if let Err(_read) = tokio::io::AsyncReadExt::read_to_end(&mut stderr, &mut buf).await {
-        // Diagnostic only; empty stderr is fine.
-    }
+    let _read = tokio::io::AsyncReadExt::read_to_end(&mut stderr, &mut buf).await;
     let s = String::from_utf8_lossy(&buf);
     let trimmed = s.trim();
     if trimmed.is_empty() {

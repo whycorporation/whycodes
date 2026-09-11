@@ -55,30 +55,7 @@ impl Tool for SkillTool {
             let project = std::path::Path::new(&ctx.working_dir);
 
             match action {
-                "list" => {
-                    let registry = match SkillRegistry::load_for_project(project) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return ToolResult {
-                                tool_call_id: String::new(),
-                                content: format!("Error loading skills: {e}"),
-                                is_error: true,
-                            };
-                        }
-                    };
-
-                    ToolResult {
-                        tool_call_id: String::new(),
-                        content: format_skill_list(
-                            registry
-                                .skills
-                                .iter()
-                                .map(|s| (s.name.as_str(), s.description.as_str()))
-                                .collect(),
-                        ),
-                        is_error: false,
-                    }
-                }
+                "list" => listed_skills(take_skill_registry(load_skill_registry(project))),
                 "load" => {
                     let name = args["name"].as_str().unwrap_or("");
                     if name.is_empty() {
@@ -88,34 +65,7 @@ impl Tool for SkillTool {
                             is_error: true,
                         };
                     }
-
-                    let registry = match SkillRegistry::load_for_project(project) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return ToolResult {
-                                tool_call_id: String::new(),
-                                content: format!("Error loading skills: {e}"),
-                                is_error: true,
-                            };
-                        }
-                    };
-
-                    match registry.get_ignore_ascii_case(name) {
-                        Some(skill) => ToolResult {
-                            tool_call_id: String::new(),
-                            content: format_loaded_skill(
-                                &skill.name,
-                                &skill.description,
-                                &skill.prompt,
-                            ),
-                            is_error: false,
-                        },
-                        None => ToolResult {
-                            tool_call_id: String::new(),
-                            content: skill_not_found(name),
-                            is_error: true,
-                        },
-                    }
+                    loaded_skill(take_skill_registry(load_skill_registry(project)), name)
                 }
                 _ => ToolResult {
                     tool_call_id: String::new(),
@@ -159,6 +109,72 @@ fn skill_not_found(name: &str) -> String {
 
 fn unknown_skill_action(action: &str) -> String {
     format!("Unknown action '{action}'. Valid actions: list, load")
+}
+
+fn take_skill_registry(
+    result: Result<SkillRegistry, ToolResult>,
+) -> Result<SkillRegistry, ToolResult> {
+    match result {
+        Ok(r) => Ok(r),
+        Err(e) => Err(registry_load_failed(e)),
+    }
+}
+
+fn skill_registry_or_err(
+    result: Result<SkillRegistry, ToolResult>,
+) -> Result<SkillRegistry, ToolResult> {
+    result
+}
+
+fn listed_skills(result: Result<SkillRegistry, ToolResult>) -> ToolResult {
+    match skill_registry_or_err(result) {
+        Ok(registry) => ToolResult {
+            tool_call_id: String::new(),
+            content: format_skill_list(
+                registry
+                    .skills
+                    .iter()
+                    .map(|s| (s.name.as_str(), s.description.as_str()))
+                    .collect(),
+            ),
+            is_error: false,
+        },
+        Err(e) => e,
+    }
+}
+
+fn loaded_skill(result: Result<SkillRegistry, ToolResult>, name: &str) -> ToolResult {
+    match skill_registry_or_err(result) {
+        Ok(registry) => match registry.get_ignore_ascii_case(name) {
+            Some(skill) => ToolResult {
+                tool_call_id: String::new(),
+                content: format_loaded_skill(&skill.name, &skill.description, &skill.prompt),
+                is_error: false,
+            },
+            None => ToolResult {
+                tool_call_id: String::new(),
+                content: skill_not_found(name),
+                is_error: true,
+            },
+        },
+        Err(e) => e,
+    }
+}
+
+fn registry_load_failed(e: ToolResult) -> ToolResult {
+    e
+}
+
+fn skill_load_error(e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Error loading skills: {e}"),
+        is_error: true,
+    }
+}
+
+fn load_skill_registry(project: &std::path::Path) -> Result<SkillRegistry, ToolResult> {
+    SkillRegistry::load_for_project(project).map_err(|e| skill_load_error(&e.to_string()))
 }
 
 #[cfg(test)]

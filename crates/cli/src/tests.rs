@@ -15,6 +15,51 @@ fn lock_env() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Tiny HTTP/1.1 stub: read headers, write `body` with `status`, close.
+async fn serve_http1_loop(
+    listener: tokio::net::TcpListener,
+    n: usize,
+    mut route: impl FnMut(&str) -> (u16, &'static [u8]) + Send + 'static,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for _ in 0..n {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            break;
+        };
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 512];
+        loop {
+            let n = stream.read(&mut tmp).await.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+            if buf.len() > 16 * 1024 {
+                break;
+            }
+        }
+        let req = String::from_utf8_lossy(&buf);
+        let (code, body) = route(&req);
+        let status = if code == 200 {
+            "200 OK"
+        } else if code == 500 {
+            "500 Internal Server Error"
+        } else {
+            "404 Not Found"
+        };
+        let resp = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            std::str::from_utf8(body).unwrap_or("")
+        );
+        let _ = stream.write_all(resp.as_bytes()).await;
+        let _ = stream.shutdown().await;
+    }
+}
+
 /// Clear test-only env vars and REPL queue even if a test panics.
 struct TestLlmEnv;
 
@@ -133,16 +178,20 @@ struct IsolatedGh {
 impl IsolatedGh {
     fn new(exit: i32) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
-        let gh = dir.path().join("gh");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            let gh = dir.path().join("gh");
             std::fs::write(
                 &gh,
                 format!("#!/bin/sh\necho fake-gh \"$@\"\nexit {exit}\n"),
             )
             .unwrap();
             std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = exit;
         }
         let prev_path = std::env::var_os("PATH");
         let mut path = dir.path().display().to_string();
@@ -1809,9 +1858,9 @@ mod upgrade_helpers {
         std::fs::write(&real, b"x").unwrap();
         let bindir = dir.path().join("bin");
         std::fs::create_dir_all(&bindir).unwrap();
-        let link = bindir.join("whycodes");
         #[cfg(unix)]
         {
+            let link = bindir.join("whycodes");
             std::os::unix::fs::symlink(&real, &link).unwrap();
             assert!(
                 package_manager_upgrade_hint(&link).is_some(),
@@ -4030,6 +4079,23 @@ async fn cmd_serve_addr_in_use_reports_hint() {
     );
 }
 
+fn hang_child() -> std::process::Child {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "ping", "-n", "30", "127.0.0.1", ">", "NUL"])
+            .spawn()
+            .unwrap()
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap()
+    }
+}
+
 #[tokio::test]
 async fn takeover_holder_dead_and_live_child() {
     let dead = crate::cmd::lockfile::ServeLock {
@@ -4043,10 +4109,7 @@ async fn takeover_holder_dead_and_live_child() {
     };
     assert!(takeover_holder(&dead).await.is_err());
 
-    let mut child = std::process::Command::new("sleep")
-        .arg("30")
-        .spawn()
-        .unwrap();
+    let mut child = hang_child();
     let pid = child.id();
     let live = crate::cmd::lockfile::ServeLock {
         pid,
@@ -4063,10 +4126,7 @@ async fn takeover_holder_dead_and_live_child() {
 async fn cmd_serve_takeover_then_abort() {
     let _home = IsolatedHome::new();
     let _cwd = IsolatedCwd::new();
-    let mut child = std::process::Command::new("sleep")
-        .arg("30")
-        .spawn()
-        .unwrap();
+    let mut child = hang_child();
     let pid = child.id();
     let path = crate::cmd::lockfile::lock_path(&std::env::current_dir().unwrap());
     crate::cmd::lockfile::write_lock(
@@ -4351,9 +4411,9 @@ fn looks_like_homebrew_relative_symlink() {
     std::fs::write(&real, b"x").unwrap();
     let bindir = dir.path().join("bin");
     std::fs::create_dir_all(&bindir).unwrap();
-    let link = bindir.join("whycodes");
     #[cfg(unix)]
     {
+        let link = bindir.join("whycodes");
         std::os::unix::fs::symlink(
             std::path::Path::new("../Cellar/whycodes/1/bin/whycodes"),
             &link,
@@ -5099,30 +5159,15 @@ async fn cmd_connect_bails_without_tui_after_health() {
     let _home = IsolatedHome::new();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        for _ in 0..6 {
-            let Ok((mut stream, _)) = listener.accept().await else {
-                break;
-            };
-            let mut buf = vec![0u8; 2048];
-            let n = stream.read(&mut buf).await.unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
-            let body: &[u8] = if req.contains("/api/health") {
-                br#"{"ok":true}"#
-            } else if req.contains("/api/session/new") {
-                br#"{"session_id":"sess-no-tui"}"#
-            } else {
-                br#"{"ok":true}"#
-            };
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                std::str::from_utf8(body).unwrap()
-            );
-            let _ = stream.write_all(resp.as_bytes()).await;
+    let server = tokio::spawn(serve_http1_loop(listener, 6, |req| {
+        if req.contains("/api/health") {
+            (200, br#"{\"ok\":true}"#)
+        } else if req.contains("/api/session/new") {
+            (200, br#"{\"session_id\":\"sess-no-tui\"}"#)
+        } else {
+            (200, br#"{\"ok\":true}"#)
         }
-    });
+    }));
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
     let err = cmd_connect(&cli(None), &format!("127.0.0.1:{}", addr.port()), None).await;
     server.abort();
@@ -6012,28 +6057,13 @@ async fn cmd_connect_create_session_error_after_health() {
     let _home = IsolatedHome::new();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        for _ in 0..6 {
-            let Ok((mut stream, _)) = listener.accept().await else {
-                break;
-            };
-            let mut buf = vec![0u8; 2048];
-            let n = stream.read(&mut buf).await.unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
-            let (status, body): (&str, &[u8]) = if req.contains("/api/health") {
-                ("200 OK", br#"{"ok":true,"project":"p","uptime_secs":1}"#)
-            } else {
-                ("500 Internal Server Error", br#"{"error":"nope"}"#)
-            };
-            let resp = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                std::str::from_utf8(body).unwrap()
-            );
-            let _ = stream.write_all(resp.as_bytes()).await;
+    let server = tokio::spawn(serve_http1_loop(listener, 6, |req| {
+        if req.contains("/api/health") {
+            (200, br#"{\"ok\":true,\"project\":\"p\",\"uptime_secs\":1}"#)
+        } else {
+            (500, br#"{\"error\":\"nope\"}"#)
         }
-    });
+    }));
     unsafe { std::env::set_var("WHYCODES_TEST_TUI", "quit") };
     let err = cmd_connect(&cli(None), &format!("127.0.0.1:{}", addr.port()), None).await;
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };

@@ -3,6 +3,8 @@
 //! Domain modules group related tools; crate-root re-exports keep short
 //! paths (`whycodes_tools::read`, `whycodes_tools::blame`, …) for callers.
 
+#![cfg_attr(test, allow(clippy::default_constructed_unit_structs))]
+
 pub mod agent_tools;
 pub(crate) mod blocking;
 pub mod display;
@@ -37,6 +39,7 @@ pub use mcp::{McpCaller, McpToolBridge};
 pub use plugin::{ListedPlugin, PluginShellTool, list_shell_plugins};
 pub use profile::ToolProfile;
 pub use tool::Tool;
+pub use whycodes_lsp::{LspServerSpec, LspSettings};
 
 #[cfg(test)]
 pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

@@ -129,6 +129,13 @@ fn age_is_nonzero_after_construction() {
     assert!(rt.age() < std::time::Duration::from_secs(60));
 }
 
+#[test]
+fn persist_is_a_noop_without_a_database() {
+    let mut rt = make_runtime();
+    rt.db = None;
+    rt.persist("coverage");
+}
+
 // ── helpers ────────────────────────────────────────────────────────
 
 /// Point the data dir at a throwaway temp dir once per test binary so

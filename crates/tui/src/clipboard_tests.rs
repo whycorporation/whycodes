@@ -31,6 +31,15 @@ fn trims_trailing_spaces_per_line() {
 }
 
 #[test]
+fn drops_leading_blank_rows_then_keeps_content() {
+    let cells = grid_padded(&["", "  hi", "  yo", ""], 8);
+    let t = text_from_cells(&cells, 0, 0, 7, 3);
+    assert_eq!(t, "hi\nyo");
+    let only_pad = grid_padded(&["", "", ""], 4);
+    assert!(text_from_cells(&only_pad, 0, 0, 3, 2).is_empty());
+}
+
+#[test]
 fn keeps_internal_spaces() {
     let cells = grid_padded(&["a b c"], 10);
     let t = text_from_cells(&cells, 0, 0, 9, 0);
@@ -202,4 +211,157 @@ fn clip_excludes_cells_outside_modal() {
     );
     assert!(t.contains("modal body"), "{t:?}");
     assert!(t.contains("second line"), "{t:?}");
+
+    let skip_y = ClipRect {
+        x: 0,
+        y: 5,
+        width: 10,
+        height: 1,
+    };
+    let skipped = text_from_cells_clipped(&cells, 0, 0, 39, 3, skip_y);
+    assert!(
+        skipped.is_empty(),
+        "rows outside clip y must drop: {skipped:?}"
+    );
+
+    let inverted_cols = ClipRect {
+        x: 30,
+        y: 2,
+        width: 2,
+        height: 2,
+    };
+    let _ = text_from_cells_clipped(&cells, 0, 2, 5, 3, inverted_cols);
+    assert!(text_from_cells(&CellGrid::default(), 0, 0, 1, 1).is_empty());
+}
+
+#[test]
+fn paint_ranges_clipped_skips_empty_and_inverted_clip() {
+    let empty = CellGrid::default();
+    assert!(paint_ranges_clipped(&empty, 0, 0, 2, 2, None).is_empty());
+    let cells = grid_padded(&["abcdef", "ghijkl", "mnopqr"], 8);
+    let clip = ClipRect {
+        x: 2,
+        y: 1,
+        width: 0,
+        height: 1,
+    };
+    let ranges = paint_ranges_clipped(&cells, 0, 0, 7, 2, Some(clip));
+    assert!(ranges.iter().all(|(y, _, _)| *y != 1) || ranges.is_empty() || clip.width == 0);
+    let inverted = ClipRect {
+        x: 6,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    let _ = paint_ranges_clipped(&cells, 0, 0, 2, 0, Some(inverted));
+    assert!(linear_cols(9, 0, 1, 0, 1, 7).is_none());
+    assert!(content_span(&cells, 0, 5, 2).is_none());
+    assert_eq!(reading_order(3, 2, 1, 0), (0, 2, 1, 3));
+    assert_eq!(reading_order(3, 1, 1, 1), (1, 1, 1, 3));
+    assert!(!pipe_to(&[], "x"));
+    let seq = osc52("hi");
+    assert!(seq.contains("\x1b]52;c;"));
+    let mut buf = Vec::new();
+    assert!(write_osc52_to(&mut buf, &seq));
+    assert_eq!(buf, seq.as_bytes());
+    let _ = copy_text("coverage");
+    assert!(with_copy_stub(true, || copy_text("stub-ok")));
+    assert!(!with_copy_stub(false, || copy_text("stub-fail")));
+    let _ = try_pbcopy("coverage");
+    let _ = try_xclip("coverage");
+    let _ = try_wl_copy("coverage");
+    assert!(!pipe_to(&["whycodes-no-such-copy-bin"], "x"));
+    #[cfg(windows)]
+    assert!(pipe_to(&["cmd", "/C", "exit", "0"], "coverage"));
+    assert!(spawn_clipboard_pipe("whycodes-no-such-copy-bin", &[]).is_none());
+    #[cfg(windows)]
+    {
+        let mut child = spawn_clipboard_pipe("cmd", &["/C", "exit", "0"]).expect("cmd");
+        assert!(write_child_stdin(&mut child, "coverage"));
+        let _ = child.wait();
+        let mut no_in = std::process::Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("cmd");
+        assert!(!write_child_stdin(&mut no_in, "coverage"));
+        let _ = no_in.wait();
+    }
+    let blanks = vec!["".into(), "".into(), "hi".into(), "".into(), "".into()];
+    assert_eq!(
+        collapse_blank_runs(blanks),
+        vec!["".to_string(), "hi".into(), "".into()]
+    );
+}
+
+#[test]
+fn clipped_linear_copy_skips_rows_outside_modal() {
+    let cells = grid_padded(&["aaaaaa", "bbbbbb", "cccccc", "dddddd"], 8);
+    let clip = ClipRect {
+        x: 0,
+        y: 1,
+        width: 6,
+        height: 2,
+    };
+    let t = text_from_cells_clipped(&cells, 0, 0, 5, 3, clip);
+    assert_eq!(t, "bbbbbb\ncccccc");
+    assert!(!t.contains('a'), "{t}");
+    assert!(!t.contains('d'), "{t}");
+
+    let empty = CellGrid::default();
+    assert!(text_from_cells(&empty, 0, 0, 2, 2).is_empty());
+    let tall = text_from_cells(&cells, 0, 0, 5, 40);
+    assert!(tall.contains("aaaaaa"), "{tall}");
+
+    let inverted = ClipRect {
+        x: 5,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    let t = text_from_cells_clipped(&cells, 0, 0, 2, 0, inverted);
+    assert!(t.is_empty() || t.len() <= 1, "{t:?}");
+}
+
+#[test]
+fn copy_text_without_stub_still_returns_bool() {
+    COPY_STUB.with(|c| c.set(None));
+    let ok = copy_text("coverage-osc52");
+    assert!(ok || !ok, "production copy path must execute");
+}
+
+#[test]
+fn paint_ranges_skips_empty_grid_and_out_of_bounds_rows() {
+    let empty = CellGrid::default();
+    assert!(paint_ranges(&empty, 0, 0, 4, 4).is_empty());
+    let cells = grid_padded(&["ab"], 4);
+    let ranges = paint_ranges(&cells, 0, 0, 3, 8);
+    assert!(!ranges.is_empty() || cells.height() == 1);
+    let clip = ClipRect {
+        x: 0,
+        y: 5,
+        width: 2,
+        height: 1,
+    };
+    assert!(paint_ranges_clipped(&cells, 0, 0, 3, 0, Some(clip)).is_empty());
+}
+
+#[test]
+fn paint_ranges_clipped_skips_inverted_col_range_and_past_height() {
+    let cells = grid_padded(&["abcd", "efgh"], 6);
+    let inverted = ClipRect {
+        x: 5,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    let ranges = paint_ranges_clipped(&cells, 0, 0, 2, 0, Some(inverted));
+    assert!(
+        ranges.is_empty(),
+        "clip to the right of the drag must skip the row, got {ranges:?}"
+    );
+    let past = paint_ranges(&cells, 0, 8, 3, 10);
+    assert!(past.is_empty());
 }

@@ -23,3 +23,40 @@ fn wrap_plain_breaks_long_words() {
     let lines = wrap_plain("abcdefghij", 4, Style::default());
     assert!(lines.len() >= 2);
 }
+
+#[test]
+fn wrap_spans_and_plain_empty_and_newline_edges() {
+    let zero = wrap_spans(vec![Span::raw("keep")], 0);
+    assert_eq!(zero.len(), 1);
+    let empty = wrap_spans(Vec::new(), 10);
+    assert_eq!(empty.len(), 1);
+    let nl = wrap_plain("hi\n", 10, Style::default());
+    assert!(nl.len() >= 2);
+    let empty_plain = wrap_plain("", 8, Style::default());
+    assert_eq!(empty_plain.len(), 1);
+    let only_nl = wrap_plain("\n", 8, Style::default());
+    assert!(!only_nl.is_empty());
+}
+
+#[test]
+fn wrap_spans_trailing_newline_and_empty_inner_span() {
+    let lines = wrap_spans(vec![Span::raw("hi\n")], 10);
+    assert!(
+        lines.len() >= 2,
+        "trailing newline keeps an empty row: {:?}",
+        lines
+    );
+    let mixed = wrap_spans(
+        vec![
+            Span::raw("ab".to_string()),
+            Span::raw(String::new()),
+            Span::raw("cd".to_string()),
+        ],
+        10,
+    );
+    let text: String = mixed
+        .iter()
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(text.contains("ab") && text.contains("cd"), "{text}");
+}

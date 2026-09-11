@@ -6,6 +6,7 @@ use std::process::Command;
 #[test]
 fn status_module_loads() {
     assert!(!module_path!().is_empty());
+    let _ = GitStatusTool::default();
 }
 
 #[tokio::test]

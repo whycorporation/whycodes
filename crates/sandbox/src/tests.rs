@@ -281,12 +281,33 @@ fn find_bwrap_in_none_path_uses_fallbacks() {
 
 #[test]
 fn display_content_combines_streams_and_warning() {
+    fn fake_status(code: i32) -> std::process::ExitStatus {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            std::process::ExitStatus::from_raw(code << 8)
+        }
+        #[cfg(windows)]
+        {
+            let arg = if code == 0 { "exit 0" } else { "exit 1" };
+            std::process::Command::new("cmd")
+                .args(["/C", arg])
+                .status()
+                .expect("cmd exit status")
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = code;
+            std::process::Command::new("true")
+                .status()
+                .expect("exit status")
+        }
+    }
     fn outcome(stdout: &str, stderr: &str, code: i32, warning: Option<&str>) -> SandboxOutcome {
-        use std::os::unix::process::ExitStatusExt;
         SandboxOutcome {
             backend: Backend::Host,
             warning: warning.map(str::to_string),
-            status: std::process::ExitStatus::from_raw(code << 8),
+            status: fake_status(code),
             stdout: stdout.as_bytes().to_vec(),
             stderr: stderr.as_bytes().to_vec(),
         }

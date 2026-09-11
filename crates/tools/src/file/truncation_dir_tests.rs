@@ -1,5 +1,6 @@
 use super::*;
 use crate::tool::ToolContext;
+use std::path::Path;
 
 fn ctx(dir: &std::path::Path) -> ToolContext {
     ToolContext::new(dir.to_string_lossy().into_owned())
@@ -92,7 +93,7 @@ async fn relative_path_resolves_from_working_dir() {
 
 #[tokio::test]
 async fn default_constructs() {
-    let t = TruncationDirTool;
+    let t = TruncationDirTool::default();
     assert_eq!(t.name(), "truncation_dir");
     assert!(!t.description().is_empty());
     let _ = t.parameters();
@@ -108,6 +109,16 @@ async fn list_error_is_surfaced_for_unreadable() {
     // Missing path is already covered; keep default constructor coverage.
     let t = TruncationDirTool;
     assert_eq!(t.name(), "truncation_dir");
+    let listed = list_error("cannot list".into());
+    assert!(listed.is_error);
+    assert_eq!(listed.content, "cannot list");
+    assert!(list_dir_or_err(Path::new("/nonexistent-xyz")).is_err());
+    assert!(take_dir_entries(list_dir_or_err(Path::new("/nonexistent-xyz"))).is_err());
+    let from_err = truncation_from(Err(list_error("cannot list".into())), ".", 10);
+    assert!(from_err.is_error);
+    let from_ok = truncation_from(Ok(Vec::new()), ".", 10);
+    assert!(!from_ok.is_error);
+    assert!(from_ok.content.contains("0 entries"));
     let _ = ctx;
     let _ = nested;
 }

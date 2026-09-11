@@ -1467,45 +1467,5 @@ fn palette_material_palenight() -> ThemePalette {
 }
 
 #[cfg(test)]
-mod color_mode_tests {
-    use super::*;
-    use crate::color::ColorMode;
-    use ratatui::style::Color;
-
-    #[test]
-    fn quantize_for_drops_rgb_on_256() {
-        let mut p = ThemeName::DefaultDark.palette();
-        assert!(matches!(p.accent, Color::Rgb(_, _, _)));
-        p.quantize_for(ColorMode::Ansi256);
-        for c in [
-            p.bg,
-            p.fg,
-            p.accent,
-            p.thinking,
-            p.success,
-            p.dim,
-            p.dialog_bg,
-        ] {
-            assert!(
-                !matches!(c, Color::Rgb(_, _, _)),
-                "role still Rgb after 256 quantize: {c:?}"
-            );
-        }
-        // Truecolor is a no-op.
-        let mut q = ThemeName::DefaultDark.palette();
-        let before = q.accent;
-        q.quantize_for(ColorMode::TrueColor);
-        assert_eq!(q.accent, before);
-    }
-
-    #[test]
-    fn thinking_is_not_success_after_quantize() {
-        let mut p = ThemeName::DefaultDark.palette();
-        p.quantize_for(ColorMode::Ansi256);
-        assert_ne!(
-            p.thinking, p.success,
-            "thinking must stay distinct from build-green"
-        );
-        assert_ne!(p.dim, p.success);
-    }
-}
+#[path = "color_mode_tests.rs"]
+mod color_mode_tests;

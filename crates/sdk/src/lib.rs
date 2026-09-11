@@ -29,22 +29,22 @@ pub struct SdkError {
 }
 
 impl SdkError {
-    pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
+    pub fn new(code: ErrorCode, message: &str) -> Self {
         Self {
             code,
-            message: message.into(),
+            message: message.to_string(),
             source: None,
         }
     }
 
     pub fn with_source(
         code: ErrorCode,
-        message: impl Into<String>,
+        message: &str,
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
         Self {
             code,
-            message: message.into(),
+            message: message.to_string(),
             source: Some(source.into()),
         }
     }
@@ -57,7 +57,7 @@ impl From<reqwest::Error> for SdkError {
         } else {
             ErrorCode::Disconnected
         };
-        Self::with_source(code, e.to_string(), e)
+        Self::with_source(code, &e.to_string(), e)
     }
 }
 

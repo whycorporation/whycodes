@@ -254,11 +254,7 @@ impl GitHubPrTool {
         match api::make_request(client, reqwest::Method::GET, &path, token, None).await {
             Ok((status, text)) => {
                 let is_error = !status.is_success();
-                let formatted = if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                    serde_json::to_string_pretty(&v).unwrap_or(text)
-                } else {
-                    text
-                };
+                let formatted = format_github_body(&text);
                 ToolResult {
                     tool_call_id: String::new(),
                     content: format!("Status: {}\n\n{}", status.as_u16(), formatted),
@@ -313,11 +309,7 @@ impl GitHubPrTool {
         match api::make_request(client, reqwest::Method::PUT, &path, token, Some(payload)).await {
             Ok((status, text)) => {
                 let is_error = !status.is_success();
-                let formatted = if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                    serde_json::to_string_pretty(&v).unwrap_or(text)
-                } else {
-                    text
-                };
+                let formatted = format_github_body(&text);
                 ToolResult {
                     tool_call_id: String::new(),
                     content: format!("Status: {}\n\n{}", status.as_u16(), formatted),
@@ -331,6 +323,13 @@ impl GitHubPrTool {
             },
         }
     }
+}
+
+fn format_github_body(text: &str) -> String {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|v| serde_json::to_string_pretty(&v).ok())
+        .unwrap_or_else(|| text.to_string())
 }
 
 #[cfg(test)]

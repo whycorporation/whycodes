@@ -1,5 +1,6 @@
 use super::*;
 use whycodes_agent::events::TurnEvent;
+use whycodes_protocol::sdk::QuestionAnswerWire;
 use whycodes_tools::question::{QuestionAnswer, QuestionOption, QuestionSpec};
 
 fn scope(session_id: &str, auto_approve: bool, hub: Arc<PermHub>) -> RunScope {
@@ -558,12 +559,67 @@ async fn question_ask_without_timeout_unblocks_and_can_notify() {
         ..Default::default()
     }));
     let s = scope("s1", false, Arc::clone(&hub));
-    let task = tokio::spawn(async move { RUN.scope(s, async { q.ask(Vec::new()).await }).await });
+    let questions = vec![QuestionSpec {
+        prompt: "Need a choice".into(),
+        options: vec![QuestionOption {
+            label: "yes".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+        important: false,
+    }];
+    let task = tokio::spawn(async move { RUN.scope(s, async { q.ask(questions).await }).await });
     let ev = rx.recv().await.expect("no question ask");
     let TurnEvent::QuestionAsk { request_id, .. } = ev else {
         panic!("expected QuestionAsk");
     };
-    hub.answer_question("s1", &request_id, None, false).unwrap();
+    hub.answer_question(
+        "s1",
+        &request_id,
+        Some(vec![QuestionAnswerWire {
+            selected: vec!["yes".into()],
+            free_text: None,
+        }]),
+        false,
+    )
+    .unwrap();
+    assert!(task.await.expect("ask task panicked").is_ok());
+
+    let mut q = ServeQuestionPrompter::new(Arc::clone(&hub));
+    q.timeout = None;
+    let s = scope("s1", false, Arc::clone(&hub));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+    hub.register_run("s1", tx);
+    let questions = vec![QuestionSpec {
+        prompt: "Need a choice".into(),
+        options: vec![QuestionOption {
+            label: "yes".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+        important: false,
+    }];
+    let task = tokio::spawn(async move { RUN.scope(s, async { q.ask(questions).await }).await });
+    let ev = rx.recv().await.expect("no question ask");
+    let TurnEvent::QuestionAsk { request_id, .. } = ev else {
+        panic!("expected QuestionAsk");
+    };
+    let err = hub
+        .answer_question("s1", &request_id, None, false)
+        .unwrap_err();
+    assert!(err.contains("expected 1 answers"), "{err}");
+    hub.answer_question(
+        "s1",
+        &request_id,
+        Some(vec![QuestionAnswerWire {
+            selected: vec!["yes".into()],
+            free_text: None,
+        }]),
+        false,
+    )
+    .unwrap();
     assert!(task.await.expect("ask task panicked").is_ok());
 
     let mut q = ServeQuestionPrompter::new(Arc::clone(&hub));

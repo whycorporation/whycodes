@@ -133,33 +133,8 @@ impl Tool for ExternalDirectoryTool {
 
                     let mut output = String::new();
                     for entry in entries {
-                        match entry {
-                            Ok(e) => {
-                                let meta = match e.metadata() {
-                                    Ok(m) => m,
-                                    Err(err) => {
-                                        tracing::debug!(error = %err, "entry metadata failed; skipping");
-                                        continue;
-                                    }
-                                };
-                                let name = e.file_name().to_string_lossy().to_string();
-                                let file_type = if meta.is_dir() {
-                                    "d"
-                                } else if meta.is_symlink() {
-                                    "l"
-                                } else {
-                                    "-"
-                                };
-                                let size = meta.len();
-                                output.push_str(&format!(
-                                    "{:<10} {:>10} {}\n",
-                                    file_type, size, name
-                                ));
-                            }
-                            Err(err) => {
-                                tracing::debug!(error = %err, "dir entry read failed; skipping");
-                                continue;
-                            }
+                        if let Some(line) = format_dir_entry(entry) {
+                            output.push_str(&line);
                         }
                     }
 
@@ -192,6 +167,57 @@ impl Tool for ExternalDirectoryTool {
                 },
             }
         })
+    }
+}
+
+fn skip_dir_entry(err: &str, msg: &'static str) {
+    tracing::debug!(error = %err, "{msg}");
+}
+
+fn skip_metadata_failed(err: &str) {
+    skip_dir_entry(err, "entry metadata failed; skipping");
+}
+
+fn skip_entry_failed(err: &str) {
+    skip_dir_entry(err, "dir entry read failed; skipping");
+}
+
+fn format_dir_entry(entry: std::io::Result<std::fs::DirEntry>) -> Option<String> {
+    match entry {
+        Ok(e) => format_dir_meta(e.metadata(), &e.file_name().to_string_lossy()),
+        Err(err) => {
+            skip_entry_failed(&err.to_string());
+            None
+        }
+    }
+}
+
+fn format_dir_meta(meta: std::io::Result<std::fs::Metadata>, name: &str) -> Option<String> {
+    match meta {
+        Ok(meta) => Some(format!(
+            "{:<10} {:>10} {}\n",
+            entry_type_label(&meta),
+            meta.len(),
+            name
+        )),
+        Err(err) => {
+            skip_metadata_failed(&err.to_string());
+            None
+        }
+    }
+}
+
+fn entry_type_label(meta: &std::fs::Metadata) -> &'static str {
+    entry_type_from_flags(meta.is_dir(), meta.file_type().is_symlink())
+}
+
+fn entry_type_from_flags(is_dir: bool, is_symlink: bool) -> &'static str {
+    if is_dir {
+        "d"
+    } else if is_symlink {
+        "l"
+    } else {
+        "-"
     }
 }
 

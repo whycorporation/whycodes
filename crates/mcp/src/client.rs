@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::process::Stdio;
 
 use crate::error::{McpError, Result};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tracing::{debug, info, warn};
 
@@ -16,6 +16,7 @@ use crate::types::{
 
 const PROTOCOL_VERSION: &str = "2025-03-26";
 
+#[allow(clippy::large_enum_variant)]
 enum Transport {
     Stdio {
         /// Never read directly: held so `kill_on_drop(true)` on the spawned
@@ -36,21 +37,18 @@ pub struct McpClient {
 }
 
 impl McpClient {
-    pub async fn connect_stdio(
-        command: impl AsRef<std::ffi::OsStr>,
-        args: &[impl AsRef<std::ffi::OsStr>],
-    ) -> Result<Self> {
+    pub async fn connect_stdio(command: &str, args: &[&str]) -> Result<Self> {
         Self::connect_stdio_with(command, args, None, None).await
     }
 
     pub async fn connect_stdio_with(
-        command: impl AsRef<std::ffi::OsStr>,
-        args: &[impl AsRef<std::ffi::OsStr>],
+        command: &str,
+        args: &[&str],
         env: Option<&HashMap<String, String>>,
         cwd: Option<&str>,
     ) -> Result<Self> {
-        let mut cmd = Command::new(command.as_ref());
-        cmd.args(args.iter().map(|a| a.as_ref()))
+        let mut cmd = Command::new(command);
+        cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -63,12 +61,9 @@ impl McpClient {
         if let Some(cwd) = cwd {
             cmd.current_dir(cwd);
         }
-        let mut child = cmd.spawn().map_err(|e| {
-            McpError::msg(format!(
-                "failed to spawn MCP server {:?}: {e}",
-                command.as_ref()
-            ))
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| McpError::msg(&format!("failed to spawn MCP server {command:?}: {e}")))?;
         let (writer, stdout) = take_stdio_pipes(&mut child)?;
         let reader = AsyncBufReader::new(stdout);
         let mut client = Self {
@@ -83,10 +78,7 @@ impl McpClient {
         Ok(client)
     }
 
-    pub async fn connect_http(
-        url: impl Into<String>,
-        headers: &HashMap<String, String>,
-    ) -> Result<Self> {
+    pub async fn connect_http(url: &str, headers: &HashMap<String, String>) -> Result<Self> {
         let transport = StreamableHttpTransport::new(url, headers)?;
         let mut client = Self {
             transport: Transport::StreamableHttp(transport),
@@ -95,10 +87,7 @@ impl McpClient {
         Ok(client)
     }
 
-    pub async fn connect_sse(
-        sse_url: impl Into<String>,
-        headers: &HashMap<String, String>,
-    ) -> Result<Self> {
+    pub async fn connect_sse(sse_url: &str, headers: &HashMap<String, String>) -> Result<Self> {
         let transport = LegacySseTransport::connect(sse_url, headers).await?;
         let mut client = Self {
             transport: Transport::LegacySse(transport),
@@ -107,12 +96,8 @@ impl McpClient {
         Ok(client)
     }
 
-    pub async fn connect_auto(
-        url: impl Into<String>,
-        headers: &HashMap<String, String>,
-    ) -> Result<Self> {
-        let url = url.into();
-        match Self::connect_http(&url, headers).await {
+    pub async fn connect_auto(url: &str, headers: &HashMap<String, String>) -> Result<Self> {
+        match Self::connect_http(url, headers).await {
             Ok(c) => Ok(c),
             Err(http_err) => {
                 // Flatten the error chain — top-level message is often just
@@ -124,7 +109,7 @@ impl McpClient {
                     || msg.contains("Method Not Allowed")
                     || msg.contains("Not Found");
                 if !looks_like_wrong_transport {
-                    return Err(McpError::msg(format!(
+                    return Err(McpError::msg(&format!(
                         "Streamable HTTP connect failed: {http_err}"
                     )));
                 }
@@ -133,8 +118,8 @@ impl McpClient {
                     error = %msg,
                     "Streamable HTTP failed; falling back to legacy SSE"
                 );
-                Self::connect_sse(&url, headers).await.map_err(|sse_err| {
-                    McpError::msg(format!(
+                Self::connect_sse(url, headers).await.map_err(|sse_err| {
+                    McpError::msg(&format!(
                         "both Streamable HTTP and legacy SSE failed for {url}; HTTP error: {msg}; SSE error: {sse_err}"
                     ))
                 })
@@ -154,9 +139,9 @@ impl McpClient {
         let result = self
             .send_request("initialize", Some(params))
             .await
-            .map_err(|e| McpError::msg(format!("initialize request failed: {e}")))?;
+            .map_err(|e| McpError::msg(&format!("initialize request failed: {e}")))?;
         let init_result: InitializeResult = serde_json::from_value(result)
-            .map_err(|e| McpError::msg(format!("failed to parse initialize result: {e}")))?;
+            .map_err(|e| McpError::msg(&format!("failed to parse initialize result: {e}")))?;
         debug!(
             server_name = %init_result.server_info.name,
             server_version = %init_result.server_info.version,
@@ -165,7 +150,7 @@ impl McpClient {
         );
         self.send_notification("notifications/initialized", None)
             .await
-            .map_err(|e| McpError::msg(format!("failed to send initialized notification: {e}")))?;
+            .map_err(|e| McpError::msg(&format!("failed to send initialized notification: {e}")))?;
         Ok(init_result)
     }
 
@@ -226,9 +211,9 @@ impl McpClient {
         let result = self
             .send_request("tools/list", None)
             .await
-            .map_err(|e| McpError::msg(format!("tools/list failed: {e}")))?;
+            .map_err(tools_list_failed)?;
         let list: ListToolsResult = serde_json::from_value(result)
-            .map_err(|e| McpError::msg(format!("failed to parse tools/list result: {e}")))?;
+            .map_err(|e| McpError::msg(&format!("failed to parse tools/list result: {e}")))?;
         info!(count = list.tools.len(), "MCP tools listed");
         Ok(list.tools)
     }
@@ -241,9 +226,9 @@ impl McpClient {
         let result = self
             .send_request("tools/call", Some(params))
             .await
-            .map_err(|e| McpError::msg(format!("tools/call failed: {e}")))?;
+            .map_err(tools_call_failed)?;
         let call_result: CallToolResult = serde_json::from_value(result)
-            .map_err(|e| McpError::msg(format!("failed to parse tools/call result: {e}")))?;
+            .map_err(|e| McpError::msg(&format!("failed to parse tools/call result: {e}")))?;
         if call_result.is_error.unwrap_or(false) {
             warn!(tool = %name, "MCP tool call returned an error");
         }
@@ -260,9 +245,9 @@ impl McpClient {
         let result = self
             .send_request("resources/list", None)
             .await
-            .map_err(|e| McpError::msg(format!("resources/list failed: {e}")))?;
+            .map_err(resources_list_failed)?;
         let list: crate::types::ListResourcesResult = serde_json::from_value(result)
-            .map_err(|e| McpError::msg(format!("failed to parse resources/list result: {e}")))?;
+            .map_err(|e| McpError::msg(&format!("failed to parse resources/list result: {e}")))?;
         info!(count = list.resources.len(), "MCP resources listed");
         Ok(list.resources)
     }
@@ -271,9 +256,9 @@ impl McpClient {
         let result = self
             .send_request("prompts/list", None)
             .await
-            .map_err(|e| McpError::msg(format!("prompts/list failed: {e}")))?;
+            .map_err(prompts_list_failed)?;
         let list: crate::types::ListPromptsResult = serde_json::from_value(result)
-            .map_err(|e| McpError::msg(format!("failed to parse prompts/list result: {e}")))?;
+            .map_err(|e| McpError::msg(&format!("failed to parse prompts/list result: {e}")))?;
         info!(count = list.prompts.len(), "MCP prompts listed");
         Ok(list.prompts)
     }
@@ -293,19 +278,19 @@ impl McpClient {
 }
 
 async fn read_stdio_response(
-    reader: &mut AsyncBufReader<ChildStdout>,
+    reader: &mut (dyn AsyncBufRead + Send + Unpin),
     expected_id: u64,
 ) -> Result<serde_json::Value> {
     let mut line = String::new();
     reader
         .read_line(&mut line)
         .await
-        .map_err(|e| McpError::msg(format!("failed to read response from MCP server: {e}")))?;
+        .map_err(stdio_read_failed)?;
     if line.trim().is_empty() {
         return Err(McpError::msg("MCP server closed stdout (empty response)"));
     }
     let response: JsonRpcResponse = serde_json::from_str(&line)
-        .map_err(|e| McpError::msg(format!("failed to parse MCP response: {line}: {e}")))?;
+        .map_err(|e| McpError::msg(&format!("failed to parse MCP response: {line}: {e}")))?;
     if response.id != expected_id {
         warn!(
             expected = expected_id,
@@ -314,7 +299,7 @@ async fn read_stdio_response(
         );
     }
     if let Some(error) = response.error {
-        return Err(McpError::msg(format!(
+        return Err(McpError::msg(&format!(
             "MCP error [{}]: {}",
             error.code, error.message
         )));
@@ -322,6 +307,26 @@ async fn read_stdio_response(
     response
         .result
         .ok_or_else(|| McpError::msg("MCP response has no result"))
+}
+
+fn tools_list_failed(e: McpError) -> McpError {
+    McpError::msg(&format!("tools/list failed: {e}"))
+}
+
+fn tools_call_failed(e: McpError) -> McpError {
+    McpError::msg(&format!("tools/call failed: {e}"))
+}
+
+fn resources_list_failed(e: McpError) -> McpError {
+    McpError::msg(&format!("resources/list failed: {e}"))
+}
+
+fn prompts_list_failed(e: McpError) -> McpError {
+    McpError::msg(&format!("prompts/list failed: {e}"))
+}
+
+fn stdio_read_failed(e: std::io::Error) -> McpError {
+    McpError::msg(&format!("failed to read response from MCP server: {e}"))
 }
 
 fn take_stdio_pipes(child: &mut Child) -> Result<(ChildStdin, ChildStdout)> {

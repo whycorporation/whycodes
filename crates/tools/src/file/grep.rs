@@ -122,27 +122,7 @@ impl Tool for GrepTool {
             })
             .await;
 
-            match result {
-                Ok(Ok(output)) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: if output.is_empty() {
-                        "No matches found.".to_string()
-                    } else {
-                        output
-                    },
-                    is_error: false,
-                },
-                Ok(Err(e)) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Error: {}", e),
-                    is_error: true,
-                },
-                Err(e) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Error: grep task failed: {e}"),
-                    is_error: true,
-                },
-            }
+            grep_from_blocking(result.map_err(|e| e.to_string()))
         })
     }
 }
@@ -163,7 +143,7 @@ impl GrepTool {
             .case_insensitive(case_insensitive)
             .line_terminator(Some(b'\n'))
             .build(pattern)
-            .map_err(|e| format!("invalid regex: {e}"))?;
+            .map_err(|e| invalid_regex(&e.to_string()))?;
 
         let glob = match file_glob {
             Some(g) => Some(glob::Pattern::new(g).map_err(|e| format!("invalid glob: {}", e))?),
@@ -236,40 +216,17 @@ impl GrepTool {
                 .par_iter()
                 .enumerate()
                 .map(|(i, (file, rel))| {
-                    if stop.load(Ordering::Relaxed) {
-                        return (i, Vec::new());
-                    }
-                    let cap = remaining.load(Ordering::Relaxed);
-                    if cap == 0 {
-                        stop.store(true, Ordering::Relaxed);
-                        return (i, Vec::new());
-                    }
-                    let mut local = Vec::new();
-                    Self::search_file(file, rel, &matcher, context, &mut local, cap);
-                    if !local.is_empty() {
-                        let n = local.len();
-                        let prev = remaining.fetch_sub(n.min(cap), Ordering::Relaxed);
-                        if prev <= n {
-                            stop.store(true, Ordering::Relaxed);
-                        }
-                    }
-                    (i, local)
+                    grep_file_task(i, file, rel, &matcher, context, &stop, &remaining)
                 })
                 .collect();
             // Restore discovery order so tests and the model see a stable listing.
             let mut ordered: Vec<(usize, Vec<String>)> = per_file;
             ordered.sort_by_key(|(i, _)| *i);
-            for (_, mut local) in ordered {
-                if matches.len() >= max_results {
+            for (_, local) in ordered {
+                if merge_file_matches(&mut matches, local, max_results) {
                     truncated = true;
                     break;
                 }
-                let room = max_results - matches.len();
-                if local.len() > room {
-                    local.truncate(room);
-                    truncated = true;
-                }
-                matches.append(&mut local);
             }
             if matches.len() >= max_results {
                 truncated = true;
@@ -307,8 +264,8 @@ impl GrepTool {
         matches: &mut Vec<String>,
         max_results: usize,
     ) {
-        if matches.len() >= max_results {
-            return;
+        if search_file_at_cap(matches.len(), max_results) {
+            return skip_search_at_cap();
         }
         if file_len(file).is_some_and(|n| n > MAX_GREP_FILE_BYTES) {
             return;
@@ -326,13 +283,12 @@ impl GrepTool {
             matches,
             max_results,
         };
-        if let Err(err) = searcher.search_path(matcher, file, &mut sink) {
-            tracing::debug!(
-                path = %file.display(),
-                error = %err,
-                "skipping file that could not be searched"
-            );
-        }
+        handle_search_err(
+            file,
+            searcher
+                .search_path(matcher, file, &mut sink)
+                .map_err(|e| e.to_string()),
+        );
         // Preserve the historical `path:line-…` / `--` context separator after
         // each file so existing tests and model-facing output stay stable.
         if context > 0
@@ -360,20 +316,13 @@ impl Sink for CollectSink<'_> {
         _searcher: &grep_searcher::Searcher,
         mat: &SinkMatch<'_>,
     ) -> Result<bool, Self::Error> {
-        if self.matches.len() >= self.max_results {
-            return Ok(false);
-        }
-        let lineno = mat.line_number().unwrap_or(0);
-        let line = utf8_line(mat.bytes());
-        let tag = super::line_tag::tag_of(&line, super::line_tag::MIN_LEN);
-        self.matches.push(super::line_tag::format_grep_line(
+        sink_push_match(
+            self.matches,
+            self.max_results,
             self.display,
-            lineno,
-            &tag,
-            &clip_line(&line, 500),
-            ':',
-        ));
-        Ok(self.matches.len() < self.max_results)
+            mat.line_number().unwrap_or(0),
+            mat.bytes(),
+        )
     }
 
     fn context(
@@ -381,28 +330,87 @@ impl Sink for CollectSink<'_> {
         _searcher: &grep_searcher::Searcher,
         ctx: &SinkContext<'_>,
     ) -> Result<bool, Self::Error> {
-        if self.matches.len() >= self.max_results {
-            return Ok(false);
-        }
-        let lineno = ctx.line_number().unwrap_or(0);
-        let line = utf8_line(ctx.bytes());
-        let tag = super::line_tag::tag_of(&line, super::line_tag::MIN_LEN);
-        self.matches.push(super::line_tag::format_grep_line(
+        sink_push_context(
+            self.matches,
+            self.max_results,
             self.display,
-            lineno,
-            &tag,
-            &clip_line(&line, 500),
-            '-',
-        ));
-        Ok(true)
+            ctx.line_number().unwrap_or(0),
+            ctx.bytes(),
+        )
     }
 
     fn context_break(&mut self, _searcher: &grep_searcher::Searcher) -> Result<bool, Self::Error> {
-        if self.matches.len() < self.max_results && self.matches.last().is_none_or(|s| s != "--") {
-            self.matches.push("--".into());
-        }
-        Ok(true)
+        sink_context_break(self.matches, self.max_results)
     }
+}
+
+fn grep_file_task(
+    i: usize,
+    file: &Path,
+    rel: &str,
+    matcher: &grep_regex::RegexMatcher,
+    context: usize,
+    stop: &AtomicBool,
+    remaining: &AtomicUsize,
+) -> (usize, Vec<String>) {
+    if grep_should_stop(stop, remaining) {
+        return skip_stopped_file(i);
+    }
+    let cap = remaining.load(Ordering::Relaxed);
+    let mut local = Vec::new();
+    GrepTool::search_file(file, rel, matcher, context, &mut local, cap);
+    if !local.is_empty() {
+        let n = local.len();
+        let prev = remaining.fetch_sub(n.min(cap), Ordering::Relaxed);
+        if prev <= n {
+            stop.store(true, Ordering::Relaxed);
+        }
+    }
+    (i, local)
+}
+
+fn sink_push_match(
+    matches: &mut Vec<String>,
+    max_results: usize,
+    display: &str,
+    lineno: u64,
+    bytes: &[u8],
+) -> Result<bool, std::io::Error> {
+    if sink_at_cap(matches.len(), max_results) {
+        return sink_stop();
+    }
+    let line = utf8_line(bytes);
+    let tag = super::line_tag::tag_of(&line, super::line_tag::MIN_LEN);
+    matches.push(super::line_tag::format_grep_line(
+        display,
+        lineno,
+        &tag,
+        &clip_line(&line, 500),
+        ':',
+    ));
+    Ok(matches.len() < max_results)
+}
+
+fn sink_push_context(
+    matches: &mut Vec<String>,
+    max_results: usize,
+    display: &str,
+    lineno: u64,
+    bytes: &[u8],
+) -> Result<bool, std::io::Error> {
+    if sink_at_cap(matches.len(), max_results) {
+        return sink_stop();
+    }
+    let line = utf8_line(bytes);
+    let tag = super::line_tag::tag_of(&line, super::line_tag::MIN_LEN);
+    matches.push(super::line_tag::format_grep_line(
+        display,
+        lineno,
+        &tag,
+        &clip_line(&line, 500),
+        '-',
+    ));
+    Ok(true)
 }
 
 fn utf8_line(bytes: &[u8]) -> String {
@@ -417,6 +425,124 @@ fn clip_line(line: &str, max_chars: usize) -> String {
         let t: String = line.chars().take(max_chars).collect();
         format!("{t}…")
     }
+}
+
+fn grep_from_blocking(result: Result<Result<String, String>, String>) -> ToolResult {
+    match result {
+        Ok(Ok(output)) => grep_ok(output),
+        Ok(Err(e)) => grep_err(&e),
+        Err(e) => grep_join_error(&e),
+    }
+}
+
+fn grep_join_error(e: &str) -> ToolResult {
+    grep_err(&format!("grep task failed: {e}"))
+}
+
+fn grep_ok(output: String) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: if output.is_empty() {
+            "No matches found.".to_string()
+        } else {
+            output
+        },
+        is_error: false,
+    }
+}
+
+fn grep_err(e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Error: {e}"),
+        is_error: true,
+    }
+}
+
+fn invalid_regex(e: &str) -> String {
+    format!("invalid regex: {e}")
+}
+
+fn sink_at_cap(matches: usize, max_results: usize) -> bool {
+    matches >= max_results
+}
+
+fn sink_stop() -> Result<bool, std::io::Error> {
+    Ok(false)
+}
+
+fn push_context_break(matches: &mut Vec<String>, max_results: usize) {
+    if matches.len() < max_results && matches.last().is_none_or(|s| s != "--") {
+        matches.push("--".into());
+    }
+}
+
+fn empty_file_matches(i: usize) -> (usize, Vec<String>) {
+    (i, Vec::new())
+}
+
+fn skip_stopped_file(i: usize) -> (usize, Vec<String>) {
+    empty_file_matches(i)
+}
+
+fn search_file_at_cap(matches: usize, max_results: usize) -> bool {
+    matches >= max_results
+}
+
+fn skip_search_at_cap() {}
+
+fn handle_search_err(file: &Path, result: Result<(), String>) {
+    if let Err(err) = result {
+        skip_unsearchable(file, &err);
+    }
+}
+
+fn sink_context_break(
+    matches: &mut Vec<String>,
+    max_results: usize,
+) -> Result<bool, std::io::Error> {
+    push_context_break(matches, max_results);
+    Ok(true)
+}
+
+fn skip_unsearchable(file: &Path, err: &str) {
+    skip_unsearchable_msg(&file.display().to_string(), err);
+}
+
+fn skip_unsearchable_msg(path: &str, err: &str) {
+    tracing::debug!(
+        path = %path,
+        error = %err,
+        "skipping file that could not be searched"
+    );
+}
+
+fn grep_should_stop(stop: &AtomicBool, remaining: &AtomicUsize) -> bool {
+    if stop.load(Ordering::Relaxed) {
+        return true;
+    }
+    if remaining.load(Ordering::Relaxed) == 0 {
+        stop.store(true, Ordering::Relaxed);
+        return true;
+    }
+    false
+}
+
+fn merge_file_matches(
+    matches: &mut Vec<String>,
+    mut local: Vec<String>,
+    max_results: usize,
+) -> bool {
+    if matches.len() >= max_results {
+        return true;
+    }
+    let room = max_results - matches.len();
+    let truncated = local.len() > room;
+    if truncated {
+        local.truncate(room);
+    }
+    matches.append(&mut local);
+    truncated
 }
 
 #[cfg(test)]

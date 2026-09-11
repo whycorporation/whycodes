@@ -1,16 +1,17 @@
 //! TUI event loop — streaming agent + permission dialogs.
 
+use std::collections::VecDeque;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::color::{QuantizingBackend, detect_color_mode, set_active_color_mode};
+use crate::color::{ColorMode, QuantizingBackend, detect_color_mode, set_active_color_mode};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, MouseEventKind,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    KeyCode, KeyEventKind, KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -18,7 +19,7 @@ use crossterm::terminal::{
     size as term_size, supports_keyboard_enhancement,
 };
 use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 use whycodes_agent::agent::Agent;
@@ -87,10 +88,98 @@ impl TuiLoginUi {
     /// Best-effort delivery to the TUI event loop: a send only fails when the
     /// loop is gone (shutdown), and then the note has nowhere to land anyway.
     fn send(&self, event: AuthFlowEvent) {
-        if self.tx.send(event).is_err() {
-            tracing::debug!("auth-flow event dropped: TUI event loop closed");
-        }
+        send_auth_event(&self.tx, event);
     }
+}
+
+fn send_auth_event(tx: &mpsc::UnboundedSender<AuthFlowEvent>, event: AuthFlowEvent) {
+    seed_unbounded(tx, event, "auth-flow event");
+}
+
+fn seed_unbounded<T>(tx: &mpsc::UnboundedSender<T>, value: T, what: &'static str) {
+    if tx.send(value).is_err() {
+        tracing::debug!("{what} dropped: TUI event loop closed");
+    }
+}
+
+fn headless_busy_key_ready(ev: Option<&Event>) -> bool {
+    let Some(Event::Key(key)) = ev else {
+        return true;
+    };
+    if key.kind != KeyEventKind::Press {
+        return true;
+    }
+    if key
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::CONTROL)
+    {
+        return true;
+    }
+    // Hold overlay answers until the dialog owns the keyboard.
+    !matches!(
+        key.code,
+        KeyCode::Char('y' | 'Y' | 'n' | 'N' | 'a' | 'A' | 'd' | 'D') | KeyCode::Enter
+    )
+}
+
+/// `WHYCODES_TEST_LLM` replaces the registry with a repeating
+/// [`whycodes_llm::ScriptedProvider`] so a headless turn never hits the network.
+/// Empty / missing env is a no-op (production never sets this).
+fn inject_test_llm(agent: &mut Agent, provider: &str) {
+    let Ok(text) = std::env::var("WHYCODES_TEST_LLM") else {
+        return;
+    };
+    if text.is_empty() {
+        return;
+    }
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    if text == "ASK" {
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+            provider.to_string(),
+            [
+                vec![whycodes_llm::ScriptedStep::ToolCall {
+                    id: "q1".into(),
+                    name: "question".into(),
+                    input: serde_json::json!({
+                        "questions": [{
+                            "prompt": "Pick?",
+                            "options": [
+                                {"label": "Yes"},
+                                {"label": "No"}
+                            ]
+                        }]
+                    }),
+                }],
+                vec![whycodes_llm::ScriptedStep::Text("asked-ok".into())],
+            ],
+        )));
+    } else if text == "SHELL" {
+        // One tool call, then a text reply — repeating would loop tools forever.
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+            provider.to_string(),
+            [
+                vec![whycodes_llm::ScriptedStep::ToolCall {
+                    id: "call-1".into(),
+                    name: "bash".into(),
+                    input: serde_json::json!({"command": "echo hi"}),
+                }],
+                vec![whycodes_llm::ScriptedStep::Text("shell-done".into())],
+            ],
+        )));
+    } else {
+        let step = if text == "FAIL" {
+            whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())
+        } else if text == "HANG" {
+            whycodes_llm::ScriptedStep::Hang(std::time::Duration::from_secs(30))
+        } else {
+            whycodes_llm::ScriptedStep::Text(text)
+        };
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+            provider.to_string(),
+            [step],
+        )));
+    }
+    agent.set_provider_registry(registry);
 }
 
 impl whycodes_auth::providers::LoginUi for TuiLoginUi {
@@ -157,16 +246,16 @@ fn spawn_oauth_login(
             .await
             .map(|_| p.clone())
             .map_err(|e| e.to_string());
-        if tx
-            .send(AuthFlowEvent::Done {
-                provider: p,
-                result,
-            })
-            .is_err()
-        {
-            tracing::debug!("auth-flow Done dropped: TUI event loop closed");
-        }
+        send_auth_done(&tx, p, result);
     });
+}
+
+fn send_auth_done(
+    tx: &mpsc::UnboundedSender<AuthFlowEvent>,
+    provider: String,
+    result: Result<String, String>,
+) {
+    send_auth_event(tx, AuthFlowEvent::Done { provider, result });
 }
 
 fn bind_agent_prompters(
@@ -199,6 +288,31 @@ pub struct TuiRunOptions {
     pub remote: Option<crate::remote::RemoteAttach>,
     /// Background GitHub latest-release check. `None` skips the home popup.
     pub update_rx: Option<tokio::sync::mpsc::UnboundedReceiver<UpdateOffer>>,
+    /// Event-loop I/O injection. Production callers leave this default (real TTY).
+    pub inject: LoopInject,
+}
+
+/// Test/harness injection for [`run`]. Production leaves every field default.
+///
+/// Headless tests fill `scripted_events` (TestBackend). Live-buffer tests set
+/// `live_buf` and optionally `crossterm_events` so CrosstermBackend / poll
+/// arms execute without a controlling terminal.
+#[derive(Default)]
+pub struct LoopInject {
+    /// Scripted events → TestBackend (headless). `Some` even when empty.
+    pub scripted_events: Option<VecDeque<Event>>,
+    /// Memory-buffer CrosstermBackend (live path, no TTY).
+    pub live_buf: bool,
+    /// Events served by crossterm poll/read instead of the OS.
+    pub crossterm_events: VecDeque<Event>,
+    pub poll_err: bool,
+    pub read_err: bool,
+    pub draw_fail: bool,
+    pub clear_fail: bool,
+    /// Seed the catalog / suggestion / auth channels before the first poll.
+    pub catalog: Option<(String, String, u32)>,
+    pub suggest: Option<String>,
+    pub auth: Option<AuthFlowEvent>,
 }
 
 /// How the TUI left the event loop.
@@ -237,7 +351,25 @@ fn apply_resume(
     want: &str,
     auto_title: bool,
 ) {
-    match try_load_session(want) {
+    apply_resume_loaded(
+        app,
+        session,
+        system_prompt,
+        want,
+        auto_title,
+        try_load_session(want).map_err(|e| e.to_string()),
+    );
+}
+
+fn apply_resume_loaded(
+    app: &mut TuiApp,
+    session: &mut Session,
+    system_prompt: &str,
+    want: &str,
+    auto_title: bool,
+    loaded: Result<Option<Session>, String>,
+) {
+    match loaded {
         Ok(Some(loaded)) => {
             let n = loaded.messages.len();
             *session = loaded;
@@ -253,14 +385,8 @@ fn apply_resume(
             );
         }
         Ok(None) => {
-            app.toasts.push(
-                crate::toast::ToastKind::Warning,
-                if want == RESUME_LATEST {
-                    "No saved sessions to continue".into()
-                } else {
-                    format!("Session not found: {want}")
-                },
-            );
+            app.toasts
+                .push(crate::toast::ToastKind::Warning, resume_missing_toast(want));
         }
         Err(e) => {
             app.toasts.push(
@@ -268,6 +394,14 @@ fn apply_resume(
                 format!("Resume failed: {e}"),
             );
         }
+    }
+}
+
+fn resume_missing_toast(want: &str) -> String {
+    if want == RESUME_LATEST {
+        "No saved sessions to continue".into()
+    } else {
+        format!("Session not found: {want}")
     }
 }
 
@@ -347,9 +481,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
         .filter(|a| a.mode == AgentMode::Primary || a.mode == AgentMode::All)
         .map(|a| a.name.clone())
         .collect();
-    if app.primary_agents.is_empty() {
-        app.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
-    }
+    ensure_primary_agents(&mut app.primary_agents);
     if let Some(idx) = app
         .primary_agents
         .iter()
@@ -382,21 +514,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     let agent_info = config
         .get_agent(&opts.agent_name)
         .cloned()
-        .unwrap_or_else(|| whycodes_core::types::AgentInfo {
-            name: opts.agent_name.clone(),
-            description: "Default".into(),
-            mode: AgentMode::Primary,
-            permission: whycodes_core::types::PermissionSet {
-                allow_file_writes: true,
-                allow_network: true,
-                allow_shell: true,
-                ..whycodes_core::types::PermissionSet::default()
-            },
-            model: None,
-            system_prompt: None,
-            temperature: None,
-            top_p: None,
-        });
+        .unwrap_or_else(|| default_agent_info(&opts.agent_name));
 
     let base = agent_info
         .system_prompt
@@ -426,7 +544,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
 
     config.general.project_path = Some(opts.project_dir.clone());
     let session_claims = whycodes_core::FileClaimRegistry::new();
-    let agent = Agent::new(agent_info)
+    let mut agent = Agent::new(agent_info)
         .with_config(&config)
         .with_file_index(file_index.clone())
         .with_session_claims(session_claims.clone())
@@ -434,6 +552,8 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
             Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
         )
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
+    agent.set_approval_mode(app.approval_mode);
+    inject_test_llm(&mut agent, &opts.provider);
 
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
@@ -483,6 +603,12 @@ pub fn tui_available() -> bool {
 enum TuiWriter {
     Console(std::fs::File),
     Stdout(io::Stdout),
+    /// In-memory sink so `LoopTerm::live` can be unit-tested without a TTY.
+    Buf(Vec<u8>),
+    /// Always-failing sink so `Terminal::new` / alt-screen `execute!` error
+    /// arms run without a real TTY.
+    #[allow(dead_code)]
+    Fail,
 }
 
 impl Write for TuiWriter {
@@ -490,6 +616,8 @@ impl Write for TuiWriter {
         match self {
             Self::Console(f) => f.write(buf),
             Self::Stdout(s) => s.write(buf),
+            Self::Buf(b) => b.write(buf),
+            Self::Fail => Err(io::Error::other("tui writer fail")),
         }
     }
 
@@ -497,58 +625,366 @@ impl Write for TuiWriter {
         match self {
             Self::Console(f) => f.flush(),
             Self::Stdout(s) => s.flush(),
+            Self::Buf(b) => b.flush(),
+            Self::Fail => Err(io::Error::other("tui writer fail")),
         }
     }
 }
 
+struct LoopIo {
+    scripted: Option<VecDeque<Event>>,
+    crossterm: VecDeque<Event>,
+    poll_err: bool,
+    read_err: bool,
+    force_zero_poll: bool,
+}
+
+impl LoopIo {
+    fn from_inject(inject: &mut LoopInject) -> Self {
+        let scripted = inject.scripted_events.take();
+        let crossterm = std::mem::take(&mut inject.crossterm_events);
+        Self {
+            // Stub / live-buf / scripted runs never have a TTY. After the
+            // injected queue drains, skip OS poll (ENOENT/EAGAIN on CI).
+            force_zero_poll: inject.live_buf || scripted.is_some() || !crossterm.is_empty(),
+            scripted,
+            crossterm,
+            poll_err: inject.poll_err,
+            read_err: inject.read_err,
+        }
+    }
+
+    fn is_headless(&self) -> bool {
+        self.scripted.is_some()
+    }
+
+    fn crossterm_empty(&self) -> bool {
+        self.crossterm.is_empty()
+    }
+
+    fn peek(&self) -> Option<&Event> {
+        self.scripted.as_ref().and_then(|q| q.front())
+    }
+
+    fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
+        if let Some(q) = &self.scripted {
+            return Ok(!q.is_empty());
+        }
+        self.poll_crossterm(timeout)
+    }
+
+    fn read_batch(&mut self) -> io::Result<Vec<Event>> {
+        if let Some(q) = &mut self.scripted {
+            // One event per poll so a scripted Enter can start a turn before
+            // later keys (Esc, :q) are applied.
+            match q.pop_front() {
+                Some(ev) => Ok(vec![ev]),
+                None => Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "scripted TUI events exhausted",
+                )),
+            }
+        } else {
+            self.read_event_batch()
+        }
+    }
+
+    fn poll_crossterm(&mut self, timeout: Duration) -> io::Result<bool> {
+        if self.poll_err {
+            self.poll_err = false;
+            return Err(io::Error::other("crossterm stub poll failed"));
+        }
+        if !self.crossterm.is_empty() {
+            return Ok(true);
+        }
+        if self.force_zero_poll {
+            return Ok(false);
+        }
+        live_poll_crossterm(timeout)
+    }
+
+    fn read_crossterm(&mut self) -> io::Result<Event> {
+        if self.read_err {
+            self.read_err = false;
+            return Err(io::Error::other("crossterm stub read failed"));
+        }
+        if let Some(ev) = self.crossterm.pop_front() {
+            return Ok(ev);
+        }
+        if self.force_zero_poll {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "crossterm stub empty",
+            ));
+        }
+        live_read_crossterm()
+    }
+
+    fn read_event_batch(&mut self) -> io::Result<Vec<Event>> {
+        const MAX_BATCH: usize = 256;
+        let mut batch = Vec::with_capacity(8);
+        batch.push(self.read_crossterm()?);
+        while batch.len() < MAX_BATCH {
+            match self.poll_crossterm(Duration::ZERO) {
+                Ok(true) => batch.push(self.read_crossterm()?),
+                Ok(false) => break,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(batch)
+    }
+}
+
+enum LoopTerm {
+    Live(Terminal<QuantizingBackend<CrosstermBackend<TuiWriter>>>),
+    Headless(Terminal<QuantizingBackend<TestBackend>>),
+}
+
+impl LoopTerm {
+    fn live(out: TuiWriter, color_mode: ColorMode) -> anyhow::Result<Self> {
+        let backend = QuantizingBackend::with_size_fallback(
+            CrosstermBackend::new(out),
+            color_mode,
+            ratatui::layout::Size {
+                width: 80,
+                height: 24,
+            },
+        );
+        Ok(Self::Live(
+            Terminal::new(backend).inspect_err(on_terminal_new_failed)?,
+        ))
+    }
+
+    fn headless(color_mode: ColorMode) -> anyhow::Result<Self> {
+        let backend = QuantizingBackend::new(TestBackend::new(80, 24), color_mode);
+        Ok(Self::Headless(Terminal::new(backend)?))
+    }
+
+    fn resize(&mut self, area: Rect) {
+        match self {
+            Self::Live(t) => {
+                if let Err(e) = t.resize(area) {
+                    log_resize_failed("live", e);
+                }
+            }
+            Self::Headless(t) => {
+                if let Err(e) = t.resize(area) {
+                    log_resize_failed("headless", e);
+                }
+            }
+        }
+    }
+
+    fn clear(&mut self, fail: &mut bool) -> anyhow::Result<()> {
+        if *fail {
+            *fail = false;
+            return Err(anyhow::anyhow!("tui clear failed"));
+        }
+        match self {
+            Self::Live(t) => t.clear().map_err(Into::into),
+            Self::Headless(t) => t.clear().map_err(Into::into),
+        }
+    }
+
+    fn draw_app(
+        &mut self,
+        app: &mut TuiApp,
+        fail: &mut bool,
+    ) -> anyhow::Result<(ratatui::layout::Rect, Option<crate::cell_grid::CellGrid>)> {
+        if *fail {
+            *fail = false;
+            return Err(anyhow::anyhow!("tui draw failed"));
+        }
+        match self {
+            Self::Live(t) => draw_into(t, app),
+            Self::Headless(t) => draw_into(t, app),
+        }
+    }
+
+    fn restore(self, keyboard_enhanced: bool) {
+        match self {
+            Self::Live(mut terminal) => {
+                restore_live_backend(terminal.backend_mut(), keyboard_enhanced);
+                let _ = terminal.show_cursor();
+            }
+            Self::Headless(mut terminal) => {
+                let _ = terminal.show_cursor();
+            }
+        }
+    }
+}
+
+fn on_terminal_new_failed(e: &impl std::fmt::Display) {
+    let _ = disable_raw_mode();
+    whycodes_core::logging::emit(
+        "whycodes_tui",
+        "error",
+        "tui.terminal_new_failed",
+        Some(serde_json::json!({ "error": e.to_string() })),
+    );
+}
+
+fn log_resize_failed(kind: &str, e: impl std::fmt::Display) {
+    tracing::debug!(error = %e, "{kind} terminal resize failed");
+}
+
+fn draw_into<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut TuiApp,
+) -> anyhow::Result<(ratatui::layout::Rect, Option<crate::cell_grid::CellGrid>)>
+where
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
+    let completed = terminal
+        .draw(|f| render::render(f, app))
+        .map_err(anyhow::Error::from)?;
+    let area = completed.area;
+    let cells = if app.mouse_sel.is_some() {
+        Some(crate::cell_grid::CellGrid::from_buffer(completed.buffer))
+    } else {
+        None
+    };
+    Ok((area, cells))
+}
+
 /// Writer for alt-screen / draw / mouse: controlling console first, else stdout if TTY.
 fn open_tui_writer() -> io::Result<TuiWriter> {
-    // 1) Controlling terminal — works when stdout is piped/logged by a host.
-    if let Some(console) = open_controlling_console() {
+    choose_tui_writer(open_controlling_console(), io::stdout().is_terminal())
+}
+
+fn choose_tui_writer(console: Option<std::fs::File>, stdout_is_tty: bool) -> io::Result<TuiWriter> {
+    if let Some(console) = console {
         return Ok(TuiWriter::Console(console));
     }
-
-    // 2) Direct stdout when it is a terminal.
-    let out = io::stdout();
-    if out.is_terminal() {
-        return Ok(TuiWriter::Stdout(out));
+    if stdout_is_tty {
+        return Ok(TuiWriter::Stdout(io::stdout()));
     }
-
     Err(io::Error::new(
         io::ErrorKind::NotConnected,
         "no interactive terminal (stdout is not a TTY and the controlling console is unavailable)",
     ))
 }
 
+/// Open flags for `/dev/tty` (Unix). Always compiled so tests can drive the
+/// builder without a Unix TTY.
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+fn unix_tty_open_options() -> std::fs::OpenOptions {
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true).write(true);
+    o
+}
+
+/// Open flags for `CONOUT$` (Windows). Always compiled so tests can drive the
+/// builder without a live console.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn windows_console_open_options() -> std::fs::OpenOptions {
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true);
+    o
+}
+
+/// Open `/dev/tty` with Unix flags. Always compiled so tests can drive the
+/// builder + path without a Unix host.
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+fn try_open_unix_tty() -> io::Result<std::fs::File> {
+    unix_tty_open_options().open("/dev/tty")
+}
+
+/// Open `CONOUT$` with Windows flags. Always compiled so tests can drive it
+/// without a live console.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn try_open_windows_console() -> io::Result<std::fs::File> {
+    windows_console_open_options().open("CONOUT$")
+}
+
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+fn open_unix_controlling_console() -> Option<std::fs::File> {
+    console_open_result(try_open_unix_tty(), "open /dev/tty failed, trying stdout")
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn open_windows_controlling_console() -> Option<std::fs::File> {
+    console_open_result(
+        try_open_windows_console(),
+        "open CONOUT$ failed, trying stdout",
+    )
+}
+
 /// `/dev/tty` on Unix, `CONOUT$` on Windows. `None` if this process has no console.
 fn open_controlling_console() -> Option<std::fs::File> {
     #[cfg(unix)]
     {
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/tty")
-        {
-            Ok(f) => Some(f),
-            Err(e) => {
-                tracing::debug!(error = %e, "open /dev/tty failed, trying stdout");
-                None
-            }
-        }
+        open_unix_controlling_console()
     }
     #[cfg(windows)]
     {
-        match std::fs::OpenOptions::new().write(true).open("CONOUT$") {
-            Ok(f) => Some(f),
-            Err(e) => {
-                tracing::debug!(error = %e, "open CONOUT$ failed, trying stdout");
-                None
-            }
-        }
+        open_windows_controlling_console()
     }
     #[cfg(not(any(unix, windows)))]
     {
         None
+    }
+}
+
+fn console_open_result(
+    result: io::Result<std::fs::File>,
+    msg: &'static str,
+) -> Option<std::fs::File> {
+    match result {
+        Ok(f) => Some(f),
+        Err(e) => {
+            tracing::debug!(error = %e, "{msg}");
+            None
+        }
+    }
+}
+
+fn ensure_primary_agents(agents: &mut Vec<String>) {
+    if agents.is_empty() {
+        *agents = vec!["build".into(), "plan".into(), "ask".into()];
+    }
+}
+
+fn default_agent_info(name: &str) -> whycodes_core::types::AgentInfo {
+    whycodes_core::types::AgentInfo {
+        name: name.to_string(),
+        description: "Default".into(),
+        mode: AgentMode::Primary,
+        permission: whycodes_core::types::PermissionSet {
+            allow_file_writes: true,
+            allow_network: true,
+            allow_shell: true,
+            ..whycodes_core::types::PermissionSet::default()
+        },
+        model: None,
+        system_prompt: None,
+        temperature: None,
+        top_p: None,
+    }
+}
+
+/// Leave alt-screen / raw mode from the panic hook (and from tests).
+fn restore_terminal_on_panic() {
+    restore_terminal_with(open_tui_writer)
+}
+
+fn restore_terminal_with(open: impl FnOnce() -> io::Result<TuiWriter>) {
+    if let Ok(mut out) = open() {
+        restore_terminal_on(&mut out);
+    } else {
+        let _ = disable_raw_mode();
+    }
+}
+
+fn install_panic_terminal_restore() {
+    whycodes_core::logging::set_panic_cleanup(restore_terminal_on_panic);
+}
+
+/// After [`IDLE_TRIM_AFTER`] of quiet idle, return retained heap pages.
+fn maybe_idle_heap_trim(agent_busy: bool, idle_for: Duration, armed: &mut bool) {
+    if !agent_busy && idle_for >= crate::heap::IDLE_TRIM_AFTER && *armed {
+        crate::heap::release_retained_heap_debounced("client_idle", crate::heap::IDLE_TRIM_AFTER);
+        *armed = false;
     }
 }
 
@@ -571,14 +1007,22 @@ fn restore_terminal_on(out: &mut impl Write) {
 /// Returns whether flags were pushed (so shutdown can pop them). A 0×0 PTY
 /// or `WHYCODES_BENCH` run never answers the CSI query; skip it rather than
 /// stalling the first paint for crossterm's ~2 s timeout.
-fn enable_keyboard_enhancement(out: &mut impl Write) -> bool {
+fn enable_keyboard_enhancement(out: &mut impl Write, size: Option<(u16, u16)>) -> bool {
     if !should_query_keyboard_enhancement(
         std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty()),
-        term_size().ok(),
+        size,
     ) {
         return false;
     }
-    if !matches!(supports_keyboard_enhancement(), Ok(true)) {
+    push_keyboard_flags(out, keyboard_enhancement_supported())
+}
+
+fn keyboard_enhancement_supported() -> bool {
+    matches!(supports_keyboard_enhancement(), Ok(true))
+}
+
+fn push_keyboard_flags(out: &mut impl Write, supported: bool) -> bool {
+    if !supported {
         return false;
     }
     execute!(
@@ -586,6 +1030,92 @@ fn enable_keyboard_enhancement(out: &mut impl Write) -> bool {
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
     )
     .is_ok()
+}
+
+fn attach_live(
+    color_mode: ColorMode,
+    open: impl FnOnce() -> io::Result<TuiWriter>,
+    enable_raw: impl FnOnce() -> io::Result<()>,
+    size: impl FnOnce() -> io::Result<(u16, u16)>,
+) -> anyhow::Result<(LoopTerm, bool, u16, u16)> {
+    let mut tui_out = open().map_err(|e| {
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "error",
+            "tui.open_writer_failed",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
+        anyhow::anyhow!(
+            "failed to open terminal for TUI ({e}). \
+             Run inside a real terminal, or use `whycodes --plain`."
+        )
+    })?;
+    enter_raw_and_alt(&mut tui_out, enable_raw)?;
+    let (tw, th) = size().unwrap_or((0, 0));
+    let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out, Some((tw, th)));
+    let mut terminal = LoopTerm::live(tui_out, color_mode)?;
+    if tw == 0 || th == 0 {
+        terminal.resize(Rect::new(0, 0, 80, 24));
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "warn",
+            "tui.size_fallback",
+            Some(serde_json::json!({ "reported_w": tw, "reported_h": th, "using": "80x24" })),
+        );
+    }
+    Ok((terminal, keyboard_enhanced, tw, th))
+}
+
+fn enter_raw_and_alt(
+    out: &mut impl Write,
+    enable_raw: impl FnOnce() -> io::Result<()>,
+) -> anyhow::Result<()> {
+    enable_raw().map_err(|e| {
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "error",
+            "tui.raw_mode_failed",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
+        anyhow::anyhow!(
+            "failed to enter raw mode ({e}). \
+             Run inside a real terminal, or use `whycodes --plain`."
+        )
+    })?;
+    execute!(
+        out,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )
+    .map_err(|e| {
+        let _ = disable_raw_mode();
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "error",
+            "tui.alt_screen_failed",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
+        anyhow::anyhow!("failed to enter alternate screen ({e})")
+    })?;
+    if let Err(e) = execute!(out, SetCursorStyle::BlinkingBar) {
+        tracing::debug!(error = %e, "set blinking bar cursor style failed");
+    }
+    Ok(())
+}
+
+fn restore_live_backend(out: &mut impl Write, keyboard_enhanced: bool) {
+    let _ = disable_raw_mode();
+    if keyboard_enhanced {
+        let _ = execute!(out, PopKeyboardEnhancementFlags);
+    }
+    let _ = execute!(
+        out,
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        LeaveAlternateScreen,
+        SetCursorStyle::DefaultUserShape
+    );
 }
 
 /// Whether it is worth waiting on the keyboard-enhancement CSI query.
@@ -630,12 +1160,22 @@ pub enum TurnOutcome {
 
 /// Run the full-screen TUI until the user quits.
 pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
+    let mut opts = opts;
+    let mut loop_io = LoopIo::from_inject(&mut opts.inject);
+    let headless = loop_io.is_headless();
+    let live_buf = opts.inject.live_buf;
+    let mut draw_fail = opts.inject.draw_fail;
+    let mut clear_fail = opts.inject.clear_fail;
+    let seed_catalog = opts.inject.catalog.take();
+    let seed_suggest = opts.inject.suggest.take();
+    let seed_auth = opts.inject.auth.take();
+
     // Unit tests drive CLI `cmd_run` / `cmd_connect` through this entry
     // without opening a terminal. `WHYCODES_TEST_TUI=upgrade` asks the CLI
     // to install after restore; anything else is a clean quit.
-    // CLI unit tests set this so `cmd_run` / `cmd_connect` can call `run`
-    // without opening a terminal. Never set in production.
-    if let Ok(kind) = std::env::var("WHYCODES_TEST_TUI") {
+    // Headless scripted runs (this crate's tests) skip the stub so the loop
+    // still executes against TestBackend.
+    if !headless && let Ok(kind) = std::env::var("WHYCODES_TEST_TUI") {
         let _opts = opts;
         return Ok(if kind == "upgrade" {
             TuiExit::Upgrade
@@ -659,7 +1199,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let perm_rx = boot.perm_rx;
     let question_rx = boot.question_rx;
     let session_claims = boot.session_claims;
-    let mut missing_key = boot.missing_key;
+    let missing_key = boot.missing_key;
     let remote = opts.remote.clone();
 
     let mut provider = opts.provider.clone();
@@ -670,13 +1210,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
     // On panic, leave alt-screen / raw mode so the shell is usable and the
     // crash report (written by whycodes_core::logging) is readable.
-    whycodes_core::logging::set_panic_cleanup(|| {
-        if let Ok(mut out) = open_tui_writer() {
-            restore_terminal_on(&mut out);
-        } else {
-            let _ = disable_raw_mode();
-        }
-    });
+    if !headless {
+        install_panic_terminal_restore();
+    }
 
     whycodes_core::logging::emit(
         "whycodes_tui",
@@ -687,96 +1223,22 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             "model": model,
             "stdout_tty": io::stdout().is_terminal(),
             "stdin_tty": io::stdin().is_terminal(),
+            "headless": headless,
         })),
     );
 
-    let mut tui_out = open_tui_writer().map_err(|e| {
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "error",
-            "tui.open_writer_failed",
-            Some(serde_json::json!({ "error": e.to_string() })),
-        );
-        anyhow::anyhow!(
-            "failed to open terminal for TUI ({e}). \
-             Run inside a real terminal, or use `whycodes --plain`."
-        )
-    })?;
-
-    enable_raw_mode().map_err(|e| {
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "error",
-            "tui.raw_mode_failed",
-            Some(serde_json::json!({ "error": e.to_string() })),
-        );
-        anyhow::anyhow!(
-            "failed to enter raw mode ({e}). \
-             Run inside a real terminal, or use `whycodes --plain`."
-        )
-    })?;
-    // Mouse capture: we own drag-select so clipboard text can be trimmed of
-    // background pad spaces. Shift+drag is still native select in many hosts.
-    // Bracketed paste: terminals deliver drag-dropped file paths as Event::Paste
-    // (and multi-line pastes as one string instead of key spam).
-    execute!(
-        tui_out,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        EnableBracketedPaste
-    )
-    .map_err(|e| {
-        let _ = disable_raw_mode();
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "error",
-            "tui.alt_screen_failed",
-            Some(serde_json::json!({ "error": e.to_string() })),
-        );
-        anyhow::anyhow!("failed to enter alternate screen ({e})")
-    })?;
-    // Insert-style blinking bar in the prompt. The emulator blinks it, so
-    // idle stays 0 draws/s (a software caret would force animation cadence).
-    // Unsupported hosts keep their default shape; restore on the way out.
-    if let Err(e) = execute!(tui_out, SetCursorStyle::BlinkingBar) {
-        tracing::debug!(error = %e, "set blinking bar cursor style failed");
-    }
-    // Lets terminals that support it (Kitty, WezTerm, Alacritty…) report
-    // Shift+Enter distinctly, so multi-line input gets a portable binding.
-    //
-    // `supports_keyboard_enhancement` writes a CSI query and waits ~2 s for a
-    // reply. Dumb / 0×0 PTYs (the first-frame harness) never answer, so a
-    // query there is a 2 s tax on time-to-first-frame. Skip it.
-    let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out);
     let color_mode = detect_color_mode();
     set_active_color_mode(color_mode);
     app.config.color_mode = color_mode;
     app.config.extra.quantize_for(color_mode);
-    let backend = QuantizingBackend::new(CrosstermBackend::new(tui_out), color_mode);
-    let mut terminal = Terminal::new(backend).inspect_err(|e| {
-        let _ = disable_raw_mode();
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "error",
-            "tui.terminal_new_failed",
-            Some(serde_json::json!({ "error": e.to_string() })),
-        );
-    })?;
 
-    // Some hosts (piped stdout, odd PTYs) report 0×0 via TIOCGWINSZ. Drawing a
-    // zero-area buffer is useless and has been linked to instant “flash and
-    // quit” behaviour — force a sane fallback size.
-    let (tw, th) = term_size().unwrap_or((0, 0));
-    if tw == 0 || th == 0 {
-        let fallback = Rect::new(0, 0, 80, 24);
-        let _ = terminal.resize(fallback);
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "warn",
-            "tui.size_fallback",
-            Some(serde_json::json!({ "reported_w": tw, "reported_h": th, "using": "80x24" })),
-        );
-    }
+    // `live_buf` runs the production `!headless` arms (panic restore,
+    // first-frame hydrate, crossterm poll) into a memory buffer.
+    let (mut terminal, keyboard_enhanced, tw, th) = if headless && !live_buf {
+        (LoopTerm::headless(color_mode)?, false, 80u16, 24u16)
+    } else {
+        attach_for_loop(color_mode, live_buf)?
+    };
 
     whycodes_core::logging::emit(
         "whycodes_tui",
@@ -808,6 +1270,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let (suggest_tx, mut suggest_rx) = mpsc::unbounded_channel::<String>();
     // In-TUI OAuth login (`/connect`): flow progress → event loop.
     let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<AuthFlowEvent>();
+    if let Some(win) = seed_catalog {
+        seed_unbounded(&catalog_tx, win, "seed catalog");
+    }
+    if let Some(s) = seed_suggest {
+        seed_unbounded(&suggest_tx, s, "seed suggestion");
+    }
+    if let Some(ev) = seed_auth {
+        send_auth_event(&auth_tx, ev);
+    }
 
     // Background jobs / schedule enqueue use the same long-lived event channel.
     agent.wire_event_sink(event_tx.clone());
@@ -902,7 +1373,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             let animate = rt.agent_busy || app.running_task_count() > 0;
             if app.needs_redraw || animate || first_frame {
                 if app.pending_full_clears > 0 {
-                    if let Err(e) = terminal.clear() {
+                    if let Err(e) = terminal.clear(&mut clear_fail) {
                         whycodes_core::logging::emit(
                             "whycodes_tui",
                             "warn",
@@ -912,8 +1383,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     }
                     app.pending_full_clears = app.pending_full_clears.saturating_sub(1);
                 }
-                let completed = match terminal.draw(|f| render::render(f, &mut app)) {
-                    Ok(c) => c,
+                let (draw_area, snapshot) = match terminal.draw_app(&mut app, &mut draw_fail) {
+                    Ok(v) => v,
                     Err(e) => {
                         whycodes_core::logging::emit(
                             "whycodes_tui",
@@ -921,7 +1392,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                             "tui.draw_failed",
                             Some(serde_json::json!({ "error": e.to_string() })),
                         );
-                        return Err(e.into());
+                        return Err(e);
                     }
                 };
                 // Record *before* MCP / auto-index: those can block for
@@ -936,159 +1407,46 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         "info",
                         "tui.first_frame",
                         Some(serde_json::json!({
-                            "w": completed.area.width,
-                            "h": completed.area.height,
+                            "w": draw_area.width,
+                            "h": draw_area.height,
                         })),
                     );
                 }
                 // Cell snapshot is only for mouse text selection → clipboard.
                 // Skip the ~4k String allocs/frame when nothing is selected.
-                if app.mouse_sel.is_some() {
-                    app.screen_cells = crate::cell_grid::CellGrid::from_buffer(completed.buffer);
-                } else if !app.screen_cells.is_empty() {
-                    app.screen_cells.clear();
-                }
-                // Grok: never malloc_trim inside the paint; drain after flush.
-                crate::heap::run_deferred_release();
-                // Stay dirty while animation is live or a follow-up full
-                // clear is still owed (paste echo can land after this frame).
-                app.needs_redraw = animate || app.pending_full_clears > 0;
-
-                if let Some(ref bench) = bench
-                    && crate::bench::should_stop(bench)
-                {
+                if after_draw_frame(&mut app, snapshot, animate, bench.as_ref()) {
                     break;
                 }
 
                 if just_first {
-                    // Paint, then hydrate. Deferred boot work that is not needed
-                    // for the first 80×24 home frame (issue #49).
-                    // Syntax theme was skipped in `TuiApp::new` (syntect cache
-                    // is ~2 ms cold).
-                    let hydrate_before = capture_first_frame_hydrate_chrome(&app);
-                    app.config.theme.apply_syntax_theme();
-                    // Auth plugin dir walk was deferred from `async_main`.
-                    {
-                        let mut dirs = Vec::new();
-                        if let Ok(p) = whycodes_config::Config::default_path()
-                            && let Some(parent) = p.parent()
-                        {
-                            dirs.push(parent.join("plugins"));
-                        }
-                        dirs.push(whycodes_core::project_dir(&project_dir).join("plugins"));
-                        let loaded = whycodes_auth::plugin::load_from_dirs(&dirs);
-                        if loaded > 0 {
-                            tracing::debug!(
-                                count = loaded,
-                                "hydrated auth plugins after first frame"
-                            );
-                        }
-                    }
-                    // Real workspace file index (canonicalize + scan) — empty
-                    // index was used for the first frame so `@` picker does not
-                    // block TTFF.
-                    {
-                        let real = whycodes_index::WorkspaceIndex::start(
-                            whycodes_index::WorkspaceIndex::project_roots(&project_dir),
-                        );
-                        app.set_file_index(real.clone());
-                        rt.agent.set_file_index(real.clone());
-                        file_index = real;
-                    }
-                    // Shell plugins (plugins.toml + plugin.json discovery).
-                    rt.agent.hydrate_plugins(Some(project_dir.as_path()));
-                    // Full system prompt: AGENTS.md + sibling files + memory.
-                    // Boot used only runtime context; hydrate the rest now.
-                    {
-                        let base = rt.agent.system_prompt();
-                        let with_agents =
-                            whycodes_agent::agent::Agent::with_agents_md(&base, &project_dir);
-                        let full = with_project_memory(&with_agents, &project_dir, &config, None);
-                        rt.session.set_system_prompt(&full);
-                    }
-                    // Session picker — home paints with empty list then fills.
-                    if app.session_list.sessions.is_empty() {
-                        let entries = load_session_entries();
-                        if !entries.is_empty() {
-                            app.session_list.sessions = entries;
-                        }
-                    }
-                    // API key was deferred before `whycodes_tui::run` to avoid
-                    // blocking `auth.json` I/O before first paint. Fetch the
-                    // env/config key synchronously now; OAuth is async and
-                    // stays lazy until the first turn (`ensure_api_key`).
-                    if api_key.is_empty() {
-                        let env_var = format!("{}_API_KEY", provider.to_uppercase());
-                        let mut fetched: Option<String> = None;
-                        if let Ok(v) = std::env::var(&env_var)
-                            && !v.is_empty()
-                        {
-                            fetched = Some(v);
-                        }
-                        if fetched.is_none()
-                            && let Some(pc) = config.get_provider(&provider)
-                            && let Some(k) = &pc.api_key
-                            && !k.is_empty()
-                        {
-                            fetched = Some(k.clone());
-                        }
-                        if let Some(k) = fetched {
-                            api_key = k;
-                            missing_key = api_key.is_empty()
-                                && whycodes_llm::provider_requires_api_key(
-                                    &provider,
-                                    Some(&config),
-                                );
-                            app.status_message = if missing_key {
-                                format!(
-                                    "agent={}  {}/{}  — no API key · /connect  /help",
-                                    app.agent_name, provider, model
-                                )
-                            } else {
-                                format!(
-                                    "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
-                                    app.agent_name, provider, model
-                                )
-                            };
-                        }
-                    }
-
-                    // After first paint: MCP connect + code RAG auto-index.
-                    // Both can block; doing them here keeps startup feel snappy.
-                    rt.agent.load_mcp(&config).await;
-                    maybe_session_auto_index(&project_dir, &config, &mut app);
-                    refresh_sidebar(&mut app, &config, &file_index);
-                    load_app_todos(&mut app);
-                    settle_first_frame_hydrate(&mut app, &hydrate_before, animate);
+                    hydrate_after_first_frame(
+                        &mut app,
+                        &mut rt,
+                        &mut file_index,
+                        &mut api_key,
+                        &provider,
+                        &model,
+                        &config,
+                        &project_dir,
+                        animate,
+                    )
+                    .await;
                 }
             }
 
-            if let Some(ref bench) = bench
-                && crate::bench::should_stop(bench)
-            {
+            if bench_should_break(bench.as_ref()) {
                 break;
             }
 
             // ── Stream events from rt.agent (coalesce text/thinking deltas) ──
-            if drain_turn_events(&mut app, &mut rt.event_rx) {
-                if app.sidebar.visible {
-                    refresh_sidebar(&mut app, &config, &file_index);
-                }
-                app.mark_dirty();
-            }
+            after_turn_events_drain(&mut app, &mut rt.event_rx, &config, &file_index);
 
             if should_tick_spinner(&app, rt.agent_busy) {
                 tick_spinner(&mut app, &mut spinner_frame);
             }
 
             // ── Permission / question requests (queued; one at a time) ─
-            while let Ok(req) = rt.perm_rx.try_recv() {
-                rt.pending_perm_queue.push_back(req);
-            }
-            while let Ok(req) = rt.question_rx.try_recv() {
-                rt.pending_question_queue.push_back(req);
-            }
-            maybe_open_queued_dialog(&mut app, &rt);
+            drain_prompter_queues(&mut app, &mut rt);
 
             // ── Async title refine (does not hold rt.agent_busy) ─────────
             while let Ok((sid, title)) = title_rx.try_recv() {
@@ -1106,17 +1464,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             // Cooperative cancel covers stream/tools via select!. This is the
             // hard backstop for spawn_blocking shells / wedged HTTP that never
             // yield: abort the join handle and restore rt.agent/rt.session.
-            if should_force_stop(rt.agent_busy, cancel_requested_at, app.pending_cancel) {
-                app.pending_cancel = false;
-                force_stop_turn(
-                    &mut app,
-                    &mut rt,
-                    &mut cancel_requested_at,
-                    &config,
-                    &project_dir,
-                    &file_index,
-                );
-            }
+            maybe_force_stop_in_loop(
+                &mut app,
+                &mut rt,
+                &mut cancel_requested_at,
+                &config,
+                &project_dir,
+                &file_index,
+            );
 
             // ── Turn finished ─────────────────────────────────────────
             if let Ok(outcome) = rt.done_rx.try_recv()
@@ -1160,60 +1515,21 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
             // ── Apply agent picker selection ──────────────────────────
             if let Some(name) = app.pending_agent.take() {
-                if rt.agent_busy {
-                    app.toasts.push(
-                        crate::toast::ToastKind::Warning,
-                        "Can't switch agent while a turn is running",
-                    );
-                } else {
-                    switch_to_agent(
-                        &mut app,
-                        &mut rt.agent,
-                        &mut rt.session,
-                        &config,
-                        &project_dir,
-                        Arc::clone(&rt.perm_prompter),
-                        Arc::clone(&rt.question_prompter),
-                        &rt.event_tx,
-                        &name,
-                        false,
-                    )
-                    .await;
-                }
+                apply_pending_agent(&mut app, &mut rt, &config, &project_dir, &name).await;
             }
 
-            // ── Apply model picker selection ──────────────────────────
-            if let Some((p, m)) = app.pending_model.take() {
-                apply_model_choice(
-                    &mut app,
-                    &mut provider,
-                    &mut model,
-                    &mut api_key,
-                    p,
-                    m,
-                    &config,
-                );
-                fill_oauth_credential(&mut api_key, &provider).await;
-                if rt.agent_busy {
-                    catalog_fetch_pending = true;
-                } else {
-                    catalog_fetch_pending = false;
-                    spawn_model_context_fetch(
-                        &config,
-                        &provider,
-                        &model,
-                        &api_key,
-                        catalog_tx.clone(),
-                    );
-                }
-            }
-
-            if let Some(effort) = app.pending_effort.take() {
-                apply_reasoning_effort(&mut app, &mut rt.agent, &mut config, &effort);
-            }
-            if let Some(mode) = app.pending_approval_mode.take() {
-                apply_approval_mode(&mut app, &mut rt.agent, &mut config, mode);
-            }
+            apply_pending_picker_choices(
+                &mut app,
+                &mut rt,
+                &mut config,
+                &mut provider,
+                &mut model,
+                &mut api_key,
+                &mut catalog_fetch_pending,
+                catalog_tx.clone(),
+                &auth_tx,
+            )
+            .await;
 
             if app.pending_import && !rt.agent_busy {
                 app.pending_import = false;
@@ -1227,38 +1543,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 .await;
             }
 
-            // ── `/login` picker selection → start OAuth sign-in ──
-            if let Some(p) = app.pending_login_provider.take()
-                && let Ok(dir) = Config::data_dir()
-            {
-                spawn_oauth_login(&mut app, &auth_tx, dir, &p);
-            }
-
-            // ── Re-fetch when slash /models switches provider ──
-            if app.pending_catalog_refresh {
-                app.pending_catalog_refresh = false;
-                app.clear_api_context_window();
-                if rt.agent_busy {
-                    // Don't contend with the in-flight turn; retry when idle.
-                    catalog_fetch_pending = true;
-                } else {
-                    catalog_fetch_pending = false;
-                    spawn_model_context_fetch(
-                        &config,
-                        &provider,
-                        &model,
-                        &api_key,
-                        catalog_tx.clone(),
-                    );
-                }
-            }
-
             // Deferred / idle catalog: never race the first (or any) user turn.
-            if catalog_fetch_pending
-                && !rt.agent_busy
-                && app.pending_prompt.is_none()
-                && !missing_key
-            {
+            if should_spawn_idle_catalog(
+                catalog_fetch_pending,
+                rt.agent_busy,
+                app.pending_prompt.is_some(),
+                missing_key,
+            ) {
                 catalog_fetch_pending = false;
                 spawn_model_context_fetch(&config, &provider, &model, &api_key, catalog_tx.clone());
             }
@@ -1296,27 +1587,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
             // Mouse `[stop]` on the turn strip (or other UI) → cancel.
             // Second click while already cancelling → immediate force-stop.
-            if rt.agent_busy && app.pending_cancel {
-                app.pending_cancel = false;
-                if cancel_requested_at.is_some() {
-                    force_stop_turn(
-                        &mut app,
-                        &mut rt,
-                        &mut cancel_requested_at,
-                        &config,
-                        &project_dir,
-                        &file_index,
-                    );
-                } else {
-                    begin_cancel(
-                        &mut app,
-                        &rt.cancel_flag,
-                        &mut cancel_requested_at,
-                        &mut rt.pending_question_queue,
-                        &mut rt.pending_perm_queue,
-                    );
-                }
-            }
+            apply_pending_cancel(
+                &mut app,
+                &mut rt,
+                &mut cancel_requested_at,
+                &config,
+                &project_dir,
+                &file_index,
+            );
 
             // Drain scheduled /loop prompts when idle (no pending manual submit).
             queue_auto_prompt_if_idle(&mut app, rt.agent_busy);
@@ -1345,40 +1623,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
                 if let Some(ref rem) = remote {
                     drop(submit_images);
-                    let expanded = expand_at_files(&prompt, &project_dir);
-                    rt.session.add_user_message(&expanded);
-                    let flag =
-                        arm_generating(&mut app, &mut rt, &mut cancel_requested_at, "remote…");
-                    let rem = rem.clone();
-                    let event_tx2 = rt.event_tx.clone();
-                    let done_tx2 = rt.done_tx.clone();
-                    rt.turn_join = Some(tokio::spawn(async move {
-                        let t0 = std::time::Instant::now();
-                        let result =
-                            crate::remote::stream_chat(&rem, &expanded, event_tx2, Some(flag))
-                                .await;
-                        let work_ms = t0.elapsed().as_millis();
-                        match result {
-                            Ok(text) => {
-                                if let Err(e) = done_tx2.send(TurnOutcome::Remote {
-                                    text,
-                                    error: None,
-                                    work_ms,
-                                }) {
-                                    tracing::debug!(error = %e, "remote turn done dropped");
-                                }
-                            }
-                            Err(e) => {
-                                if let Err(send_err) = done_tx2.send(TurnOutcome::Remote {
-                                    text: String::new(),
-                                    error: Some(e.to_string()),
-                                    work_ms,
-                                }) {
-                                    tracing::debug!(error = %send_err, "remote turn err dropped");
-                                }
-                            }
-                        }
-                    }));
+                    spawn_remote_turn(
+                        &mut app,
+                        &mut rt,
+                        &mut cancel_requested_at,
+                        rem.clone(),
+                        &prompt,
+                        &project_dir,
+                    );
                     continue;
                 }
 
@@ -1396,94 +1648,20 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     continue;
                 }
 
-                let flag = arm_generating(&mut app, &mut rt, &mut cancel_requested_at, "");
-                let expanded = record_user_turn(
+                spawn_local_turn(
                     &mut app,
                     &mut rt,
+                    &mut cancel_requested_at,
                     &prompt,
+                    &submit_images,
                     &project_dir,
                     &config,
-                    &submit_images,
-                );
-                let (route_provider, route_model) = route_turn_model(
-                    rt.session.id.as_str(),
                     &provider,
                     &model,
-                    &expanded,
-                    rt.agent
-                        .model_fast()
-                        .or(config.session.model_fast.as_deref()),
+                    &api_key,
+                    max_turns,
+                    title_tx.clone(),
                 );
-
-                let provider2 = route_provider;
-                let model2 = route_model;
-                let api_key2 = api_key.clone();
-                let event_tx2 = rt.event_tx.clone();
-                let done_tx2 = rt.done_tx.clone();
-                let cancel2 = Some(flag);
-                let auto_title = config.session.auto_title;
-                let title_model = config.session.title_model.clone();
-                let title_tx2 = title_tx.clone();
-                // Title refine still uses rt.session provider/model (or title_model).
-                let title_provider = provider.clone();
-                let title_session_model = model.clone();
-
-                let (ag, sess) = take_turn_owner(&mut rt, &project_dir);
-
-                rt.turn_join = Some(tokio::spawn(async move {
-                    let agent = ag;
-                    let mut session = sess;
-                    // Time only the agent loop. Title refine runs async *after*
-                    // we release rt.agent_busy so the user can type immediately.
-                    let work_t0 = std::time::Instant::now();
-                    let result = agent
-                        .run_turn_with_events(
-                            &mut session,
-                            TurnOpts {
-                                provider_name: &provider2,
-                                model: &model2,
-                                api_key: &api_key2,
-                                max_turns,
-                                events: Some(event_tx2),
-                                cancel: cancel2,
-                            },
-                        )
-                        .await;
-                    let work_ms = work_t0.elapsed().as_millis();
-                    // Kick off small-model title refine without awaiting — the
-                    // main loop applies the title when title_tx delivers.
-                    if auto_title && result.is_ok() {
-                        let _ = agent.spawn_title_refine(
-                            &session,
-                            &title_provider,
-                            &title_session_model,
-                            &api_key2,
-                            title_model.as_deref(),
-                            title_tx2,
-                        );
-                    }
-                    match result {
-                        Ok(text) => {
-                            let _ = done_tx2.send(TurnOutcome::Ok {
-                                text,
-                                agent,
-                                session,
-                                work_ms,
-                            });
-                        }
-                        Err(e) => {
-                            let msg = e.to_string();
-                            let cancelled = msg.to_ascii_lowercase().contains("cancel");
-                            let _ = done_tx2.send(TurnOutcome::Err {
-                                error: msg,
-                                agent,
-                                session,
-                                cancelled,
-                                work_ms,
-                            });
-                        }
-                    }
-                }));
             }
 
             // ── Input ─────────────────────────────────────────────────
@@ -1500,18 +1678,24 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     toasts_visible: !app.toasts.is_empty(),
                     since_user_input: last_user_input.elapsed(),
                 });
-            if !rt.agent_busy
-                && last_user_input.elapsed() >= crate::heap::IDLE_TRIM_AFTER
-                && idle_trim_armed
-            {
-                crate::heap::release_retained_heap_debounced(
-                    "client_idle",
-                    crate::heap::IDLE_TRIM_AFTER,
-                );
-                idle_trim_armed = false;
-            }
+            maybe_idle_heap_trim(
+                rt.agent_busy,
+                last_user_input.elapsed(),
+                &mut idle_trim_armed,
+            );
 
-            let has_ev = match event::poll(poll_for) {
+            let overlay_owns_keys = dialog_overlay_owns_keys(app.dialogs.active());
+            // Headless: while a turn is in flight, hold non-cancel keys until a
+            // permission/question overlay opens (so `y` is not typed into the prompt).
+            if headless
+                && rt.agent_busy
+                && !overlay_owns_keys
+                && !headless_busy_key_ready(loop_io.peek())
+            {
+                tokio::task::yield_now().await;
+                continue;
+            }
+            let has_ev = match loop_io.poll(poll_for) {
                 Ok(v) => v,
                 Err(e) => {
                     whycodes_core::logging::emit(
@@ -1523,13 +1707,32 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     return Err(e.into());
                 }
             };
+            // Scripted tests drain the event queue, then wait for an in-flight
+            // turn (or compact) to finish instead of aborting it on shutdown.
+            // `#[tokio::test]` is current-thread: yield so spawned turns run.
+            if headless {
+                if headless_should_quit(has_ev, rt.agent_busy, rt.turn_join.is_some()) {
+                    app.running = false;
+                } else if rt.agent_busy || rt.turn_join.is_some() {
+                    tokio::task::yield_now().await;
+                }
+            }
+            // Live-buffer runs drive crossterm via `LoopInject`. When the
+            // queue is empty the loop would wait forever (no TTY).
+            if live_buf && !headless {
+                if rt.agent_busy || rt.turn_join.is_some() {
+                    tokio::task::yield_now().await;
+                } else if live_buf_should_quit(has_ev, loop_io.crossterm_empty()) {
+                    app.running = false;
+                }
+            }
             if has_ev {
                 // Drain the whole pending queue before the next paint. A
                 // trackpad flick is dozens of wheel events; handling one per
                 // draw made the chat look frozen (each frame re-laid the
                 // transcript). Moves alone do not force a redraw — hover
                 // chrome still calls mark_dirty when the hit set changes.
-                let batch = match read_event_batch() {
+                let batch = match loop_io.read_batch() {
                     Ok(b) => b,
                     Err(e) => {
                         whycodes_core::logging::emit(
@@ -1563,289 +1766,70 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     // can emit Resize while we are in a long poll; apply it
                     // immediately so the next paint uses the new viewport
                     // instead of a stale buffer (garbled rows / clipped popup).
-                    let _ = terminal.resize(Rect::new(0, 0, *w, *h));
+                    terminal.resize(Rect::new(0, 0, *w, *h));
                 }
                 if batch.iter().any(event_forces_redraw) {
                     app.mark_dirty();
                 }
-                if batch
-                    .iter()
-                    .any(crate::redraw_schedule::event_needs_full_clear)
-                {
-                    // Two frames: some emulators echo the paste *after*
-                    // Event::Paste, so one clear is overwritten by the ghost.
-                    app.request_full_clear(2);
-                }
-                if crate::redraw_schedule::batch_looks_like_unbracketed_paste(&batch) {
-                    app.request_full_clear(2);
-                }
+                apply_batch_full_clears(&mut app, &batch);
 
                 for ev in batch {
-                    // Permission dialog keys handled specially
-                    if matches!(app.dialogs.active(), Some(DialogKind::Permission { .. }))
-                        && let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                    {
-                        match key.code {
-                            KeyCode::Char('y')
-                            | KeyCode::Char('Y')
-                            | KeyCode::Char('a')
-                            | KeyCode::Char('A')
-                            | KeyCode::Enter => {
-                                reply_permission(&mut app, &mut rt.pending_perm_queue, true);
-                                continue;
-                            }
-                            KeyCode::Char('n')
-                            | KeyCode::Char('N')
-                            | KeyCode::Char('d')
-                            | KeyCode::Char('D')
-                            | KeyCode::Esc => {
-                                reply_permission(&mut app, &mut rt.pending_perm_queue, false);
-                                continue;
-                            }
-                            _ => {}
-                        }
+                    if apply_permission_overlay_event(&mut app, &mut rt, &ev) {
+                        continue;
                     }
-
-                    // Questionnaire dialog (Grok-style `question` tool).
-                    // Press *and* Repeat: enhanced keyboard can emit Repeat for held Esc.
-                    if matches!(app.dialogs.active(), Some(DialogKind::Question(_)))
-                        && let Event::Key(key) = &ev
-                        && (key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat)
-                    {
-                        let handled = handle_question_key(
-                            &mut app,
-                            key.code,
-                            &mut rt.pending_question_queue,
-                            &rt.pending_perm_queue,
-                        );
-                        if handled {
-                            app.mark_dirty();
-                            continue;
-                        }
-                    }
-
-                    // Ctrl+T: cycle agents (when idle). Tab is focus toggle (Grok).
-                    if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Char('t')
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && app.mode == AppMode::Normal
-                        && !rt.agent_busy
-                    {
-                        cycle_agent(
-                            &mut app,
-                            &mut rt.agent,
-                            &mut rt.session,
-                            &config,
-                            &project_dir,
-                            Arc::clone(&rt.perm_prompter),
-                            Arc::clone(&rt.question_prompter),
-                            &rt.event_tx,
-                        )
-                        .await;
+                    if apply_question_overlay_event(&mut app, &mut rt, &ev) {
                         continue;
                     }
 
-                    // ── S2: multi-session keys ────────────────────────────
-                    // Ctrl+N: park the active session and open a fresh one.
+                    // Ctrl+T / Ctrl+N / Ctrl+Page / Ctrl+O / Ctrl+Tab / slash Enter.
                     if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Char('n')
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && app.mode == AppMode::Normal
-                    {
-                        if runtimes.len() + 1 >= MAX_LIVE_SESSIONS {
-                            warn_session_limit(&mut app);
-                            continue;
-                        }
-                        let fresh = spawn_new_session_runtime(
-                            &app.agent_name,
-                            &config,
-                            &project_dir,
-                            &file_index,
-                            session_claims.clone(),
+                        && let Some(action) = idle_loop_key_action(
+                            key,
+                            app.mode,
+                            rt.agent_busy,
+                            !runtimes.is_empty(),
+                            runtimes.len() + 1 >= MAX_LIVE_SESSIONS,
                         )
-                        .await;
-                        adopt_fresh_runtime(&mut app, &mut rt, &mut runtimes, &mut mru, fresh);
-                        continue;
-                    }
-
-                    // Ctrl+PageDown/PageUp: cycle sessions in creation order.
-                    if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && matches!(key.code, KeyCode::PageDown | KeyCode::PageUp)
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && app.mode == AppMode::Normal
-                        && !runtimes.is_empty()
-                    {
-                        cycle_live_session(
+                        && apply_idle_loop_key(
+                            action,
                             &mut app,
                             &mut rt,
                             &mut runtimes,
                             &mut mru,
-                            key.code == KeyCode::PageDown,
-                        );
-                        continue;
-                    }
-
-                    // Ctrl+O: live-session dashboard (grouped, peek, attach).
-                    if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Char('o')
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && app.mode == AppMode::Normal
-                    {
-                        open_sessions_dashboard(&mut app, &rt, &runtimes);
-                        continue;
-                    }
-
-                    // Ctrl+Tab: MRU switch to the most recently parked session.
-                    if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Tab
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                        && app.mode == AppMode::Normal
-                        && !runtimes.is_empty()
-                    {
-                        switch_mru_session(&mut app, &mut rt, &mut runtimes, &mut mru);
-                        continue;
-                    }
-
-                    // Slash commands on Enter
-                    if let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
-                        && key.code == KeyCode::Enter
-                        && app.mode == AppMode::Normal
-                        && !rt.agent_busy
-                        && let Some(text) = slash_command_from_prompt(&app)
-                    {
-                        consume_slash_draft(&mut app);
-                        handle_slash(
-                            &text,
-                            &mut SlashContext {
-                                app: &mut app,
-                                session: &mut rt.session,
-                                history: &mut rt.history,
-                                agent: &mut rt.agent,
-                                config: &mut config,
-                                project_dir: &project_dir,
-                                provider: &mut provider,
-                                model: &mut model,
-                                api_key: &mut api_key,
-                                perm_prompter: Arc::clone(&rt.perm_prompter),
-                                question_prompter: Arc::clone(&rt.question_prompter),
-                                auth_tx: auth_tx.clone(),
-                                pending_compact: &mut rt.pending_compact,
-                            },
+                            &mut config,
+                            &project_dir,
+                            &file_index,
+                            &session_claims,
+                            &mut provider,
+                            &mut model,
+                            &mut api_key,
+                            &auth_tx,
                         )
-                        .await;
+                        .await
+                    {
                         continue;
                     }
 
                     // While busy: Esc cancels (draft preserved — Grok). Typing, scroll,
                     // and focus still work so the user can queue thoughts.
                     // Permission / question overlays own Esc/Enter — do not steal them.
-                    let overlay_owns_keys = matches!(
-                        app.dialogs.active(),
-                        Some(DialogKind::Permission { .. } | DialogKind::Question(_))
-                    );
+                    let overlay_owns_keys = dialog_overlay_owns_keys(app.dialogs.active());
                     if rt.agent_busy
                         && !overlay_owns_keys
                         && let Event::Key(key) = &ev
                         && key.kind == KeyEventKind::Press
                     {
-                        match key.code {
-                            KeyCode::Esc => {
-                                // First Esc: cooperative cancel. Second: force-stop now.
-                                if cancel_requested_at.is_some() {
-                                    force_stop_turn(
-                                        &mut app,
-                                        &mut rt,
-                                        &mut cancel_requested_at,
-                                        &config,
-                                        &project_dir,
-                                        &file_index,
-                                    );
-                                } else {
-                                    begin_cancel(
-                                        &mut app,
-                                        &rt.cancel_flag,
-                                        &mut cancel_requested_at,
-                                        &mut rt.pending_question_queue,
-                                        &mut rt.pending_perm_queue,
-                                    );
-                                }
-                                app.esc_armed_at = None;
-                                continue;
-                            }
-                            KeyCode::Char('q')
-                                if key
-                                    .modifiers
-                                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                            {
-                                // Quit: always force-stop so we never hang on exit.
-                                if rt.agent_busy {
-                                    force_stop_turn(
-                                        &mut app,
-                                        &mut rt,
-                                        &mut cancel_requested_at,
-                                        &config,
-                                        &project_dir,
-                                        &file_index,
-                                    );
-                                }
-                                app.running = false;
-                                continue;
-                            }
-                            KeyCode::Char('c')
-                                if key
-                                    .modifiers
-                                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                            {
-                                match busy_ctrl_c(&mut app, cancel_requested_at) {
-                                    BusyCtrlC::ClearedDraft => {}
-                                    BusyCtrlC::BeginCancel => begin_cancel(
-                                        &mut app,
-                                        &rt.cancel_flag,
-                                        &mut cancel_requested_at,
-                                        &mut rt.pending_question_queue,
-                                        &mut rt.pending_perm_queue,
-                                    ),
-                                    BusyCtrlC::ForceStop => force_stop_turn(
-                                        &mut app,
-                                        &mut rt,
-                                        &mut cancel_requested_at,
-                                        &config,
-                                        &project_dir,
-                                        &file_index,
-                                    ),
-                                }
-                                continue;
-                            }
-                            KeyCode::Enter => {
-                                app.toasts.push(
-                                    crate::toast::ToastKind::Info,
-                                    "Wait for turn or Esc to cancel",
-                                );
-                                continue;
-                            }
-                            _ => {
-                                // Typing, scroll, focus toggle — all allowed mid-turn.
-                                let _ = input::handle_event(&mut app, ev);
-                                continue;
-                            }
-                        }
+                        apply_busy_key(
+                            busy_key_action(key),
+                            &ev,
+                            &mut app,
+                            &mut rt,
+                            &mut cancel_requested_at,
+                            &config,
+                            &project_dir,
+                            &file_index,
+                        );
+                        continue;
                     }
 
                     if !input::handle_event(&mut app, ev) {
@@ -1911,20 +1895,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     }
 
     // Cleanup must not fail the process after a successful rt.session — best-effort.
-    let _ = disable_raw_mode();
-    if keyboard_enhanced {
-        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
-    }
-    let _ = execute!(
-        terminal.backend_mut(),
-        DisableBracketedPaste,
-        DisableMouseCapture,
-        LeaveAlternateScreen,
-        SetCursorStyle::DefaultUserShape
-    );
-    let _ = terminal.show_cursor();
+    terminal.restore(keyboard_enhanced);
     // Normal exit — panic hook no longer needs to touch the terminal.
-    whycodes_core::logging::clear_panic_cleanup();
+    if !headless {
+        whycodes_core::logging::clear_panic_cleanup();
+    }
 
     // After the terminal is restored, so a failed write cannot corrupt the
     // screen the user is left looking at.
@@ -1960,22 +1935,127 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     })
 }
 
-/// Read the event that woke `poll`, then drain anything already queued.
-///
-/// Cap the batch so a stuck input flood cannot grow without bound before
-/// the next paint / turn-event drain.
-fn read_event_batch() -> io::Result<Vec<Event>> {
-    const MAX_BATCH: usize = 256;
-    let mut batch = Vec::with_capacity(8);
-    batch.push(event::read()?);
-    while batch.len() < MAX_BATCH {
-        match event::poll(Duration::ZERO) {
-            Ok(true) => batch.push(event::read()?),
-            Ok(false) => break,
-            Err(e) => return Err(e),
-        }
+/// Real crossterm poll. Tests call this with `Duration::ZERO` so the
+/// production line runs without a TTY wait.
+fn production_term_size() -> io::Result<(u16, u16)> {
+    term_size().or(Ok((0, 0)))
+}
+
+fn live_buf_open() -> io::Result<TuiWriter> {
+    Ok(TuiWriter::Buf(Vec::new()))
+}
+
+fn live_buf_raw() -> io::Result<()> {
+    Ok(())
+}
+
+fn live_buf_size() -> io::Result<(u16, u16)> {
+    Ok((0, 0))
+}
+
+type OpenTui = fn() -> io::Result<TuiWriter>;
+type EnableRaw = fn() -> io::Result<()>;
+type TermSize = fn() -> io::Result<(u16, u16)>;
+
+/// Live-buffer tests swap in memory writers; production uses the controlling
+/// console, raw mode, and the real terminal size.
+fn loop_attach_io(live_buf: bool) -> (OpenTui, EnableRaw, TermSize) {
+    if live_buf {
+        (live_buf_open, live_buf_raw, live_buf_size)
+    } else {
+        (open_tui_writer, enable_raw_mode, production_term_size)
     }
-    Ok(batch)
+}
+
+fn attach_for_loop(
+    color_mode: ColorMode,
+    live_buf: bool,
+) -> anyhow::Result<(LoopTerm, bool, u16, u16)> {
+    let (open, raw, size) = loop_attach_io(live_buf);
+    attach_live(color_mode, open, raw, size)
+}
+
+/// Overlay keys that answer a permission prompt (allow / deny). Other keys
+/// fall through to the normal dialog handler.
+fn permission_overlay_reply(code: KeyCode) -> Option<bool> {
+    match code {
+        KeyCode::Char('y' | 'Y' | 'a' | 'A') | KeyCode::Enter => Some(true),
+        KeyCode::Char('n' | 'N' | 'd' | 'D') | KeyCode::Esc => Some(false),
+        _ => None,
+    }
+}
+
+/// Permission overlay Y/N/A/D/Enter/Esc. Returns true when the event is consumed.
+fn apply_permission_overlay_event(app: &mut TuiApp, rt: &mut SessionRuntime, ev: &Event) -> bool {
+    if !matches!(app.dialogs.active(), Some(DialogKind::Permission { .. })) {
+        return false;
+    }
+    let Event::Key(key) = ev else {
+        return false;
+    };
+    if key.kind != KeyEventKind::Press {
+        return false;
+    }
+    let Some(allow) = permission_overlay_reply(key.code) else {
+        return false;
+    };
+    reply_permission(app, &mut rt.pending_perm_queue, allow);
+    true
+}
+
+/// Question overlay keys (Press and Repeat). Returns true when consumed.
+fn apply_question_overlay_event(app: &mut TuiApp, rt: &mut SessionRuntime, ev: &Event) -> bool {
+    if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
+        return false;
+    }
+    let Event::Key(key) = ev else {
+        return false;
+    };
+    if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
+        return false;
+    }
+    let handled = handle_question_key(
+        app,
+        key.code,
+        &mut rt.pending_question_queue,
+        &rt.pending_perm_queue,
+    );
+    if handled {
+        app.mark_dirty();
+    }
+    handled
+}
+
+fn live_poll_crossterm(timeout: Duration) -> io::Result<bool> {
+    poll_crossterm_with(timeout, crossterm::event::poll)
+}
+
+/// Injected poll so tests can drive the live-poll wrapper without a TTY.
+fn poll_crossterm_with(
+    timeout: Duration,
+    poll: impl FnOnce(Duration) -> io::Result<bool>,
+) -> io::Result<bool> {
+    poll(timeout)
+}
+
+/// Real crossterm read. Tests only call this after a zero-timeout poll
+/// returns true (otherwise it would block on a missing TTY).
+fn live_read_crossterm() -> io::Result<Event> {
+    read_crossterm_with(crossterm::event::read)
+}
+
+fn read_crossterm_with(read: impl FnOnce() -> io::Result<Event>) -> io::Result<Event> {
+    read()
+}
+
+/// Tests force a zero timeout so an empty stub cannot block on a missing TTY.
+#[cfg(test)]
+fn poll_timeout(requested: Duration, force_zero: bool) -> Duration {
+    if force_zero {
+        Duration::ZERO
+    } else {
+        requested
+    }
 }
 
 /// Mouse motion is tracked for hover; it must not by itself schedule a
@@ -2008,8 +2088,360 @@ fn print_session_summary(summary: &str) {
     let _ = err.flush();
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdleLoopKey {
+    CycleAgent,
+    NewSession,
+    SessionLimit,
+    CycleSession { next: bool },
+    Dashboard,
+    MruSwitch,
+    SlashEnter,
+}
+
+fn idle_loop_key_action(
+    key: &crossterm::event::KeyEvent,
+    mode: AppMode,
+    agent_busy: bool,
+    has_parked: bool,
+    at_session_limit: bool,
+) -> Option<IdleLoopKey> {
+    if key.kind != KeyEventKind::Press || mode != AppMode::Normal {
+        return None;
+    }
+    let ctrl = key
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('t') if ctrl && !agent_busy => Some(IdleLoopKey::CycleAgent),
+        KeyCode::Char('n') if ctrl => Some(if at_session_limit {
+            IdleLoopKey::SessionLimit
+        } else {
+            IdleLoopKey::NewSession
+        }),
+        KeyCode::PageDown if ctrl && has_parked => Some(IdleLoopKey::CycleSession { next: true }),
+        KeyCode::PageUp if ctrl && has_parked => Some(IdleLoopKey::CycleSession { next: false }),
+        KeyCode::Char('o') if ctrl => Some(IdleLoopKey::Dashboard),
+        KeyCode::Tab if ctrl && has_parked => Some(IdleLoopKey::MruSwitch),
+        KeyCode::Enter if !agent_busy => Some(IdleLoopKey::SlashEnter),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BusyKey {
+    Esc,
+    Quit,
+    CtrlC,
+    WaitEnter,
+    PassThrough,
+}
+
+fn busy_key_action(key: &crossterm::event::KeyEvent) -> BusyKey {
+    match key.code {
+        KeyCode::Esc => BusyKey::Esc,
+        KeyCode::Char('q')
+            if key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+        {
+            BusyKey::Quit
+        }
+        KeyCode::Char('c')
+            if key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+        {
+            BusyKey::CtrlC
+        }
+        KeyCode::Enter => BusyKey::WaitEnter,
+        _ => BusyKey::PassThrough,
+    }
+}
+
+/// Idle Ctrl+T/N/Page/O/Tab and slash-Enter. Returns true when the event is consumed.
+#[allow(clippy::too_many_arguments)]
+async fn apply_idle_loop_key(
+    action: IdleLoopKey,
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    runtimes: &mut Vec<SessionRuntime>,
+    mru: &mut Vec<usize>,
+    config: &mut Config,
+    project_dir: &std::path::Path,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
+    session_claims: &whycodes_core::FileClaimRegistry,
+    provider: &mut String,
+    model: &mut String,
+    api_key: &mut String,
+    auth_tx: &mpsc::UnboundedSender<AuthFlowEvent>,
+) -> bool {
+    match action {
+        IdleLoopKey::CycleAgent => {
+            cycle_agent(
+                app,
+                &mut rt.agent,
+                &mut rt.session,
+                config,
+                project_dir,
+                Arc::clone(&rt.perm_prompter),
+                Arc::clone(&rt.question_prompter),
+                &rt.event_tx,
+            )
+            .await;
+            true
+        }
+        IdleLoopKey::NewSession => {
+            let fresh = spawn_new_session_runtime(
+                &app.agent_name,
+                config,
+                project_dir,
+                file_index,
+                session_claims.clone(),
+            )
+            .await;
+            adopt_fresh_runtime(app, rt, runtimes, mru, fresh);
+            true
+        }
+        IdleLoopKey::SessionLimit => {
+            warn_session_limit(app);
+            true
+        }
+        IdleLoopKey::CycleSession { next } => {
+            cycle_live_session(app, rt, runtimes, mru, next);
+            true
+        }
+        IdleLoopKey::Dashboard => {
+            open_sessions_dashboard(app, rt, runtimes);
+            true
+        }
+        IdleLoopKey::MruSwitch => {
+            switch_mru_session(app, rt, runtimes, mru);
+            true
+        }
+        IdleLoopKey::SlashEnter => {
+            if let Some(text) = slash_command_from_prompt(app) {
+                consume_slash_draft(app);
+                handle_slash(
+                    &text,
+                    &mut SlashContext {
+                        app,
+                        session: &mut rt.session,
+                        history: &mut rt.history,
+                        agent: &mut rt.agent,
+                        config,
+                        project_dir,
+                        provider,
+                        model,
+                        api_key,
+                        perm_prompter: Arc::clone(&rt.perm_prompter),
+                        question_prompter: Arc::clone(&rt.question_prompter),
+                        auth_tx: auth_tx.clone(),
+                        pending_compact: &mut rt.pending_compact,
+                    },
+                )
+                .await;
+                true
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// Busy Esc / Ctrl+Q / Ctrl+C / Enter / passthrough. Always consumes the key.
+#[allow(clippy::too_many_arguments)]
+fn apply_busy_key(
+    action: BusyKey,
+    ev: &Event,
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    config: &Config,
+    project_dir: &std::path::Path,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
+) {
+    match action {
+        BusyKey::Esc => {
+            // First Esc: cooperative cancel. Second: force-stop now.
+            if cancel_requested_at.is_some() {
+                force_stop_turn(
+                    app,
+                    rt,
+                    cancel_requested_at,
+                    config,
+                    project_dir,
+                    file_index,
+                );
+            } else {
+                begin_cancel(
+                    app,
+                    &rt.cancel_flag,
+                    cancel_requested_at,
+                    &mut rt.pending_question_queue,
+                    &mut rt.pending_perm_queue,
+                );
+            }
+            app.esc_armed_at = None;
+        }
+        BusyKey::Quit => {
+            // Quit: always force-stop so we never hang on exit.
+            if rt.agent_busy {
+                force_stop_turn(
+                    app,
+                    rt,
+                    cancel_requested_at,
+                    config,
+                    project_dir,
+                    file_index,
+                );
+            }
+            app.running = false;
+        }
+        BusyKey::CtrlC => match busy_ctrl_c(app, *cancel_requested_at) {
+            BusyCtrlC::ClearedDraft => {}
+            BusyCtrlC::BeginCancel => begin_cancel(
+                app,
+                &rt.cancel_flag,
+                cancel_requested_at,
+                &mut rt.pending_question_queue,
+                &mut rt.pending_perm_queue,
+            ),
+            BusyCtrlC::ForceStop => force_stop_turn(
+                app,
+                rt,
+                cancel_requested_at,
+                config,
+                project_dir,
+                file_index,
+            ),
+        },
+        BusyKey::WaitEnter => {
+            toast_wait_for_turn(app);
+        }
+        BusyKey::PassThrough => {
+            // Typing, scroll, focus toggle — all allowed mid-turn.
+            let _ = input::handle_event(app, ev.clone());
+        }
+    }
+}
+
+fn toast_wait_for_turn(app: &mut TuiApp) {
+    app.toasts.push(
+        crate::toast::ToastKind::Info,
+        "Wait for turn or Esc to cancel",
+    );
+}
+
+fn dialog_overlay_owns_keys(active: Option<&DialogKind>) -> bool {
+    matches!(
+        active,
+        Some(DialogKind::Permission { .. } | DialogKind::Question(_))
+    )
+}
+
+fn headless_should_quit(has_ev: bool, agent_busy: bool, turn_join: bool) -> bool {
+    !has_ev && !agent_busy && !turn_join
+}
+
+fn live_buf_should_quit(has_ev: bool, crossterm_empty: bool) -> bool {
+    !has_ev && crossterm_empty
+}
+
+/// Idle catalog: only after a deferred fetch, with no in-flight turn or prompt.
+fn should_spawn_idle_catalog(
+    catalog_fetch_pending: bool,
+    agent_busy: bool,
+    pending_prompt: bool,
+    missing_key: bool,
+) -> bool {
+    catalog_fetch_pending && !agent_busy && !pending_prompt && !missing_key
+}
+
+/// Queue a catalog fetch when a turn is in flight; otherwise spawn it now.
+fn defer_or_spawn_catalog(
+    agent_busy: bool,
+    catalog_fetch_pending: &mut bool,
+    config: &Config,
+    provider: &str,
+    model: &str,
+    api_key: &str,
+    catalog_tx: mpsc::UnboundedSender<(String, String, u32)>,
+) {
+    if agent_busy {
+        *catalog_fetch_pending = true;
+        return;
+    }
+    *catalog_fetch_pending = false;
+    spawn_model_context_fetch(config, provider, model, api_key, catalog_tx);
+}
+
+/// Agent picker selection: refuse while a turn is in flight, otherwise switch.
+async fn apply_pending_agent(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    config: &Config,
+    project_dir: &std::path::Path,
+    name: &str,
+) {
+    if rt.agent_busy {
+        app.toasts.push(
+            crate::toast::ToastKind::Warning,
+            "Can't switch agent while a turn is running",
+        );
+        return;
+    }
+    switch_to_agent(
+        app,
+        &mut rt.agent,
+        &mut rt.session,
+        config,
+        project_dir,
+        Arc::clone(&rt.perm_prompter),
+        Arc::clone(&rt.question_prompter),
+        &rt.event_tx,
+        name,
+        false,
+    )
+    .await;
+}
+
 /// Arm cooperative cancel: set the flag, unblock permission/question waits,
 /// and start the force-stop timer.
+/// Mouse `[stop]` / UI cancel: first click begins cooperative cancel, a
+/// second click while already cancelling force-stops the turn.
+fn apply_pending_cancel(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    config: &Config,
+    project_dir: &std::path::Path,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
+) {
+    if !rt.agent_busy || !app.pending_cancel {
+        return;
+    }
+    app.pending_cancel = false;
+    if cancel_requested_at.is_some() {
+        force_stop_turn(
+            app,
+            rt,
+            cancel_requested_at,
+            config,
+            project_dir,
+            file_index,
+        );
+    } else {
+        begin_cancel(
+            app,
+            &rt.cancel_flag,
+            cancel_requested_at,
+            &mut rt.pending_question_queue,
+            &mut rt.pending_perm_queue,
+        );
+    }
+}
+
 fn begin_cancel(
     app: &mut TuiApp,
     cancel_flag: &Option<CancelFlag>,
@@ -2313,16 +2745,16 @@ async fn spawn_new_session_runtime(
         question_prompter.with_notify(whycodes_agent::notify::handle_from_config(&config.notify));
     let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
 
-    let agent = Agent::new(agent_info)
+    let mut agent = Agent::new(agent_info)
         .with_config(config)
         .with_file_index(file_index.clone())
         .with_session_claims(session_claims)
         .with_permission_prompter(
             Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
         )
-        .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
-        .with_mcp(config)
-        .await;
+        .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
+    agent.set_approval_mode(config.general.approval_mode.unwrap_or_default());
+    agent = agent.with_mcp(config).await;
 
     let session = Session::new(project_dir.to_path_buf(), system_prompt);
     let history = SessionHistory::new();
@@ -3071,6 +3503,58 @@ fn warn_missing_api_key(app: &mut TuiApp, provider: &str) {
     );
 }
 
+/// Apply model / effort / approval / login / catalog flags set by dialogs.
+#[allow(clippy::too_many_arguments)]
+async fn apply_pending_picker_choices(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    config: &mut Config,
+    provider: &mut String,
+    model: &mut String,
+    api_key: &mut String,
+    catalog_fetch_pending: &mut bool,
+    catalog_tx: mpsc::UnboundedSender<(String, String, u32)>,
+    auth_tx: &mpsc::UnboundedSender<AuthFlowEvent>,
+) {
+    if let Some((p, m)) = app.pending_model.take() {
+        apply_model_choice(app, provider, model, api_key, p, m, config);
+        fill_oauth_credential(api_key, provider).await;
+        defer_or_spawn_catalog(
+            rt.agent_busy,
+            catalog_fetch_pending,
+            config,
+            provider,
+            model,
+            api_key,
+            catalog_tx.clone(),
+        );
+    }
+    if let Some(effort) = app.pending_effort.take() {
+        apply_reasoning_effort(app, &mut rt.agent, config, &effort);
+    }
+    if let Some(mode) = app.pending_approval_mode.take() {
+        apply_approval_mode(app, &mut rt.agent, config, mode);
+    }
+    if let Some(p) = app.pending_login_provider.take()
+        && let Ok(dir) = Config::data_dir()
+    {
+        spawn_oauth_login(app, auth_tx, dir, &p);
+    }
+    if app.pending_catalog_refresh {
+        app.pending_catalog_refresh = false;
+        app.clear_api_context_window();
+        defer_or_spawn_catalog(
+            rt.agent_busy,
+            catalog_fetch_pending,
+            config,
+            provider,
+            model,
+            api_key,
+            catalog_tx,
+        );
+    }
+}
+
 fn apply_idle_suggestion(app: &mut TuiApp, suggestion: String, agent_busy: bool) {
     if suggestion.trim().is_empty() || agent_busy {
         return;
@@ -3403,10 +3887,6 @@ fn apply_reasoning_effort(app: &mut TuiApp, agent: &mut Agent, config: &mut Conf
 }
 
 fn persist_session_reasoning_effort(value: &str) -> anyhow::Result<()> {
-    // Tests must not rewrite the developer's user config.toml.
-    if cfg!(test) {
-        return Ok(());
-    }
     let mut disk = Config::load()?;
     disk.session.reasoning_effort = Some(value.to_string());
     disk.save()?;
@@ -3441,9 +3921,6 @@ fn apply_approval_mode(
 }
 
 fn persist_general_approval_mode(mode: ApprovalMode) -> anyhow::Result<()> {
-    if cfg!(test) {
-        return Ok(());
-    }
     let mut disk = Config::load()?;
     disk.general.approval_mode = Some(mode);
     disk.save()?;
@@ -3604,6 +4081,170 @@ fn should_force_stop(
             .unwrap_or(false)
 }
 
+/// In-loop hard stop: abort a wedged turn after [`CANCEL_FORCE_AFTER`] or a
+/// second `[stop]` while already cancelling.
+fn maybe_force_stop_in_loop(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    config: &Config,
+    project_dir: &std::path::Path,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
+) {
+    if !should_force_stop(rt.agent_busy, *cancel_requested_at, app.pending_cancel) {
+        return;
+    }
+    app.pending_cancel = false;
+    force_stop_turn(
+        app,
+        rt,
+        cancel_requested_at,
+        config,
+        project_dir,
+        file_index,
+    );
+}
+
+/// Local in-process agent turn. Records the user message, routes the model,
+/// and delivers [`TurnOutcome::Ok`] / [`TurnOutcome::Err`].
+#[allow(clippy::too_many_arguments)]
+fn spawn_local_turn(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    prompt: &str,
+    submit_images: &[crate::images::PromptImage],
+    project_dir: &std::path::Path,
+    config: &Config,
+    provider: &str,
+    model: &str,
+    api_key: &str,
+    max_turns: Option<usize>,
+    title_tx: mpsc::UnboundedSender<(String, String)>,
+) {
+    let flag = arm_generating(app, rt, cancel_requested_at, "");
+    let expanded = record_user_turn(app, rt, prompt, project_dir, config, submit_images);
+    let (route_provider, route_model) = route_turn_model(
+        rt.session.id.as_str(),
+        provider,
+        model,
+        &expanded,
+        rt.agent
+            .model_fast()
+            .or(config.session.model_fast.as_deref()),
+    );
+
+    let provider2 = route_provider;
+    let model2 = route_model;
+    let api_key2 = api_key.to_string();
+    let event_tx2 = rt.event_tx.clone();
+    let done_tx2 = rt.done_tx.clone();
+    let cancel2 = Some(flag);
+    let auto_title = config.session.auto_title;
+    let title_model = config.session.title_model.clone();
+    let title_tx2 = title_tx;
+    let title_provider = provider.to_string();
+    let title_session_model = model.to_string();
+
+    let (ag, sess) = take_turn_owner(rt, project_dir);
+
+    rt.turn_join = Some(tokio::spawn(async move {
+        let agent = ag;
+        let mut session = sess;
+        // Time only the agent loop. Title refine runs async *after*
+        // we release rt.agent_busy so the user can type immediately.
+        let work_t0 = Instant::now();
+        let result = agent
+            .run_turn_with_events(
+                &mut session,
+                TurnOpts {
+                    provider_name: &provider2,
+                    model: &model2,
+                    api_key: &api_key2,
+                    max_turns,
+                    events: Some(event_tx2),
+                    cancel: cancel2,
+                },
+            )
+            .await;
+        let work_ms = work_t0.elapsed().as_millis();
+        // Kick off small-model title refine without awaiting — the
+        // main loop applies the title when title_tx delivers.
+        if auto_title && result.is_ok() {
+            let _ = agent.spawn_title_refine(
+                &session,
+                &title_provider,
+                &title_session_model,
+                &api_key2,
+                title_model.as_deref(),
+                title_tx2,
+            );
+        }
+        match result {
+            Ok(text) => {
+                let _ = done_tx2.send(TurnOutcome::Ok {
+                    text,
+                    agent,
+                    session,
+                    work_ms,
+                });
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                let cancelled = msg.to_ascii_lowercase().contains("cancel");
+                let _ = done_tx2.send(TurnOutcome::Err {
+                    error: msg,
+                    agent,
+                    session,
+                    cancelled,
+                    work_ms,
+                });
+            }
+        }
+    }));
+}
+
+/// Remote `whycodes serve` turn: stream over HTTP, deliver [`TurnOutcome::Remote`].
+fn spawn_remote_turn(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    rem: crate::remote::RemoteAttach,
+    prompt: &str,
+    project_dir: &std::path::Path,
+) {
+    let expanded = expand_at_files(prompt, project_dir);
+    rt.session.add_user_message(&expanded);
+    let flag = arm_generating(app, rt, cancel_requested_at, "remote…");
+    let event_tx2 = rt.event_tx.clone();
+    let done_tx2 = rt.done_tx.clone();
+    rt.turn_join = Some(tokio::spawn(async move {
+        let t0 = Instant::now();
+        let result = crate::remote::stream_chat(&rem, &expanded, event_tx2, Some(flag)).await;
+        let work_ms = t0.elapsed().as_millis();
+        match result {
+            Ok(text) => {
+                if let Err(e) = done_tx2.send(TurnOutcome::Remote {
+                    text,
+                    error: None,
+                    work_ms,
+                }) {
+                    tracing::debug!(error = %e, "remote turn done dropped");
+                }
+            }
+            Err(e) => {
+                if let Err(send_err) = done_tx2.send(TurnOutcome::Remote {
+                    text: String::new(),
+                    error: Some(e.to_string()),
+                    work_ms,
+                }) {
+                    tracing::debug!(error = %send_err, "remote turn err dropped");
+                }
+            }
+        }
+    }));
+}
+
 fn maybe_open_queued_dialog(app: &mut TuiApp, rt: &SessionRuntime) {
     // Key off the actual overlay, not a stale WaitingFor* state. A dismissed
     // question can leave WaitingForQuestion with an empty stack (issue #41).
@@ -3620,6 +4261,17 @@ fn maybe_open_queued_dialog(app: &mut TuiApp, rt: &SessionRuntime) {
         app.ask_question(front.questions.clone());
         app.mark_dirty();
     }
+}
+
+/// Move newly arrived prompter requests onto the runtime queues, then open one overlay.
+fn drain_prompter_queues(app: &mut TuiApp, rt: &mut SessionRuntime) {
+    while let Ok(req) = rt.perm_rx.try_recv() {
+        rt.pending_perm_queue.push_back(req);
+    }
+    while let Ok(req) = rt.question_rx.try_recv() {
+        rt.pending_question_queue.push_back(req);
+    }
+    maybe_open_queued_dialog(app, rt);
 }
 
 fn apply_dashboard_switch(
@@ -4066,6 +4718,74 @@ pub(super) fn settle_first_frame_hydrate(
     }
 }
 
+/// Paste / focus / resize echo leftover glyphs onto the PTY; clear twice.
+fn apply_batch_full_clears(app: &mut TuiApp, batch: &[Event]) {
+    if batch
+        .iter()
+        .any(crate::redraw_schedule::event_needs_full_clear)
+    {
+        // Two frames: some emulators echo the paste *after*
+        // Event::Paste, so one clear is overwritten by the ghost.
+        app.request_full_clear(2);
+    }
+    if crate::redraw_schedule::batch_looks_like_unbracketed_paste(batch) {
+        app.request_full_clear(2);
+    }
+}
+
+/// Store the mouse-selection cell snapshot, or drop it when nothing is selected.
+fn apply_draw_snapshot(app: &mut TuiApp, snapshot: Option<crate::cell_grid::CellGrid>) {
+    if let Some(cells) = snapshot {
+        app.screen_cells = cells;
+    } else if !app.screen_cells.is_empty() {
+        app.screen_cells.clear();
+    }
+}
+
+/// True once a `WHYCODES_BENCH` run has drawn its first frame and outstayed its duration.
+fn bench_should_break(bench: Option<&crate::bench::BenchConfig>) -> bool {
+    matches!(bench, Some(b) if crate::bench::should_stop(b))
+}
+
+/// Snapshot + deferred heap trim + dirty flag. Returns true when a bench run should exit.
+fn after_draw_frame(
+    app: &mut TuiApp,
+    snapshot: Option<crate::cell_grid::CellGrid>,
+    animate: bool,
+    bench: Option<&crate::bench::BenchConfig>,
+) -> bool {
+    apply_draw_snapshot(app, snapshot);
+    crate::heap::run_deferred_release();
+    app.needs_redraw = animate || app.pending_full_clears > 0;
+    bench_should_break(bench)
+}
+
+fn refresh_sidebar_if_visible(
+    app: &mut TuiApp,
+    config: &whycodes_config::Config,
+    file_index: &std::sync::Arc<whycodes_index::WorkspaceIndex>,
+) {
+    if app.sidebar.visible {
+        refresh_sidebar(app, config, file_index);
+    }
+}
+
+/// Drain agent stream events; refresh the sidebar only when it is on screen.
+fn after_turn_events_drain(
+    app: &mut TuiApp,
+    event_rx: &mut mpsc::UnboundedReceiver<TurnEvent>,
+    config: &whycodes_config::Config,
+    file_index: &std::sync::Arc<whycodes_index::WorkspaceIndex>,
+) -> bool {
+    if drain_turn_events(app, event_rx) {
+        refresh_sidebar_if_visible(app, config, file_index);
+        app.mark_dirty();
+        true
+    } else {
+        false
+    }
+}
+
 /// Refresh sidebar lists from the workspace index, config, and session todos.
 fn refresh_sidebar(
     app: &mut TuiApp,
@@ -4106,6 +4826,114 @@ fn load_app_todos(app: &mut TuiApp) {
             Some(app.session_id.as_str())
         },
     ));
+}
+
+/// Paint, then hydrate. Deferred boot work the first 80×24 home frame does
+/// not need (issue #49).
+#[allow(clippy::too_many_arguments)]
+async fn hydrate_after_first_frame(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    file_index: &mut Arc<whycodes_index::WorkspaceIndex>,
+    api_key: &mut String,
+    provider: &str,
+    model: &str,
+    config: &Config,
+    project_dir: &std::path::Path,
+    animate: bool,
+) {
+    let hydrate_before = capture_first_frame_hydrate_chrome(app);
+    app.config.theme.apply_syntax_theme();
+    hydrate_auth_plugins(project_dir);
+    let real = start_workspace_file_index(project_dir);
+    app.set_file_index(real.clone());
+    rt.agent.set_file_index(real.clone());
+    *file_index = real;
+    rt.agent.hydrate_plugins(Some(project_dir));
+    hydrate_full_system_prompt(rt, project_dir, config);
+    hydrate_session_picker(app);
+    hydrate_deferred_api_key(api_key, provider, model, config, app);
+    rt.agent.load_mcp(config).await;
+    maybe_session_auto_index(project_dir, config, app);
+    refresh_sidebar(app, config, file_index);
+    load_app_todos(app);
+    settle_first_frame_hydrate(app, &hydrate_before, animate);
+}
+
+fn hydrate_auth_plugins(project_dir: &std::path::Path) -> usize {
+    let mut dirs = Vec::new();
+    if let Ok(p) = whycodes_config::Config::default_path()
+        && let Some(parent) = p.parent()
+    {
+        dirs.push(parent.join("plugins"));
+    }
+    dirs.push(whycodes_core::project_dir(project_dir).join("plugins"));
+    let loaded = whycodes_auth::plugin::load_from_dirs(&dirs);
+    if loaded > 0 {
+        tracing::debug!(count = loaded, "hydrated auth plugins after first frame");
+    }
+    loaded
+}
+
+fn start_workspace_file_index(
+    project_dir: &std::path::Path,
+) -> Arc<whycodes_index::WorkspaceIndex> {
+    whycodes_index::WorkspaceIndex::start(whycodes_index::WorkspaceIndex::project_roots(
+        project_dir,
+    ))
+}
+
+fn hydrate_full_system_prompt(
+    rt: &mut SessionRuntime,
+    project_dir: &std::path::Path,
+    config: &Config,
+) {
+    let base = rt.agent.system_prompt();
+    let with_agents = whycodes_agent::agent::Agent::with_agents_md(&base, project_dir);
+    let full = with_project_memory(&with_agents, project_dir, config, None);
+    rt.session.set_system_prompt(&full);
+}
+
+fn hydrate_session_picker(app: &mut TuiApp) {
+    if app.session_list.sessions.is_empty() {
+        let entries = load_session_entries();
+        if !entries.is_empty() {
+            app.session_list.sessions = entries;
+        }
+    }
+}
+
+fn hydrate_deferred_api_key(
+    api_key: &mut String,
+    provider: &str,
+    model: &str,
+    config: &Config,
+    app: &mut TuiApp,
+) {
+    if !api_key.is_empty() {
+        return;
+    }
+    let env_var = format!("{}_API_KEY", provider.to_uppercase());
+    let mut fetched: Option<String> = None;
+    if let Ok(v) = std::env::var(&env_var)
+        && !v.is_empty()
+    {
+        fetched = Some(v);
+    }
+    if fetched.is_none()
+        && let Some(pc) = config.get_provider(provider)
+        && let Some(k) = &pc.api_key
+        && !k.is_empty()
+    {
+        fetched = Some(k.clone());
+    }
+    if let Some(k) = fetched {
+        *api_key = k;
+        app.status_message = format!(
+            "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
+            app.agent_name, provider, model
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4463,7 +5291,7 @@ fn spawn_model_context_fetch(
     tx: mpsc::UnboundedSender<(String, String, u32)>,
 ) {
     // Opt-out for debugging hang/crash suspicions: WHYCODES_NO_MODEL_CATALOG=1
-    if std::env::var_os("WHYCODES_NO_MODEL_CATALOG").is_some() {
+    if skip_model_catalog() {
         tracing::debug!("WHYCODES_NO_MODEL_CATALOG set — skip /v1/models");
         return;
     }
@@ -4518,4 +5346,8 @@ fn spawn_model_context_fetch(
             }
         }
     });
+}
+
+fn skip_model_catalog() -> bool {
+    std::env::var_os("WHYCODES_NO_MODEL_CATALOG").is_some()
 }

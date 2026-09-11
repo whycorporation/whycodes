@@ -91,13 +91,7 @@ impl Tool for MemoryTool {
 
             let svc = match service_for(ctx) {
                 Ok(s) => s,
-                Err(e) => {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: e,
-                        is_error: true,
-                    };
-                }
+                Err(e) => return memory_err(e),
             };
 
             let result = match action.as_str() {
@@ -114,30 +108,16 @@ impl Tool for MemoryTool {
                             is_error: true,
                         };
                     }
-                    match svc.remember(text, ctx.session_id.as_deref()) {
-                        Ok(id) => Ok(format!(
-                            "Saved memory {}:\n{}",
-                            &id[..8.min(id.len())],
-                            text
-                        )),
-                        Err(e) => Err(e.to_string()),
-                    }
+                    map_svc(
+                        svc.remember(text, ctx.session_id.as_deref())
+                            .map_err(|e| e.to_string()),
+                        |id| format!("Saved memory {}:\n{text}", &id[..8.min(id.len())]),
+                    )
                 }
-                "list" => match svc.list(limit) {
-                    Ok(rows) if rows.is_empty() => Ok("No memories for this project.".into()),
-                    Ok(rows) => {
-                        let mut out = format!("{} memories:\n", rows.len());
-                        for r in rows {
-                            out.push_str(&format!(
-                                "- [{}] {}\n",
-                                &r.id[..8.min(r.id.len())],
-                                r.text
-                            ));
-                        }
-                        Ok(out)
-                    }
-                    Err(e) => Err(e.to_string()),
-                },
+                "list" => map_svc(
+                    svc.list(limit).map_err(|e| e.to_string()),
+                    format_memory_list,
+                ),
                 "search" => {
                     let q = args
                         .get("text")
@@ -151,22 +131,10 @@ impl Tool for MemoryTool {
                             is_error: true,
                         };
                     }
-                    match svc.search(q, limit, 0.15) {
-                        Ok(hits) if hits.is_empty() => Ok("No matching memories.".into()),
-                        Ok(hits) => {
-                            let mut out = format!("{} hits:\n", hits.len());
-                            for h in hits {
-                                out.push_str(&format!(
-                                    "- [{:.2}] [{}] {}\n",
-                                    h.score,
-                                    &h.entry.id[..8.min(h.entry.id.len())],
-                                    h.entry.text
-                                ));
-                            }
-                            Ok(out)
-                        }
-                        Err(e) => Err(e.to_string()),
-                    }
+                    map_svc(
+                        svc.search(q, limit, 0.15).map_err(|e| e.to_string()),
+                        format_memory_hits,
+                    )
                 }
                 "delete" => {
                     let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
@@ -177,11 +145,9 @@ impl Tool for MemoryTool {
                             is_error: true,
                         };
                     }
-                    match svc.delete(id) {
-                        Ok(true) => Ok(format!("Deleted memory {id}")),
-                        Ok(false) => Ok(format!("No memory matching '{id}'")),
-                        Err(e) => Err(e.to_string()),
-                    }
+                    map_svc(svc.delete(id).map_err(|e| e.to_string()), |ok| {
+                        format_delete(id, ok)
+                    })
                 }
                 "code_search" => {
                     let q = args
@@ -196,32 +162,15 @@ impl Tool for MemoryTool {
                             is_error: true,
                         };
                     }
-                    match svc.search_code(q, limit, 0.12) {
-                    Ok(hits) if hits.is_empty() => Ok(
-                        "No code hits. Run memory action=index first (or `whycodes memory index`)."
-                            .into(),
-                    ),
-                    Ok(hits) => {
-                        let mut out = format!("{} code hits:\n", hits.len());
-                        for h in hits {
-                            out.push_str(&format!(
-                                "- [{:.2}] {}:{}-{}\n{}\n",
-                                h.score,
-                                h.entry.path,
-                                h.entry.start_line,
-                                h.entry.end_line,
-                                h.entry.text.lines().take(6).collect::<Vec<_>>().join("\n")
-                            ));
-                        }
-                        Ok(out)
-                    }
-                    Err(e) => Err(e.to_string()),
+                    map_svc(
+                        svc.search_code(q, limit, 0.12).map_err(|e| e.to_string()),
+                        format_code_hits,
+                    )
                 }
-                }
-                "index" => match svc.index_codebase(2000, 8000) {
-                    Ok(n) => Ok(format!("Indexed {n} code chunks for this project.")),
-                    Err(e) => Err(e.to_string()),
-                },
+                "index" => map_svc(
+                    svc.index_codebase(2000, 8000).map_err(|e| e.to_string()),
+                    |n| format!("Indexed {n} code chunks for this project."),
+                ),
                 "learn" => {
                     let text = args
                         .get("text")
@@ -236,13 +185,11 @@ impl Tool for MemoryTool {
                         };
                     }
                     let lesson = format!("Lesson: {text}");
-                    match svc.remember(&lesson, ctx.session_id.as_deref()) {
-                        Ok(id) => Ok(format!(
-                            "Lesson stored {}:\n{lesson}",
-                            &id[..8.min(id.len())]
-                        )),
-                        Err(e) => Err(e.to_string()),
-                    }
+                    map_svc(
+                        svc.remember(&lesson, ctx.session_id.as_deref())
+                            .map_err(|e| e.to_string()),
+                        |id| format!("Lesson stored {}:\n{lesson}", &id[..8.min(id.len())]),
+                    )
                 }
                 _ => {
                     return ToolResult {
@@ -255,20 +202,96 @@ impl Tool for MemoryTool {
                 }
             };
 
-            match result {
-                Ok(content) => ToolResult {
-                    tool_call_id: String::new(),
-                    content,
-                    is_error: false,
-                },
-                Err(e) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: e,
-                    is_error: true,
-                },
-            }
+            memory_result(result)
         })
     }
+}
+
+fn map_svc<T>(result: Result<T, String>, ok: impl FnOnce(T) -> String) -> Result<String, String> {
+    match result {
+        Ok(v) => Ok(ok(v)),
+        Err(e) => Err(memory_svc_err(&e)),
+    }
+}
+
+fn format_memory_list(rows: Vec<whycodes_memory::MemoryRow>) -> String {
+    if rows.is_empty() {
+        return "No memories for this project.".into();
+    }
+    let mut out = format!("{} memories:\n", rows.len());
+    for r in rows {
+        out.push_str(&format!("- [{}] {}\n", &r.id[..8.min(r.id.len())], r.text));
+    }
+    out
+}
+
+fn format_memory_hits(hits: Vec<whycodes_memory::RecallHit>) -> String {
+    if hits.is_empty() {
+        return "No matching memories.".into();
+    }
+    let mut out = format!("{} hits:\n", hits.len());
+    for h in hits {
+        out.push_str(&format!(
+            "- [{:.2}] [{}] {}\n",
+            h.score,
+            &h.entry.id[..8.min(h.entry.id.len())],
+            h.entry.text
+        ));
+    }
+    out
+}
+
+fn format_delete(id: &str, ok: bool) -> String {
+    if ok {
+        format!("Deleted memory {id}")
+    } else {
+        format!("No memory matching '{id}'")
+    }
+}
+
+fn format_code_hits(hits: Vec<whycodes_memory::CodeHit>) -> String {
+    if hits.is_empty() {
+        return "No code hits. Run memory action=index first (or `whycodes memory index`).".into();
+    }
+    let mut out = format!("{} code hits:\n", hits.len());
+    for h in hits {
+        out.push_str(&format!(
+            "- [{:.2}] {}:{}-{}\n{}\n",
+            h.score,
+            h.entry.path,
+            h.entry.start_line,
+            h.entry.end_line,
+            h.entry.text.lines().take(6).collect::<Vec<_>>().join("\n")
+        ));
+    }
+    out
+}
+
+fn memory_result(result: Result<String, String>) -> ToolResult {
+    match result {
+        Ok(content) => memory_ok(content),
+        Err(e) => memory_err(e),
+    }
+}
+
+fn memory_ok(content: String) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content,
+        is_error: false,
+    }
+}
+
+fn memory_err(e: String) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: e,
+        is_error: true,
+    }
+}
+
+fn memory_svc_err(e: &str) -> String {
+    e.to_string()
 }
 
 #[cfg(test)]

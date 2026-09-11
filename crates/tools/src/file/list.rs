@@ -142,69 +142,83 @@ impl ListTool {
                 None => list_recursive(&target, &ignore, max_depth, max_entries),
             }
         } else {
-            match list_dir_entries(&target, &ignore) {
-                Ok(all) => {
-                    let dir_count = all.iter().filter(|e| e.is_dir).count();
-                    let file_count = all.len() - dir_count;
-                    let truncated = all.len() > max_entries;
-                    let entries: Vec<(String, bool, Option<u64>)> = all
-                        .into_iter()
-                        .take(max_entries)
-                        .map(|e| (e.name, e.is_dir, e.size))
-                        .collect();
-                    (entries, truncated, dir_count, file_count)
-                }
-                Err(e) => {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: e,
-                        is_error: true,
-                    };
-                }
-            }
+            return listing_from(
+                take_listed(listed_entries(&target, &ignore, max_entries)),
+                &shown,
+                recursive,
+                max_depth,
+            );
         };
 
-        let mut out = format!("Contents of {}:\n", shown);
-        if entries.is_empty() {
-            out.push_str("(empty)\n");
-        } else {
-            // Column width for names
-            let name_w = entries
-                .iter()
-                .map(|(n, is_dir, _)| n.len() + if *is_dir { 1 } else { 0 })
-                .max()
-                .unwrap_or(8)
-                .min(60);
+        listing_ok(
+            &shown, entries, truncated, dir_count, file_count, recursive, max_depth,
+        )
+    }
+}
 
-            for (name, is_dir, size) in &entries {
-                if *is_dir {
-                    out.push_str(&format!("  {:<width$}/\n", name, width = name_w));
-                } else {
-                    let sz = size.map(human_size).unwrap_or_else(|| "?".into());
-                    out.push_str(&format!("  {:<width$}  {:>10}\n", name, sz, width = name_w));
-                }
+fn listing_from(
+    result: Result<ListRecursiveOut, ToolResult>,
+    shown: &str,
+    recursive: bool,
+    max_depth: usize,
+) -> ToolResult {
+    match result {
+        Ok((entries, truncated, dir_count, file_count)) => listing_ok(
+            shown, entries, truncated, dir_count, file_count, recursive, max_depth,
+        ),
+        Err(e) => listed_entries_failed(e),
+    }
+}
+
+fn listing_ok(
+    shown: &str,
+    entries: Vec<ListEntry>,
+    truncated: bool,
+    dir_count: usize,
+    file_count: usize,
+    recursive: bool,
+    max_depth: usize,
+) -> ToolResult {
+    let mut out = format!("Contents of {}:\n", shown);
+    if entries.is_empty() {
+        out.push_str("(empty)\n");
+    } else {
+        // Column width for names
+        let name_w = entries
+            .iter()
+            .map(|(n, is_dir, _)| n.len() + if *is_dir { 1 } else { 0 })
+            .max()
+            .unwrap_or(8)
+            .min(60);
+
+        for (name, is_dir, size) in &entries {
+            if *is_dir {
+                out.push_str(&format!("  {:<width$}/\n", name, width = name_w));
+            } else {
+                let sz = size.map(human_size).unwrap_or_else(|| "?".into());
+                out.push_str(&format!("  {:<width$}  {:>10}\n", name, sz, width = name_w));
             }
         }
+    }
 
+    out.push_str(&format!(
+        "\n{} directories, {} files",
+        dir_count, file_count
+    ));
+    if truncated {
         out.push_str(&format!(
-            "\n{} directories, {} files",
-            dir_count, file_count
+            " (showing first {} — raise max_entries or narrow path)",
+            entries.len()
         ));
-        if truncated {
-            out.push_str(&format!(
-                " (showing first {} — raise max_entries or narrow path)",
-                entries.len()
-            ));
-        }
-        if recursive {
-            out.push_str(&format!(" [recursive depth≤{}]", max_depth));
-        }
+    }
+    if recursive {
+        out.push_str(&format!(" [recursive depth≤{}]", max_depth));
+    }
 
-        ToolResult {
-            tool_call_id: String::new(),
-            content: out,
-            is_error: false,
-        }
+    ToolResult {
+        tool_call_id: String::new(),
+        content: out,
+        is_error: false,
     }
 }
 
@@ -259,6 +273,44 @@ fn list_recursive_index(
             .then_with(|| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()))
     });
     Some((out, truncated, dir_count, file_count))
+}
+
+fn listed_entries(
+    target: &Path,
+    ignore: &[String],
+    max_entries: usize,
+) -> Result<ListRecursiveOut, ToolResult> {
+    let all = list_dir_entries(target, ignore).map_err(list_entries_error)?;
+    let dir_count = all.iter().filter(|e| e.is_dir).count();
+    let file_count = all.len() - dir_count;
+    let truncated = all.len() > max_entries;
+    let entries: Vec<(String, bool, Option<u64>)> = all
+        .into_iter()
+        .take(max_entries)
+        .map(|e| (e.name, e.is_dir, e.size))
+        .collect();
+    Ok((entries, truncated, dir_count, file_count))
+}
+
+fn take_listed(
+    result: Result<ListRecursiveOut, ToolResult>,
+) -> Result<ListRecursiveOut, ToolResult> {
+    match result {
+        Ok(out) => Ok(out),
+        Err(e) => Err(listed_entries_failed(e)),
+    }
+}
+
+fn listed_entries_failed(e: ToolResult) -> ToolResult {
+    e
+}
+
+fn list_entries_error(e: String) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: e,
+        is_error: true,
+    }
 }
 
 /// Recursive listing with depth limit, gitignore, and skip-dir pruning.

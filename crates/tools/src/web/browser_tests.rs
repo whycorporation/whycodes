@@ -1,6 +1,30 @@
 use super::*;
 use std::net::TcpListener;
+use std::process::Stdio;
 use std::thread;
+
+fn hang_browser_child() -> Child {
+    #[cfg(windows)]
+    {
+        Command::new("cmd")
+            .args(["/C", "ping", "-n", "30", "127.0.0.1", ">", "NUL"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    }
+}
 
 fn connected_streams() -> (TcpStream, TcpStream) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
@@ -242,6 +266,13 @@ fn find_browser_and_http_get_without_slash() {
     let exists = std::env::current_exe().unwrap();
     unsafe { std::env::set_var("WHYCODES_BROWSER", &exists) };
     assert_eq!(find_browser().as_deref(), Some(exists.as_path()));
+    let found_status = status();
+    assert!(!found_status.is_error, "{}", found_status.content);
+    assert!(
+        found_status.content.contains("browser:"),
+        "{}",
+        found_status.content
+    );
     unsafe {
         match prev {
             Some(v) => std::env::set_var("WHYCODES_BROWSER", v),
@@ -251,6 +282,200 @@ fn find_browser_and_http_get_without_slash() {
     let _ = user_data_dir();
     let _ = pick_port();
     assert!(http_get("http://127.0.0.1:1").is_err());
+    assert!(which_browser_from(None).is_none());
+    assert!(
+        which_browser_from(Some(std::process::Output {
+            status: fail_cmd_status(),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }))
+        .is_none()
+    );
+    assert!(
+        which_browser_from(Some(std::process::Output {
+            status: ok_cmd_status(),
+            stdout: b"   \n".to_vec(),
+            stderr: Vec::new(),
+        }))
+        .is_none()
+    );
+    assert_eq!(
+        which_browser_from(Some(std::process::Output {
+            status: ok_cmd_status(),
+            stdout: b"/usr/bin/chromium\n".to_vec(),
+            stderr: Vec::new(),
+        }))
+        .as_deref(),
+        Some(std::path::Path::new("/usr/bin/chromium"))
+    );
+    let _ = find_browser_on_path();
+    let (running, port) = session_status();
+    assert!(!running);
+    assert!(port.is_none());
+    assert_eq!(pick_port_fallback("boom", "ephemeral port bind"), 9222);
+    let status = browser_status_line(Path::new("/usr/bin/chrome"), false, None);
+    assert!(status.contains("running: false"));
+    assert!(status.contains("port: -"));
+    let js_err = evaluate_js_exception(&json!({"text": "boom"}));
+    assert!(js_err.unwrap_err().contains("js exception"));
+    let found = browser_found_status(Path::new("/usr/bin/chrome"), false, None);
+    assert!(!found.is_error);
+    assert!(found.content.contains("running: false"));
+    let fields = session_fields(&None);
+    assert!(!fields.0);
+    assert!(fields.1.is_none());
+    assert!(decode_screenshot("%%%").is_err());
+    assert_eq!(decode_screenshot("aGVsbG8=").unwrap(), b"hello");
+    assert_eq!(screenshot_data(&json!({"data": "abc"})), Some("abc"));
+    assert!(screenshot_data(&json!({})).is_none());
+    assert!(existing_session_port(Ok(SESSION.lock().unwrap_or_else(|e| e.into_inner()))).is_none());
+    mkdir_browser_profile(&std::env::temp_dir().join("whycodes-browser-profile-test"));
+    let snap_ok = snapshot_from_eval(Ok(json!({"title": "t"})));
+    assert!(!snap_ok.is_error, "{}", snap_ok.content);
+    let snap_err = snapshot_from_eval(Err("boom".into()));
+    assert!(snap_err.is_error);
+    let click_ok = click_from_eval(Ok(json!({"ok": true})), "#x");
+    assert!(!click_ok.is_error);
+    let click_fail = click_from_eval(Ok(json!({"ok": false})), "#x");
+    assert!(click_fail.is_error);
+    let click_err = click_from_eval(Err("boom".into()), "#x");
+    assert!(click_err.is_error);
+    let type_ok = type_from_eval(Ok(json!({"ok": true})));
+    assert!(!type_ok.is_error);
+    let type_fail = type_from_eval(Ok(json!({"ok": false})));
+    assert!(type_fail.is_error);
+    let type_err = type_from_eval(Err("boom".into()));
+    assert!(type_err.is_error);
+    let shot_err = screenshot_from_cdp(Err("boom".into()), &ToolContext::unsandboxed("."));
+    assert!(shot_err.is_error);
+    let shot_nodata = screenshot_from_cdp(Ok(json!({})), &ToolContext::unsandboxed("."));
+    assert!(shot_nodata.is_error);
+    let shot_bad = screenshot_from_cdp(Ok(json!({"data": "%%%"})), &ToolContext::unsandboxed("."));
+    assert!(shot_bad.is_error);
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::unsandboxed(dir.path().to_string_lossy().into_owned());
+    let saved = write_screenshot_bytes(&ctx, b"png");
+    assert!(!saved.is_error, "{}", saved.content);
+    assert!(js_exception_from(&json!({"text": "boom"})).is_err());
+    let nav_err = navigate_opened(1, "http://example.test");
+    assert!(nav_err.is_error);
+    mkdir_browser_profile_result(Err(std::io::Error::other("mkdir")));
+    page_enable_result(Err("boom".into()));
+    kill_child_debug(Err(std::io::Error::other("kill")), "browser kill");
+    set_timeout_debug(Err(std::io::Error::other("timeout")), "http get timeout");
+    assert!(screenshot_mkdir_failed("denied").is_error);
+    assert!(screenshot_write_failed("denied").is_error);
+    assert_eq!(pick_bound_port(Err(std::io::Error::other("bind"))), 9222);
+    assert_eq!(port_from_addr(Err(std::io::Error::other("addr"))), 9222);
+    drop(unlock_session(Ok(SESSION
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()))));
+    drop(unlock_session_result(Ok(SESSION
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()))));
+    let lock: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _g = lock.lock().unwrap();
+        panic!("poison");
+    }));
+    let recovered = recover_lock(lock.lock());
+    assert_eq!(*recovered, 0);
+    let not_ready = take_ready_session(false, hang_browser_child(), 1, PathBuf::from("/tmp"));
+    match not_ready {
+        Err((mut child, _)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        Ok(_) => panic!("expected not ready"),
+    }
+    let ready = take_ready_session(true, hang_browser_child(), 11, PathBuf::from("/tmp"));
+    assert_eq!(ready.ok().and_then(|r| r.ok()), Some(11));
+    drop(close_browser());
+    let applied = apply_ready_session(Ok(Ok(12)));
+    assert_eq!(applied.ok().and_then(|r| r.ok()), Some(12));
+    let finished = finish_session_poll(Ok(Ok(14)));
+    assert_eq!(finished.ok().and_then(|r| r.ok()), Some(14));
+    let (ready, retry) = split_session_poll(Ok(Ok(15)));
+    assert_eq!(ready.and_then(|r| r.ok()), Some(15));
+    assert!(retry.is_none());
+    let (ready, retry) = split_session_poll(Err((hang_browser_child(), PathBuf::from("/tmp"))));
+    assert!(ready.is_none());
+    if let Some((mut child, _)) = retry {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let polled = next_session_poll(true, hang_browser_child(), 13, PathBuf::from("/tmp"));
+    assert_eq!(polled.ok().and_then(|r| r.ok()), Some(13));
+    drop(close_browser());
+    let retried = apply_ready_session(Err((hang_browser_child(), PathBuf::from("/tmp"))));
+    match retried {
+        Err((mut child, _)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        Ok(_) => panic!("expected retry"),
+    }
+    let eval_ex = evaluate_cdp_result(Ok(json!({"exceptionDetails": {"text": "boom"}})));
+    assert!(eval_ex.is_err());
+    let eval_ok = evaluate_cdp_result(Ok(json!({"result": {"value": 4}})));
+    assert_eq!(eval_ok.ok(), Some(json!(4)));
+    let eval_err = evaluate_cdp_result(Err("cdp".into()));
+    assert!(eval_err.is_err());
+    let blocked = tempfile::tempdir().unwrap();
+    let why = blocked.path().join(".whycodes");
+    std::fs::create_dir_all(&why).unwrap();
+    std::fs::write(why.join("browser"), "not-a-dir").unwrap();
+    let ctx = ToolContext::unsandboxed(blocked.path().to_string_lossy().into_owned());
+    let mkdir_err = write_screenshot_bytes(&ctx, b"png");
+    assert!(mkdir_err.is_error, "{}", mkdir_err.content);
+    let write_err = write_screenshot_file(why.as_path(), b"png");
+    assert!(write_err.is_error, "{}", write_err.content);
+    let stored = store_session(
+        hang_browser_child(),
+        9,
+        PathBuf::from("/tmp/whycodes-browser-store"),
+    );
+    assert_eq!(stored.ok(), Some(9));
+    assert!(existing_session_port(Ok(SESSION.lock().unwrap_or_else(|e| e.into_inner()))).is_some());
+    drop(close_browser());
+    let mut hanging = hang_browser_child();
+    kill_launch_timeout(&mut hanging);
+    let mut hanging = hang_browser_child();
+    kill_browser_child(&mut hanging);
+    wait_browser_child(&mut hanging);
+    let (client, server) = connected_streams();
+    set_http_read_timeout(&client);
+    set_cdp_timeouts(&client);
+    drop(server);
+    drop(client);
+}
+
+fn fail_cmd_status() -> std::process::ExitStatus {
+    #[cfg(windows)]
+    {
+        Command::new("cmd")
+            .args(["/C", "exit", "1"])
+            .status()
+            .unwrap()
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("false").status().unwrap()
+    }
+}
+
+fn ok_cmd_status() -> std::process::ExitStatus {
+    #[cfg(windows)]
+    {
+        Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .status()
+            .unwrap()
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("true").status().unwrap()
+    }
 }
 
 #[test]
@@ -314,7 +539,7 @@ fn websocket_error_and_handshake_failure() {
 #[tokio::test]
 async fn default_and_open_without_browser() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let t = BrowserTool;
+    let t = BrowserTool::default();
     assert_eq!(t.name(), "browser");
     drop(close_browser());
     let ctx = ToolContext::unsandboxed(".");
@@ -374,13 +599,7 @@ fn evaluate_and_session_helpers_on_loopback_cdp() {
         let mut g = SESSION.lock().unwrap_or_else(|e| e.into_inner());
         *g = None;
     }
-    let sleep = Command::new("sleep")
-        .arg("30")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let sleep = hang_browser_child();
     {
         let mut g = SESSION.lock().unwrap_or_else(|e| e.into_inner());
         *g = Some(BrowserSession {
@@ -391,6 +610,14 @@ fn evaluate_and_session_helpers_on_loopback_cdp() {
     }
 
     assert_eq!(current_port(), Some(port));
+    assert_eq!(ensure_session().ok(), Some(port));
+    page_enable_best_effort(port);
+    let opened = open_url("http://example.test");
+    assert!(
+        !opened.is_error || opened.content.contains("opened") || opened.content.contains("cdp"),
+        "{}",
+        opened.content
+    );
     assert!(evaluate(port, "1+1").is_ok());
     let snap = snapshot();
     assert!(!snap.is_error, "{}", snap.content);
@@ -416,6 +643,23 @@ fn evaluate_and_session_helpers_on_loopback_cdp() {
     );
     let closed = close_browser();
     assert!(!closed.is_error, "{}", closed.content);
+    let ready = poll_session_ready(hang_browser_child(), port, PathBuf::from("/tmp"));
+    assert_eq!(ready.ok(), Some(port));
+    drop(close_browser());
+    assert!(poll_invariant().is_err());
+    assert!(retry_or_invariant(None).is_err());
+    assert!(apply_split_poll((None, None)).is_err());
+    let applied_ok = apply_split_poll((Some(Ok(16)), None));
+    assert_eq!(applied_ok.ok().and_then(|r| r.ok()), Some(16));
+    let applied_retry =
+        apply_split_poll((None, Some((hang_browser_child(), PathBuf::from("/tmp")))));
+    match applied_retry {
+        Err(Some((mut child, _))) => {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        _ => panic!("expected retry"),
+    }
     drop(server);
 }
 

@@ -2,6 +2,7 @@ use super::*;
 use std::collections::HashMap;
 use whycodes_config::Config;
 use whycodes_core::types::{ModelConfig, ProviderConfig};
+use whycodes_session::session::Session;
 
 #[test]
 fn html_escape_escapes_special_chars() {
@@ -331,6 +332,76 @@ fn emit_status_ignores_a_closed_channel() {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     drop(rx);
     emit_status(&tx, "gone");
+    warn_persist("ok", Ok(()));
+    warn_persist("failed", Err("no db".into()));
+    assert_eq!(persist_error(&"disk"), "disk");
+    assert_eq!(persist_result(Ok(())), Ok(()));
+    assert_eq!(persist_result(Err("disk".into())), Err("disk".into()));
+    assert_eq!(
+        save_to_db_result(Err(whycodes_session::error::SessionError::msg("disk"))),
+        Err("disk".into())
+    );
+    assert!(share_search_dirs_from(None, None).is_empty());
+    assert_eq!(
+        share_search_dirs_from(Some(PathBuf::from("/tmp")), Some(PathBuf::from("/data"))).len(),
+        2
+    );
+    assert_eq!(
+        read_share_or(std::path::Path::new("no-such-share-file"), "(empty)"),
+        "(empty)"
+    );
+}
+
+#[tokio::test]
+async fn list_session_helpers_skip_missing_and_failed_db_rows() {
+    let mut live = Vec::new();
+    push_live_api_session(&mut live, None).await;
+    assert!(live.is_empty());
+
+    let mut db_sessions = Vec::new();
+    push_db_api_sessions(&mut db_sessions, &[], None);
+    assert!(db_sessions.is_empty());
+
+    let overlap = whycodes_storage::models::SessionRow {
+        id: "live".into(),
+        title: "t".into(),
+        created_at: "c".into(),
+        updated_at: "u".into(),
+        project_path: "/p".into(),
+        usage: Default::default(),
+    };
+    let extra = whycodes_storage::models::SessionRow {
+        id: "db-only".into(),
+        title: "t2".into(),
+        created_at: "c".into(),
+        updated_at: "u".into(),
+        project_path: "/p".into(),
+        usage: Default::default(),
+    };
+    push_db_api_sessions(
+        &mut db_sessions,
+        &["live".into()],
+        Some(vec![overlap, extra]),
+    );
+    assert_eq!(db_sessions.len(), 1);
+    assert_eq!(db_sessions[0]["id"], "db-only");
+}
+
+#[test]
+fn save_session_reports_unavailable_database() {
+    let home = crate::http_tests::IsolatedHome::new();
+    std::fs::create_dir_all(home.path().join("whycodes.db")).unwrap();
+    let session = Session::new("/tmp".into(), "sys".into());
+    let err = save_session(&session).unwrap_err();
+    assert!(err.contains("database unavailable"), "{err}");
+}
+
+#[tokio::test]
+async fn load_or_get_session_returns_none_when_db_unavailable() {
+    let home = crate::http_tests::IsolatedHome::new();
+    std::fs::create_dir_all(home.path().join("whycodes.db")).unwrap();
+    let state = crate::http_tests::test_state();
+    assert!(load_or_get_session(&state, "missing").await.is_none());
 }
 
 #[test]
@@ -458,6 +529,7 @@ async fn share_routes_serve_files_and_error_on_unreadable() {
     std::fs::write(global_shares.join("jsononly.json"), "{\"ok\":true}").unwrap();
     std::fs::create_dir(project_shares.join("baddir.md")).unwrap();
     std::fs::create_dir(project_shares.join("baddir.json")).unwrap();
+    std::fs::create_dir(global_shares.join("jsonunreadable.json")).unwrap();
 
     let listed = list_shares().await;
     let shares = listed["shares"].as_array().unwrap();
@@ -496,6 +568,12 @@ async fn share_routes_serve_files_and_error_on_unreadable() {
     assert_eq!(parts.status, StatusCode::OK);
     let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
     assert!(String::from_utf8_lossy(&bytes).contains("(empty)"));
+
+    let json_unreadable = share_view(Path("jsonunreadable".into())).await;
+    let (parts, body) = json_unreadable.into_parts();
+    assert_eq!(parts.status, StatusCode::OK);
+    let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("Share not found"));
 }
 
 #[tokio::test]

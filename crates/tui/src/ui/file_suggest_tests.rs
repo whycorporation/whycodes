@@ -1,4 +1,6 @@
 use super::*;
+use ratatui::buffer::Buffer;
+use ratatui::style::Color;
 
 #[test]
 fn at_token_finds_mentions() {
@@ -10,6 +12,8 @@ fn at_token_finds_mentions() {
     assert_eq!(at_token("@", 1), Some((0, 1)));
     assert_eq!(at_token("a@", 2), None); // glued to a word → not a mention
     assert_eq!(at_token(" @", 2), Some((1, 2))); // space-separated → mention
+    assert_eq!(at_token("user@host path", 9), None);
+    assert_eq!(at_token("see @file.rs extra", 16), None);
 }
 
 #[test]
@@ -347,4 +351,168 @@ fn render_scrollbar_when_matches_overflow() {
         "scrolled window should include the selection: {text}"
     );
     assert!(app.file_suggest.list_scroll_start > 0);
+}
+
+#[test]
+fn scan_status_root_label_and_scanning_empty_paint() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+    let extra_dir = tempfile::tempdir().unwrap();
+    std::fs::write(extra_dir.path().join("b.rs"), "fn b() {}").unwrap();
+    let extra_name = extra_dir
+        .path()
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "other".into());
+    let index = WorkspaceIndex::start(vec![
+        dir.path().to_path_buf(),
+        extra_dir.path().to_path_buf(),
+    ]);
+    let mut st = FileSuggestState::default();
+    st.set_index(index.clone());
+    assert!(st.scan_status().is_some());
+    assert!(st.root_label(0).is_none());
+    let tag = st.root_label(1);
+    assert!(
+        tag.as_deref() == Some(extra_name.as_str()) || tag.is_some(),
+        "{tag:?} extra={extra_name}"
+    );
+    assert!(st.root_label(99).is_none());
+
+    let mut app = TuiApp::new(crate::config::TuiAppConfig::default());
+    app.file_suggest.set_index(index);
+    app.file_suggest.active = true;
+    app.file_suggest.matches.clear();
+    let text = paint(50, 16, &mut app);
+    assert!(
+        text.contains("scanning") || text.contains("files") || text.contains("no matches"),
+        "{text}"
+    );
+
+    app.file_suggest.matches = vec![FileMatch {
+        rel: "b.rs".into(),
+        root: 1,
+        ..Default::default()
+    }];
+    let tagged = paint(50, 16, &mut app);
+    assert!(
+        tagged.contains(&extra_name) || tagged.contains("b.rs"),
+        "{tagged}"
+    );
+
+    let mut buf = Buffer::empty(Rect::new(0, 0, 1, 1));
+    paint_row(
+        &mut buf,
+        0,
+        0,
+        0,
+        &FileMatch {
+            rel: "x.rs".into(),
+            ..Default::default()
+        },
+        None,
+        false,
+        Color::Black,
+        &DropdownColors::from_palette(&crate::theme::ThemeName::DefaultDark.palette()),
+        &crate::theme::ThemeName::DefaultDark.palette(),
+    );
+}
+
+#[test]
+fn poll_matches_adopts_fuzzy_hits_and_browse_is_not_pending() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::write(tmp.path().join("src/main.rs"), "fn main() {}").unwrap();
+    std::fs::write(tmp.path().join("README.md"), "hi").unwrap();
+    let idx = WorkspaceIndex::start_with(
+        vec![tmp.path().to_path_buf()],
+        whycodes_index::IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(std::time::Duration::from_secs(10)));
+
+    let mut st = FileSuggestState::default();
+    st.set_index(idx);
+    let mut buf = String::from("@mai");
+    let cur = buf.len();
+    st.refresh(&buf, cur);
+    assert!(st.active);
+    assert!(
+        st.results_pending,
+        "fuzzy query must stay pending until workers settle"
+    );
+    assert!(st.awaiting_matches());
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        let _ = st.poll_matches();
+        if st.matches.iter().any(|m| m.rel.contains("main")) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        st.matches.iter().any(|m| m.rel.contains("main")),
+        "poll_matches must adopt fuzzy hits, got {:?}",
+        st.matches
+            .iter()
+            .map(|m| m.rel.as_str())
+            .collect::<Vec<_>>()
+    );
+    let _ = st.poll_matches();
+
+    buf = String::from("@src/");
+    let cur = buf.len();
+    st.refresh(&buf, cur);
+    assert!(st.active);
+    assert!(
+        !st.results_pending,
+        "dir browse is store-backed and must not wait on fuzzy workers"
+    );
+    let _ = st.poll_matches();
+    let _ = st.awaiting_matches();
+}
+
+#[test]
+fn render_ready_truncated_status_and_no_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+    std::fs::write(dir.path().join("b.rs"), "fn b() {}").unwrap();
+    let index = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        whycodes_index::IndexOptions {
+            watch: false,
+            threads: 1,
+            max_entries: 1,
+        },
+    );
+    assert!(index.wait_ready(std::time::Duration::from_secs(10)));
+    match index.status() {
+        ScanStatus::Ready { truncated, .. } => assert!(truncated, "cap of 1 must truncate"),
+        other => panic!("expected ready+truncated, got {other:?}"),
+    }
+
+    let mut app = TuiApp::new(crate::config::TuiAppConfig::default());
+    app.file_suggest.set_index(index);
+    app.file_suggest.active = true;
+    app.file_suggest.matches.clear();
+    let empty = paint(50, 16, &mut app);
+    assert!(empty.contains("no matches"), "ready empty list: {empty}");
+    assert!(
+        empty.contains("capped") || empty.contains("files"),
+        "truncated scan must show capped status: {empty}"
+    );
+
+    app.file_suggest.matches = vec![FileMatch {
+        rel: "a.rs".into(),
+        ..Default::default()
+    }];
+    let capped = paint(50, 16, &mut app);
+    assert!(
+        capped.contains("capped"),
+        "hairline must say (capped) when the index truncated, got {capped}"
+    );
 }

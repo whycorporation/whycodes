@@ -105,6 +105,47 @@ fn default_matches_new() {
     let a = ToolExecutor::new();
     let b = ToolExecutor::default();
     assert_eq!(a.tool_names(), b.tool_names());
+    let _ = skipped_plugin_toml("boom", "plugins.toml load skipped");
+    assert!(skip_empty_plugin_cfg("", "echo"));
+    assert!(skip_empty_plugin_cfg("ok", " "));
+    assert!(!skip_empty_plugin_cfg("ok", "echo"));
+    let empty_cfg = whycodes_skill::PluginConfig {
+        name: String::new(),
+        command: "echo".into(),
+        description: String::new(),
+        parameters: None,
+        working_dir: None,
+    };
+    assert!(keep_plugin_cfg(empty_cfg).is_none());
+    let ok_cfg = whycodes_skill::PluginConfig {
+        name: "ok".into(),
+        command: "echo".into(),
+        description: String::new(),
+        parameters: None,
+        working_dir: None,
+    };
+    assert!(keep_plugin_cfg(ok_cfg).is_some());
+    assert!(
+        keep_plugin_spec(
+            String::new(),
+            "echo".into(),
+            String::new(),
+            None,
+            std::path::PathBuf::from("."),
+        )
+        .is_none()
+    );
+    assert!(
+        keep_plugin_spec(
+            "ok".into(),
+            "echo".into(),
+            String::new(),
+            None,
+            std::path::PathBuf::from("."),
+        )
+        .is_some()
+    );
+    let _ = load_plugin_toml(None);
 }
 
 #[test]
@@ -118,6 +159,17 @@ fn register_and_register_as() {
     ex.register_as("alias_name", fake("real_name", true));
     assert!(ex.get("alias_name").is_some());
     assert!(ex.get("real_name").is_none());
+}
+
+#[test]
+fn configure_lsp_replaces_the_builtin_lsp_tool() {
+    let mut ex = ToolExecutor::new();
+    let overlay = whycodes_lsp::LspSettings {
+        idle_timeout_ms: Some(1_000),
+        servers: Default::default(),
+    };
+    ex.configure_lsp(&overlay);
+    assert!(ex.get("lsp").is_some());
 }
 
 #[test]

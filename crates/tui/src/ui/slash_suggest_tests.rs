@@ -293,4 +293,10 @@ fn render_overflow_reserves_scrollbar_and_honours_hover() {
     assert_eq!(hit.width, 70 - SCROLLBAR_GUTTER);
     assert_eq!(hit.height, MAX_ROWS);
     assert_eq!(app.slash_suggest.list_scroll_start, 0);
+
+    app.slash_suggest.selected = n.saturating_sub(1);
+    let _ = paint(70, 20, |f| {
+        render(f, Rect::new(0, 16, 70, 2), &mut app, &p);
+    });
+    assert!(app.slash_suggest.list_scroll_start > 0);
 }

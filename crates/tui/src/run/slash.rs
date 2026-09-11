@@ -22,6 +22,14 @@ pub struct SlashContext<'a> {
 
 pub(super) const LOOP_USAGE: &str = "Usage: /loop N prompt…  |  /loop stop";
 
+pub(super) fn oauth_unavailable_hint(names: Vec<String>) -> String {
+    if names.is_empty() {
+        "install an auth plugin".to_string()
+    } else {
+        names.join(", ")
+    }
+}
+
 pub(super) enum LoopSlash {
     Stop,
     Queue { n: usize, prompt: String },
@@ -233,21 +241,10 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                         .toasts
                         .push(crate::toast::ToastKind::Info, "No background jobs");
                 } else {
-                    let mut lines = vec![format!(
-                        "Background jobs ({} running)",
-                        ctx.agent.background_registry().running_count()
-                    )];
-                    for j in jobs {
-                        lines.push(format!(
-                            "{} [{}] {:.0}s  {}",
-                            j.id,
-                            j.status.as_str(),
-                            j.elapsed.as_secs_f64(),
-                            j.label
-                        ));
-                    }
-                    lines.push("Hint: /bg kill bg-N".into());
-                    ctx.app.add_message(ChatRole::System, lines.join("\n"));
+                    ctx.app.add_message(
+                        ChatRole::System,
+                        format_bg_jobs(ctx.agent.background_registry().running_count(), &jobs),
+                    );
                 }
             } else if let Some(id) = rest.strip_prefix("kill ").map(str::trim) {
                 match ctx.agent.background_registry().kill(id) {
@@ -295,17 +292,9 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                             );
                             ctx.app.status_message = format!("Saved memory: {text}");
                         }
-                        Err(e) => {
-                            ctx.app
-                                .toasts
-                                .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
-                        }
+                        Err(e) => memory_err_toast(ctx.app, e),
                     },
-                    Err(e) => {
-                        ctx.app
-                            .toasts
-                            .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
-                    }
+                    Err(e) => memory_err_toast(ctx.app, e),
                 }
             }
         }
@@ -328,48 +317,11 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.add_message(ChatRole::System, msg);
                 ctx.app.status_message = format!("Memory · {n} entries");
             }
-            Err(e) => {
-                ctx.app
-                    .toasts
-                    .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
-            }
+            Err(e) => memory_err_toast(ctx.app, e),
         },
         "/share" | "/export" => match ctx.session.export_share() {
-            Ok(p) => {
-                let md = p.replace(".json", ".md");
-                let id = ctx.session.id.clone();
-                let port = std::env::var("WHYCODES_SHARE_PORT")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(3030u16);
-                let url = format!("http://127.0.0.1:{port}/s/{id}");
-                let live = share_server_up(port);
-                ctx.app.status_message = if live {
-                    format!("Share: {url}")
-                } else {
-                    format!("Exported — run `whycodes serve` then open {url}")
-                };
-                ctx.app.add_message(
-                    ChatRole::System,
-                    format!(
-                        "Session shared locally:\n\
-                         - {p}\n\
-                         - {md}\n\
-                         - View URL: {url}\n\
-                         {}\n\
-                         /unshare removes local share files.",
-                        if live {
-                            "(server is up)"
-                        } else {
-                            "Start server: whycodes serve 3030"
-                        }
-                    ),
-                );
-            }
-            Err(e) => ctx.app.toasts.push(
-                crate::toast::ToastKind::Error,
-                format!("Export failed: {e}"),
-            ),
+            Ok(p) => apply_share_ok(ctx.app, &p, &ctx.session.id, share_server_up),
+            Err(e) => export_failed_toast(ctx.app, e),
         },
         "/unshare" => {
             let id = ctx.session.id.clone();
@@ -472,14 +424,10 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     spawn_oauth_login(ctx.app, &ctx.auth_tx, dir, arg);
                 }
             } else {
-                ctx.app.status_message = format!("OAuth login not available for `{arg}` ({})", {
-                    let names = whycodes_auth::oauth_providers();
-                    if names.is_empty() {
-                        "install an auth plugin".to_string()
-                    } else {
-                        names.join(", ")
-                    }
-                });
+                ctx.app.status_message = format!(
+                    "OAuth login not available for `{arg}` ({})",
+                    oauth_unavailable_hint(whycodes_auth::oauth_providers())
+                );
             }
         }
         "/agent" => {
@@ -546,25 +494,7 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         }
         "/mode" => apply_approval_mode_raw(ctx.app, ctx.agent, ctx.config, rest),
         "/models" => {
-            if rest.is_empty() {
-                let src = if ctx
-                    .app
-                    .api_context_for
-                    .as_ref()
-                    .is_some_and(|(p, m)| p == ctx.provider.as_str() && m == ctx.model.as_str())
-                {
-                    "api"
-                } else {
-                    "local"
-                };
-                ctx.app.status_message = format!(
-                    "Model: {}/{}  ·  ctx {} / {} ({src})",
-                    ctx.provider,
-                    ctx.model,
-                    crate::app::format_token_count(ctx.app.context_used),
-                    crate::app::format_token_count(ctx.app.max_context_tokens),
-                );
-            } else if let Some((p, m)) = rest.split_once('/') {
+            if let Some((p, m)) = rest.split_once('/') {
                 apply_model_choice(
                     ctx.app,
                     ctx.provider,
@@ -692,6 +622,64 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
     }
 }
 
+pub(super) fn format_bg_jobs(running: usize, jobs: &[whycodes_agent::JobSnapshot]) -> String {
+    let mut lines = vec![format!("Background jobs ({running} running)")];
+    for j in jobs {
+        lines.push(format!(
+            "{} [{}] {:.0}s  {}",
+            j.id,
+            j.status.as_str(),
+            j.elapsed.as_secs_f64(),
+            j.label
+        ));
+    }
+    lines.push("Hint: /bg kill bg-N".into());
+    lines.join("\n")
+}
+
+pub(super) fn memory_err_toast(app: &mut TuiApp, e: impl std::fmt::Display) {
+    app.toasts
+        .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
+}
+
+pub(super) fn export_failed_toast(app: &mut TuiApp, e: impl std::fmt::Display) {
+    app.toasts.push(
+        crate::toast::ToastKind::Error,
+        format!("Export failed: {e}"),
+    );
+}
+
+fn apply_share_ok(app: &mut TuiApp, path: &str, session_id: &str, live: impl FnOnce(u16) -> bool) {
+    let md = path.replace(".json", ".md");
+    let port = std::env::var("WHYCODES_SHARE_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3030u16);
+    let url = format!("http://127.0.0.1:{port}/s/{session_id}");
+    let live = live(port);
+    app.status_message = if live {
+        format!("Share: {url}")
+    } else {
+        format!("Exported — run `whycodes serve` then open {url}")
+    };
+    app.add_message(
+        ChatRole::System,
+        format!(
+            "Session shared locally:\n\
+             - {path}\n\
+             - {md}\n\
+             - View URL: {url}\n\
+             {}\n\
+             /unshare removes local share files.",
+            if live {
+                "(server is up)"
+            } else {
+                "Start server: whycodes serve 3030"
+            }
+        ),
+    );
+}
+
 /// Spawn a tiny follow-up suggestion when `tui.prompt_suggestions = "idle"`.
 pub(super) fn maybe_spawn_prompt_suggestion(
     config: &Config,
@@ -738,63 +726,105 @@ pub(super) fn maybe_spawn_prompt_suggestion(
         let Some(prov) = reg.get(&p) else {
             return;
         };
-        use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
-        let body = format!(
-            "User last said:\n{}\n\nAssistant replied (excerpt):\n{}\n\n\
-             Suggest ONE short next user message (≤12 words) to continue the coding task. \
-             Reply with only that message, no quotes.",
-            last_user.chars().take(500).collect::<String>(),
-            last_asst.chars().take(400).collect::<String>()
-        );
-        let request = LlmRequest {
-            system: "You propose a single follow-up user prompt for a coding agent.".into(),
-            messages: std::sync::Arc::from(vec![Message {
-                role: Role::User,
-                content: MessageContent::Text(body),
-                tool_call_id: None,
-                name: None,
-                created_at: None,
-            }]),
-            tools: std::sync::Arc::from([]),
-            max_tokens: Some(40),
-            temperature: Some(0.4),
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: false,
-        };
-        let transport = whycodes_llm::LlmTransport {
-            complete_timeout: Some(std::time::Duration::from_secs(8)),
-            retry: whycodes_llm::RetryPolicy {
-                max_retries: 0,
-                initial_backoff: std::time::Duration::from_millis(100),
-                max_backoff: std::time::Duration::from_secs(1),
-                max_elapsed: std::time::Duration::from_secs(8),
-                full_jitter: true,
-            },
-        };
-        if let Ok(resp) = transport.complete(prov, &request, &api_key, &m).await {
-            let text = resp
-                .content
-                .iter()
-                .filter_map(|b| match b {
-                    whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
-                .lines()
-                .map(str::trim)
-                .find(|l| !l.is_empty())
-                .unwrap_or("")
-                .trim_matches('"')
-                .to_string();
-            if !text.is_empty() {
-                let _ = suggest_tx.send(text);
-            }
-        }
+        complete_prompt_suggestion(prov, &last_user, &last_asst, &api_key, &m, suggest_tx).await;
     });
+}
+
+pub(super) async fn complete_prompt_suggestion(
+    prov: &dyn whycodes_llm::LlmProvider,
+    last_user: &str,
+    last_asst: &str,
+    api_key: &str,
+    model: &str,
+    suggest_tx: mpsc::UnboundedSender<String>,
+) {
+    let request = suggestion_llm_request(last_user, last_asst);
+    match suggestion_transport()
+        .complete(prov, &request, api_key, model)
+        .await
+    {
+        Ok(resp) => send_suggestion_text(&resp.content, &suggest_tx),
+        Err(error) => {
+            tracing::debug!(%error, "idle suggestion complete failed");
+        }
+    }
+}
+
+pub(super) fn suggestion_prompt_body(last_user: &str, last_asst: &str) -> String {
+    format!(
+        "User last said:\n{}\n\nAssistant replied (excerpt):\n{}\n\n\
+         Suggest ONE short next user message (≤12 words) to continue the coding task. \
+         Reply with only that message, no quotes.",
+        last_user.chars().take(500).collect::<String>(),
+        last_asst.chars().take(400).collect::<String>()
+    )
+}
+
+pub(super) fn suggestion_llm_request(
+    last_user: &str,
+    last_asst: &str,
+) -> whycodes_core::types::LlmRequest {
+    use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
+    LlmRequest {
+        system: "You propose a single follow-up user prompt for a coding agent.".into(),
+        messages: std::sync::Arc::from(vec![Message {
+            role: Role::User,
+            content: MessageContent::Text(suggestion_prompt_body(last_user, last_asst)),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }]),
+        tools: std::sync::Arc::from([]),
+        max_tokens: Some(40),
+        temperature: Some(0.4),
+        top_p: None,
+        top_k: None,
+        stop_sequences: None,
+        thinking: None,
+        use_prompt_cache: false,
+    }
+}
+
+pub(super) fn suggestion_transport() -> whycodes_llm::LlmTransport {
+    whycodes_llm::LlmTransport {
+        complete_timeout: Some(std::time::Duration::from_secs(8)),
+        retry: whycodes_llm::RetryPolicy {
+            max_retries: 0,
+            initial_backoff: std::time::Duration::from_millis(100),
+            max_backoff: std::time::Duration::from_secs(1),
+            max_elapsed: std::time::Duration::from_secs(8),
+            full_jitter: true,
+        },
+    }
+}
+
+pub(super) fn send_suggestion_text(
+    content: &[whycodes_core::types::ContentBlock],
+    tx: &mpsc::UnboundedSender<String>,
+) {
+    let text = suggestion_text_from_blocks(content);
+    if !text.is_empty() && tx.send(text).is_err() {
+        tracing::debug!("idle suggestion dropped: TUI event loop closed");
+    }
+}
+
+pub(super) fn suggestion_text_from_blocks(
+    content: &[whycodes_core::types::ContentBlock],
+) -> String {
+    content
+        .iter()
+        .filter_map(|b| match b {
+            whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .trim_matches('"')
+        .to_string()
 }
 
 #[cfg(test)]

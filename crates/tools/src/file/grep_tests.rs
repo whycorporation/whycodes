@@ -1,5 +1,7 @@
 use super::*;
 use std::fs;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tempfile::TempDir;
 
 fn write(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
@@ -231,7 +233,7 @@ async fn execute_finds_match_and_reports_no_matches() {
 
 #[tokio::test]
 async fn remaining_execute_and_search_edges() {
-    let t = GrepTool;
+    let t = GrepTool::default();
     assert_eq!(t.name(), "grep");
     assert!(!t.description().is_empty());
     let _ = t.parameters();
@@ -261,6 +263,95 @@ async fn remaining_execute_and_search_edges() {
         GrepTool::search("hello", dir.path(), Some("*.txt"), false, 0, 50, "/", None).unwrap();
     assert!(out.contains("a.txt"));
     assert_eq!(utf8_line(b"hi\r\n"), "hi");
+    let empty = grep_ok(String::new());
+    assert!(!empty.is_error);
+    assert_eq!(empty.content, "No matches found.");
+    let hit = grep_ok("a.txt:1:hello".into());
+    assert_eq!(hit.content, "a.txt:1:hello");
+    let failed = grep_err("grep task failed: boom");
+    assert!(failed.is_error);
+    assert!(
+        failed.content.contains("grep task failed"),
+        "{}",
+        failed.content
+    );
+    assert!(invalid_regex("bad").contains("invalid regex"));
+    let join = grep_join_error("boom");
+    assert!(join.is_error);
+    assert!(join.content.contains("grep task failed"));
+    assert!(sink_at_cap(3, 3));
+    assert!(!sink_at_cap(2, 3));
+    let mut breaks = vec!["a.txt:1:x".into()];
+    push_context_break(&mut breaks, 10);
+    assert_eq!(breaks.last().map(String::as_str), Some("--"));
+    push_context_break(&mut breaks, 10);
+    assert_eq!(breaks.iter().filter(|s| *s == "--").count(), 1);
+    skip_unsearchable(Path::new("gone.rs"), "permission denied");
+    skip_unsearchable_msg("gone.rs", "permission denied");
+    assert_eq!(empty_file_matches(3), (3, Vec::<String>::new()));
+    assert_eq!(skip_stopped_file(3), (3, Vec::<String>::new()));
+    assert!(search_file_at_cap(5, 5));
+    skip_search_at_cap();
+    assert!(!sink_stop().unwrap());
+    let mut capped = vec!["a.txt:1:x".into()];
+    assert!(!sink_push_match(&mut capped, 1, "a.txt", 2, b"more").unwrap());
+    assert!(!sink_push_context(&mut capped, 1, "a.txt", 3, b"ctx").unwrap());
+    let mut open = Vec::new();
+    assert!(sink_push_match(&mut open, 2, "a.txt", 1, b"hello").unwrap());
+    assert!(sink_push_context(&mut open, 2, "a.txt", 2, b"before").unwrap());
+    let stop = AtomicBool::new(true);
+    let remaining = AtomicUsize::new(3);
+    assert_eq!(
+        grep_file_task(
+            4,
+            Path::new("gone.rs"),
+            "gone.rs",
+            &grep_regex::RegexMatcherBuilder::new().build("x").unwrap(),
+            0,
+            &stop,
+            &remaining
+        ),
+        (4, Vec::<String>::new())
+    );
+    let mut sink_matches = vec!["a.txt:1:x".into()];
+    let mut sink = CollectSink {
+        display: "a.txt",
+        matches: &mut sink_matches,
+        max_results: 10,
+    };
+    let searcher = SearcherBuilder::new().build();
+    assert!(sink.context_break(&searcher).unwrap());
+    let matcher = grep_regex::RegexMatcherBuilder::new().build("x").unwrap();
+    let mut at_cap = vec!["already".into()];
+    GrepTool::search_file(Path::new("gone.rs"), "gone.rs", &matcher, 0, &mut at_cap, 1);
+    assert_eq!(at_cap.len(), 1);
+    handle_search_err(Path::new("gone.rs"), Err("denied".into()));
+    handle_search_err(Path::new("gone.rs"), Ok(()));
+    let mut breaks2 = vec!["x".into()];
+    assert!(sink_context_break(&mut breaks2, 10).unwrap());
+    let from_ok = grep_from_blocking(Ok(Ok("hit".into())));
+    assert_eq!(from_ok.content, "hit");
+    let from_err = grep_from_blocking(Ok(Err("bad".into())));
+    assert!(from_err.is_error);
+    let from_join = grep_from_blocking(Err("boom".into()));
+    assert!(from_join.content.contains("grep task failed"));
+    let stop = AtomicBool::new(false);
+    let remaining = AtomicUsize::new(0);
+    assert!(grep_should_stop(&stop, &remaining));
+    stop.store(true, Ordering::Relaxed);
+    remaining.store(3, Ordering::Relaxed);
+    assert!(grep_should_stop(&stop, &remaining));
+    stop.store(false, Ordering::Relaxed);
+    remaining.store(2, Ordering::Relaxed);
+    assert!(!grep_should_stop(&stop, &remaining));
+    let mut merged = vec!["a".into()];
+    assert!(merge_file_matches(
+        &mut merged,
+        vec!["b".into(), "c".into()],
+        2
+    ));
+    assert_eq!(merged, vec!["a".to_string(), "b".to_string()]);
+    assert!(merge_file_matches(&mut merged, vec!["d".into()], 2));
 }
 
 #[tokio::test]

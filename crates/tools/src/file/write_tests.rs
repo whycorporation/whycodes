@@ -88,7 +88,7 @@ async fn file_claim_conflict_blocks_write() {
 
 #[tokio::test]
 async fn default_constructs() {
-    assert_eq!(WriteTool.name(), "write");
+    assert_eq!(WriteTool::default().name(), "write");
 }
 
 #[tokio::test]

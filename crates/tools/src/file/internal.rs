@@ -4,18 +4,60 @@ use crate::tool::ToolContext;
 use whycodes_core::types::ToolResult;
 use whycodes_skill::SkillRegistry;
 
-fn ok(msg: impl Into<String>) -> ToolResult {
+fn take_skill_registry(
+    result: Result<SkillRegistry, ToolResult>,
+) -> Result<SkillRegistry, ToolResult> {
+    match result {
+        Ok(r) => Ok(r),
+        Err(e) => Err(registry_load_failed(e)),
+    }
+}
+
+fn skill_registry_or_err(
+    result: Result<SkillRegistry, ToolResult>,
+) -> Result<SkillRegistry, ToolResult> {
+    result
+}
+
+fn skill_body(result: Result<SkillRegistry, ToolResult>, name: &str) -> ToolResult {
+    match skill_registry_or_err(result) {
+        Ok(registry) => match registry.get_ignore_ascii_case(name) {
+            Some(skill) => ok(&format!(
+                "# skill://{}\n{}\n\n{}",
+                skill.name, skill.description, skill.prompt
+            )),
+            None => err(&format!(
+                "Skill '{name}' not found. Use the `skill` tool (action=list) or `read skill://`."
+            )),
+        },
+        Err(e) => e,
+    }
+}
+
+fn registry_load_failed(e: ToolResult) -> ToolResult {
+    e
+}
+
+fn skill_load_error(e: &str) -> ToolResult {
+    err(&format!("Error loading skills: {e}"))
+}
+
+fn load_skill_registry(project: &std::path::Path) -> Result<SkillRegistry, ToolResult> {
+    SkillRegistry::load_for_project(project).map_err(|e| skill_load_error(&e.to_string()))
+}
+
+fn ok(msg: &str) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
-        content: msg.into(),
+        content: msg.to_string(),
         is_error: false,
     }
 }
 
-fn err(msg: impl Into<String>) -> ToolResult {
+fn err(msg: &str) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
-        content: msg.into(),
+        content: msg.to_string(),
         is_error: true,
     }
 }
@@ -36,19 +78,7 @@ fn read_skill(name: &str, ctx: &ToolContext) -> ToolResult {
         return err("skill:// requires a skill name (e.g. skill://demo).");
     }
     let project = std::path::Path::new(&ctx.working_dir);
-    let registry = match SkillRegistry::load_for_project(project) {
-        Ok(r) => r,
-        Err(e) => return err(format!("Error loading skills: {e}")),
-    };
-    match registry.get_ignore_ascii_case(name) {
-        Some(skill) => ok(format!(
-            "# skill://{}\n{}\n\n{}",
-            skill.name, skill.description, skill.prompt
-        )),
-        None => err(format!(
-            "Skill '{name}' not found. Use the `skill` tool (action=list) or `read skill://`."
-        )),
-    }
+    skill_body(take_skill_registry(load_skill_registry(project)), name)
 }
 
 fn read_agent(id: &str, ctx: &ToolContext) -> ToolResult {
@@ -65,9 +95,9 @@ fn read_agent(id: &str, ctx: &ToolContext) -> ToolResult {
     }
     let path = dir.join(format!("{id}.md"));
     match std::fs::read_to_string(&path) {
-        Ok(body) if !body.trim().is_empty() => ok(format!("# agent://{id}\n\n{body}")),
-        Ok(_) => err(format!("agent://{id} is empty.")),
-        Err(_) => err(format!(
+        Ok(body) if !body.trim().is_empty() => ok(&format!("# agent://{id}\n\n{body}")),
+        Ok(_) => err(&format!("agent://{id} is empty.")),
+        Err(_e) => err(&format!(
             "No agent artifact '{id}'. Finished task/swarm workers write `.whycodes/agents/<id>.md`."
         )),
     }
@@ -100,7 +130,7 @@ fn list_agent_artifacts(dir: &std::path::Path) -> ToolResult {
         out.push_str(&n);
         out.push('\n');
     }
-    ok(out)
+    ok(&out)
 }
 
 #[cfg(test)]
