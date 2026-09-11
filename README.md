@@ -135,18 +135,20 @@ configuration — is in **[docs/guide.md](docs/guide.md)**.
 
 ## Performance
 
-Idle TUI, Linux x86_64, 2026-09-02 (method and machine in
-[docs/benchmarks.md](docs/benchmarks.md)):
+Latest re-measure, Windows AMD64, 2026-09-11 (Ryzen 7 3800X). Linux
+2026-09-02 remains the last PTY / PSS snapshot — do not compare Windows
+first-frame to the Linux ~12 ms PTY row. Method and machines in
+[docs/benchmarks.md](docs/benchmarks.md):
 
-| Metric | Result |
-|---|---|
-| 1 session PSS | **10.5 MB** |
-| 10 sessions PSS | **32.0 MB** (~2.4 MB each extra) |
-| `--version` | **1.4 ms** |
-| First frame (harness, in-proc) | **12 ms** |
-| Idle redraws (harness, 3 s) | **0.3 /s** |
+| Metric | Windows 2026-09-11 | Linux 2026-09-02 |
+|---|---|---|
+| 1 session PSS | — (`/proc` only) | **10.5 MB** |
+| 10 sessions PSS | — | **32.0 MB** (~2.4 MB each extra) |
+| `--version` | **13.8 ms** | **1.4 ms** |
+| First frame (harness, in-proc) | **131 ms** (console inherit) | **12 ms** (80×24 PTY) |
+| Idle redraws (harness, 3 s) | **0.6 /s** | **0.3 /s** |
 
-The TUI paints only when something changed. This run’s 3 s harness idle is **0.3 redraws/s** (same as `ea098af` / `50e05d8`; idle-zero gates did not restore a hard zero); the product target is still **0 redraws/s**, not a frames-per-second race.
+The TUI paints only when something changed. This Windows run’s 3 s harness idle is **0.6 redraws/s** (Linux 2026-09-02 was 0.3/s); the product target is still **0 redraws/s**, not a frames-per-second race.
 
 Workspace line coverage is **85.58%** (Linux x86_64, 2026-08-21). CI fails
 below 82%, with twelve foundational crates held at 100% production-code line

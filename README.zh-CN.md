@@ -129,20 +129,20 @@ whycodes -P openai -m gpt-4o generate "Refactor this module"
 
 ## 性能
 
-空闲 TUI，Linux x86_64，2026-09-02（方法与机器见
-[docs/benchmarks.md](docs/benchmarks.md)）：
+最近一次测量：Windows AMD64，2026-09-11（Ryzen 7 3800X）。Linux 2026-09-02
+仍是最近一次 PTY / PSS 快照 — 不要把 Windows 首帧与 Linux PTY 的约 12 ms
+相比。方法与机器见 [docs/benchmarks.md](docs/benchmarks.md)：
 
-| 指标 | 结果 |
-|---|---|
-| 1 个会话 PSS | **10.5 MB** |
-| 10 个会话 PSS | **32.0 MB**（每多一个约 2.4 MB） |
-| `--version` | **1.4 ms** |
-| 首帧（harness，进程内） | **12 ms** |
-| 空闲重绘（harness，3 s） | **0.3 /s** |
+| 指标 | Windows 2026-09-11 | Linux 2026-09-02 |
+|---|---|---|
+| 1 个会话 PSS | —（仅 `/proc`） | **10.5 MB** |
+| 10 个会话 PSS | — | **32.0 MB**（每多一个约 2.4 MB） |
+| `--version` | **13.8 ms** | **1.4 ms** |
+| 首帧（harness，进程内） | **131 ms**（继承控制台） | **12 ms**（80×24 PTY） |
+| 空闲重绘（harness，3 s） | **0.6 /s** | **0.3 /s** |
 
-TUI 仅在有变化时绘制。本次 3 秒 harness 空闲为 **0.3 次重绘/秒**（与
-`ea098af` / `50e05d8` 相同；idle-zero 门控并未恢复硬零）；产品目标仍是
-**0 次重绘/秒**，而不是帧率竞赛。
+TUI 仅在有变化时绘制。本次 Windows 3 秒 harness 空闲为 **0.6 次重绘/秒**
+（Linux 2026-09-02 为 0.3/s）；产品目标仍是 **0 次重绘/秒**，而不是帧率竞赛。
 
 工作区行覆盖率为 **85.58%**（Linux x86_64，2026-08-21）。CI 在低于 82%
 时失败，十二个基础 crate 的生产代码行覆盖率保持 100% —— 见
