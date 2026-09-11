@@ -2336,3 +2336,17 @@ Harness TTFF then dropped ratatui entirely: `write_splash_csi` is `SM?1049` + cl
 **Prevention:** Do not inject launch failures through process env while other `#[tokio::test]` launch tests run. Keep the missing-binary check ahead of temp-home allocation.
 
 Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs already have no edge between them; a single runner still serializes them. Extra self-hosted runners with separate `_work` dirs run them together.
+
+## Coverage flake: `git::commit::tests::commit_module_loads` cannot spawn `false`
+
+**Date:** 2026-09-12 · **Area:** `crates/tools/src/git/commit_tests.rs`
+
+**Symptom:** Coverage (and any parallel `cargo test -p whycodes-tools`) panics `commit_module_loads` with `Os { kind: NotFound }` on `Command::new("false")`. Isolated re-run is green.
+
+**JSONL / crash:** none.
+
+**Root cause:** `commit_fails_when_git_missing_from_path` (and the other git `*_missing_from_path` tests) set process-wide `PATH=/nonexistent-whycodes-path` under `ENV_LOCK`. `fail_status()` did not take that lock and spawned `false` / `cmd /C exit 1` to build an `ExitStatus`.
+
+**Fix:** Build the failing `ExitStatus` with `ExitStatusExt::from_raw` (unix wait status `1 << 8`, Windows `1`). Same for the browser test helpers.
+
+**Prevention:** Helpers that only need a dummy `ExitStatus` must not spawn PATH binaries. Tests that mutate `PATH` already hold `ENV_LOCK`; unlocked tests must not depend on PATH.

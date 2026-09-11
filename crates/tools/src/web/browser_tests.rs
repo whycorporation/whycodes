@@ -451,30 +451,28 @@ fn find_browser_and_http_get_without_slash() {
 }
 
 fn fail_cmd_status() -> std::process::ExitStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(1 << 8)
+    }
     #[cfg(windows)]
     {
-        Command::new("cmd")
-            .args(["/C", "exit", "1"])
-            .status()
-            .unwrap()
-    }
-    #[cfg(not(windows))]
-    {
-        Command::new("false").status().unwrap()
+        use std::os::windows::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(1)
     }
 }
 
 fn ok_cmd_status() -> std::process::ExitStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(0)
+    }
     #[cfg(windows)]
     {
-        Command::new("cmd")
-            .args(["/C", "exit", "0"])
-            .status()
-            .unwrap()
-    }
-    #[cfg(not(windows))]
-    {
-        Command::new("true").status().unwrap()
+        use std::os::windows::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(0)
     }
 }
 
