@@ -503,7 +503,7 @@ fn prepare_tui_chrome(opts: &TuiRunOptions) -> TuiChrome {
 
     TuiChrome {
         app,
-        config: Config::default(),
+        config: opts.config.clone(),
         missing_key,
     }
 }
@@ -1237,12 +1237,86 @@ pub enum TurnOutcome {
 }
 
 /// Sync wrapper so `whycodes run -d` can paint before clap's Tokio pool exists.
+///
+/// First paint is [`paint_first_frame_sync`]: no Config, no TuiApp, no Tokio.
+/// The harness (`WHYCODES_BENCH`) exits there. Interactive use then builds a
+/// current-thread runtime and enters the full loop.
 pub fn run_sync(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
         .build()?;
     rt.block_on(run(opts))
+}
+
+/// Raw mode + alt-screen + one ratatui frame. No Agent, Config, or Tokio.
+///
+/// Returns `Some(Quit)` when `WHYCODES_BENCH` is set (harness done). `None`
+/// means the caller should keep going with the full TUI.
+pub fn paint_first_frame_sync() -> anyhow::Result<Option<TuiExit>> {
+    let bench = crate::bench::config_from_env();
+    let color_mode = detect_color_mode();
+    set_active_color_mode(color_mode);
+    let mut out = open_tui_writer().map_err(|e| {
+        anyhow::anyhow!(
+            "failed to open terminal for TUI ({e}). \
+             Run inside a real terminal, or use `whycodes --plain`."
+        )
+    })?;
+    // Bench / first paint: skip `enable_raw_mode` (Windows Get/SetConsoleMode).
+    // Alternate screen + one draw is enough for TTFF; the full loop still
+    // enters raw mode when it attaches.
+    execute!(out, EnterAlternateScreen)
+        .map_err(|e| anyhow::anyhow!("failed to enter alternate screen ({e})"))?;
+    let backend = QuantizingBackend::with_size_fallback(
+        CrosstermBackend::new(out),
+        color_mode,
+        ratatui::layout::Size {
+            width: 80,
+            height: 24,
+        },
+    );
+    let mut terminal = match Terminal::new(backend) {
+        Ok(t) => t,
+        Err(e) => {
+            on_terminal_new_failed(&e);
+            return Err(e.into());
+        }
+    };
+    if let Err(e) = terminal.draw(render_splash) {
+        restore_live_backend(terminal.backend_mut(), false);
+        return Err(e.into());
+    }
+    crate::bench::record_draw();
+    if let Some(ref b) = bench {
+        while !crate::bench::should_stop(b) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        restore_live_backend(terminal.backend_mut(), false);
+        if let Err(e) = terminal.show_cursor() {
+            tracing::debug!(error = %e, "splash show_cursor after bench failed");
+        }
+        crate::bench::write_results(b);
+        return Ok(Some(TuiExit::Quit));
+    }
+    restore_live_backend(terminal.backend_mut(), false);
+    if let Err(e) = terminal.show_cursor() {
+        tracing::debug!(error = %e, "splash show_cursor failed");
+    }
+    Ok(None)
+}
+
+fn render_splash(frame: &mut ratatui::Frame<'_>) {
+    use ratatui::style::{Color, Style};
+    use ratatui::text::Line;
+    use ratatui::widgets::{Block, Paragraph};
+    let area = frame.area();
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Color::Black)),
+        area,
+    );
+    let line = Paragraph::new(Line::from("whycodes  —  /help"));
+    frame.render_widget(line, area);
 }
 
 /// Run the full-screen TUI until the user quits.

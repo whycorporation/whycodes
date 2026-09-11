@@ -7758,6 +7758,19 @@ fn loop_io_live_buf_empty_read_is_eof() {
 }
 
 #[test]
+fn render_splash_paints_home_label() {
+    let backend = TestBackend::new(40, 8);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(render_splash).unwrap();
+    let buf = terminal.backend().buffer();
+    let row: String = (0..40).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+    assert!(
+        row.contains("whycodes"),
+        "splash must paint product name, got {row:?}"
+    );
+}
+
+#[test]
 fn enter_raw_and_alt_ok_and_restore_backend() {
     let mut out = Vec::new();
     enter_raw_and_alt(&mut out, || Ok(())).unwrap();

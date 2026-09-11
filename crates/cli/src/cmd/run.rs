@@ -381,6 +381,15 @@ pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
 /// The first-frame harness is this argv. Building clap + a Tokio runtime
 /// before paint was tens of ms on Windows (issue #85 follow-up).
 pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
+    if std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty()) {
+        let exit = whycodes_tui::paint_first_frame_sync()
+            .map_err(map_tui_run_error)?
+            .unwrap_or(whycodes_tui::TuiExit::Quit);
+        return match exit {
+            whycodes_tui::TuiExit::Quit => Ok(()),
+            whycodes_tui::TuiExit::Upgrade => Ok(()),
+        };
+    }
     let exit = whycodes_tui::run_sync(whycodes_tui::TuiRunOptions {
         project_dir,
         provider: "anthropic".into(),

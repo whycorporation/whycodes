@@ -592,6 +592,18 @@ paint; mouse/paste/cursor after first frame):
 Spawn-to-exit at `--idle-ms 0` is **70.9 ms** (min 65.3, max 78.5).
 Remainder is Windows console inherit + `--version` floor (~14 ms).
 
+Tokio-free splash (`paint_first_frame_sync`: no Config, no TuiApp, no
+runtime — alt-screen + one ratatui frame):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **52.1 ms** median | 0.0/s | min 48.2 |
+| Harness `--idle-ms 3000` (8 runs) | **53.1 ms** median | **0.0/s** | still zero |
+
+Spawn-to-exit at `--idle-ms 0` is **66.3 ms** (min 62.6, max 68.9).
+`--version` floor is 13.8 ms; the rest is Windows console inherit
+(no stdlib ConPTY).
+
 
 ## Hot paths
 

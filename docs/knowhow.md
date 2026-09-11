@@ -2312,3 +2312,5 @@ Debugged 2026-08-24 after real-world 403 → "did not yield a project id" report
 **Prevention:** do not put I/O that an empty project does not need (git spawn, tool registry, session DB, home scan) before `record_draw`. Re-measure with `python scripts/bench_first_frame.py --runs 12 --idle-ms 0`.
 
 Same day follow-up: `whycodes run -d <dir>` skips clap + the multi-thread Tokio pool until after first paint (`cmd_run_fast_tui` / `run_sync`). Mouse, paste, and blinking cursor wait until after `record_draw`. That cut Windows in-proc TTFF 86 → 56 ms.
+
+Harness path then dropped Config/TuiApp/Tokio entirely (`paint_first_frame_sync`): alt-screen + one splash frame. 56 → **52 ms**. Remainder is `CreateProcess` + console inherit (~`--version` 14 ms + conhost). Do not restore+reattach around splash on the interactive path (flicker).
