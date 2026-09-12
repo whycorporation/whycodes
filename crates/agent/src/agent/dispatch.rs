@@ -770,6 +770,7 @@ impl Agent {
         let hub = hub.clone();
         let question_prompter = Arc::clone(&self.question_prompter);
         let approval_mode = self.approval_mode;
+        let overlays = self.system_prompt_overlays.clone();
 
         let mut handles = Vec::with_capacity(specs.len());
 
@@ -796,6 +797,7 @@ impl Agent {
             let panel = panel.clone();
             let hub = hub.clone();
             let question_prompter = Arc::clone(&question_prompter);
+            let overlays = overlays.clone();
             hub.ensure(&worker_id);
 
             handles.push(tokio::spawn(async move {
@@ -870,7 +872,12 @@ impl Agent {
                             allowed_paths: None,
                             rules: Default::default(),
                         },
-                        Agent::system_prompt_for(&spec.subagent_type),
+                        Agent::with_prompt_overlays(
+                            &Agent::system_prompt_for(&spec.subagent_type),
+                            &overlays,
+                            pn.as_ref(),
+                            m.as_ref(),
+                        ),
                     ),
                     _ => {
                         let mut perm = parent_permission;
@@ -881,7 +888,15 @@ impl Agent {
                             }
                         }
                         perm.denied_tools = Some(denied);
-                        (perm, Agent::system_prompt_for("general"))
+                        (
+                            perm,
+                            Agent::with_prompt_overlays(
+                                &Agent::system_prompt_for("general"),
+                                &overlays,
+                                pn.as_ref(),
+                                m.as_ref(),
+                            ),
+                        )
                     }
                 };
 
@@ -1135,6 +1150,8 @@ impl Agent {
             .unwrap_or(15) as usize;
 
         // Permission profile per OpenCode subagent type
+        let (worker_provider, worker_model) =
+            crate::routing::resolve_worker_model(provider_name, model, self.model_smol.as_deref());
         let (permission, system_prompt) = match subagent_type {
             "explore" | "scout" => (
                 PermissionSet {
@@ -1164,7 +1181,12 @@ impl Agent {
                     allowed_paths: None,
                     rules: Default::default(),
                 },
-                Self::system_prompt_for(subagent_type),
+                Self::with_prompt_overlays(
+                    &Self::system_prompt_for(subagent_type),
+                    &self.system_prompt_overlays,
+                    &worker_provider,
+                    &worker_model,
+                ),
             ),
             _ => {
                 // general: full tools except todo / nested swarm (OpenCode default + safety)
@@ -1176,7 +1198,15 @@ impl Agent {
                     }
                 }
                 perm.denied_tools = Some(denied);
-                (perm, Self::system_prompt_for("general"))
+                (
+                    perm,
+                    Self::with_prompt_overlays(
+                        &Self::system_prompt_for("general"),
+                        &self.system_prompt_overlays,
+                        &worker_provider,
+                        &worker_model,
+                    ),
+                )
             }
         };
 
@@ -1222,8 +1252,6 @@ impl Agent {
             },
         );
 
-        let (worker_provider, worker_model) =
-            crate::routing::resolve_worker_model(provider_name, model, self.model_smol.as_deref());
         let result = runner
             .run(task, &worker_provider, &worker_model, api_key)
             .await;

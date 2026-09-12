@@ -17,7 +17,8 @@ pub use types::{
     CustomToolConfig, GeneralConfig, HookConfig, HookEvent, LspConfig, LspServerConfig,
     MagicKeywordsConfig, McpServerConfig, McpTransportKind, MemoryConfig, NotifyConfig,
     NotifyEvent, QuestionToolConfig, RuntimeLspServer, SecurityConfig, SessionConfig,
-    StreamRuleConfig, SwarmConfig, ToolsConfig, TuiConfig, is_discord_webhook_url,
+    StreamRuleConfig, SwarmConfig, SystemPromptOverlays, ToolsConfig, TuiConfig,
+    is_discord_webhook_url,
 };
 
 #[cfg(test)]

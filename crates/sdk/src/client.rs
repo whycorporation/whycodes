@@ -106,10 +106,14 @@ impl WhyCodesClient {
     /// The child inherits this process's environment (API keys, `HOME`), so
     /// it spends the same provider quota as the user. `close` / drop kills it.
     pub async fn launch(opts: LaunchOptions) -> Result<Self, SdkError> {
-        let prepared = prepare_launch(&opts)?;
-        if let Some(err) = missing_spawned_binary(&prepared.binary) {
+        // Classify a missing binary before create_temp_home. A sibling test
+        // that injects tempdir failure must not turn ServeNotFound into
+        // StartupFailed, and a dead path should not allocate WHYCODES_HOME.
+        let binary = resolve_binary(opts.binary.as_deref())?;
+        if let Some(err) = missing_spawned_binary(&binary) {
             return Err(err);
         }
+        let prepared = prepare_launch(&opts)?;
         let mut cmd = launch_command(&prepared, &opts);
         let child = cmd.spawn().map_err(|e| {
             SdkError::with_source(
@@ -843,9 +847,35 @@ fn poll_child_exit(child: Option<&mut Child>) -> Option<String> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_TEMPDIR_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Process-wide `WHYCODES_TEST_TEMPDIR_FAIL` leaked into parallel `launch`
+/// tests (ServeNotFound became StartupFailed). Thread-local stays on the
+/// current-thread tokio test runtime.
+#[cfg(test)]
+pub(crate) struct TestTempdirFailGuard;
+
+#[cfg(test)]
+impl TestTempdirFailGuard {
+    pub(crate) fn arm() -> Self {
+        TEST_TEMPDIR_FAIL.with(|c| c.set(true));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestTempdirFailGuard {
+    fn drop(&mut self) {
+        TEST_TEMPDIR_FAIL.with(|c| c.set(false));
+    }
+}
+
 fn create_temp_home() -> std::io::Result<tempfile::TempDir> {
     #[cfg(test)]
-    if std::env::var_os("WHYCODES_TEST_TEMPDIR_FAIL").is_some() {
+    if TEST_TEMPDIR_FAIL.with(std::cell::Cell::get) {
         return Err(std::io::Error::other("injected tempdir failure"));
     }
     tempfile::tempdir()

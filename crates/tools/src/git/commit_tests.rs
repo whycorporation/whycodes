@@ -77,16 +77,17 @@ fn commit_module_loads() {
 }
 
 fn fail_status() -> std::process::ExitStatus {
+    // Do not spawn `false`/`cmd`: sibling tests empty PATH under ENV_LOCK
+    // (commit_fails_when_git_missing_from_path) and this helper is not locked.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(1 << 8)
+    }
     #[cfg(windows)]
     {
-        Command::new("cmd")
-            .args(["/C", "exit", "1"])
-            .status()
-            .unwrap()
-    }
-    #[cfg(not(windows))]
-    {
-        Command::new("false").status().unwrap()
+        use std::os::windows::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(1)
     }
 }
 

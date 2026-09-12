@@ -363,7 +363,8 @@ pub(crate) fn refresh_session_memory(
     config: &Config,
     query: Option<&str>,
 ) {
-    let base = Agent::with_agents_md(&agent.system_prompt(), project_dir);
+    let (provider, model) = agent.route();
+    let base = Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project_dir);
     session.set_system_prompt(&with_project_memory(&base, project_dir, config, query));
 }
 
@@ -383,6 +384,8 @@ pub(crate) fn switch_agent(
     name: &str,
     config: &Config,
     project_dir: &std::path::Path,
+    provider: &str,
+    model: &str,
 ) -> anyhow::Result<(String, Agent, String)> {
     let name = name.trim();
     let info = config.get_agent(name).cloned().ok_or_else(|| {
@@ -391,17 +394,14 @@ pub(crate) fn switch_agent(
             name
         )
     })?;
-    let base = info
-        .system_prompt
-        .clone()
-        .unwrap_or_else(|| Agent::system_prompt_for(name));
+    let mut agent = Agent::new(info).with_config(config);
+    agent.set_route(provider, model);
     let prompt = with_project_memory(
-        &Agent::with_agents_md(&base, project_dir),
+        &Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project_dir),
         project_dir,
         config,
         None,
     );
-    let agent = Agent::new(info);
     Ok((name.to_string(), agent, prompt))
 }
 

@@ -441,6 +441,16 @@ checkout so you do not have to migrate them: `CLAUDE.md`, `GEMINI.md`,
 is skipped. In a git repo, parent directories up to the repository root are
 included.
 
+Provider or model extras belong in markdown next to `config.toml` (or the
+project `.whycodes/` dir). Long prompts stay out of TOML:
+
+- `prompts/<provider>.md` — every model on that provider (`prompts/xai.md`)
+- `prompts/<provider>/<model>.md` — that provider+model (`prompts/xai/grok-4.6.md`)
+- `prompts/models/<model>.md` — that model id on any provider
+
+Project files overwrite the same key. Optional YAML frontmatter is stripped.
+Switching `/models` rebuilds the session system prompt.
+
 Skills are listed in the system prompt by **name and description only**. The
 body is loaded with `read skill://<name>` or `skill` (`action=load`). Project
 trees: `.skills/*.skill.md`, `.whycodes/skills/`, `.claude/skills/*/SKILL.md`.

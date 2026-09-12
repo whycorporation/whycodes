@@ -561,17 +561,6 @@ pub(crate) async fn cmd_run(
         info.permission = config.effective_permission(&info.permission);
         info
     };
-    let base_prompt = agent_info
-        .system_prompt
-        .clone()
-        .unwrap_or_else(|| Agent::system_prompt_for(&agent_name));
-    let system_prompt = with_project_memory(
-        &Agent::with_agents_md(&base_prompt, &project_dir),
-        &project_dir,
-        &config,
-        None,
-    );
-
     // Wall clock for the Cline-style exit summary (process open → quit).
     let session_started = std::time::Instant::now();
 
@@ -585,7 +574,17 @@ pub(crate) async fn cmd_run(
         .with_file_index(file_index)
         .with_mcp(&config)
         .await;
+    agent.set_route(&provider, &model);
     maybe_inject_test_llm(&mut agent, &provider);
+    let system_prompt = with_project_memory(
+        &Agent::with_agents_md(
+            &agent.system_prompt_for_route(&provider, &model),
+            &project_dir,
+        ),
+        &project_dir,
+        &config,
+        None,
+    );
     let mut session = whycodes_session::session::Session::new(project_dir.clone(), system_prompt);
     maybe_session_auto_index(&project_dir, &config);
     let mut history = whycodes_session::SessionHistory::new();
@@ -793,7 +792,10 @@ pub(crate) async fn cmd_run(
                     session = whycodes_session::session::Session::new(
                         project_dir.clone(),
                         with_project_memory(
-                            &Agent::with_agents_md(&agent.system_prompt(), &project_dir),
+                            &Agent::with_agents_md(
+                                &agent.system_prompt_for_route(&provider, &model),
+                                &project_dir,
+                            ),
                             &project_dir,
                             &config,
                             None,
@@ -861,7 +863,7 @@ pub(crate) async fn cmd_run(
                     // Reload system prompt with new AGENTS.md + memory
                     session.set_system_prompt(&with_project_memory(
                         &Agent::with_agents_md(
-                            &Agent::system_prompt_for(&agent_name),
+                            &agent.system_prompt_for_route(&provider, &model),
                             &project_dir,
                         ),
                         &project_dir,
@@ -1049,11 +1051,27 @@ pub(crate) async fn cmd_run(
                                 provider = p;
                                 model = m;
                                 api_key = get_api_key(&provider, &config).await.unwrap_or_default();
+                                agent.set_route(&provider, &model);
+                                refresh_session_memory(
+                                    &mut session,
+                                    &agent,
+                                    &project_dir,
+                                    &config,
+                                    None,
+                                );
                                 println!("{}", switched_model_line(&provider, &model));
                                 maybe_inject_test_llm(&mut agent, &provider);
                             }
                             ModelsSlash::ModelOnly(m) => {
                                 model = m;
+                                agent.set_route(&provider, &model);
+                                refresh_session_memory(
+                                    &mut session,
+                                    &agent,
+                                    &project_dir,
+                                    &config,
+                                    None,
+                                );
                                 println!("{}", model_set_line(&model));
                             }
                         }
@@ -1107,7 +1125,7 @@ pub(crate) async fn cmd_run(
                         let _ = super::provider::cmd_agent(None).await;
                         println!("Current agent: {}", agent_name.cyan());
                     } else {
-                        match switch_agent(rest, &config, &project_dir) {
+                        match switch_agent(rest, &config, &project_dir, &provider, &model) {
                             Ok((name, new_agent, prompt)) => {
                                 agent_name = name;
                                 agent = new_agent;
@@ -1440,6 +1458,7 @@ pub(crate) async fn cmd_generate(
     if cli.no_memory {
         config.memory.enabled = false;
     }
+    config.load_command_files(&project_dir);
     let provider = resolve_provider(cli, &config);
     let model = resolve_model(cli, &config);
     let agent_name = resolve_agent(cli, &config);
@@ -1485,17 +1504,7 @@ pub(crate) async fn cmd_generate(
 
     let mut agent_info = agent_info_for(cli, &config);
     agent_info.permission = config.effective_permission(&agent_info.permission);
-    let base_prompt = agent_info
-        .system_prompt
-        .clone()
-        .unwrap_or_else(|| Agent::system_prompt_for(&agent_name));
     let expanded = expand_user_input(prompt, &project_dir);
-    let system_prompt = with_project_memory(
-        &Agent::with_agents_md(&base_prompt, &project_dir),
-        &project_dir,
-        &config,
-        Some(&expanded),
-    );
 
     // Structured CI formats cannot prompt on stdin; auto-approve tool asks.
     // Catastrophic shell risk still hard-blocks regardless of this.
@@ -1507,7 +1516,17 @@ pub(crate) async fn cmd_generate(
         .with_file_index(file_index)
         .with_mcp(&config)
         .await;
+    agent.set_route(&provider, &model);
     maybe_inject_test_llm(&mut agent, &provider);
+    let system_prompt = with_project_memory(
+        &Agent::with_agents_md(
+            &agent.system_prompt_for_route(&provider, &model),
+            &project_dir,
+        ),
+        &project_dir,
+        &config,
+        Some(&expanded),
+    );
     if format.is_structured() {
         agent = agent
             .with_permission_prompter(Arc::new(AutoApprovePrompter))
@@ -1661,17 +1680,7 @@ pub(crate) async fn run_one_parallel_turn(
 ) -> bool {
     let started = std::time::Instant::now();
 
-    let base_prompt = agent_info
-        .system_prompt
-        .clone()
-        .unwrap_or_else(|| Agent::system_prompt_for(agent_name));
     let expanded = expand_user_input(prompt, project_dir);
-    let system_prompt = with_project_memory(
-        &Agent::with_agents_md(&base_prompt, project_dir),
-        project_dir,
-        config,
-        Some(&expanded),
-    );
 
     let file_index = whycodes_index::WorkspaceIndex::start(
         whycodes_index::WorkspaceIndex::project_roots(project_dir),
@@ -1681,7 +1690,14 @@ pub(crate) async fn run_one_parallel_turn(
         .with_file_index(file_index)
         .with_mcp(config)
         .await;
+    agent.set_route(provider, model);
     maybe_inject_test_llm(&mut agent, provider);
+    let system_prompt = with_project_memory(
+        &Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project_dir),
+        project_dir,
+        config,
+        Some(&expanded),
+    );
     if structured {
         agent = agent
             .with_permission_prompter(Arc::new(AutoApprovePrompter))

@@ -540,16 +540,32 @@ async fn launch_missing_binary_is_serve_not_found() {
         Ok(_) => panic!("expected ServeNotFound"),
     };
     assert_eq!(err.code, ErrorCode::ServeNotFound);
+
+    // Armed tempdir-fail must not steal ServeNotFound (CI flake on Linux).
+    let _fail = super::TestTempdirFailGuard::arm();
+    let err = match WhyCodesClient::launch(LaunchOptions {
+        binary: Some(PathBuf::from("/no/such/whycodes-binary")),
+        inherit_logins: false,
+        startup_timeout: Duration::from_millis(200),
+        ..Default::default()
+    })
+    .await
+    {
+        Err(e) => e,
+        Ok(_) => panic!("expected ServeNotFound"),
+    };
+    assert_eq!(err.code, ErrorCode::ServeNotFound);
 }
 
 #[tokio::test]
 async fn launch_temp_home_create_failure_is_startup_failed() {
     let dir = tempfile::tempdir().unwrap();
-    let blocker = dir.path().join("not-a-dir");
-    std::fs::write(&blocker, b"x").unwrap();
+    let dummy = dir.path().join("unused");
+    std::fs::write(&dummy, b"").unwrap();
+    let _fail = super::TestTempdirFailGuard::arm();
     let err = match WhyCodesClient::launch(LaunchOptions {
         working_dir: dir.path().to_path_buf(),
-        binary: Some(dir.path().join("unused")),
+        binary: Some(dummy),
         inherit_logins: false,
         home: None,
         startup_timeout: Duration::from_millis(200),
@@ -558,15 +574,9 @@ async fn launch_temp_home_create_failure_is_startup_failed() {
     .await
     {
         Err(e) => e,
-        Ok(_) => panic!("expected StartupFailed or ServeNotFound"),
+        Ok(_) => panic!("expected StartupFailed"),
     };
-    assert!(
-        matches!(
-            err.code,
-            ErrorCode::StartupFailed | ErrorCode::ServeNotFound
-        ),
-        "{err:?}"
-    );
+    assert_eq!(err.code, ErrorCode::StartupFailed, "{err:?}");
 }
 
 #[tokio::test]
@@ -574,9 +584,12 @@ async fn launch_home_create_failure_is_startup_failed() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("not-a-dir");
     std::fs::write(&file, b"x").unwrap();
+    // Present so launch does not classify a missing binary first.
+    let dummy = dir.path().join("unused");
+    std::fs::write(&dummy, b"").unwrap();
     let err = match WhyCodesClient::launch(LaunchOptions {
         working_dir: dir.path().to_path_buf(),
-        binary: Some(dir.path().join("unused")),
+        binary: Some(dummy),
         inherit_logins: true,
         home: Some(file.join("nested")),
         startup_timeout: Duration::from_millis(200),
@@ -594,15 +607,12 @@ async fn launch_home_create_failure_is_startup_failed() {
 #[tokio::test]
 async fn launch_injected_tempdir_failure_is_startup_failed() {
     let dir = tempfile::tempdir().unwrap();
-    let prev = {
-        let _lock = env_lock();
-        let prev = std::env::var_os("WHYCODES_TEST_TEMPDIR_FAIL");
-        unsafe { std::env::set_var("WHYCODES_TEST_TEMPDIR_FAIL", "1") };
-        prev
-    };
+    let dummy = dir.path().join("unused");
+    std::fs::write(&dummy, b"").unwrap();
+    let _fail = super::TestTempdirFailGuard::arm();
     let err = match WhyCodesClient::launch(LaunchOptions {
         working_dir: dir.path().to_path_buf(),
-        binary: Some(dir.path().join("unused")),
+        binary: Some(dummy),
         inherit_logins: false,
         home: None,
         startup_timeout: Duration::from_millis(200),
@@ -613,13 +623,6 @@ async fn launch_injected_tempdir_failure_is_startup_failed() {
         Err(e) => e,
         Ok(_) => panic!("expected injected tempdir failure"),
     };
-    {
-        let _lock = env_lock();
-        match prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TEMPDIR_FAIL", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_TEST_TEMPDIR_FAIL") },
-        }
-    }
     assert_eq!(err.code, ErrorCode::StartupFailed);
     assert!(err.message.contains("temp WHYCODES_HOME"), "{err:?}");
 }

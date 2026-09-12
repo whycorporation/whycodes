@@ -1300,6 +1300,121 @@ fn load_command_files_loads_markdown_and_builtins() {
 }
 
 #[test]
+fn load_prompt_files_reads_provider_and_model_markdown() {
+    with_isolated_home(|home| {
+        let prompts = home.join("prompts");
+        std::fs::create_dir_all(prompts.join("xai")).unwrap();
+        std::fs::create_dir_all(prompts.join("models")).unwrap();
+        std::fs::write(prompts.join("xai.md"), "# XAI\nBe terse.").unwrap();
+        std::fs::write(
+            prompts.join("xai/grok-4.6.md"),
+            "---\nnote: ignored\n---\nGrok 4.6 extra.",
+        )
+        .unwrap();
+        std::fs::write(prompts.join("models/grok-4.md"), "generic grok-4").unwrap();
+        std::fs::write(prompts.join("skip.txt"), "ignored").unwrap();
+        std::fs::write(prompts.join("empty.md"), "  \n").unwrap();
+
+        let proj = home.join("proj");
+        let proj_prompts = proj.join(".whycodes/prompts");
+        std::fs::create_dir_all(&proj_prompts).unwrap();
+        std::fs::write(proj_prompts.join("xai.md"), "project xai wins").unwrap();
+
+        let mut cfg = Config::default();
+        cfg.load_prompt_files(&proj);
+        assert_eq!(
+            cfg.system_prompt_overlays
+                .providers
+                .get("xai")
+                .map(String::as_str),
+            Some("project xai wins")
+        );
+        assert_eq!(
+            cfg.system_prompt_overlays
+                .models
+                .get("xai/grok-4.6")
+                .map(String::as_str),
+            Some("Grok 4.6 extra.")
+        );
+        assert_eq!(
+            cfg.system_prompt_overlays
+                .models
+                .get("grok-4")
+                .map(String::as_str),
+            Some("generic grok-4")
+        );
+        assert!(!cfg.system_prompt_overlays.providers.contains_key("skip"));
+        assert!(!cfg.system_prompt_overlays.providers.contains_key("empty"));
+
+        let sections = cfg.system_prompt_overlays.sections("xai", "grok-4.6");
+        assert_eq!(sections.len(), 2);
+        assert!(sections[0].1.contains("project xai wins"));
+        assert!(sections[1].1.contains("Grok 4.6 extra."));
+
+        // Nested dirs under a provider folder are ignored; broken frontmatter
+        // still yields the body; unreadable paths are skipped.
+        std::fs::create_dir_all(prompts.join("xai/nested")).unwrap();
+        std::fs::write(prompts.join("xai/nested/skip.md"), "nope").unwrap();
+        std::fs::write(prompts.join("xai/open.md"), "---\nno close").unwrap();
+        std::fs::create_dir(prompts.join("models/dir.md")).unwrap();
+        let mut cfg2 = Config::default();
+        cfg2.load_prompt_files(&proj);
+        assert!(
+            !cfg2
+                .system_prompt_overlays
+                .models
+                .values()
+                .any(|v| v.contains("nope"))
+        );
+        assert_eq!(
+            cfg2.system_prompt_overlays
+                .models
+                .get("xai/open")
+                .map(String::as_str),
+            Some("---\nno close")
+        );
+        assert!(!cfg2.system_prompt_overlays.models.contains_key("dir"));
+    });
+}
+
+#[test]
+fn merge_overlays_project_keys_win() {
+    let mut base = Config::default();
+    base.system_prompt_overlays
+        .providers
+        .insert("xai".into(), "global".into());
+    base.system_prompt_overlays
+        .models
+        .insert("grok".into(), "g".into());
+    let mut other = Config::default();
+    other
+        .system_prompt_overlays
+        .providers
+        .insert("xai".into(), "project".into());
+    other
+        .system_prompt_overlays
+        .models
+        .insert("xai/grok".into(), "specific".into());
+    let merged = base.merge_with(&other);
+    assert_eq!(
+        merged.system_prompt_overlays.providers.get("xai").unwrap(),
+        "project"
+    );
+    assert_eq!(
+        merged.system_prompt_overlays.models.get("grok").unwrap(),
+        "g"
+    );
+    assert_eq!(
+        merged
+            .system_prompt_overlays
+            .models
+            .get("xai/grok")
+            .unwrap(),
+        "specific"
+    );
+}
+
+#[test]
 fn builtin_prompt_commands_do_not_overwrite_user() {
     let mut cfg = Config::default();
     cfg.commands.insert(

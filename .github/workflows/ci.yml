@@ -24,25 +24,28 @@ env:
   CARGO_INCREMENTAL: 0
   CARGO_NET_RETRY: 2
 
-# One pipeline per PR / branch. The repo has a single self-hosted Linux runner;
-# without this, every push to main queues jobs behind the previous run.
+# One pipeline per PR / branch. A new push cancels the previous run so the
+# runner pool is not stuck on stale jobs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# Linux jobs run on the repo's self-hosted runner (no GitHub-hosted minutes).
-# Fork pull requests never do: untrusted workflow + checkout on that machine
-# is a takeover. Same-repo PRs and pushes to main still run here.
+# Linux jobs run on the repo's self-hosted runner pool (no GitHub-hosted
+# minutes). lint is the cheap gate; test, coverage, and build then run in
+# parallel when more than one runner is online. Fork pull requests never do:
+# untrusted workflow + checkout on those machines is a takeover. Same-repo
+# PRs and pushes to main still run here.
 # Job-level `if` cannot use `matrix` — multi-OS is a separate optional job set
 # on GitHub-hosted runners (set repo variable CI_MULTI_OS=true).
 #
 # `github.event.pull_request.head.repo.full_name` is empty on push, so the
-# first clause keeps those jobs.
+# first clause keeps those jobs. Each runner process must keep its own
+# `_work` directory so parallel cargo jobs do not share `target/`.
 jobs:
   lint:
     name: Lint & Budgets
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 15
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
@@ -53,7 +56,7 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          # Shared key keeps lint/test/build/coverage on same cache on the single runner.
+          # Shared key so every Linux job restores the same cargo cache.
           shared-key: whycodes-ci
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v7
@@ -137,8 +140,12 @@ jobs:
   test:
     name: Test (linux)
     runs-on: self-hosted
-    timeout-minutes: 12
+    timeout-minutes: 25
+    # Independent of coverage/build so a runner pool can run them together.
     needs: lint
+    env:
+      # One rustc per parallel job on the shared 4-vCPU host.
+      CARGO_BUILD_JOBS: 1
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       - uses: actions/checkout@v7
@@ -155,8 +162,10 @@ jobs:
   coverage:
     name: Coverage (line floor)
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 30
     needs: lint
+    env:
+      CARGO_BUILD_JOBS: 1
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       - uses: actions/checkout@v7
@@ -176,12 +185,15 @@ jobs:
       # checked by Python instead of 12 separate `cargo llvm-cov -p` re-runs.
       # Wrapper flags live in scripts/coverage.sh (same as local `scripts/coverage.sh`).
       - name: Measure coverage
-        run: COVERAGE_FEATURES=whycodes-storage/bundled scripts/coverage.sh
+        # Unique path so two coverage jobs on one host cannot clobber /tmp/cov.json.
+        run: COVERAGE_FEATURES=whycodes-storage/bundled REPORT_JSON="$RUNNER_TEMP/cov.json" scripts/coverage.sh
 
   build:
     name: Build (linux)
     runs-on: self-hosted
-    timeout-minutes: 12
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: 1
     needs: lint
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:

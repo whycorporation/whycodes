@@ -25,7 +25,7 @@ use crate::events::{EventSink, TurnEvent};
 use crate::permission::{PermissionPrompter, default_prompter};
 use crate::question::{QuestionPrompter, default_question_prompter};
 use whycodes_command_risk::RiskThreshold;
-use whycodes_config::{HookConfig, NotifyConfig};
+use whycodes_config::{HookConfig, NotifyConfig, SystemPromptOverlays};
 
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("../../prompts/build.txt");
 
@@ -103,6 +103,12 @@ pub struct Agent {
     swarm_hub: Option<whycodes_core::SwarmHub>,
     /// `[lsp]` overlay from config (empty = built-in auto-detect).
     lsp_overlay: whycodes_tools::LspSettings,
+    /// Provider/model extras from `prompts/*.md`.
+    system_prompt_overlays: SystemPromptOverlays,
+    /// Active provider id for overlay lookup (`/models`, session route).
+    route_provider: String,
+    /// Active model id for overlay lookup.
+    route_model: String,
 }
 
 /// Recover from a poisoned mutex instead of aborting (`panic = "abort"` in release).
@@ -346,6 +352,9 @@ impl Agent {
             session_claims: None,
             swarm_hub: None,
             lsp_overlay: whycodes_tools::LspSettings::default(),
+            system_prompt_overlays: SystemPromptOverlays::default(),
+            route_provider: String::new(),
+            route_model: String::new(),
         }
     }
 
@@ -422,6 +431,22 @@ impl Agent {
     /// Session-level approval overlay (`auto` / `important` / `manual`).
     pub fn set_approval_mode(&mut self, mode: ApprovalMode) {
         self.approval_mode = mode;
+    }
+
+    /// Bind the active provider/model so [`Self::system_prompt`] can append
+    /// matching `prompts/*.md` extras.
+    pub fn set_route(&mut self, provider: &str, model: &str) {
+        self.route_provider = provider.to_string();
+        self.route_model = model.to_string();
+    }
+
+    pub fn route(&self) -> (&str, &str) {
+        (&self.route_provider, &self.route_model)
+    }
+
+    /// Replace loaded `prompts/*.md` extras (TUI hydrate after first paint).
+    pub fn set_system_prompt_overlays(&mut self, overlays: SystemPromptOverlays) {
+        self.system_prompt_overlays = overlays;
     }
 
     /// Current approval overlay.
@@ -510,6 +535,7 @@ impl Agent {
         // agent switches / re-config.
         self.background.set_max_jobs(self.max_background_jobs);
         self.lsp_overlay = lsp_overlay_from_config(&config.lsp);
+        self.system_prompt_overlays = config.system_prompt_overlays.clone();
         let sandbox_desc = whycodes_sandbox::describe_backend(&self.sandbox);
         let network_allow = self.network.allowlist.len();
         let network_deny = self.network.denylist.len();
@@ -729,7 +755,43 @@ impl Agent {
             .system_prompt
             .clone()
             .unwrap_or_else(|| Self::system_prompt_for(&self.info.name));
-        Self::with_runtime_context(&base)
+        Self::with_runtime_context(&Self::with_prompt_overlays(
+            &base,
+            &self.system_prompt_overlays,
+            &self.route_provider,
+            &self.route_model,
+        ))
+    }
+
+    /// Role prompt plus provider/model extras from `prompts/*.md` (no runtime).
+    pub fn system_prompt_for_route(&self, provider: &str, model: &str) -> String {
+        let base = self
+            .info
+            .system_prompt
+            .clone()
+            .unwrap_or_else(|| Self::system_prompt_for(&self.info.name));
+        Self::with_prompt_overlays(&base, &self.system_prompt_overlays, provider, model)
+    }
+
+    /// Append provider then model extras. Empty overlay is a no-op.
+    pub fn with_prompt_overlays(
+        system_prompt: &str,
+        overlays: &SystemPromptOverlays,
+        provider: &str,
+        model: &str,
+    ) -> String {
+        let sections = overlays.sections(provider, model);
+        if sections.is_empty() {
+            return system_prompt.to_string();
+        }
+        let mut out = String::from(system_prompt);
+        for (label, body) in sections {
+            out.push_str("\n\n# ");
+            out.push_str(&label);
+            out.push_str("\n\n");
+            out.push_str(&body);
+        }
+        out
     }
 
     /// Get the system prompt for a named agent.

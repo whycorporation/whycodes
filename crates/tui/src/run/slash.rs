@@ -163,7 +163,10 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             *ctx.session = Session::new(
                 ctx.project_dir.to_path_buf(),
                 with_project_memory(
-                    &Agent::with_agents_md(&ctx.agent.system_prompt(), ctx.project_dir),
+                    &Agent::with_agents_md(
+                        &ctx.agent.system_prompt_for_route(ctx.provider, ctx.model),
+                        ctx.project_dir,
+                    ),
                     ctx.project_dir,
                     ctx.config,
                     None,
@@ -434,20 +437,21 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             if rest.is_empty() {
                 crate::input::open_agent_dialog(ctx.app);
             } else if let Some(info) = ctx.config.get_agent(rest).cloned() {
-                let base = info
-                    .system_prompt
-                    .clone()
-                    .unwrap_or_else(|| Agent::system_prompt_for(rest));
-                let prompt = with_project_memory(
-                    &Agent::with_agents_md(&base, ctx.project_dir),
-                    ctx.project_dir,
-                    ctx.config,
-                    None,
-                );
-                *ctx.agent = bind_agent_prompters(
+                let mut next = bind_agent_prompters(
                     Agent::new(info).with_config(ctx.config),
                     &ctx.perm_prompter,
                     &ctx.question_prompter,
+                );
+                next.set_route(ctx.provider, ctx.model);
+                *ctx.agent = next;
+                let prompt = with_project_memory(
+                    &Agent::with_agents_md(
+                        &ctx.agent.system_prompt_for_route(ctx.provider, ctx.model),
+                        ctx.project_dir,
+                    ),
+                    ctx.project_dir,
+                    ctx.config,
+                    None,
                 );
                 ctx.session.set_system_prompt(&prompt);
                 if let Some(idx) = ctx.app.primary_agents.iter().position(|n| n == rest) {
@@ -504,11 +508,15 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     m.to_string(),
                     ctx.config,
                 );
+                ctx.agent.set_route(ctx.provider, ctx.model);
+                refresh_session_memory(ctx.session, ctx.agent, ctx.project_dir, ctx.config, None);
                 fill_oauth_credential(ctx.api_key, ctx.provider).await;
                 ctx.app.pending_catalog_refresh = true;
             } else {
                 *ctx.model = rest.to_string();
                 ctx.app.model_name = rest.to_string();
+                ctx.agent.set_route(ctx.provider, ctx.model);
+                refresh_session_memory(ctx.session, ctx.agent, ctx.project_dir, ctx.config, None);
                 refresh_context_window(ctx.app, ctx.config, ctx.provider, rest);
                 ctx.app.status_message = format!(
                     "Model → {}  ·  window {}",
