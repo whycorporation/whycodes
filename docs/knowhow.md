@@ -2337,6 +2337,20 @@ Harness TTFF then dropped ratatui entirely: `write_splash_csi` is `SM?1049` + cl
 
 Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs already have no edge between them; a single runner still serializes them. Extra self-hosted runners with separate `_work` dirs run them together.
 
+## Shared `~/.cargo` across self-hosted runner processes
+
+**Date:** 2026-09-12 · **Area:** `.github/workflows/ci.yml`
+
+**Symptom:** After adding a second and third runner on the same host, `main` CI failed in Test (`strum_macros` E0583, missing helper modules) and Coverage (`could not parse/generate dep info` for `rustversion-*.d`). The PR run on the same SHA was green when jobs did not overlap as hard.
+
+**JSONL / crash:** none.
+
+**Root cause:** Three `Runner.Listener` processes share the `github-runner` user. `_work` is per process; `~/.cargo/registry` is not. Parallel `cargo` unpacks the same crates.io crate into one directory and rustc reads a half-written tree.
+
+**Fix:** Set `CARGO_HOME: ${{ runner.temp }}/cargo-home` on every self-hosted Linux job so registry/git/home are per-job.
+
+**Prevention:** Do not point extra runners at one OS home for Cargo. Separate `_work` is not enough.
+
 ## Coverage flake: `git::commit::tests::commit_module_loads` cannot spawn `false`
 
 **Date:** 2026-09-12 · **Area:** `crates/tools/src/git/commit_tests.rs`
