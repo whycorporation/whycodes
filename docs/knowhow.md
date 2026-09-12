@@ -2351,6 +2351,20 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 
 **Prevention:** Do not point extra runners at one OS home for Cargo. Separate `_work` is not enough.
 
+## TUI suggestion FailOpen test hits the LLM response cache
+
+**Date:** 2026-09-12 · **Area:** `crates/tui/src/run/slash_tests.rs`
+
+**Symptom:** `complete_prompt_suggestion_logs_fail_open_without_sending` failed under `cargo test --workspace` (`fail-open must not enqueue a suggestion`). Isolated re-run is green.
+
+**JSONL / crash:** none.
+
+**Root cause:** `LlmTransport::complete` stores tools-free replies in a process-wide `ResponseCache`. The sibling success test used the same prompt + model (`m1`) and stored `"try cargo test"`. FailOpen then got a cache hit and enqueued that text.
+
+**Fix:** Distinct model ids (`m-suggest-ok` / `m-suggest-fail`) so the cache keys do not collide.
+
+**Prevention:** Tests that share `LlmTransport::complete` must not reuse prompt+model across success and error cases.
+
 ## Coverage flake: `git::commit::tests::commit_module_loads` cannot spawn `false`
 
 **Date:** 2026-09-12 · **Area:** `crates/tools/src/git/commit_tests.rs`

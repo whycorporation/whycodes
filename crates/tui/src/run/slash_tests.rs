@@ -165,7 +165,7 @@ async fn complete_prompt_suggestion_sends_scripted_text() {
         "acme",
         [whycodes_llm::ScriptedStep::Text("try cargo test".into())],
     );
-    complete_prompt_suggestion(&prov, "do the next step", "ok", "sk", "m1", tx).await;
+    complete_prompt_suggestion(&prov, "do the next step", "ok", "sk", "m-suggest-ok", tx).await;
     let got = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
         .await
         .ok()
@@ -181,7 +181,9 @@ async fn complete_prompt_suggestion_logs_fail_open_without_sending() {
         "acme",
         [whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())],
     );
-    complete_prompt_suggestion(&prov, "do the next step", "ok", "sk", "m1", tx).await;
+    // Distinct model so the sibling success test's process-wide response
+    // cache cannot replay "try cargo test" here.
+    complete_prompt_suggestion(&prov, "do the next step", "ok", "sk", "m-suggest-fail", tx).await;
     assert!(
         rx.try_recv().is_err(),
         "fail-open must not enqueue a suggestion"
