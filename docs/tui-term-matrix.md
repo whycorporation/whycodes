@@ -51,7 +51,9 @@ when `TERM` is empty, and honours `WHYCODES_COLOR=truecolor|256|16`. Other
 `TERM` strings still follow the emulator. Setup is in `crates/tui/src/run.rs`:
 controlling console (`/dev/tty` on Unix, `CONOUT$` on Windows), alt-screen,
 mouse capture, bracketed paste, and (when `supports_keyboard_enhancement`)
-`DISAMBIGUATE_ESCAPE_CODES`.
+`DISAMBIGUATE_ESCAPE_CODES`. On Windows the `CONOUT$` handle also gets CP
+65001 + VT processing so UTF-8 box drawing (`╭─╮`) is not OEM-decoded as
+`Ööö` (Turkish CP857). Restore the previous output CP on exit.
 
 ## Checklist (every host)
 
@@ -75,6 +77,7 @@ Do these in the window that just opened. Mark fail + host in the PR / issue.
 | 11 | Hover chrome updates (message / button highlight) | |
 | 12 | `?` help modal: scroll, select-copy, `[✗]` close | |
 | 13 | Modal chrome uses theme colours (not white / profile default). Thinking rail is `palette.thinking`, not build-green | |
+| 14 | **Windows:** prompt/dialog borders are line-drawing (`╭─╮│╰─╯`), not `Ö`/`ö`/mojibake. `chcp` after quit should match the pre-TUI code page | |
 
 ## Capability cuts (same emulator)
 

@@ -55,6 +55,7 @@ mod persist;
 mod slash;
 #[cfg(test)]
 mod tests;
+mod windows_console;
 
 pub(crate) use import::mark_import_declined;
 use import::*;
@@ -896,6 +897,7 @@ impl LoopTerm {
 
 fn on_terminal_new_failed(e: &impl std::fmt::Display) {
     let _ = disable_raw_mode();
+    windows_console::restore_windows_console();
     whycodes_core::logging::emit(
         "whycodes_tui",
         "error",
@@ -1080,6 +1082,7 @@ fn restore_terminal_on(out: &mut impl Write) {
         SetCursorStyle::DefaultUserShape,
         crossterm::cursor::Show
     );
+    windows_console::restore_windows_console();
 }
 
 /// Probe + enable the kitty keyboard protocol.
@@ -1130,7 +1133,13 @@ fn attach_live(
              Run inside a real terminal, or use `whycodes --plain`."
         )
     })?;
-    enter_raw_and_alt(&mut tui_out, enable_raw)?;
+    // `CONOUT$` is a new handle: crossterm's stdout VT flag does not apply,
+    // and the OEM code page turns UTF-8 box drawing into `Ööö` on TR Windows.
+    windows_console::prepare_windows_console(&tui_out);
+    if let Err(e) = enter_raw_and_alt(&mut tui_out, enable_raw) {
+        windows_console::restore_windows_console();
+        return Err(e);
+    }
     let (tw, th) = size().unwrap_or((0, 0));
     let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out, Some((tw, th)));
     let mut terminal = LoopTerm::live(tui_out, color_mode)?;
@@ -1198,6 +1207,7 @@ fn restore_live_backend(out: &mut impl Write, keyboard_enhanced: bool) {
         LeaveAlternateScreen,
         SetCursorStyle::DefaultUserShape
     );
+    windows_console::restore_windows_console();
 }
 
 /// Whether it is worth waiting on the keyboard-enhancement CSI query.
@@ -1264,7 +1274,11 @@ pub fn paint_first_frame_sync() -> anyhow::Result<Option<TuiExit>> {
              Run inside a real terminal, or use `whycodes --plain`."
         )
     })?;
-    write_splash_csi(&mut out)?;
+    windows_console::prepare_windows_console(&out);
+    if let Err(e) = write_splash_csi(&mut out) {
+        restore_splash_csi(&mut out);
+        return Err(e.into());
+    }
     crate::bench::record_draw();
     if let Some(ref b) = bench {
         while !crate::bench::should_stop(b) {
@@ -1291,6 +1305,7 @@ fn restore_splash_csi(out: &mut impl Write) {
     if let Err(e) = out.flush() {
         tracing::debug!(error = %e, "splash CSI restore flush failed");
     }
+    windows_console::restore_windows_console();
 }
 
 fn render_splash(frame: &mut ratatui::Frame<'_>) {
