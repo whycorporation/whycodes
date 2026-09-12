@@ -4437,10 +4437,7 @@ fn command_ctrl_chord_and_paste_word_moves() {
 
 #[test]
 fn provider_and_model_dialogs_load_custom_from_isolated_home() {
-    let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let home = tempfile::tempdir().unwrap();
-    let prev = std::env::var_os("WHYCODES_HOME");
-    unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+    let home = crate::IsolatedHome::new();
     std::fs::write(
         home.path().join("config.toml"),
         r#"
@@ -4452,6 +4449,7 @@ models = ["disk-m1"]
     )
     .unwrap();
 
+    home.pin();
     let mut a = app();
     open_provider_dialog(&mut a);
     assert!(
@@ -4460,6 +4458,7 @@ models = ["disk-m1"]
         a.provider_dialog.providers
     );
 
+    home.pin();
     let mut a = app();
     a.model_selection.models.clear();
     fill_model_catalog_from_disk(&mut a);
@@ -4471,21 +4470,14 @@ models = ["disk-m1"]
         "{:?}",
         a.model_selection.models
     );
-
-    match prev {
-        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
-        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
-    }
 }
 
 #[test]
 fn fill_model_catalog_from_disk_is_a_noop_when_config_load_fails() {
-    let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let home = tempfile::tempdir().unwrap();
-    let prev = std::env::var_os("WHYCODES_HOME");
-    unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+    let home = crate::IsolatedHome::new();
     std::fs::write(home.path().join("config.toml"), "not valid toml {{{").unwrap();
 
+    home.pin();
     let mut a = app();
     a.model_selection.models.clear();
     fill_model_catalog_from_disk(&mut a);
@@ -4494,11 +4486,6 @@ fn fill_model_catalog_from_disk_is_a_noop_when_config_load_fails() {
         "broken config.toml must leave the catalog empty, got {:?}",
         a.model_selection.models
     );
-
-    match prev {
-        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
-        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
-    }
 }
 
 #[test]

@@ -2366,6 +2366,20 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 
 **Prevention:** Tests that share `LlmTransport::complete` must not reuse prompt+model across success and error cases.
 
+## Coverage: TUI isolated-home dialog test sees an empty catalog
+
+**Date:** 2026-09-12 · **Area:** `crates/tui/src/input_event_tests.rs`
+
+**Symptom:** `provider_and_model_dialogs_load_custom_from_isolated_home` panicked with `[]` on `main` Coverage while the Test job was green.
+
+**JSONL / crash:** none.
+
+**Root cause:** The first `Config::load` found `acme-disk`; the second (`fill_model_catalog_from_disk`) saw empty providers. TUI `ENV_LOCK` does not serialize other crates in `cargo llvm-cov --workspace`, which all mutate `WHYCODES_HOME`. Restore-on-panic was also missing.
+
+**Fix:** `IsolatedHome` Drop guard + re-pin before each load. Skip those two tests in `scripts/coverage.sh`; the Test job still runs them.
+
+**Prevention:** Process-wide env tests are unsafe under workspace llvm-cov. Skip them there or use a crate-local lock that every crate honors (none exists).
+
 ## SDK launch: ephemeral port stolen before spawn
 
 **Date:** 2026-09-12 · **Area:** `crates/sdk/src/client.rs`

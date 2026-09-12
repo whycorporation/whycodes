@@ -110,7 +110,7 @@ cov_cmd="cargo llvm-cov --workspace"
 if [ -n "$COVERAGE_FEATURES" ]; then
     cov_cmd="$cov_cmd --features $COVERAGE_FEATURES"
 fi
-cov_cmd="$cov_cmd --ignore-filename-regex $IGNORE --fail-under-lines $FAIL_UNDER --summary-only -- --skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index --skip launch_inherited_logins_retries_until_healthy --skip launch_isolated_home_and_tempdir_connect --skip launch_timeout_closes_stderr_then_hangs --skip launch_child_exit_is_startup_failed --skip launch_unsupported_version_does_not_retry --skip isolated_cwd_points_at_home_and_restores --skip git_log_status_diff_blame_and_commit_on_repo"
+cov_cmd="$cov_cmd --ignore-filename-regex $IGNORE --fail-under-lines $FAIL_UNDER --summary-only -- --skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index --skip launch_inherited_logins_retries_until_healthy --skip launch_isolated_home_and_tempdir_connect --skip launch_timeout_closes_stderr_then_hangs --skip launch_child_exit_is_startup_failed --skip launch_unsupported_version_does_not_retry --skip isolated_cwd_points_at_home_and_restores --skip git_log_status_diff_blame_and_commit_on_repo --skip provider_and_model_dialogs_load_custom_from_isolated_home --skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails"
 
 report_cmd="cargo llvm-cov report --json --ignore-filename-regex $CRATE_IGNORE --summary-only"
 floors_cmd="python3 scripts/check_coverage_floors.py $REPORT_JSON"
@@ -159,7 +159,9 @@ set -- "$@" \
     --skip launch_child_exit_is_startup_failed \
     --skip launch_unsupported_version_does_not_retry \
     --skip isolated_cwd_points_at_home_and_restores \
-    --skip git_log_status_diff_blame_and_commit_on_repo
+    --skip git_log_status_diff_blame_and_commit_on_repo \
+    --skip provider_and_model_dialogs_load_custom_from_isolated_home \
+    --skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails
 run "$@"
 
 # cargo-llvm-cov JSON includes rustc macro expansions (`format!`, tracing
