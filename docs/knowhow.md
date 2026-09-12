@@ -2347,7 +2347,7 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 
 **Root cause:** Three `Runner.Listener` processes share the `github-runner` user. `_work` is per process; `~/.cargo/registry` is not. Parallel `cargo` unpacks the same crates.io crate into one directory and rustc reads a half-written tree.
 
-**Fix:** Set `CARGO_HOME: ${{ runner.temp }}/cargo-home` on every self-hosted Linux job so registry/git/home are per-job.
+**Fix:** Each self-hosted Linux job writes `CARGO_HOME=$RUNNER_TEMP/cargo-home` into `GITHUB_ENV` before rust-toolchain/cache. Do not put `${{ runner.temp }}` in job-level `env` — GitHub fails the workflow with zero jobs.
 
 **Prevention:** Do not point extra runners at one OS home for Cargo. Separate `_work` is not enough.
 
