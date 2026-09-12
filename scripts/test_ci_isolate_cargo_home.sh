@@ -130,12 +130,17 @@ need "shared-key: whycodes-ci-registry" "$wf"
 need "CARGO_LLVM_COV_TARGET_DIR: \${{ runner.temp }}/llvm-cov-target" "$wf"
 forbid 'RUNNER_TEMP/cargo-home' "$wf"
 
-dry="$(CARGO_TARGET_DIR=/tmp/pinned-llvm-target "$COV" --dry-run)"
+dry="$(
+    env -u RUNNER_TEMP -u CARGO_LLVM_COV_TARGET_DIR \
+        CARGO_TARGET_DIR=/tmp/pinned-llvm-target \
+        "$COV" --dry-run
+)"
 need "CARGO_LLVM_COV_TARGET_DIR=/tmp/pinned-llvm-target-llvm-cov" "$dry"
 forbid "--target-dir" "$dry"
 
 dryci="$(
-    RUNNER_TEMP=/tmp/gha-runner-temp \
+    env -u CARGO_LLVM_COV_TARGET_DIR \
+        RUNNER_TEMP=/tmp/gha-runner-temp \
         CARGO_TARGET_DIR=/tmp/pinned-llvm-target \
         "$COV" --dry-run
 )"
