@@ -2390,9 +2390,9 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 
 **Root cause:** `CARGO_LLVM_COV_TARGET_DIR` points at a persistent per-job cache. Previous llvm-cov `.profraw` files mixed into the next merge.
 
-**Fix:** `cargo llvm-cov clean --workspace` before the instrumented test run.
+**Fix:** Write Cargo's `CACHEDIR.TAG` into the persistent target dir, delete leftover `*.profraw`/`*.profdata`, then `cargo llvm-cov clean --workspace`. Without the tag, `clean` errors and the traces stay.
 
-**Prevention:** Persistent coverage `target/` must be cleaned of profraw, or do not persist `llvm-cov-target`.
+**Prevention:** Persistent coverage `target/` must be a Cargo cache dir (CACHEDIR.TAG) and must drop profraw each run.
 
 ## SDK launch: ephemeral port stolen before spawn
 

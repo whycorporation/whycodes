@@ -119,6 +119,7 @@ if [ "$dry_run" -eq 1 ]; then
     if [ -n "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
         say "+ CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR"
     fi
+    say "+ write CACHEDIR.TAG; delete *.profraw *.profdata"
     say "+ cargo llvm-cov clean --workspace"
     say "+ $cov_cmd"
     say "+ $report_cmd > $REPORT_JSON"
@@ -145,6 +146,18 @@ fi
 # Rebuild argv without going through the shell so regex metacharacters stay literal.
 # Persistent CARGO_TARGET_DIR keeps stale .profraw from the previous job.
 # Mixing those files tanks crate floors (index 74.7%, sdk 54% on PR 93).
+# cargo llvm-cov clean also refuses a dir without CACHEDIR.TAG — write one,
+# delete leftover traces, then clean.
+cov_root="${CARGO_LLVM_COV_TARGET_DIR:-${CARGO_TARGET_DIR:-target}}"
+mkdir -p "$cov_root"
+if [ ! -f "$cov_root/CACHEDIR.TAG" ]; then
+    cat >"$cov_root/CACHEDIR.TAG" <<'EOF'
+Signature: 8a477f597d28d172789c096e48218643
+# This file is a cache directory tag created by cargo.
+# For information about cache directory tags see https://bford.info/cachedir/
+EOF
+fi
+find "$cov_root" \( -name '*.profraw' -o -name '*.profdata' \) -delete
 run cargo llvm-cov clean --workspace
 
 set -- cargo llvm-cov --workspace
