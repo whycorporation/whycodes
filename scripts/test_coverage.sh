@@ -33,7 +33,7 @@ printf '%s\n' "$help" | grep -q '^set ' && {
 
 dry="$("$SCRIPT" --dry-run)"
 need "cargo llvm-cov --workspace" "$dry"
-need "rm -rf llvm-cov-target" "$dry"
+need "purge *.profraw from CARGO_TARGET_DIR" "$dry"
 forbid "cargo llvm-cov clean --workspace" "$dry"
 need "--fail-under-lines 82" "$dry"
 need "--skip tests::watcher_picks_up_changes" "$dry"
@@ -57,9 +57,24 @@ need "--fail-under-lines 100" "$dry100"
 dryjson="$(REPORT_JSON=/tmp/custom-cov.json "$SCRIPT" --dry-run)"
 need "/tmp/custom-cov.json" "$dryjson"
 
-drytgt="$(CARGO_TARGET_DIR=/tmp/pinned-llvm-target "$SCRIPT" --dry-run)"
-need "CARGO_LLVM_COV_TARGET_DIR=/tmp/pinned-llvm-target/llvm-cov-target" "$drytgt"
+# Unset RUNNER_TEMP: CI jobs inherit it, which would skip the local
+# ${CARGO_TARGET_DIR}-llvm-cov fallback this case is meant to cover.
+drytgt="$(
+    env -u RUNNER_TEMP -u CARGO_LLVM_COV_TARGET_DIR \
+        CARGO_TARGET_DIR=/tmp/pinned-llvm-target \
+        "$SCRIPT" --dry-run
+)"
+need "CARGO_LLVM_COV_TARGET_DIR=/tmp/pinned-llvm-target-llvm-cov" "$drytgt"
 forbid "--target-dir" "$drytgt"
+
+dryci="$(
+    env -u CARGO_LLVM_COV_TARGET_DIR \
+        RUNNER_TEMP=/tmp/gha-runner-temp \
+        CARGO_TARGET_DIR=/tmp/pinned-llvm-target \
+        "$SCRIPT" --dry-run
+)"
+need "CARGO_LLVM_COV_TARGET_DIR=/tmp/gha-runner-temp/llvm-cov-target" "$dryci"
+need "LLVM_PROFILE_FILE=/tmp/gha-runner-temp/llvm-cov-target/whycodes-%p-%m.profraw" "$dryci"
 
 # rustup llvm-cov is under rustlib/bin, not PATH. The wrapper must prepend
 # that dir so CI (and rustup clones) do not fail with `llvm-cov not found`.
