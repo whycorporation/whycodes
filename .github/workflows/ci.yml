@@ -41,11 +41,14 @@ concurrency:
 # `github.event.pull_request.head.repo.full_name` is empty on push, so the
 # first clause keeps those jobs. Each runner process must keep its own
 # `_work` directory so parallel cargo jobs do not share `target/`.
-# Three listeners still share one OS user, so they also need a per-job
-# CARGO_HOME; otherwise cargo unpacks crates.io into ~/.cargo together
-# and rustc sees a half-written strum_macros (E0583 / missing .d files).
-# `runner.temp` is not valid in job-level `env` (0-job workflow failure);
-# the first step writes CARGO_HOME from $RUNNER_TEMP into GITHUB_ENV.
+# Three listeners share one OS user. Per-job CARGO_HOME + CARGO_TARGET_DIR
+# live under RUNNER_TOOL_CACHE/<runner>/<job> (not ~/.cargo, not
+# RUNNER_TEMP, not the git worktree). `actions/checkout` `git clean -ffdx`
+# would wipe workspace `target/`; a temp home forced a cold crates.io
+# unpack every job. Disk persistence is the hot path; rust-cache only
+# seeds registry/git when that disk is empty (and never restores into a
+# populated home — that clobber is how strum_macros E0583 happened).
+# Do not put `${{ runner.temp }}` in job-level `env` (0-job failure).
 jobs:
   lint:
     name: Lint & Budgets
@@ -53,20 +56,19 @@ jobs:
     timeout-minutes: 15
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
-      - name: Isolate Cargo home
-        run: |
-          mkdir -p "$RUNNER_TEMP/cargo-home"
-          echo "CARGO_HOME=$RUNNER_TEMP/cargo-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+      - name: Isolate Cargo home
+        run: sh scripts/ci_isolate_cargo_home.sh
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+        if: env.CARGO_CACHE_HIT_LOCAL != '1'
         with:
-          # Shared key so every Linux job restores the same cargo cache.
-          shared-key: whycodes-ci
+          shared-key: whycodes-ci-registry
+          cache-targets: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v7
         with:
@@ -104,11 +106,14 @@ jobs:
           sh -n scripts/tui_term_matrix.sh
           sh -n scripts/coverage.sh
           test -x scripts/coverage.sh
+          sh -n scripts/ci_isolate_cargo_home.sh
+          test -x scripts/ci_isolate_cargo_home.sh
           sh -n scripts/pre-push
           sh -n scripts/install_git_hooks.sh
           sh scripts/test_update_homebrew_formula.sh
           sh scripts/test_tui_term_matrix.sh
           sh scripts/test_coverage.sh
+          sh scripts/test_ci_isolate_cargo_home.sh
           sh scripts/test_pre_push.sh
           python scripts/test_tracked_secrets.py
           python scripts/test_release_downloads.py
@@ -157,17 +162,17 @@ jobs:
       CARGO_BUILD_JOBS: 1
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
-      - name: Isolate Cargo home
-        run: |
-          mkdir -p "$RUNNER_TEMP/cargo-home"
-          echo "CARGO_HOME=$RUNNER_TEMP/cargo-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+      - name: Isolate Cargo home
+        run: sh scripts/ci_isolate_cargo_home.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        if: env.CARGO_CACHE_HIT_LOCAL != '1'
         with:
-          shared-key: whycodes-ci
+          shared-key: whycodes-ci-registry
+          cache-targets: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run tests
         run: cargo test --workspace --locked --features whycodes-storage/bundled
@@ -181,19 +186,19 @@ jobs:
       CARGO_BUILD_JOBS: 1
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
-      - name: Isolate Cargo home
-        run: |
-          mkdir -p "$RUNNER_TEMP/cargo-home"
-          echo "CARGO_HOME=$RUNNER_TEMP/cargo-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+      - name: Isolate Cargo home
+        run: sh scripts/ci_isolate_cargo_home.sh
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+        if: env.CARGO_CACHE_HIT_LOCAL != '1'
         with:
-          shared-key: whycodes-ci
+          shared-key: whycodes-ci-registry
+          cache-targets: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
@@ -214,17 +219,17 @@ jobs:
     needs: lint
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
-      - name: Isolate Cargo home
-        run: |
-          mkdir -p "$RUNNER_TEMP/cargo-home"
-          echo "CARGO_HOME=$RUNNER_TEMP/cargo-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+      - name: Isolate Cargo home
+        run: sh scripts/ci_isolate_cargo_home.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        if: env.CARGO_CACHE_HIT_LOCAL != '1'
         with:
-          shared-key: whycodes-ci
+          shared-key: whycodes-ci-registry
+          cache-targets: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build release (cli only — workspace builds 2 extra crates not in the shipped binary)
         run: cargo build --release --locked -p whycodes-cli --features bundled-sqlite
@@ -233,7 +238,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: whycodes-linux
-          path: target/release/whycodes*
+          path: ${{ env.CARGO_TARGET_DIR }}/release/whycodes*
           retention-days: 3
 
   # Public forks never reach the self-hosted jobs above. This GitHub-hosted

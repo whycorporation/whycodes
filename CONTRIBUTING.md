@@ -83,6 +83,10 @@ Things to know about CI:
   same-repo branch. A new push to the same PR or to `main` cancels the
   previous CI run so the pool is not stuck on stale jobs. After lint, Test /
   Coverage / Build run in parallel across whatever runners are online.
+  Each job pins `CARGO_HOME` and `CARGO_TARGET_DIR` under
+  `RUNNER_TOOL_CACHE/<runner>/<job>` so crates.io and `target/` survive
+  `git clean` without sharing `~/.cargo` across listeners. GitHub
+  `rust-cache` only seeds the registry when that disk is empty.
 
 ## Conventions
 
