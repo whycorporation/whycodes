@@ -101,8 +101,11 @@ home3="$(printf '%s\n' "$out3" | sed -n 's/^CARGO_HOME=//p')"
     exit 1
 }
 
+# Unset RUNNER_TOOL_CACHE: CI jobs inherit it, which would skip the
+# ~/.cache fallback this case is meant to cover.
 out4="$(
-    HOME="$tmp/home" \
+    env -u RUNNER_TOOL_CACHE \
+        HOME="$tmp/home" \
         RUNNER_NAME="local" \
         GITHUB_JOB="lint" \
         "$SCRIPT"
