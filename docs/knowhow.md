@@ -2458,3 +2458,31 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 - Index original-case trigrams **union** ASCII-lowercased ones. Lowercase-only storage false-negatives a case-sensitive `Hello` against file `Hello`.
 - Do not prune on Unicode case-insensitive queries (`İ` / `ı`). ASCII `i` is the only fold the overlay applies.
 - `visit_content_candidates` `rel` is scoped to the search root, same contract as tools `visit_index`.
+
+## Release: Homebrew formula cannot push to protected main
+
+**Date:** 2026-09-12 · **Area:** `.github/workflows/release.yml`, `Formula/whycodes.rb`
+
+**Symptom:** v0.5.0 binaries and GitHub Release published, then `Homebrew formula` failed. `git push origin HEAD:main` rejected with GH013 (PR required + 4 required checks).
+
+**JSONL / crash:** none.
+
+**Root cause:** `release.yml` rewrites `Formula/whycodes.rb` and pushes to `main` with `GITHUB_TOKEN`. Branch protection does not allow that. v0.4.0 landed before the rule, or with a token that bypassed it.
+
+**Fix:** Manual backfill: `scripts/update_homebrew_formula.sh vX.Y.Z`, PR to `main`. Do not re-run the whole release (the GitHub Release already exists).
+
+**Prevention:** Formula bumps after a tag must go through a PR while `main` is protected. Do not give `GITHUB_TOKEN` a bypass just to skip review.
+
+## Landing: `pnpm deploy` is not the landing script
+
+**Date:** 2026-09-12 · **Area:** `.github/workflows/deploy-landing.yml`
+
+**Symptom:** v0.5.0 dispatch of `deploy-landing.yml` failed at Deploy with `ERR_PNPM_INVALID_DEPLOY_TARGET` / "This command requires one parameter". Tests had passed.
+
+**JSONL / crash:** none.
+
+**Root cause:** pnpm 12 has a built-in `pnpm deploy` (copy a workspace package). `deploy-landing.yml` ran `pnpm deploy`, which never invoked `package.json` `"deploy"`.
+
+**Fix:** `pnpm run deploy`.
+
+**Prevention:** Call package scripts with `pnpm run <name>` when the name collides with a pnpm built-in (`deploy`, `test`, `install`, …).
