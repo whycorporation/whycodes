@@ -35,6 +35,7 @@ impl Tool for GrepTool {
     fn description(&self) -> &str {
         "Search file contents with regex (ripgrep engine, in-process — no `rg` binary). \
          Respects .gitignore; skips binaries and heavy dirs (target, node_modules, .git, …). \
+         Literal queries prune files via the workspace content index before scanning. \
          Prefer over shell grep for project code search. Hits are \
          `path:line tag:text` so `edit` can name the line by tag."
     }
@@ -195,13 +196,7 @@ impl GrepTool {
             let used_index = if targets_hidden {
                 false
             } else if let Some(idx) = file_index {
-                visit_index(idx, path, &mut |file, rel, is_dir, _size| {
-                    if is_dir {
-                        return true;
-                    }
-                    collect(file, rel)
-                })
-                .is_some()
+                collect_from_index(idx, path, pattern, case_insensitive, &mut collect)
             } else {
                 false
             };
@@ -342,6 +337,30 @@ impl Sink for CollectSink<'_> {
     fn context_break(&mut self, _searcher: &grep_searcher::Searcher) -> Result<bool, Self::Error> {
         sink_context_break(self.matches, self.max_results)
     }
+}
+
+fn collect_from_index(
+    idx: &whycodes_index::WorkspaceIndex,
+    path: &Path,
+    pattern: &str,
+    case_insensitive: bool,
+    collect: &mut dyn FnMut(&Path, &str) -> bool,
+) -> bool {
+    if idx
+        .visit_content_candidates(path, pattern, case_insensitive, &mut |file, rel, _size| {
+            collect(file, rel)
+        })
+        .is_some()
+    {
+        return true;
+    }
+    visit_index(idx, path, &mut |file, rel, is_dir, _size| {
+        if is_dir {
+            return true;
+        }
+        collect(file, rel)
+    })
+    .is_some()
 }
 
 fn grep_file_task(

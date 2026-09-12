@@ -628,3 +628,150 @@ fn lock_helpers_survive_poison() {
     .join();
     drop(write(&store));
 }
+
+#[test]
+fn visit_content_candidates_prunes_and_scopes() {
+    let dir = fixture();
+    fs::write(dir.path().join("src/main.rs"), "fn unique_needle() {}\n").unwrap();
+    fs::write(dir.path().join("src/nested/deep.rs"), "// other\n").unwrap();
+    fs::write(dir.path().join("srcx.rs"), "fn unique_needle() {}\n").unwrap();
+    let idx = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+
+    let mut hits = Vec::new();
+    assert!(
+        idx.visit_content_candidates(dir.path(), "unique_needle", false, &mut |_, rel, _| {
+            hits.push(rel.to_string());
+            true
+        })
+        .is_some()
+    );
+    assert!(hits.contains(&"src/main.rs".to_string()), "{hits:?}");
+    assert!(hits.contains(&"srcx.rs".to_string()), "{hits:?}");
+    assert_eq!(hits.len(), 2, "{hits:?}");
+
+    let mut scoped = Vec::new();
+    assert!(
+        idx.visit_content_candidates(
+            &dir.path().join("src"),
+            "unique_needle",
+            false,
+            &mut |_, rel, _| {
+                scoped.push(rel.to_string());
+                true
+            }
+        )
+        .is_some()
+    );
+    assert_eq!(scoped, vec!["main.rs".to_string()]);
+    assert!(!scoped.iter().any(|r| r.contains("srcx")), "{scoped:?}");
+
+    let mut stopped = 0;
+    idx.visit_content_candidates(dir.path(), "unique_needle", false, &mut |_, _, _| {
+        stopped += 1;
+        false
+    });
+    assert_eq!(stopped, 1);
+
+    assert!(
+        idx.visit_content_candidates(dir.path(), "unique.needle", false, &mut |_, _, _| true)
+            .is_none(),
+        "regex must not prune"
+    );
+    assert!(
+        idx.visit_content_candidates(dir.path(), "ab", false, &mut |_, _, _| true)
+            .is_none()
+    );
+    assert!(
+        idx.visit_content_candidates(
+            Path::new("/no/such/grep/root"),
+            "unique_needle",
+            false,
+            &mut |_, _, _| true
+        )
+        .is_none()
+    );
+
+    let empty = WorkspaceIndex::start_with(vec![], IndexOptions::default());
+    assert!(
+        empty
+            .visit_content_candidates(Path::new("."), "unique_needle", false, &mut |_, _, _| true)
+            .is_none()
+    );
+}
+
+#[test]
+fn visit_content_candidates_incomplete_when_truncated_empty() {
+    let dir = fixture();
+    let idx = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            max_entries: 0,
+            threads: 1,
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+    assert!(
+        idx.visit_content_candidates(dir.path(), "unique_needle", false, &mut |_, _, _| true)
+            .is_none()
+    );
+}
+
+#[test]
+fn apply_changes_updates_content_overlay() {
+    let dir = fixture();
+    let idx = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+    fs::write(dir.path().join("src/extra.rs"), "fn extra_unique() {}\n").unwrap();
+    idx.apply_test_changes(vec![Change {
+        root: 0,
+        rel: "src/extra.rs".into(),
+        kind: ChangeKind::Upsert,
+    }]);
+    let mut hits = Vec::new();
+    idx.visit_content_candidates(dir.path(), "extra_unique", false, &mut |_, rel, _| {
+        hits.push(rel.to_string());
+        true
+    });
+    assert_eq!(hits, vec!["src/extra.rs".to_string()]);
+
+    fs::remove_file(dir.path().join("src/extra.rs")).unwrap();
+    idx.apply_test_changes(vec![Change {
+        root: 0,
+        rel: "src/extra.rs".into(),
+        kind: ChangeKind::Remove,
+    }]);
+    hits.clear();
+    idx.visit_content_candidates(dir.path(), "extra_unique", false, &mut |_, rel, _| {
+        hits.push(rel.to_string());
+        true
+    });
+    assert!(hits.is_empty(), "{hits:?}");
+
+    idx.apply_test_changes(vec![Change {
+        root: 0,
+        rel: "src".into(),
+        kind: ChangeKind::Upsert,
+    }]);
+    hits.clear();
+    idx.visit_content_candidates(dir.path(), "fn main", false, &mut |_, rel, _| {
+        hits.push(rel.to_string());
+        true
+    });
+    assert!(hits.iter().any(|r| r == "src/main.rs"), "{hits:?}");
+}
