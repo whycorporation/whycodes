@@ -33,8 +33,8 @@ printf '%s\n' "$help" | grep -q '^set ' && {
 
 dry="$("$SCRIPT" --dry-run)"
 need "cargo llvm-cov --workspace" "$dry"
-need "cargo llvm-cov clean --workspace" "$dry"
-need "CACHEDIR.TAG" "$dry"
+need "rm -rf llvm-cov-target" "$dry"
+forbid "cargo llvm-cov clean --workspace" "$dry"
 need "--fail-under-lines 82" "$dry"
 need "--skip tests::watcher_picks_up_changes" "$dry"
 need "--skip picker_flow_over_real_index" "$dry"
@@ -58,7 +58,7 @@ dryjson="$(REPORT_JSON=/tmp/custom-cov.json "$SCRIPT" --dry-run)"
 need "/tmp/custom-cov.json" "$dryjson"
 
 drytgt="$(CARGO_TARGET_DIR=/tmp/pinned-llvm-target "$SCRIPT" --dry-run)"
-need "CARGO_LLVM_COV_TARGET_DIR=/tmp/pinned-llvm-target" "$drytgt"
+need "CARGO_LLVM_COV_TARGET_DIR=/tmp/pinned-llvm-target/llvm-cov-target" "$drytgt"
 forbid "--target-dir" "$drytgt"
 
 # rustup llvm-cov is under rustlib/bin, not PATH. The wrapper must prepend

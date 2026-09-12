@@ -99,10 +99,11 @@ if [ -z "${LLVM_PROFDATA:-}" ] && command -v llvm-profdata >/dev/null 2>&1; then
 fi
 
 # cargo-llvm-cov 0.9 rejects --target-dir. Default is workspace
-# `target/llvm-cov-target`, which `actions/checkout` wipes. Honor
-# CARGO_TARGET_DIR via CARGO_LLVM_COV_TARGET_DIR when CI pins it.
+# `target/llvm-cov-target`, which `actions/checkout` wipes. Keep compiled
+# artifacts in CARGO_TARGET_DIR; put traces in a sibling llvm-cov-target
+# that this script deletes every run (stale .profraw mixed floors to 54%).
 if [ -n "${CARGO_TARGET_DIR:-}" ] && [ -z "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
-    CARGO_LLVM_COV_TARGET_DIR="$CARGO_TARGET_DIR"
+    CARGO_LLVM_COV_TARGET_DIR="$CARGO_TARGET_DIR/llvm-cov-target"
     export CARGO_LLVM_COV_TARGET_DIR
 fi
 
@@ -119,8 +120,7 @@ if [ "$dry_run" -eq 1 ]; then
     if [ -n "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
         say "+ CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR"
     fi
-    say "+ write CACHEDIR.TAG; delete *.profraw *.profdata"
-    say "+ cargo llvm-cov clean --workspace"
+    say "+ rm -rf llvm-cov-target (CACHEDIR.TAG + traces)"
     say "+ $cov_cmd"
     say "+ $report_cmd > $REPORT_JSON"
     say "+ $floors_cmd"
@@ -144,21 +144,12 @@ if [ -z "${LLVM_COV:-}" ] || ! command -v "$LLVM_COV" >/dev/null 2>&1; then
 fi
 
 # Rebuild argv without going through the shell so regex metacharacters stay literal.
-# Persistent CARGO_TARGET_DIR keeps stale .profraw from the previous job.
-# Mixing those files tanks crate floors (index 74.7%, sdk 54% on PR 93).
-# cargo llvm-cov clean also refuses a dir without CACHEDIR.TAG — write one,
-# delete leftover traces, then clean.
-cov_root="${CARGO_LLVM_COV_TARGET_DIR:-${CARGO_TARGET_DIR:-target}}"
+# Drop coverage traces only. Do not `llvm-cov clean` the compile cache — it
+# refuses a persistent dir whose CACHEDIR.TAG is not Cargo's exact bytes.
+cov_root="${CARGO_LLVM_COV_TARGET_DIR:-target/llvm-cov-target}"
+rm -rf "$cov_root"
 mkdir -p "$cov_root"
-if [ ! -f "$cov_root/CACHEDIR.TAG" ]; then
-    cat >"$cov_root/CACHEDIR.TAG" <<'EOF'
-Signature: 8a477f597d28d172789c096e48218643
-# This file is a cache directory tag created by cargo.
-# For information about cache directory tags see https://bford.info/cachedir/
-EOF
-fi
-find "$cov_root" \( -name '*.profraw' -o -name '*.profdata' \) -delete
-run cargo llvm-cov clean --workspace
+printf 'Signature: 8a477f597d28d172789c096e48218643\n' >"$cov_root/CACHEDIR.TAG"
 
 set -- cargo llvm-cov --workspace
 if [ -n "$COVERAGE_FEATURES" ]; then

@@ -40,15 +40,9 @@ case "$home" in
 esac
 
 mkdir -p "$home" "$target"
-# cargo llvm-cov clean refuses a target dir without this signature
-# (Coverage then mixed stale .profraw and tanked crate floors).
-if [ ! -f "$target/CACHEDIR.TAG" ]; then
-    cat >"$target/CACHEDIR.TAG" <<'EOF'
-Signature: 8a477f597d28d172789c096e48218643
-# This file is a cache directory tag created by cargo.
-# For information about cache directory tags see https://bford.info/cachedir/
-EOF
-fi
+# Cargo (and llvm-cov clean) require this exact first line. A heredoc from a
+# CRLF-checked-out script produced "invalid signature"; printf is one LF.
+printf 'Signature: 8a477f597d28d172789c096e48218643\n' >"$target/CACHEDIR.TAG"
 
 if [ -d "$home/registry/index" ] || [ -d "$home/registry/src" ]; then
     hit=1
