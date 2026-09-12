@@ -2366,6 +2366,20 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 
 **Prevention:** Tests that share `LlmTransport::complete` must not reuse prompt+model across success and error cases.
 
+## SDK launch: ephemeral port stolen before spawn
+
+**Date:** 2026-09-12 · **Area:** `crates/sdk/src/client.rs`
+
+**Symptom:** `client::tests::launch_python_health_server_is_ready` failed on Linux CI with `OSError: [Errno 98] Address already in use` while `launch_python_wrong_protocol_is_unsupported_version` passed in the same crate.
+
+**JSONL / crash:** none.
+
+**Root cause:** `ephemeral_port()` binds `127.0.0.1:0` then drops the listener. A sibling `launch(..., port: None)` can pick the same number before `python serve` binds. Parallel SDK tests on one host hit that window.
+
+**Fix:** When `LaunchOptions.port` is `None`, retry spawn on a fresh ephemeral port if child stderr looks like EADDRINUSE (unix + Windows wording). An explicit port still fails on collision.
+
+**Prevention:** Do not treat `bind(:0)` + drop as a reservation. Retry or hold the socket until the child is ready to inherit it.
+
 ## Coverage flake: `git::commit::tests::commit_module_loads` cannot spawn `false`
 
 **Date:** 2026-09-12 · **Area:** `crates/tools/src/git/commit_tests.rs`

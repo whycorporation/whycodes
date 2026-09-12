@@ -89,6 +89,18 @@ fn ephemeral_port_binds() {
 }
 
 #[test]
+fn port_in_use_stderr_matches_unix_and_windows() {
+    assert!(port_in_use_stderr(
+        "OSError: [Errno 98] Address already in use"
+    ));
+    assert!(port_in_use_stderr("bind: EADDRINUSE"));
+    assert!(port_in_use_stderr(
+        "Only one usage of each socket address is normally permitted"
+    ));
+    assert!(!port_in_use_stderr("connection refused"));
+}
+
+#[test]
 fn launch_options_default() {
     let o = LaunchOptions::default();
     assert!(o.inherit_logins);

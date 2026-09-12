@@ -113,47 +113,66 @@ impl WhyCodesClient {
         if let Some(err) = missing_spawned_binary(&binary) {
             return Err(err);
         }
-        let prepared = prepare_launch(&opts)?;
-        let mut cmd = launch_command(&prepared, &opts);
-        let child = cmd.spawn().map_err(|e| {
-            SdkError::with_source(
-                ErrorCode::ServeNotFound,
-                &format!("could not execute {}: {e}", prepared.binary.display()),
-                e,
-            )
-        })?;
-        let port = prepared.port;
-        let held_home = prepared.held_home;
-
-        let base = format!("http://127.0.0.1:{port}");
-        let http = http_client()?;
-        let mut client = Self {
-            base: base.clone(),
-            http,
-            child: Some(child),
-            _home: held_home,
+        // `bind(127.0.0.1:0)` then drop the listener before spawn. A sibling
+        // launch can steal that port (EADDRINUSE). Retry only when we picked
+        // the port; an explicit `opts.port` must fail on collision.
+        let attempts = if opts.port.is_none() {
+            EPHEMERAL_PORT_RETRIES
+        } else {
+            1
         };
+        let mut last_err = None;
+        for attempt in 0..attempts {
+            let prepared = prepare_launch(&opts)?;
+            let mut cmd = launch_command(&prepared, &opts);
+            let child = cmd.spawn().map_err(|e| {
+                SdkError::with_source(
+                    ErrorCode::ServeNotFound,
+                    &format!("could not execute {}: {e}", prepared.binary.display()),
+                    e,
+                )
+            })?;
+            let port = prepared.port;
+            let held_home = prepared.held_home;
 
-        let deadline = Instant::now() + opts.startup_timeout;
-        loop {
-            let child_status = poll_child_exit(client.child.as_mut());
-            let handshake = client.handshake().await.map(|_| ());
-            match launch_poll(
-                Instant::now(),
-                deadline,
-                opts.startup_timeout,
-                &base,
-                child_status,
-                handshake,
-            ) {
-                LaunchPoll::Ready => return Ok(client),
-                LaunchPoll::Retry => tokio::time::sleep(Duration::from_millis(50)).await,
-                LaunchPoll::Failed(err) => {
-                    let stderr = take_stderr(&mut client.child).await;
-                    return Err(attach_stderr(err, &stderr));
+            let base = format!("http://127.0.0.1:{port}");
+            let http = http_client()?;
+            let mut client = Self {
+                base: base.clone(),
+                http,
+                child: Some(child),
+                _home: held_home,
+            };
+
+            let deadline = Instant::now() + opts.startup_timeout;
+            loop {
+                let child_status = poll_child_exit(client.child.as_mut());
+                let handshake = client.handshake().await.map(|_| ());
+                match launch_poll(
+                    Instant::now(),
+                    deadline,
+                    opts.startup_timeout,
+                    &base,
+                    child_status,
+                    handshake,
+                ) {
+                    LaunchPoll::Ready => return Ok(client),
+                    LaunchPoll::Retry => tokio::time::sleep(Duration::from_millis(50)).await,
+                    LaunchPoll::Failed(err) => {
+                        let stderr = take_stderr(&mut client.child).await;
+                        let err = attach_stderr(err, &stderr);
+                        if attempt + 1 < attempts && port_in_use_stderr(&stderr) {
+                            last_err = Some(err);
+                            break;
+                        }
+                        return Err(err);
+                    }
                 }
             }
         }
+        Err(last_err.unwrap_or_else(|| {
+            SdkError::new(ErrorCode::StartupFailed, "ephemeral port retries exhausted")
+        }))
     }
 
     /// Daemon base URL (`http://127.0.0.1:3030`).
@@ -793,12 +812,21 @@ fn ephemeral_addr_failed(e: std::io::Error) -> SdkError {
     SdkError::with_source(ErrorCode::StartupFailed, "ephemeral port", e)
 }
 
+const EPHEMERAL_PORT_RETRIES: u32 = 8;
+
 fn ephemeral_port() -> Result<u16, SdkError> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(ephemeral_bind_failed)?;
     listener
         .local_addr()
         .map(|a| a.port())
         .map_err(ephemeral_addr_failed)
+}
+
+fn port_in_use_stderr(stderr: &str) -> bool {
+    let s = stderr.to_ascii_lowercase();
+    s.contains("address already in use")
+        || s.contains("eaddrinuse")
+        || s.contains("only one usage of each socket address")
 }
 
 const STRIPPED_LOGIN_KEYS: &[&str] = &[
