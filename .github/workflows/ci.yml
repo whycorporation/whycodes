@@ -41,6 +41,11 @@ concurrency:
 # `github.event.pull_request.head.repo.full_name` is empty on push, so the
 # first clause keeps those jobs. Each runner process must keep its own
 # `_work` directory so parallel cargo jobs do not share `target/`.
+# Three listeners still share one OS user, so they also need a per-job
+# CARGO_HOME; otherwise cargo unpacks crates.io into ~/.cargo together
+# and rustc sees a half-written strum_macros (E0583 / missing .d files).
+# `runner.temp` is not valid in job-level `env` (0-job workflow failure);
+# the first step writes CARGO_HOME from $RUNNER_TEMP into GITHUB_ENV.
 jobs:
   lint:
     name: Lint & Budgets
@@ -48,6 +53,10 @@ jobs:
     timeout-minutes: 15
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
+      - name: Isolate Cargo home
+        run: |
+          mkdir -p "$RUNNER_TEMP/cargo-home"
+          echo "CARGO_HOME=$RUNNER_TEMP/cargo-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
@@ -148,6 +157,10 @@ jobs:
       CARGO_BUILD_JOBS: 1
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
+      - name: Isolate Cargo home
+        run: |
+          mkdir -p "$RUNNER_TEMP/cargo-home"
+          echo "CARGO_HOME=$RUNNER_TEMP/cargo-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
@@ -168,6 +181,10 @@ jobs:
       CARGO_BUILD_JOBS: 1
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
+      - name: Isolate Cargo home
+        run: |
+          mkdir -p "$RUNNER_TEMP/cargo-home"
+          echo "CARGO_HOME=$RUNNER_TEMP/cargo-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
@@ -197,6 +214,10 @@ jobs:
     needs: lint
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
+      - name: Isolate Cargo home
+        run: |
+          mkdir -p "$RUNNER_TEMP/cargo-home"
+          echo "CARGO_HOME=$RUNNER_TEMP/cargo-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1

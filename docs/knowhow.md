@@ -2337,6 +2337,34 @@ Harness TTFF then dropped ratatui entirely: `write_splash_csi` is `SM?1049` + cl
 
 Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs already have no edge between them; a single runner still serializes them. Extra self-hosted runners with separate `_work` dirs run them together.
 
+## Shared `~/.cargo` across self-hosted runner processes
+
+**Date:** 2026-09-12 · **Area:** `.github/workflows/ci.yml`
+
+**Symptom:** After adding a second and third runner on the same host, `main` CI failed in Test (`strum_macros` E0583, missing helper modules) and Coverage (`could not parse/generate dep info` for `rustversion-*.d`). The PR run on the same SHA was green when jobs did not overlap as hard.
+
+**JSONL / crash:** none.
+
+**Root cause:** Three `Runner.Listener` processes share the `github-runner` user. `_work` is per process; `~/.cargo/registry` is not. Parallel `cargo` unpacks the same crates.io crate into one directory and rustc reads a half-written tree.
+
+**Fix:** Each self-hosted Linux job writes `CARGO_HOME=$RUNNER_TEMP/cargo-home` into `GITHUB_ENV` before rust-toolchain/cache. Do not put `${{ runner.temp }}` in job-level `env` — GitHub fails the workflow with zero jobs.
+
+**Prevention:** Do not point extra runners at one OS home for Cargo. Separate `_work` is not enough.
+
+## TUI suggestion FailOpen test hits the LLM response cache
+
+**Date:** 2026-09-12 · **Area:** `crates/tui/src/run/slash_tests.rs`
+
+**Symptom:** `complete_prompt_suggestion_logs_fail_open_without_sending` failed under `cargo test --workspace` (`fail-open must not enqueue a suggestion`). Isolated re-run is green.
+
+**JSONL / crash:** none.
+
+**Root cause:** `LlmTransport::complete` stores tools-free replies in a process-wide `ResponseCache`. The sibling success test used the same prompt + model (`m1`) and stored `"try cargo test"`. FailOpen then got a cache hit and enqueued that text.
+
+**Fix:** Distinct model ids (`m-suggest-ok` / `m-suggest-fail`) so the cache keys do not collide.
+
+**Prevention:** Tests that share `LlmTransport::complete` must not reuse prompt+model across success and error cases.
+
 ## Coverage flake: `git::commit::tests::commit_module_loads` cannot spawn `false`
 
 **Date:** 2026-09-12 · **Area:** `crates/tools/src/git/commit_tests.rs`
