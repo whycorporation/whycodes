@@ -2380,6 +2380,20 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 
 **Prevention:** Process-wide env tests are unsafe under workspace llvm-cov. Skip them there or use a crate-local lock that every crate honors (none exists).
 
+## Coverage floors collapse when CARGO_TARGET_DIR is reused
+
+**Date:** 2026-09-12 · **Area:** `scripts/coverage.sh`
+
+**Symptom:** PR 93 Coverage reported `whycodes-index` 74.7%, `whycodes-sdk` 54.0%, `whycodes-tools` 94.3% after a 9-minute run. Tests had not failed; floors were garbage.
+
+**JSONL / crash:** none.
+
+**Root cause:** `CARGO_LLVM_COV_TARGET_DIR` points at a persistent per-job cache. Previous llvm-cov `.profraw` files mixed into the next merge.
+
+**Fix:** `cargo llvm-cov clean --workspace` before the instrumented test run.
+
+**Prevention:** Persistent coverage `target/` must be cleaned of profraw, or do not persist `llvm-cov-target`.
+
 ## SDK launch: ephemeral port stolen before spawn
 
 **Date:** 2026-09-12 · **Area:** `crates/sdk/src/client.rs`

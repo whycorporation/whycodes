@@ -119,6 +119,7 @@ if [ "$dry_run" -eq 1 ]; then
     if [ -n "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
         say "+ CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR"
     fi
+    say "+ cargo llvm-cov clean --workspace"
     say "+ $cov_cmd"
     say "+ $report_cmd > $REPORT_JSON"
     say "+ $floors_cmd"
@@ -142,6 +143,10 @@ if [ -z "${LLVM_COV:-}" ] || ! command -v "$LLVM_COV" >/dev/null 2>&1; then
 fi
 
 # Rebuild argv without going through the shell so regex metacharacters stay literal.
+# Persistent CARGO_TARGET_DIR keeps stale .profraw from the previous job.
+# Mixing those files tanks crate floors (index 74.7%, sdk 54% on PR 93).
+run cargo llvm-cov clean --workspace
+
 set -- cargo llvm-cov --workspace
 if [ -n "$COVERAGE_FEATURES" ]; then
     set -- "$@" --features "$COVERAGE_FEATURES"

@@ -33,6 +33,7 @@ printf '%s\n' "$help" | grep -q '^set ' && {
 
 dry="$("$SCRIPT" --dry-run)"
 need "cargo llvm-cov --workspace" "$dry"
+need "cargo llvm-cov clean --workspace" "$dry"
 need "--fail-under-lines 82" "$dry"
 need "--skip tests::watcher_picks_up_changes" "$dry"
 need "--skip picker_flow_over_real_index" "$dry"

@@ -9,9 +9,10 @@ breakdown.
 scripts/coverage.sh
 ```
 
-Same flags as the CI `Coverage (line floor)` job: one `cargo llvm-cov
---workspace` instrumentation, then a JSON report and
-`python3 scripts/check_coverage_floors.py`.
+Same flags as the CI `Coverage (line floor)` job: `cargo llvm-cov clean
+--workspace` (stale `.profraw` in a persistent `CARGO_TARGET_DIR` tanks
+crate floors), one `cargo llvm-cov --workspace` instrumentation, then a
+JSON report and `python3 scripts/check_coverage_floors.py`.
 
 ```bash
 scripts/coverage.sh --dry-run          # print the cargo/python argv
