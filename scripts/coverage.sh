@@ -99,11 +99,18 @@ if [ -z "${LLVM_PROFDATA:-}" ] && command -v llvm-profdata >/dev/null 2>&1; then
 fi
 
 # cargo-llvm-cov 0.9 rejects --target-dir. Default is workspace
-# `target/llvm-cov-target`, which `actions/checkout` wipes. Keep compiled
-# artifacts in CARGO_TARGET_DIR; put traces in a sibling llvm-cov-target
-# that this script deletes every run (stale .profraw mixed floors to 54%).
-if [ -n "${CARGO_TARGET_DIR:-}" ] && [ -z "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
-    CARGO_LLVM_COV_TARGET_DIR="$CARGO_TARGET_DIR/llvm-cov-target"
+# `target/llvm-cov-target`, which `actions/checkout` wipes.
+# Traces MUST NOT live under persistent CARGO_TARGET_DIR: leftover .profraw
+# mixed floors to 54% (index 74.7%). Prefer RUNNER_TEMP (job-scoped, gone
+# after the job). Locally, use a sibling of CARGO_TARGET_DIR that we rm -rf.
+if [ -z "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
+    if [ -n "${RUNNER_TEMP:-}" ]; then
+        CARGO_LLVM_COV_TARGET_DIR="$RUNNER_TEMP/llvm-cov-target"
+    elif [ -n "${CARGO_TARGET_DIR:-}" ]; then
+        CARGO_LLVM_COV_TARGET_DIR="${CARGO_TARGET_DIR%/}-llvm-cov"
+    else
+        CARGO_LLVM_COV_TARGET_DIR="$ROOT/target/llvm-cov-target"
+    fi
     export CARGO_LLVM_COV_TARGET_DIR
 fi
 
@@ -119,8 +126,9 @@ floors_cmd="python3 scripts/check_coverage_floors.py $REPORT_JSON"
 if [ "$dry_run" -eq 1 ]; then
     if [ -n "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
         say "+ CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR"
+        say "+ LLVM_PROFILE_FILE=$CARGO_LLVM_COV_TARGET_DIR/whycodes-%p-%m.profraw"
     fi
-    say "+ rm -rf llvm-cov-target (CACHEDIR.TAG + traces)"
+    say "+ rm -rf \$CARGO_LLVM_COV_TARGET_DIR; purge *.profraw from CARGO_TARGET_DIR"
     say "+ $cov_cmd"
     say "+ $report_cmd > $REPORT_JSON"
     say "+ $floors_cmd"
@@ -144,12 +152,17 @@ if [ -z "${LLVM_COV:-}" ] || ! command -v "$LLVM_COV" >/dev/null 2>&1; then
 fi
 
 # Rebuild argv without going through the shell so regex metacharacters stay literal.
-# Drop coverage traces only. Do not `llvm-cov clean` the compile cache — it
-# refuses a persistent dir whose CACHEDIR.TAG is not Cargo's exact bytes.
-cov_root="${CARGO_LLVM_COV_TARGET_DIR:-target/llvm-cov-target}"
+# Drop coverage traces only. Never `llvm-cov clean` the compile cache.
+cov_root="$CARGO_LLVM_COV_TARGET_DIR"
 rm -rf "$cov_root"
 mkdir -p "$cov_root"
 printf 'Signature: 8a477f597d28d172789c096e48218643\n' >"$cov_root/CACHEDIR.TAG"
+# Previous jobs wrote traces into CARGO_TARGET_DIR itself. Purge them or
+# llvm-cov merges garbage even when CARGO_LLVM_COV_TARGET_DIR is elsewhere.
+if [ -n "${CARGO_TARGET_DIR:-}" ] && [ -d "$CARGO_TARGET_DIR" ]; then
+    find "$CARGO_TARGET_DIR" \( -name '*.profraw' -o -name '*.profdata' \) -delete
+fi
+export LLVM_PROFILE_FILE="$cov_root/whycodes-%p-%m.profraw"
 
 set -- cargo llvm-cov --workspace
 if [ -n "$COVERAGE_FEATURES" ]; then

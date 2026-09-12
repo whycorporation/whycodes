@@ -2390,9 +2390,9 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 
 **Root cause:** `CARGO_LLVM_COV_TARGET_DIR` points at a persistent per-job cache. Previous llvm-cov `.profraw` files mixed into the next merge.
 
-**Fix:** Keep compile artifacts in `CARGO_TARGET_DIR`. Put llvm-cov traces in `$CARGO_TARGET_DIR/llvm-cov-target` and `rm -rf` that dir every Coverage run. Stamp `CACHEDIR.TAG` with `printf` (exact LF signature). Do not call `cargo llvm-cov clean` on the persistent compile cache.
+**Fix:** On CI, put traces in `$RUNNER_TEMP/llvm-cov-target` (job-scoped). Locally, `${CARGO_TARGET_DIR}-llvm-cov`. `rm -rf` that dir, `find`-delete leftover `*.profraw` under `CARGO_TARGET_DIR`, set `LLVM_PROFILE_FILE`. Stamp `CACHEDIR.TAG` with `printf`. Do not `cargo llvm-cov clean` the compile cache.
 
-**Prevention:** Never mix llvm-cov traces into a long-lived compile `target/`. Never write `CACHEDIR.TAG` via a heredoc from a CRLF-checked-out script.
+**Prevention:** Coverage traces must not share a directory with a long-lived compile cache. Never write `CACHEDIR.TAG` via a heredoc from a CRLF-checked-out script.
 
 ## SDK launch: ephemeral port stolen before spawn
 

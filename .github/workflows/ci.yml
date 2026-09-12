@@ -207,8 +207,13 @@ jobs:
       # checked by Python instead of 12 separate `cargo llvm-cov -p` re-runs.
       # Wrapper flags live in scripts/coverage.sh (same as local `scripts/coverage.sh`).
       - name: Measure coverage
-        # Unique path so two coverage jobs on one host cannot clobber /tmp/cov.json.
-        run: COVERAGE_FEATURES=whycodes-storage/bundled REPORT_JSON="$RUNNER_TEMP/cov.json" scripts/coverage.sh
+        env:
+          # Job-scoped; do not put ${{ runner.temp }} in job-level env (0-job
+          # workflow failure). Traces must not share CARGO_TARGET_DIR.
+          CARGO_LLVM_COV_TARGET_DIR: ${{ runner.temp }}/llvm-cov-target
+          COVERAGE_FEATURES: whycodes-storage/bundled
+          REPORT_JSON: ${{ runner.temp }}/cov.json
+        run: scripts/coverage.sh
 
   build:
     name: Build (linux)
