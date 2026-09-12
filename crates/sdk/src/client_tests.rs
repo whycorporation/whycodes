@@ -101,6 +101,30 @@ fn port_in_use_stderr_matches_unix_and_windows() {
 }
 
 #[test]
+fn ephemeral_retry_helpers() {
+    assert_eq!(ephemeral_launch_attempts(true), 1);
+    assert_eq!(ephemeral_launch_attempts(false), EPHEMERAL_PORT_RETRIES);
+    assert!(should_retry_ephemeral_port(
+        0,
+        8,
+        "OSError: [Errno 98] Address already in use"
+    ));
+    assert!(!should_retry_ephemeral_port(
+        7,
+        8,
+        "OSError: [Errno 98] Address already in use"
+    ));
+    assert!(!should_retry_ephemeral_port(0, 8, "connection refused"));
+    assert!(!should_retry_ephemeral_port(0, 1, "Address already in use"));
+    let exhausted = exhausted_ephemeral_port_error(None);
+    assert_eq!(exhausted.code, ErrorCode::StartupFailed);
+    assert!(exhausted.message.contains("retries exhausted"));
+    let prior = SdkError::new(ErrorCode::StartupFailed, "port busy");
+    let wrapped = exhausted_ephemeral_port_error(Some(prior));
+    assert_eq!(wrapped.message, "port busy");
+}
+
+#[test]
 fn launch_options_default() {
     let o = LaunchOptions::default();
     assert!(o.inherit_logins);
@@ -840,6 +864,51 @@ HTTPServer(("127.0.0.1", port), H).serve_forever()
     .unwrap();
 }
 
+fn write_eaddrinuse_then_health_script(dir: &std::path::Path, protocol: u32) {
+    std::fs::write(
+        dir.join("serve"),
+        format!(
+            r#"
+import json, os, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+marker = os.path.join(os.getcwd(), ".eaddrinuse-once")
+if not os.path.exists(marker):
+    open(marker, "w").close()
+    sys.stderr.write("OSError: [Errno 98] Address already in use\n")
+    sys.stderr.flush()
+    sys.exit(1)
+
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/v1/health":
+            body = json.dumps({{
+                "protocol": {protocol},
+                "version": "0.0.0",
+                "healthy": True,
+                "project": "/tmp",
+                "uptime_secs": 1,
+                "sessions_in_memory": 0,
+            }}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(404)
+        self.end_headers()
+    def log_message(self, *_args):
+        pass
+
+port = int(sys.argv[-1])
+HTTPServer(("127.0.0.1", port), H).serve_forever()
+"#
+        ),
+    )
+    .unwrap();
+}
+
 /// Real spawn + handshake Ready path: `python3 serve <port>` binds
 /// `/v1/health` on the requested port.
 #[tokio::test]
@@ -856,6 +925,26 @@ async fn launch_python_health_server_is_ready() {
     })
     .await
     .expect("python health server should become ready");
+    assert!(client.base_url().starts_with("http://127.0.0.1:"));
+    client.close().await.unwrap();
+}
+
+/// First spawn prints EADDRINUSE and exits; launch retries and the second
+/// spawn serves `/v1/health`.
+#[tokio::test]
+async fn launch_retries_when_ephemeral_port_is_stolen() {
+    let dir = tempfile::tempdir().unwrap();
+    write_eaddrinuse_then_health_script(dir.path(), PROTOCOL_MAJOR);
+    let client = WhyCodesClient::launch(LaunchOptions {
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(python3()),
+        inherit_logins: false,
+        startup_timeout: Duration::from_secs(5),
+        port: None,
+        home: None,
+    })
+    .await
+    .expect("launch should retry after EADDRINUSE");
     assert!(client.base_url().starts_with("http://127.0.0.1:"));
     client.close().await.unwrap();
 }

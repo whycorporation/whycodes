@@ -116,11 +116,7 @@ impl WhyCodesClient {
         // `bind(127.0.0.1:0)` then drop the listener before spawn. A sibling
         // launch can steal that port (EADDRINUSE). Retry only when we picked
         // the port; an explicit `opts.port` must fail on collision.
-        let attempts = if opts.port.is_none() {
-            EPHEMERAL_PORT_RETRIES
-        } else {
-            1
-        };
+        let attempts = ephemeral_launch_attempts(opts.port.is_some());
         let mut last_err = None;
         for attempt in 0..attempts {
             let prepared = prepare_launch(&opts)?;
@@ -161,7 +157,7 @@ impl WhyCodesClient {
                     LaunchPoll::Failed(err) => {
                         let stderr = take_stderr(&mut client.child).await;
                         let err = attach_stderr(err, &stderr);
-                        if attempt + 1 < attempts && port_in_use_stderr(&stderr) {
+                        if should_retry_ephemeral_port(attempt, attempts, &stderr) {
                             last_err = Some(err);
                             break;
                         }
@@ -170,9 +166,7 @@ impl WhyCodesClient {
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| {
-            SdkError::new(ErrorCode::StartupFailed, "ephemeral port retries exhausted")
-        }))
+        Err(exhausted_ephemeral_port_error(last_err))
     }
 
     /// Daemon base URL (`http://127.0.0.1:3030`).
@@ -813,6 +807,24 @@ fn ephemeral_addr_failed(e: std::io::Error) -> SdkError {
 }
 
 const EPHEMERAL_PORT_RETRIES: u32 = 8;
+
+fn ephemeral_launch_attempts(explicit_port: bool) -> u32 {
+    if explicit_port {
+        1
+    } else {
+        EPHEMERAL_PORT_RETRIES
+    }
+}
+
+fn should_retry_ephemeral_port(attempt: u32, attempts: u32, stderr: &str) -> bool {
+    attempt + 1 < attempts && port_in_use_stderr(stderr)
+}
+
+fn exhausted_ephemeral_port_error(last: Option<SdkError>) -> SdkError {
+    last.unwrap_or_else(|| {
+        SdkError::new(ErrorCode::StartupFailed, "ephemeral port retries exhausted")
+    })
+}
 
 fn ephemeral_port() -> Result<u16, SdkError> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(ephemeral_bind_failed)?;
