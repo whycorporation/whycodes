@@ -98,12 +98,17 @@ if [ -z "${LLVM_PROFDATA:-}" ] && command -v llvm-profdata >/dev/null 2>&1; then
     export LLVM_PROFDATA
 fi
 
+# cargo-llvm-cov 0.9 rejects --target-dir. Default is workspace
+# `target/llvm-cov-target`, which `actions/checkout` wipes. Honor
+# CARGO_TARGET_DIR via CARGO_LLVM_COV_TARGET_DIR when CI pins it.
+if [ -n "${CARGO_TARGET_DIR:-}" ] && [ -z "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
+    CARGO_LLVM_COV_TARGET_DIR="$CARGO_TARGET_DIR"
+    export CARGO_LLVM_COV_TARGET_DIR
+fi
+
 cov_cmd="cargo llvm-cov --workspace"
 if [ -n "$COVERAGE_FEATURES" ]; then
     cov_cmd="$cov_cmd --features $COVERAGE_FEATURES"
-fi
-if [ -n "${CARGO_TARGET_DIR:-}" ]; then
-    cov_cmd="$cov_cmd --target-dir $CARGO_TARGET_DIR"
 fi
 cov_cmd="$cov_cmd --ignore-filename-regex $IGNORE --fail-under-lines $FAIL_UNDER --summary-only -- --skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index --skip launch_inherited_logins_retries_until_healthy --skip launch_isolated_home_and_tempdir_connect --skip launch_timeout_closes_stderr_then_hangs --skip launch_child_exit_is_startup_failed --skip launch_unsupported_version_does_not_retry --skip isolated_cwd_points_at_home_and_restores --skip git_log_status_diff_blame_and_commit_on_repo"
 
@@ -111,6 +116,9 @@ report_cmd="cargo llvm-cov report --json --ignore-filename-regex $CRATE_IGNORE -
 floors_cmd="python3 scripts/check_coverage_floors.py $REPORT_JSON"
 
 if [ "$dry_run" -eq 1 ]; then
+    if [ -n "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
+        say "+ CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR"
+    fi
     say "+ $cov_cmd"
     say "+ $report_cmd > $REPORT_JSON"
     say "+ $floors_cmd"
@@ -137,11 +145,6 @@ fi
 set -- cargo llvm-cov --workspace
 if [ -n "$COVERAGE_FEATURES" ]; then
     set -- "$@" --features "$COVERAGE_FEATURES"
-fi
-# Default llvm-cov dir is workspace `target/llvm-cov-target`, which
-# `actions/checkout` wipes. Honor CARGO_TARGET_DIR when CI pins it.
-if [ -n "${CARGO_TARGET_DIR:-}" ]; then
-    set -- "$@" --target-dir "$CARGO_TARGET_DIR"
 fi
 set -- "$@" \
     --ignore-filename-regex "$IGNORE" \
