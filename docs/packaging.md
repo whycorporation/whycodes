@@ -60,8 +60,8 @@ macOS release builds set `MACOSX_DEPLOYMENT_TARGET` (11.0 on arm64, 10.15 on
 Intel) so the prebuilt does not require the runner's latest SDK.
 
 If `main` is protected against `GITHUB_TOKEN` pushes, the Homebrew job will
-fail after a successful release; bump the formula locally with the script
-above or allow that bot push.
+fail after a successful release (GH013: PR required). Bump the formula
+locally with the script above and open a PR. Do not re-tag.
 
 ## Landing (why.codes)
 
@@ -71,8 +71,9 @@ from hand-edited copy.
 
 `release.yml` dispatches [`deploy-landing.yml`](../.github/workflows/deploy-landing.yml)
 after a tagged publish. That job checks out `whycorporation/whycodes-landing`
-and runs `pnpm deploy`, which refreshes `app/data/github.json` then prerenders
-Cloudflare Workers.
+and runs `pnpm run deploy` (not `pnpm deploy` — that is pnpm's workspace-copy
+builtin), which refreshes `app/data/github.json` then prerenders Cloudflare
+Workers.
 
 Manual refresh (no new tag):
 
