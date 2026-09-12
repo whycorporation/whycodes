@@ -411,3 +411,69 @@ async fn search_uses_index_hidden_glob_and_truncates() {
         .await;
     assert!(!with_ctx.is_error, "{}", with_ctx.content);
 }
+
+#[test]
+fn search_index_prunes_files_without_trigrams() {
+    use std::time::Duration;
+    use whycodes_index::IndexOptions;
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    write(&dir, "src/hit.rs", "fn unique_needle() {}\n");
+    write(&dir, "src/miss.rs", "fn other() {}\n");
+    write(&dir, "src/Case.rs", "HelloWorld\n");
+    write(&dir, "README.md", "unique_needle in docs\n");
+    let idx = whycodes_index::WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+
+    let out = GrepTool::search(
+        "unique_needle",
+        dir.path(),
+        None,
+        false,
+        0,
+        50,
+        dir.path().to_str().unwrap(),
+        Some(&idx),
+    )
+    .unwrap();
+    assert!(out.contains("src/hit.rs"), "{out}");
+    assert!(out.contains("README.md"), "{out}");
+    assert!(!out.contains("src/miss.rs"), "{out}");
+    assert!(out.contains("in 2 file"), "{out}");
+
+    let regex = GrepTool::search(
+        "unique.needle",
+        dir.path(),
+        None,
+        false,
+        0,
+        50,
+        dir.path().to_str().unwrap(),
+        Some(&idx),
+    )
+    .unwrap();
+    assert!(regex.contains("src/hit.rs"), "{regex}");
+    assert!(regex.contains("README.md"), "{regex}");
+    assert!(regex.contains("in 4 file"), "{regex}");
+
+    let ci = GrepTool::search(
+        "helloworld",
+        dir.path(),
+        Some("*.rs"),
+        true,
+        0,
+        50,
+        dir.path().to_str().unwrap(),
+        Some(&idx),
+    )
+    .unwrap();
+    assert!(ci.contains("src/Case.rs"), "{ci}");
+    assert!(ci.contains("in 1 file"), "{ci}");
+}

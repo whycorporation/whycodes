@@ -2006,8 +2006,9 @@ prompt (or Ctrl+Space) opens the picker; dirs drill down on Tab.
   highlight positions (cheap at picker sizes).
 - Injector pushes are thread-safe and stream during the walk; `restart()`
   is the only way to remove items.
-- Lock order is **fuzzy → store**, never reversed (delta application takes
-  both); queries lock only fuzzy, browse/tools lock only store.
+- Lock order is **store → content**, then (after drop) **fuzzy → store**.
+  Never reverse either pair. Queries lock only fuzzy; browse/tools lock
+  only store; grep prune locks store then content.
 - The scanner thread must NOT hold an `Arc` cycle: split `WorkspaceIndex`
   (handle, owns `JoinHandle`) from `Shared` (thread's `Arc` target), or the
   last external drop never runs.
@@ -2365,6 +2366,20 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 
 **Prevention:** Tests that share `LlmTransport::complete` must not reuse prompt+model across success and error cases.
 
+## SDK launch: ephemeral port stolen before spawn
+
+**Date:** 2026-09-12 · **Area:** `crates/sdk/src/client.rs`
+
+**Symptom:** `client::tests::launch_python_health_server_is_ready` failed on Linux CI with `OSError: [Errno 98] Address already in use` while `launch_python_wrong_protocol_is_unsupported_version` passed in the same crate.
+
+**JSONL / crash:** none.
+
+**Root cause:** `ephemeral_port()` binds `127.0.0.1:0` then drops the listener. A sibling `launch(..., port: None)` can pick the same number before `python serve` binds. Parallel SDK tests on one host hit that window.
+
+**Fix:** When `LaunchOptions.port` is `None`, retry spawn on a fresh ephemeral port if child stderr looks like EADDRINUSE (unix + Windows wording). An explicit port still fails on collision.
+
+**Prevention:** Do not treat `bind(:0)` + drop as a reservation. Retry or hold the socket until the child is ready to inherit it.
+
 ## Coverage flake: `git::commit::tests::commit_module_loads` cannot spawn `false`
 
 **Date:** 2026-09-12 · **Area:** `crates/tools/src/git/commit_tests.rs`
@@ -2378,3 +2393,20 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 **Fix:** Build the failing `ExitStatus` with `ExitStatusExt::from_raw` (unix wait status `1 << 8`, Windows `1`). Same for the browser test helpers.
 
 **Prevention:** Helpers that only need a dummy `ExitStatus` must not spawn PATH binaries. Tests that mutate `PATH` already hold `ENV_LOCK`; unlocked tests must not depend on PATH.
+
+## Content trigrams prune grep; they must not hide matches
+
+**Date:** 2026-09-12 · **Area:** `crates/index` content overlay + `tools` grep
+
+**Symptom:** A resident path index still made every grep scan every file. Microsoft tgrep's answer is a trigram inverted index. We did **not** take their CLI or git crate (`deny.toml` `unknown-git = deny`).
+
+**What shipped:** In-memory per-root overlay in `WorkspaceIndex`. Literal patterns (≥3 bytes, no regex meta) prune files that lack a required trigram; `grep-searcher` still confirms. Regex / short / Unicode-casefold / incomplete overlay → no prune.
+
+**Pitfalls:**
+
+- Overlay lock order is **store → content**, then (after drop) **fuzzy → store**. Never hold fuzzy and content together.
+- Unknown paths (`may_match` with no posting) must return **true**. A partial overlay that drops unknowns hides matches.
+- Files larger than the overlay cap (1 MiB) stay **unknown**, not skipped. Grep still searches them up to 2 MiB.
+- Index original-case trigrams **union** ASCII-lowercased ones. Lowercase-only storage false-negatives a case-sensitive `Hello` against file `Hello`.
+- Do not prune on Unicode case-insensitive queries (`İ` / `ı`). ASCII `i` is the only fold the overlay applies.
+- `visit_content_candidates` `rel` is scoped to the search root, same contract as tools `visit_index`.

@@ -5,7 +5,9 @@
 //! * **TUI file picker** — fuzzy path queries (`@file`, Ctrl+Space) served by
 //!   a resident [`nucleo`] engine; keystroke queries never touch the disk.
 //! * **File tools** — `glob` / `list` / `grep` enumerate the in-memory store
-//!   instead of re-walking the tree on every tool call.
+//!   instead of re-walking the tree on every tool call. Grep also consults
+//!   a resident content-trigram overlay so regex confirm only opens files
+//!   that could contain a required literal.
 //!
 //! The walk honours `.gitignore` / `.ignore` (via the [`ignore`] crate, the
 //! same engine ripgrep uses) plus the shared pruning [`policy`]. After the
@@ -17,6 +19,7 @@
 //! let hits = index.query("main.rs", 20);
 //! ```
 
+mod content;
 mod fuzzy;
 pub mod policy;
 mod store;
@@ -30,6 +33,9 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuar
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+pub use content::{
+    ContentIndex, MAX_INDEX_BYTES, TRIGRAM_LEN, extract_trigrams, pack_trigram, required_trigrams,
+};
 pub use fuzzy::FileMatch;
 use fuzzy::FuzzyEngine;
 pub use store::{Entry, IndexStore};
@@ -94,6 +100,7 @@ impl Default for IndexOptions {
 struct RootState {
     store: RwLock<IndexStore>,
     fuzzy: Mutex<FuzzyEngine>,
+    content: RwLock<ContentIndex>,
 }
 
 /// State shared between the public handle and the scanner thread.
@@ -150,6 +157,7 @@ impl WorkspaceIndex {
             .map(|_| RootState {
                 store: RwLock::new(IndexStore::new()),
                 fuzzy: Mutex::new(FuzzyEngine::new(results_dirty.clone())),
+                content: RwLock::new(ContentIndex::new()),
             })
             .collect();
         let (cmd_tx, cmd_rx) = mpsc::channel();
@@ -379,6 +387,45 @@ impl WorkspaceIndex {
         }
     }
 
+    /// Visit primary-root files under `search_root` that the content overlay
+    /// cannot rule out for `pattern`. `None` means "do not prune" (regex /
+    /// too short / Unicode case-fold / overlay not complete / path outside
+    /// the primary root) — the caller should fall back to [`visit`].
+    ///
+    /// `f` receives `(abs, rel, size)` with `rel` scoped to `search_root`,
+    /// matching [`visit`] + tools `visit_index`. Return `false` to stop.
+    pub fn visit_content_candidates(
+        &self,
+        search_root: &Path,
+        pattern: &str,
+        case_insensitive: bool,
+        f: &mut dyn FnMut(&Path, &str, u64) -> bool,
+    ) -> Option<()> {
+        let required = required_trigrams(pattern, case_insensitive)?;
+        let state = self.shared.states.first()?;
+        // Lock order: store → content (never reversed; see apply_changes).
+        let store = read(&state.store);
+        let content = read(&state.content);
+        if !content.is_complete() {
+            return None;
+        }
+        let root = self.shared.roots.first()?;
+        let prefix = content_search_prefix(root, search_root)?;
+        for e in store.entries() {
+            if e.is_dir || !content_entry_in_scope(&prefix, &e.rel) {
+                continue;
+            }
+            if !content.may_match(&e.rel, &required) {
+                continue;
+            }
+            let rel = content_scoped_rel(&prefix, &e.rel);
+            if !f(&root.join(&*e.rel), &rel, e.size) {
+                break;
+            }
+        }
+        Some(())
+    }
+
     /// Clone of all primary-root entries (tools that need owned data).
     pub fn entries(&self) -> Vec<Entry> {
         self.shared
@@ -415,6 +462,28 @@ impl std::fmt::Debug for WorkspaceIndex {
             .field("roots", &self.shared.roots)
             .field("status", &self.status())
             .finish()
+    }
+}
+
+fn content_search_prefix(primary: &Path, search_root: &Path) -> Option<String> {
+    let search = std::fs::canonicalize(search_root).unwrap_or_else(|_| search_root.to_path_buf());
+    let rel = search.strip_prefix(primary).ok()?;
+    let prefix = rel.to_string_lossy().replace('\\', "/");
+    Some(prefix.trim_matches('/').to_string())
+}
+
+fn content_entry_in_scope(prefix: &str, rel: &str) -> bool {
+    prefix.is_empty()
+        || (rel.len() > prefix.len()
+            && rel.starts_with(prefix)
+            && rel.as_bytes().get(prefix.len()) == Some(&b'/'))
+}
+
+fn content_scoped_rel(prefix: &str, rel: &str) -> String {
+    if prefix.is_empty() {
+        rel.to_string()
+    } else {
+        rel[prefix.len() + 1..].to_string()
     }
 }
 
@@ -512,6 +581,7 @@ fn full_scan(shared: &Arc<Shared>) {
             return;
         }
         write(&state.store).clear();
+        write(&state.content).clear();
         let injector = {
             let mut fz = lock(&state.fuzzy);
             fz.restart();
@@ -539,9 +609,15 @@ fn full_scan(shared: &Arc<Shared>) {
             },
         );
         let mut store = write(&state.store);
+        let mut content = write(&state.content);
         for e in lock(&queue).drain(..) {
+            if !e.is_dir {
+                content.upsert(&shared.roots[i], &e.rel, e.size);
+            }
             store.insert(i as u16, e.rel, e.is_dir, e.size);
         }
+        content.mark_complete();
+        drop(content);
         drop(store);
         if stats.truncated {
             shared.truncated.store(true, Ordering::Relaxed);
@@ -567,10 +643,12 @@ pub(crate) fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
         let mut upserts: Vec<(Box<str>, bool)> = Vec::new();
         {
             let mut store = write(&state.store);
+            let mut content = write(&state.content);
             for c in cs {
                 match c.kind {
                     ChangeKind::Remove => {
                         store.remove_tree(root_idx, &c.rel);
+                        content.remove_tree(&c.rel);
                         saw_removal = true;
                     }
                     ChangeKind::Upsert => {
@@ -581,10 +659,16 @@ pub(crate) fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
                                 let is_dir = md.is_dir();
                                 let size = if is_dir { 0 } else { md.len() };
                                 upserts.push((c.rel.clone().into_boxed_str(), is_dir));
+                                if is_dir {
+                                    content.remove(&c.rel);
+                                } else {
+                                    content.upsert(root, &c.rel, size);
+                                }
                                 store.insert(root_idx, c.rel.into_boxed_str(), is_dir, size);
                             }
                             Err(_) => {
                                 store.remove_tree(root_idx, &c.rel);
+                                content.remove_tree(&c.rel);
                                 saw_removal = true;
                             }
                         }
@@ -592,7 +676,8 @@ pub(crate) fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
                 }
             }
         }
-        // Lock order is always fuzzy → store (never the reverse).
+        // Lock order is store → content, then (after drop) fuzzy → store.
+        // Never reverse either pair.
         let mut fz = lock(&state.fuzzy);
         if saw_removal {
             fz.restart();
