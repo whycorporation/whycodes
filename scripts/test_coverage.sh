@@ -53,6 +53,10 @@ need "--fail-under-lines 100" "$dry100"
 dryjson="$(REPORT_JSON=/tmp/custom-cov.json "$SCRIPT" --dry-run)"
 need "/tmp/custom-cov.json" "$dryjson"
 
+drytgt="$(CARGO_TARGET_DIR=/tmp/pinned-llvm-target "$SCRIPT" --dry-run)"
+need "CARGO_LLVM_COV_TARGET_DIR=/tmp/pinned-llvm-target" "$drytgt"
+forbid "--target-dir" "$drytgt"
+
 # rustup llvm-cov is under rustlib/bin, not PATH. The wrapper must prepend
 # that dir so CI (and rustup clones) do not fail with `llvm-cov not found`.
 src="$(cat "$SCRIPT")"

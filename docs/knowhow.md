@@ -2347,9 +2347,9 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 
 **Root cause:** Three `Runner.Listener` processes share the `github-runner` user. `_work` is per process; `~/.cargo/registry` is not. Parallel `cargo` unpacks the same crates.io crate into one directory and rustc reads a half-written tree.
 
-**Fix:** Each self-hosted Linux job writes `CARGO_HOME=$RUNNER_TEMP/cargo-home` into `GITHUB_ENV` before rust-toolchain/cache. Do not put `${{ runner.temp }}` in job-level `env` — GitHub fails the workflow with zero jobs.
+**Fix:** `scripts/ci_isolate_cargo_home.sh` pins `CARGO_HOME` and `CARGO_TARGET_DIR` under `RUNNER_TOOL_CACHE/<runner-name>/<job>` (not `~/.cargo`, not `RUNNER_TEMP`, not the git worktree). `actions/checkout` `git clean -ffdx` would wipe workspace `target/`; a temp home forced a cold crates.io unpack. rust-cache restores registry/git only when that disk is empty (`CARGO_CACHE_HIT_LOCAL!=1`) and never with `cache-targets`. Do not put `${{ runner.temp }}` in job-level `env` — GitHub fails the workflow with zero jobs.
 
-**Prevention:** Do not point extra runners at one OS home for Cargo. Separate `_work` is not enough.
+**Prevention:** Do not point extra runners at one OS home for Cargo. Separate `_work` is not enough. Do not restore GitHub cargo caches into a populated `CARGO_HOME`.
 
 ## TUI suggestion FailOpen test hits the LLM response cache
 
