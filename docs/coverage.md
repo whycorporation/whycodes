@@ -9,9 +9,10 @@ breakdown.
 scripts/coverage.sh
 ```
 
-Same flags as the CI `Coverage (line floor)` job: one `cargo llvm-cov
---workspace` instrumentation, then a JSON report and
-`python3 scripts/check_coverage_floors.py`.
+Same flags as the CI `Coverage (line floor)` job: `cargo llvm-cov clean
+--workspace` (stale `.profraw` in a persistent `CARGO_TARGET_DIR` tanks
+crate floors), one `cargo llvm-cov --workspace` instrumentation, then a
+JSON report and `python3 scripts/check_coverage_floors.py`.
 
 ```bash
 scripts/coverage.sh --dry-run          # print the cargo/python argv
@@ -29,6 +30,10 @@ installed (`pkg-config sqlite3`).
 - `--skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index`
   avoids notify-timing flakes under instrumentation (`crates/index`). The
   normal `test` job still runs them.
+- `--skip provider_and_model_dialogs_load_custom_from_isolated_home` (and the
+  sibling broken-toml catalog test) skip TUI tests that pin `WHYCODES_HOME`.
+  `cargo llvm-cov --workspace` is one process; other crates overwrite that
+  env. The Test job still runs them.
 - Crate floors at 100% also ignore `tests.rs` so host-only branches cannot
   sink the gate (`CRATE_IGNORE` in the wrapper).
 - JSON crate floors pass `LLVM_COV_FLAGS=--skip-expansions` so rustc macro

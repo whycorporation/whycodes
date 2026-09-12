@@ -2366,6 +2366,34 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 
 **Prevention:** Tests that share `LlmTransport::complete` must not reuse prompt+model across success and error cases.
 
+## Coverage: TUI isolated-home dialog test sees an empty catalog
+
+**Date:** 2026-09-12 · **Area:** `crates/tui/src/input_event_tests.rs`
+
+**Symptom:** `provider_and_model_dialogs_load_custom_from_isolated_home` panicked with `[]` on `main` Coverage while the Test job was green.
+
+**JSONL / crash:** none.
+
+**Root cause:** The first `Config::load` found `acme-disk`; the second (`fill_model_catalog_from_disk`) saw empty providers. TUI `ENV_LOCK` does not serialize other crates in `cargo llvm-cov --workspace`, which all mutate `WHYCODES_HOME`. Restore-on-panic was also missing.
+
+**Fix:** `IsolatedHome` Drop guard + re-pin before each load. Skip those two tests in `scripts/coverage.sh`; the Test job still runs them.
+
+**Prevention:** Process-wide env tests are unsafe under workspace llvm-cov. Skip them there or use a crate-local lock that every crate honors (none exists).
+
+## Coverage floors collapse when CARGO_TARGET_DIR is reused
+
+**Date:** 2026-09-12 · **Area:** `scripts/coverage.sh`
+
+**Symptom:** PR 93 Coverage reported `whycodes-index` 74.7%, `whycodes-sdk` 54.0%, `whycodes-tools` 94.3% after a 9-minute run. Tests had not failed; floors were garbage.
+
+**JSONL / crash:** none.
+
+**Root cause:** `CARGO_LLVM_COV_TARGET_DIR` points at a persistent per-job cache. Previous llvm-cov `.profraw` files mixed into the next merge.
+
+**Fix:** Write Cargo's `CACHEDIR.TAG` into the persistent target dir, delete leftover `*.profraw`/`*.profdata`, then `cargo llvm-cov clean --workspace`. Without the tag, `clean` errors and the traces stay.
+
+**Prevention:** Persistent coverage `target/` must be a Cargo cache dir (CACHEDIR.TAG) and must drop profraw each run.
+
 ## SDK launch: ephemeral port stolen before spawn
 
 **Date:** 2026-09-12 · **Area:** `crates/sdk/src/client.rs`

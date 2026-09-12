@@ -39,5 +39,48 @@ pub use theme::tokens;
 #[cfg(test)]
 pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Holds `ENV_LOCK` and restores `WHYCODES_HOME` on drop (including panic).
+#[cfg(test)]
+pub(crate) struct IsolatedHome {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    dir: tempfile::TempDir,
+    prev: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl IsolatedHome {
+    pub(crate) fn new() -> Self {
+        let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        Self {
+            _lock: lock,
+            dir,
+            prev,
+        }
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+
+    /// Re-pin after another crate in `cargo test --workspace` may have
+    /// overwritten the process env (TUI `ENV_LOCK` is not process-wide).
+    pub(crate) fn pin(&self) {
+        unsafe { std::env::set_var("WHYCODES_HOME", self.dir.path()) };
+    }
+}
+
+#[cfg(test)]
+impl Drop for IsolatedHome {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;
