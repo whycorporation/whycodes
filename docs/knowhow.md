@@ -144,6 +144,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-12 — Windows TUI box lines render as `Ööö`
+
+**Symptom:** Prompt / dialog chrome (`╭─╮│╰─╯`) shows as `Ö` / `ö` (or similar OEM
+mojibake) on Windows, especially Turkish locale (CP857 / CP1254). ASCII text is
+fine. Windows Terminal and conhost both do it.
+
+**Root cause:** The TUI draws on a **new** `CONOUT$` handle. Crossterm enables
+`ENABLE_VIRTUAL_TERMINAL_PROCESSING` on stdout only (per-handle). Console
+output stays on the OEM code page, so UTF-8 box-drawing bytes are decoded as
+OEM. `WriteFile` of UTF-8 `─` (E2 94 80) through CP857 is exactly this class of
+garbage.
+
+**Fix:** Before alt-screen, set output CP 65001 and OR VT processing onto the
+**writer** handle (`CONOUT$` or stdout). Restore the previous CP on TUI exit
+(and splash / attach failure). `crates/tui/src/run/windows_console.rs`.
+
+**Prevention:** Do not assume stdout console mode applies to `CONOUT$`. Any new
+Windows TUI writer must go through `prepare_windows_console`. Regression:
+`windows_console::tests` + `windows_console_helpers_are_safe_without_a_tty`.
+
 ### 2026-09-10 — `IsolatedHome` restore asserted after dropping `ENV_LOCK`
 
 **Symptom:** CI `Test (linux)` failed

@@ -6171,6 +6171,15 @@ fn cycle_live_session_noop_when_empty() {
 }
 
 #[test]
+fn windows_console_helpers_are_safe_without_a_tty() {
+    // Buf/Fail never touch the process code page. Restore without prepare
+    // must stay a no-op so panic cleanup and Unix CI stay quiet.
+    super::windows_console::prepare_windows_console(&TuiWriter::Buf(Vec::new()));
+    super::windows_console::prepare_windows_console(&TuiWriter::Fail);
+    restore_terminal_on(&mut Vec::new());
+}
+
+#[test]
 fn tui_available_does_not_panic() {
     let _ = tui_available();
     let _ = open_tui_writer();
