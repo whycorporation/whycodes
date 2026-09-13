@@ -144,6 +144,23 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-13 — Coverage flake: GitHub PR list hits `127.0.0.1:1`
+
+**Symptom:** `github::pr::tests::execute_create_list_view_merge_on_loopback`
+fails on Coverage with `error sending request for url
+(http://127.0.0.1:1/repos/o/r/pulls?…)`. Create against the real loopback
+had already passed. Test (linux) is usually green.
+
+**Root cause:** `request_errors_and_non_json_success` dropped `ApiBaseGuard`
+(releases `ENV_LOCK`) then `set_var(WHYCODES_GITHUB_API_BASE,
+http://127.0.0.1:1)` **without** the lock. A sibling still holding the lock
+had its loopback URL overwritten mid-request.
+
+**Fix:** Only change the base through `ApiBaseGuard::set` (lock held).
+
+**Prevention:** Never `set_var` process-global GitHub/test URLs outside
+`ENV_LOCK`. Port `:1` is a connect-fail stub, not a live server.
+
 ### 2026-09-13 — Switching Windows PowerShell tabs flashes the TUI white
 
 **Symptom:** Leave the WhyCodes tab (or the window) and come back: the whole
