@@ -11,6 +11,7 @@ on:
       - 'docs/**'
       - '.github/ISSUE_TEMPLATE/**'
       - 'landing/**'
+      - 'Formula/**'
   pull_request:
     branches: [main]
     paths-ignore:
@@ -18,6 +19,7 @@ on:
       - 'docs/**'
       - '.github/ISSUE_TEMPLATE/**'
       - 'landing/**'
+      - 'Formula/**'
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,8 +33,9 @@ concurrency:
   cancel-in-progress: true
 
 # Linux jobs run on the repo's self-hosted runner pool (no GitHub-hosted
-# minutes). lint is the cheap gate; test, coverage, and build then run in
-# parallel when more than one runner is online. Fork pull requests never do:
+# minutes). lint is the cheap gate; test and coverage then run in parallel
+# when more than one runner is online. Release Build reports on PRs (required
+# check) but only compiles on push to main. Fork PRs never do:
 # untrusted workflow + checkout on those machines is a takeover. Same-repo
 # PRs and pushes to main still run here.
 # Job-level `if` cannot use `matrix` — multi-OS is a separate optional job set
@@ -183,7 +186,9 @@ jobs:
     timeout-minutes: 30
     needs: lint
     env:
-      CARGO_BUILD_JOBS: 1
+      # Long pole (~22m cold). Test/Build stay at 1 rustc so overlap on the
+      # shared 4-vCPU host stays bounded; this job keeps 3 after they finish.
+      CARGO_BUILD_JOBS: 3
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       - uses: actions/checkout@v7
@@ -209,8 +214,8 @@ jobs:
       - name: Measure coverage
         env:
           # Job-scoped; do not put ${{ runner.temp }} in job-level env (0-job
-          # workflow failure). Traces must not share CARGO_TARGET_DIR.
-          CARGO_LLVM_COV_TARGET_DIR: ${{ runner.temp }}/llvm-cov-target
+          # workflow failure). Compile cache is ${CARGO_TARGET_DIR}-llvm-cov
+          # (scripts/coverage.sh). REPORT_JSON stays in temp.
           COVERAGE_FEATURES: whycodes-storage/bundled
           REPORT_JSON: ${{ runner.temp }}/cov.json
         run: scripts/coverage.sh
@@ -222,23 +227,33 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 1
     needs: lint
+    # Required status check on main — the job must still report on PRs.
+    # Artifact compile is push-to-main only so Coverage keeps the 4-vCPU host.
     if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
+      - name: Skip release build on pull requests
+        if: github.event_name != 'push'
+        run: echo "Release binary is built on push to main; PRs already compile via Test."
       - uses: actions/checkout@v7
+        if: github.event_name == 'push'
         with:
           fetch-depth: 1
       - name: Isolate Cargo home
+        if: github.event_name == 'push'
         run: sh scripts/ci_isolate_cargo_home.sh
       - uses: dtolnay/rust-toolchain@stable
+        if: github.event_name == 'push'
       - uses: Swatinem/rust-cache@v2
-        if: env.CARGO_CACHE_HIT_LOCAL != '1'
+        if: github.event_name == 'push' && env.CARGO_CACHE_HIT_LOCAL != '1'
         with:
           shared-key: whycodes-ci-registry
           cache-targets: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build release (cli only — workspace builds 2 extra crates not in the shipped binary)
+        if: github.event_name == 'push'
         run: cargo build --release --locked -p whycodes-cli --features bundled-sqlite
       - name: Upload binary
+        if: github.event_name == 'push'
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:

@@ -9,11 +9,11 @@ breakdown.
 scripts/coverage.sh
 ```
 
-Same flags as the CI `Coverage (line floor)` job: traces go to
-`$RUNNER_TEMP/llvm-cov-target` (or `${CARGO_TARGET_DIR}-llvm-cov` locally),
-leftover `*.profraw` under the compile cache are deleted, then one
-`cargo llvm-cov --workspace` instrumentation, a JSON report, and
-`python3 scripts/check_coverage_floors.py`.
+Same flags as the CI `Coverage (line floor)` job: the instrumented compile
+cache is `${CARGO_TARGET_DIR}-llvm-cov` (or `target/llvm-cov-target`), leftover
+`*.profraw` / `*.profdata` under that cache and `CARGO_TARGET_DIR` are deleted
+(rlibs stay), then one `cargo llvm-cov --workspace` instrumentation, a JSON
+report, and `python3 scripts/check_coverage_floors.py`.
 
 ```bash
 scripts/coverage.sh --dry-run          # print the cargo/python argv
