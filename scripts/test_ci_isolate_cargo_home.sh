@@ -127,7 +127,12 @@ need "scripts/ci_isolate_cargo_home.sh" "$wf"
 need "cache-targets: false" "$wf"
 need "CARGO_CACHE_HIT_LOCAL" "$wf"
 need "shared-key: whycodes-ci-registry" "$wf"
-need "CARGO_LLVM_COV_TARGET_DIR: \${{ runner.temp }}/llvm-cov-target" "$wf"
+# Compile cache is ${CARGO_TARGET_DIR}-llvm-cov. Pinning it to RUNNER_TEMP
+# wiped instrumented rlibs every job (Coverage ~22m cold).
+forbid "CARGO_LLVM_COV_TARGET_DIR: \${{ runner.temp }}/llvm-cov-target" "$wf"
+need "CARGO_BUILD_JOBS: 3" "$wf"
+need "Skip release build on pull requests" "$wf"
+need "'Formula/**'" "$wf"
 forbid 'RUNNER_TEMP/cargo-home' "$wf"
 
 dry="$(
@@ -144,6 +149,7 @@ dryci="$(
         CARGO_TARGET_DIR=/tmp/pinned-llvm-target \
         "$COV" --dry-run
 )"
-need "CARGO_LLVM_COV_TARGET_DIR=/tmp/gha-runner-temp/llvm-cov-target" "$dryci"
+need "CARGO_LLVM_COV_TARGET_DIR=/tmp/pinned-llvm-target-llvm-cov" "$dryci"
+forbid "CARGO_LLVM_COV_TARGET_DIR=/tmp/gha-runner-temp/llvm-cov-target" "$dryci"
 
 printf 'ok\n'

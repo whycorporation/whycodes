@@ -98,15 +98,14 @@ if [ -z "${LLVM_PROFDATA:-}" ] && command -v llvm-profdata >/dev/null 2>&1; then
     export LLVM_PROFDATA
 fi
 
-# cargo-llvm-cov 0.9 rejects --target-dir. Default is workspace
-# `target/llvm-cov-target`, which `actions/checkout` wipes.
-# Traces MUST NOT live under persistent CARGO_TARGET_DIR: leftover .profraw
-# mixed floors to 54% (index 74.7%). Prefer RUNNER_TEMP (job-scoped, gone
-# after the job). Locally, use a sibling of CARGO_TARGET_DIR that we rm -rf.
+# cargo-llvm-cov 0.9 rejects --target-dir. Default workspace
+# `target/llvm-cov-target` is wiped by `actions/checkout` `git clean`.
+# Put the compile cache next to the persistent CARGO_TARGET_DIR so
+# instrumented rlibs survive the job (Coverage was a 22m cold rebuild when
+# this lived in RUNNER_TEMP). Leftover *.profraw mixed floors to 54% —
+# purge traces, do not rm -rf the rlibs.
 if [ -z "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
-    if [ -n "${RUNNER_TEMP:-}" ]; then
-        CARGO_LLVM_COV_TARGET_DIR="$RUNNER_TEMP/llvm-cov-target"
-    elif [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    if [ -n "${CARGO_TARGET_DIR:-}" ]; then
         CARGO_LLVM_COV_TARGET_DIR="${CARGO_TARGET_DIR%/}-llvm-cov"
     else
         CARGO_LLVM_COV_TARGET_DIR="$ROOT/target/llvm-cov-target"
@@ -128,7 +127,7 @@ if [ "$dry_run" -eq 1 ]; then
         say "+ CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR"
         say "+ LLVM_PROFILE_FILE=$CARGO_LLVM_COV_TARGET_DIR/whycodes-%p-%m.profraw"
     fi
-    say "+ rm -rf \$CARGO_LLVM_COV_TARGET_DIR; purge *.profraw from CARGO_TARGET_DIR"
+    say "+ purge *.profraw *.profdata from compile cache (keep rlibs)"
     say "+ $cov_cmd"
     say "+ $report_cmd > $REPORT_JSON"
     say "+ $floors_cmd"
@@ -152,13 +151,14 @@ if [ -z "${LLVM_COV:-}" ] || ! command -v "$LLVM_COV" >/dev/null 2>&1; then
 fi
 
 # Rebuild argv without going through the shell so regex metacharacters stay literal.
-# Drop coverage traces only. Never `llvm-cov clean` the compile cache.
+# Drop coverage traces only. Never `llvm-cov clean` / `rm -rf` the compile cache.
 cov_root="$CARGO_LLVM_COV_TARGET_DIR"
-rm -rf "$cov_root"
 mkdir -p "$cov_root"
 printf 'Signature: 8a477f597d28d172789c096e48218643\n' >"$cov_root/CACHEDIR.TAG"
-# Previous jobs wrote traces into CARGO_TARGET_DIR itself. Purge them or
-# llvm-cov merges garbage even when CARGO_LLVM_COV_TARGET_DIR is elsewhere.
+# Leftover traces mixed floors to 54% (index 74.7%). Same find on both
+# dirs: llvm-cov used to write into CARGO_TARGET_DIR, and cargo-llvm-cov
+# merges every *.profraw under CARGO_LLVM_COV_TARGET_DIR.
+find "$cov_root" \( -name '*.profraw' -o -name '*.profdata' \) -delete
 if [ -n "${CARGO_TARGET_DIR:-}" ] && [ -d "$CARGO_TARGET_DIR" ]; then
     find "$CARGO_TARGET_DIR" \( -name '*.profraw' -o -name '*.profdata' \) -delete
 fi
