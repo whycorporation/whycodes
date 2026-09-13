@@ -48,7 +48,7 @@ need "--skip provider_and_model_dialogs_load_custom_from_isolated_home" "$dry"
 need "--skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails" "$dry"
 need "check_coverage_floors.py" "$dry"
 need "/tmp/cov.json" "$dry"
-need "LLVM_COV=scripts/llvm_cov_skip_expansions.sh LLVM_PROFDATA=" "$dry"
+need "PATH=<tmp>/llvm-cov-wrapper:" "$dry"
 forbid "--features" "$dry"
 
 dryf="$(COVERAGE_FEATURES=whycodes-storage/bundled "$SCRIPT" --dry-run)"
@@ -99,19 +99,25 @@ fake="$(mktemp)"
 trap 'rm -f "$fake"' EXIT
 printf '#!/bin/sh\nprintf %%s\\n "$*"\n' >"$fake"
 chmod +x "$fake"
-got="$(WHYCODES_LLVM_COV_REAL="$fake" "$wrap" export --summary-only)"
+got="$(WHYCODES_LLVM_COV_REAL="$fake" "$wrap" export --summary-only 2>/dev/null)"
 printf '%s\n' "$got" | grep -F -q -- "-skip-expansions" || {
     printf 'error: wrapper did not inject -skip-expansions on export\n' >&2
     printf '%s\n' "$got" >&2
     exit 1
 }
-got="$(WHYCODES_LLVM_COV_REAL="$fake" "$wrap" show --summary-only)"
+got="$(WHYCODES_LLVM_COV_REAL="$fake" "$wrap" -instr-profile=x export --summary-only 2>/dev/null)"
+printf '%s\n' "$got" | grep -F -q -- "-skip-expansions" || {
+    printf 'error: wrapper must inject when export is not argv0\n' >&2
+    printf '%s\n' "$got" >&2
+    exit 1
+}
+got="$(WHYCODES_LLVM_COV_REAL="$fake" "$wrap" show --summary-only 2>/dev/null)"
 if printf '%s\n' "$got" | grep -F -q -- "-skip-expansions"; then
     printf 'error: wrapper must not inject -skip-expansions on show\n' >&2
     printf '%s\n' "$got" >&2
     exit 1
 fi
-got="$(WHYCODES_LLVM_COV_REAL="$fake" "$wrap" export -skip-expansions --summary-only)"
+got="$(WHYCODES_LLVM_COV_REAL="$fake" "$wrap" export -skip-expansions --summary-only 2>/dev/null)"
 n="$(printf '%s\n' "$got" | tr ' ' '\n' | grep -c -- '-skip-expansions' || true)"
 if [ "$n" -ne 1 ]; then
     printf 'error: wrapper duplicated -skip-expansions (n=%s)\n' "$n" >&2

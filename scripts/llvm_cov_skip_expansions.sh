@@ -9,19 +9,18 @@ set -eu
 
 real="${WHYCODES_LLVM_COV_REAL:?WHYCODES_LLVM_COV_REAL must be the real llvm-cov}"
 
-if [ "${1-}" = "export" ]; then
-    skip=1
-    for arg in "$@"; do
-        case "$arg" in
-            -skip-expansions|--skip-expansions)
-                skip=0
-                break
-                ;;
-        esac
-    done
-    if [ "$skip" -eq 1 ]; then
-        exec "$real" "$@" -skip-expansions
-    fi
+is_export=0
+have_skip=0
+for arg in "$@"; do
+    case "$arg" in
+        export) is_export=1 ;;
+        -skip-expansions|--skip-expansions) have_skip=1 ;;
+    esac
+done
+
+if [ "$is_export" -eq 1 ] && [ "$have_skip" -eq 0 ]; then
+    printf 'llvm-cov wrapper: injecting -skip-expansions\n' >&2
+    exec "$real" "$@" -skip-expansions
 fi
 
 exec "$real" "$@"

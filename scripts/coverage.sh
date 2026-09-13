@@ -130,7 +130,7 @@ if [ "$dry_run" -eq 1 ]; then
     say "+ cargo llvm-cov clean --workspace --profraw-only"
     say "+ purge *.profraw *.profdata from compile cache (keep rlibs)"
     say "+ $cov_cmd"
-    say "+ LLVM_COV=scripts/llvm_cov_skip_expansions.sh LLVM_PROFDATA=<real> $report_cmd > $REPORT_JSON"
+    say "+ PATH=<tmp>/llvm-cov-wrapper:\$PATH LLVM_COV=<tmp>/llvm-cov $report_cmd > $REPORT_JSON"
     say "+ FAIL_UNDER=$FAIL_UNDER $floors_cmd"
     exit 0
 fi
@@ -192,11 +192,10 @@ run "$@"
 # JSON floors need `-skip-expansions` so serde / `format!` / tracing are
 # not extra uncovered lines. rustup llvm-cov 21 accepts that on `export`
 # but not on `show`. cargo-llvm-cov `report --json` uses export; the text
-# summary above uses show. LLVM_COV_FLAGS is stripped from the child
-# llvm-cov process. cargo-llvm-cov also ignores LLVM_COV unless
-# LLVM_PROFDATA is set too — then wrap only this export:
-#   export → inject -skip-expansions
-#   show / merge / anything else → pass through
+# summary above uses show. LLVM_COV_FLAGS is stripped from the child.
+# Pointing LLVM_COV at a .sh path is also ignored unless LLVM_PROFDATA is
+# set, and even then some 0.9.1 builds still use rustlib `llvm-cov`.
+# Shadow PATH with a file *named* llvm-cov so lookup cannot skip it.
 _real_llvm_cov="${LLVM_COV:-}"
 if [ -z "$_real_llvm_cov" ]; then
     _real_llvm_cov="$(command -v llvm-cov)"
@@ -205,13 +204,22 @@ if [ -z "${LLVM_PROFDATA:-}" ]; then
     LLVM_PROFDATA="$(command -v llvm-profdata)"
     export LLVM_PROFDATA
 fi
+_wrap_dir="$(mktemp -d)"
+cp "$ROOT/scripts/llvm_cov_skip_expansions.sh" "$_wrap_dir/llvm-cov"
+chmod +x "$_wrap_dir/llvm-cov"
 WHYCODES_LLVM_COV_REAL="$_real_llvm_cov"
 export WHYCODES_LLVM_COV_REAL
-LLVM_COV="$ROOT/scripts/llvm_cov_skip_expansions.sh"
+PATH="$_wrap_dir:$PATH"
+export PATH
+LLVM_COV="$_wrap_dir/llvm-cov"
 export LLVM_COV
 run cargo llvm-cov report --json --ignore-filename-regex "$CRATE_IGNORE" --summary-only >"$REPORT_JSON"
+PATH="${PATH#$_wrap_dir:}"
+export PATH
 LLVM_COV="$_real_llvm_cov"
 export LLVM_COV
 unset WHYCODES_LLVM_COV_REAL
+rm -rf "$_wrap_dir"
+unset _wrap_dir
 unset _real_llvm_cov
 FAIL_UNDER="$FAIL_UNDER" python3 scripts/check_coverage_floors.py "$REPORT_JSON"
