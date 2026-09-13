@@ -683,7 +683,13 @@ fn ensure_session_times_out_fake_browser() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     drop(close_browser());
     let prev = std::env::var_os("WHYCODES_BROWSER");
-    let fake = std::env::current_exe().unwrap();
+    // Must not be a real Chromium: `current_exe()` on some Linux CI hosts
+    // still answers CDP and the timeout path never fires (`Ok(port)`).
+    let fake = std::path::PathBuf::from(if cfg!(windows) {
+        "C:\\Windows\\System32\\cmd.exe"
+    } else {
+        "/bin/false"
+    });
     unsafe { std::env::set_var("WHYCODES_BROWSER", &fake) };
     let err = ensure_session();
     unsafe {

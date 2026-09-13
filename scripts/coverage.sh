@@ -127,6 +127,7 @@ if [ "$dry_run" -eq 1 ]; then
         say "+ CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR"
         say "+ LLVM_PROFILE_FILE=$CARGO_LLVM_COV_TARGET_DIR/whycodes-%p-%m.profraw"
     fi
+    say "+ cargo llvm-cov clean --workspace --profraw-only"
     say "+ purge *.profraw *.profdata from compile cache (keep rlibs)"
     say "+ $cov_cmd"
     say "+ $report_cmd > $REPORT_JSON"
@@ -155,11 +156,12 @@ fi
 cov_root="$CARGO_LLVM_COV_TARGET_DIR"
 mkdir -p "$cov_root"
 printf 'Signature: 8a477f597d28d172789c096e48218643\n' >"$cov_root/CACHEDIR.TAG"
-# Leftover traces mixed floors to 54% (index 74.7%). Same find on both
-# dirs: llvm-cov used to write into CARGO_TARGET_DIR, and cargo-llvm-cov
-# merges every *.profraw under CARGO_LLVM_COV_TARGET_DIR.
+# Leftover traces mixed floors to 54% (index 74.7%) and later to 59% on
+# config/protocol (in-file #[cfg(test)] never ran). cargo-llvm-cov merges
+# every *.profraw under CARGO_LLVM_COV_TARGET_DIR *and* CARGO_TARGET_DIR.
+cargo llvm-cov clean --workspace --profraw-only >/dev/null 2>&1 || true
 find "$cov_root" \( -name '*.profraw' -o -name '*.profdata' \) -delete
-if [ -n "${CARGO_TARGET_DIR:-}" ] && [ -d "$CARGO_TARGET_DIR" ]; then
+if [ -n "${CARGO_TARGET_DIR:-}" ] && [ "$CARGO_TARGET_DIR" != "$cov_root" ] && [ -d "$CARGO_TARGET_DIR" ]; then
     find "$CARGO_TARGET_DIR" \( -name '*.profraw' -o -name '*.profdata' \) -delete
 fi
 export LLVM_PROFILE_FILE="$cov_root/whycodes-%p-%m.profraw"
