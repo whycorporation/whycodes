@@ -104,38 +104,34 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
     elif "files" in report:
         files = report["files"]
     else:
-        # unexpected shape — treat as empty to fail loudly
         print(f"unexpected report shape: keys={list(report.keys())}", file=sys.stderr)
         return {}
 
-    by_crate: dict[str, list] = defaultdict(list)
+    # One mapping per test binary. The same source file appears in several
+    # `data[]` entries; summing double-counts and mixes skip-expansions
+    # (2122/2122) with expansion-inflated totals (2122/3567). Keep the
+    # mapping with the highest percent, then the smallest total.
+    best: dict[str, tuple[str, int, int]] = {}
     for f in files:
         filename = f.get("filename") or f.get("file") or ""
-        # Only consider our crate files under crates/<name>/
-        # filename is absolute or relative; look for /crates/<crate>/
         if "/crates/" not in filename:
             continue
-        # Extract crate dir name after /crates/
         try:
             crate_dir = filename.split("/crates/")[1].split("/")[0]
             crate = f"whycodes-{crate_dir}"
         except IndexError:
             continue
-        # Skip tests.rs basenames when caller already filtered, but double-guard
         if filename.endswith("tests.rs"):
             continue
         summary = f.get("summary") or {}
         lines = summary.get("lines") or {}
         covered = lines.get("covered")
         count = lines.get("count")
-        # Some versions use `covered`/`count`, others `covered`/`total`
         if covered is None or count is None:
-            # Try alternative keys
             covered = summary.get("covered_lines") or lines.get("covered")
             count = summary.get("total_lines") or lines.get("count")
         if covered is None or count is None:
             continue
-        # Normalize
         try:
             covered = int(covered)
             count = int(count)
@@ -143,17 +139,24 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
             continue
         if count == 0:
             continue
-        # rustc llvm-cov JSON without working --skip-expansions counts
-        # `format!` / tracing as extra lines (load.rs ~800 → 1929). CI
-        # filenames are often absolute and not readable as-is; resolve
-        # against the repo root (`crates/<crate>/…`).
         src_lines = source_line_count(filename, crate_dir)
         if src_lines > 20 and count > src_lines * 2:
-            if covered >= src_lines:
-                covered = src_lines
-            else:
-                covered = min(covered, src_lines)
+            covered = src_lines if covered >= src_lines else min(covered, src_lines)
             count = src_lines
+        key = filename.replace("\\", "/")
+        pct = covered / count
+        prev = best.get(key)
+        if prev is not None:
+            _, pc, pt = prev
+            prev_pct = pc / pt
+            if pct < prev_pct - 1e-12:
+                continue
+            if abs(pct - prev_pct) <= 1e-12 and count >= pt:
+                continue
+        best[key] = (crate, covered, count)
+
+    by_crate: dict[str, list] = defaultdict(list)
+    for crate, covered, count in best.values():
         by_crate[crate].append((covered, count))
 
     aggregated: dict[str, tuple[int, int]] = {}
@@ -211,6 +214,30 @@ def _self_check() -> None:
     assert n > 100, n
     n = source_line_count(str(ROOT / "crates" / "protocol" / "src" / "ci.rs"), "protocol")
     assert n > 50, n
+    report = {
+        "data": [
+            {
+                "files": [
+                    {
+                        "filename": "/x/crates/config/src/load.rs",
+                        "summary": {"lines": {"covered": 800, "count": 800}},
+                    }
+                ]
+            },
+            {
+                "files": [
+                    {
+                        "filename": "/x/crates/config/src/load.rs",
+                        "summary": {"lines": {"covered": 800, "count": 1929}},
+                    }
+                ]
+            },
+        ]
+    }
+    agg = aggregate_by_crate(report)
+    cov, tot = agg["whycodes-config"]
+    assert cov == tot, (cov, tot)
+    assert tot < 900, tot
 
 
 if __name__ == "__main__":
