@@ -130,7 +130,7 @@ if [ "$dry_run" -eq 1 ]; then
     say "+ cargo llvm-cov clean --workspace --profraw-only"
     say "+ purge *.profraw *.profdata from compile cache (keep rlibs)"
     say "+ $cov_cmd"
-    say "+ LLVM_COV=scripts/llvm_cov_skip_expansions.sh $report_cmd > $REPORT_JSON"
+    say "+ LLVM_COV=scripts/llvm_cov_skip_expansions.sh LLVM_PROFDATA=<real> $report_cmd > $REPORT_JSON"
     say "+ $floors_cmd"
     exit 0
 fi
@@ -194,12 +194,17 @@ run "$@"
 # not extra uncovered lines. rustup llvm-cov 21 accepts that on `export`
 # but not on `show`. cargo-llvm-cov `report --json` uses export; the text
 # summary above uses show. LLVM_COV_FLAGS is stripped from the child
-# llvm-cov process, so wrap only this export:
+# llvm-cov process. cargo-llvm-cov also ignores LLVM_COV unless
+# LLVM_PROFDATA is set too — then wrap only this export:
 #   export → inject -skip-expansions
 #   show / merge / anything else → pass through
 _real_llvm_cov="${LLVM_COV:-}"
 if [ -z "$_real_llvm_cov" ]; then
     _real_llvm_cov="$(command -v llvm-cov)"
+fi
+if [ -z "${LLVM_PROFDATA:-}" ]; then
+    LLVM_PROFDATA="$(command -v llvm-profdata)"
+    export LLVM_PROFDATA
 fi
 WHYCODES_LLVM_COV_REAL="$_real_llvm_cov"
 export WHYCODES_LLVM_COV_REAL

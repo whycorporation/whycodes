@@ -2486,11 +2486,11 @@ Linux CI wall-clock is lint then max(test, coverage). Build still reports on PRs
 
 **JSONL / crash:** none.
 
-**Root cause:** 100% floors are defined against llvm-cov `-skip-expansions`. cargo-llvm-cov reads `LLVM_COV_FLAGS` in the parent, then `ProcessBuilder::new` strips that env from the child llvm-cov. rustup llvm-cov 21 also rejects the flag on `show`. JSON then counted serde/`format!` expansions. In-file `#[cfg(test)]` in `ci.rs` also sat on the production floor (`tests.rs$` ignore).
+**Root cause:** 100% floors are defined against llvm-cov `-skip-expansions`. cargo-llvm-cov reads `LLVM_COV_FLAGS` in the parent, then `ProcessBuilder::new` strips that env from the child llvm-cov. It also ignores `LLVM_COV` unless `LLVM_PROFDATA` is set in the same process (otherwise it uses rustlib `llvm-cov` and warns). rustup llvm-cov 21 rejects the flag on `show`. JSON then counted serde/`format!` expansions.
 
-**Fix:** Point `LLVM_COV` at `scripts/llvm_cov_skip_expansions.sh` for the JSON export only; it injects `-skip-expansions` on `export` and passes `show` through. Protocol CI tests live in `crates/protocol/src/tests.rs`.
+**Fix:** For the JSON export only, set both `LLVM_COV=scripts/llvm_cov_skip_expansions.sh` and `LLVM_PROFDATA` to the real binary. The wrapper injects `-skip-expansions` on `export` and passes `show` through. Protocol CI tests live in `crates/protocol/src/tests.rs`.
 
-**Prevention:** Do not rely on `LLVM_COV_FLAGS` reaching llvm-cov. Do not set the flag for the workspace text report. Keep crate-floor tests in a `tests.rs` sibling.
+**Prevention:** Do not rely on `LLVM_COV_FLAGS` reaching llvm-cov. Always pair `LLVM_COV` with `LLVM_PROFDATA`. Keep crate-floor tests in a `tests.rs` sibling.
 
 ## Coverage: TUI isolated-home dialog test sees an empty catalog
 
