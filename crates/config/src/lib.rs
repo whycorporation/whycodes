@@ -16,7 +16,7 @@ pub use types::{
     AutomationConfig, CONFIG_SCHEMA_VERSION, CommandConfig, Config, CustomCommandConfig,
     CustomToolConfig, GeneralConfig, HookConfig, HookEvent, LspConfig, LspServerConfig,
     MagicKeywordsConfig, McpServerConfig, McpTransportKind, MemoryConfig, NotifyConfig,
-    NotifyEvent, QuestionToolConfig, RuntimeLspServer, SecurityConfig, SessionConfig,
+    NotifyEvent, QuestionToolConfig, RuntimeLspServer, SecurityConfig, SessionConfig, SlopConfig,
     StreamRuleConfig, SwarmConfig, SystemPromptOverlays, ToolsConfig, TuiConfig,
     is_discord_webhook_url,
 };
@@ -25,6 +25,11 @@ pub use types::{
 pub(crate) use load::{
     encode_toml, ensure_parent_dir, map_toml_ser, parse_command_markdown, toml_err,
 };
+
+/// `.whycodes/slop.toml` next to project config.
+pub fn project_slop_path(project_dir: &std::path::Path) -> std::path::PathBuf {
+    whycodes_core::project_dir(project_dir).join("slop.toml")
+}
 
 #[cfg(test)]
 mod tests;

@@ -25,6 +25,7 @@ members = [
     "crates/memory",
     "crates/index",
     "crates/import",
+    "crates/slop",
 ]
 resolver = "2"
 

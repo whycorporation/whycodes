@@ -111,6 +111,10 @@ pub enum CiEvent {
         is_error: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// Present on `generate --format json|stream-json` when the turn mutated
+        /// a git worktree. Deterministic slop metrics — never LLM-as-judge.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        slop: Option<serde_json::Value>,
     },
     /// Hard failure before / outside a completed turn result.
     Error { message: String },
@@ -148,6 +152,7 @@ pub struct ResultMeta {
     pub agent: String,
     pub usage: Usage,
     pub duration_ms: u64,
+    pub slop: Option<serde_json::Value>,
 }
 
 impl ResultMeta {
@@ -162,6 +167,7 @@ impl ResultMeta {
             duration_ms: self.duration_ms,
             is_error: false,
             error: None,
+            slop: self.slop,
         }
     }
 
@@ -177,6 +183,7 @@ impl ResultMeta {
             duration_ms: self.duration_ms,
             is_error: true,
             error: Some(message),
+            slop: self.slop,
         }
     }
 }
@@ -257,6 +264,7 @@ mod tests {
             duration_ms: 42,
             is_error: false,
             error: None,
+            slop: None,
         };
         let json = serde_json::to_string(&e).unwrap();
         assert!(json.contains(r#""type":"result""#));
@@ -265,6 +273,27 @@ mod tests {
         assert!(v.get("error").is_none()); // skip_serializing_if None
         assert_eq!(v["is_error"], false);
         assert_eq!(v["usage"]["input_tokens"], 10);
+        assert!(v.get("slop").is_none());
+    }
+
+    #[test]
+    fn result_includes_optional_slop() {
+        let e = CiEvent::Result {
+            result: "ok".into(),
+            session_id: "s".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            agent: "a".into(),
+            usage: Usage::default(),
+            duration_ms: 1,
+            is_error: false,
+            error: None,
+            slop: Some(serde_json::json!({"verdict":"ok","delta_loc":0})),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains(r#""slop""#));
+        let back: CiEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, e);
     }
 
     #[test]
@@ -290,6 +319,7 @@ mod tests {
             agent: "a".into(),
             usage: Usage::default(),
             duration_ms: 1,
+            slop: None,
         };
         let ev = meta.err("boom");
         assert!(matches!(
@@ -312,6 +342,7 @@ mod tests {
             agent: "a".into(),
             usage: Usage::default(),
             duration_ms: 7,
+            slop: None,
         };
         let ev = meta.ok("done");
         assert!(matches!(
@@ -321,9 +352,26 @@ mod tests {
                 ref result,
                 error: None,
                 duration_ms: 7,
+                slop: None,
                 ..
             } if result == "done"
         ));
+        let with = ResultMeta {
+            session_id: "s".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            agent: "a".into(),
+            usage: Usage::default(),
+            duration_ms: 2,
+            slop: Some(serde_json::json!({"verdict":"review"})),
+        };
+        let ev = with.ok("x");
+        match ev {
+            CiEvent::Result { slop: Some(v), .. } => {
+                assert_eq!(v["verdict"], "review");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

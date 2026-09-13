@@ -282,6 +282,7 @@ pub(crate) fn print_slash_help() {
     println!("  /security-review       — Security-focused review");
     println!("  /commit                — Draft a git commit");
     println!("  /cost, /usage          — Session token usage");
+    println!("  /slop                  — ΔLOC / verbosity / erosion vs git base");
     println!("  /doctor                — Environment diagnostics");
     println!("  /remember <text>       — Save a durable project memory");
     println!("  /memory                — Show memory path and entry count");
@@ -648,6 +649,10 @@ pub(crate) async fn run_headless_turn(
         agent: agent_name.to_string(),
         usage: session.usage.clone(),
         duration_ms,
+        slop: format
+            .is_structured()
+            .then(|| slop_json_for(session.project_path.as_path(), None))
+            .flatten(),
     };
 
     emit_turn_outcome(format, turn_result.map_err(|e| e.to_string()), meta)
@@ -701,6 +706,63 @@ pub(crate) fn emit_turn_outcome(
 
 pub(crate) fn is_cancel_message(msg: &str) -> bool {
     msg.to_ascii_lowercase().contains("cancel")
+}
+
+/// Slop object for a headless result event. `None` when the tree is clean or
+/// not a git repo (so CI envelopes stay small on no-op turns).
+pub(crate) fn slop_json_for(
+    project_dir: &std::path::Path,
+    config: Option<&Config>,
+) -> Option<serde_json::Value> {
+    let thresholds = match config {
+        Some(c) => slop_thresholds(&c.slop),
+        None => match Config::load_layered(project_dir) {
+            Ok(c) => slop_thresholds(&c.slop),
+            Err(err) => {
+                tracing::debug!(error = %err, "slop: config load skipped");
+                whycodes_slop::Thresholds::default()
+            }
+        },
+    };
+    match whycodes_slop::analyze(project_dir, None, &thresholds) {
+        Ok(report) if report.files_changed > 0 || report.delta_loc != 0 => {
+            match serde_json::to_value(&report) {
+                Ok(v) => Some(v),
+                Err(err) => {
+                    tracing::debug!(error = %err, "slop: serialize skipped");
+                    None
+                }
+            }
+        }
+        Ok(_) => None,
+        Err(err) => {
+            tracing::debug!(error = %err, "slop: analyze skipped");
+            None
+        }
+    }
+}
+
+pub(crate) fn slop_thresholds(cfg: &whycodes_config::SlopConfig) -> whycodes_slop::Thresholds {
+    whycodes_slop::Thresholds::from_parts(
+        cfg.verbosity,
+        cfg.erosion,
+        cfg.delta_loc,
+        cfg.block_verbosity,
+        cfg.block_erosion,
+        cfg.block_delta_loc,
+        cfg.hotspots,
+    )
+}
+
+pub(crate) fn slop_report_text(
+    project_dir: &std::path::Path,
+    base: Option<&str>,
+    config: &Config,
+) -> String {
+    match whycodes_slop::analyze(project_dir, base, &slop_thresholds(&config.slop)) {
+        Ok(report) => whycodes_slop::format_report(&report),
+        Err(e) => format!("Slop\n  error  {e}\n"),
+    }
 }
 
 pub(crate) fn log_cli_turn_error(meta: &ResultMeta, msg: &str) {

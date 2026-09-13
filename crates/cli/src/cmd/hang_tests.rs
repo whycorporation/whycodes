@@ -44,6 +44,10 @@ fn short_commands_are_debug_config_session() {
     assert!(is_short_command(&cli(Some(Commands::Completions {
         shell: clap_complete::Shell::Bash,
     }))));
+    assert!(is_short_command(&cli(Some(Commands::Slop {
+        base: None,
+        json: false,
+    }))));
     assert!(!is_short_command(&cli(None)));
     assert!(!is_short_command(&cli(Some(Commands::Run {
         prompt: None,

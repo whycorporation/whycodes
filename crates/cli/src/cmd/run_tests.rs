@@ -17,6 +17,7 @@ fn emit_parallel_outcome_covers_formats() {
         agent: "a".into(),
         usage: Default::default(),
         duration_ms: 1,
+        slop: None,
     };
     let wrap = |ev: CiEvent| ev;
     assert!(!emit_parallel_outcome(

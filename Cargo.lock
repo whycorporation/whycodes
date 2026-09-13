@@ -4835,6 +4835,7 @@ dependencies = [
  "whycodes-server",
  "whycodes-session",
  "whycodes-skill",
+ "whycodes-slop",
  "whycodes-storage",
  "whycodes-tools",
  "whycodes-tui",
@@ -5117,6 +5118,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "whycodes-slop"
+version = "0.6.0"
+dependencies = [
+ "serde",
+ "tempfile",
+]
+
+[[package]]
 name = "whycodes-storage"
 version = "0.6.0"
 dependencies = [
@@ -5190,6 +5199,7 @@ dependencies = [
  "whycodes-llm",
  "whycodes-memory",
  "whycodes-session",
+ "whycodes-slop",
  "whycodes-storage",
  "whycodes-tools",
 ]

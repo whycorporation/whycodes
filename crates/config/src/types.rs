@@ -117,9 +117,119 @@ pub struct Config {
     #[serde(default)]
     pub notify: NotifyConfig,
 
+    /// Code-slop tripwires (`whycodes slop` / `/slop`). Not a training objective.
+    #[serde(default)]
+    pub slop: SlopConfig,
+
     /// Extra system-prompt text loaded from `prompts/*.md` (not stored in TOML).
     #[serde(default, skip)]
     pub system_prompt_overlays: SystemPromptOverlays,
+}
+
+/// Verbosity / erosion / ΔLOC tripwires. Default `verdict` is `review`, not block.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlopConfig {
+    /// Review when verbosity ≥ this (default 0.25).
+    #[serde(default = "default_slop_verbosity")]
+    pub verbosity: f64,
+    /// Review when erosion ≥ this (default 0.50).
+    #[serde(default = "default_slop_erosion")]
+    pub erosion: f64,
+    /// Review when |ΔLOC| of the diff ≥ this (default 800).
+    #[serde(default = "default_slop_delta_loc")]
+    pub delta_loc: i64,
+    /// Block when verbosity ≥ this (default 0.40).
+    #[serde(default = "default_slop_block_verbosity")]
+    pub block_verbosity: f64,
+    /// Block when erosion ≥ this (default 0.75).
+    #[serde(default = "default_slop_block_erosion")]
+    pub block_erosion: f64,
+    /// Block when ΔLOC ≥ this (default 5000).
+    #[serde(default = "default_slop_block_delta_loc")]
+    pub block_delta_loc: i64,
+    /// How many hotspot functions to list (default 8).
+    #[serde(default = "default_slop_hotspots")]
+    pub hotspots: usize,
+}
+
+pub(crate) fn default_slop_verbosity() -> f64 {
+    0.25
+}
+pub(crate) fn default_slop_erosion() -> f64 {
+    0.50
+}
+pub(crate) fn default_slop_delta_loc() -> i64 {
+    800
+}
+pub(crate) fn default_slop_block_verbosity() -> f64 {
+    0.40
+}
+pub(crate) fn default_slop_block_erosion() -> f64 {
+    0.75
+}
+pub(crate) fn default_slop_block_delta_loc() -> i64 {
+    5_000
+}
+pub(crate) fn default_slop_hotspots() -> usize {
+    8
+}
+
+impl Default for SlopConfig {
+    fn default() -> Self {
+        Self {
+            verbosity: default_slop_verbosity(),
+            erosion: default_slop_erosion(),
+            delta_loc: default_slop_delta_loc(),
+            block_verbosity: default_slop_block_verbosity(),
+            block_erosion: default_slop_block_erosion(),
+            block_delta_loc: default_slop_block_delta_loc(),
+            hotspots: default_slop_hotspots(),
+        }
+    }
+}
+
+impl SlopConfig {
+    /// Overlay non-default fields from `other` (higher-priority layer).
+    pub fn merge_with(&self, other: &Self) -> Self {
+        let d = Self::default();
+        Self {
+            verbosity: if (other.verbosity - d.verbosity).abs() > f64::EPSILON {
+                other.verbosity
+            } else {
+                self.verbosity
+            },
+            erosion: if (other.erosion - d.erosion).abs() > f64::EPSILON {
+                other.erosion
+            } else {
+                self.erosion
+            },
+            delta_loc: if other.delta_loc != d.delta_loc {
+                other.delta_loc
+            } else {
+                self.delta_loc
+            },
+            block_verbosity: if (other.block_verbosity - d.block_verbosity).abs() > f64::EPSILON {
+                other.block_verbosity
+            } else {
+                self.block_verbosity
+            },
+            block_erosion: if (other.block_erosion - d.block_erosion).abs() > f64::EPSILON {
+                other.block_erosion
+            } else {
+                self.block_erosion
+            },
+            block_delta_loc: if other.block_delta_loc != d.block_delta_loc {
+                other.block_delta_loc
+            } else {
+                self.block_delta_loc
+            },
+            hotspots: if other.hotspots != d.hotspots {
+                other.hotspots
+            } else {
+                self.hotspots
+            },
+        }
+    }
 }
 
 /// Process-local background shell jobs and schedule/loop knobs.
@@ -765,6 +875,7 @@ impl Default for Config {
             swarm: SwarmConfig::default(),
             automation: AutomationConfig::default(),
             notify: NotifyConfig::default(),
+            slop: SlopConfig::default(),
             system_prompt_overlays: SystemPromptOverlays::default(),
         }
     }

@@ -518,6 +518,29 @@ pub(super) fn project_diff_report(project_dir: &std::path::Path) -> String {
     out
 }
 
+/// ΔLOC / verbosity / erosion on the working-tree diff (`whycodes slop`).
+pub(super) fn project_slop_report(
+    project_dir: &std::path::Path,
+    rest: &str,
+    config: &Config,
+) -> String {
+    let base = rest.trim();
+    let base = if base.is_empty() { None } else { Some(base) };
+    let t = whycodes_slop::Thresholds::from_parts(
+        config.slop.verbosity,
+        config.slop.erosion,
+        config.slop.delta_loc,
+        config.slop.block_verbosity,
+        config.slop.block_erosion,
+        config.slop.block_delta_loc,
+        config.slop.hotspots,
+    );
+    match whycodes_slop::analyze(project_dir, base, &t) {
+        Ok(report) => whycodes_slop::format_report(&report),
+        Err(e) => format!("Slop\n  error  {e}\n"),
+    }
+}
+
 /// Session + last-turn token usage (Claude Code `/cost` spirit).
 pub(super) fn cost_report(session: &Session, app: &TuiApp) -> String {
     let mut lines = vec!["Cost / usage".to_string()];

@@ -2211,6 +2211,7 @@ async fn handle_slash_covers_local_commands() {
     h.run("/diff").await;
     h.run("/context").await;
     h.run("/cost").await;
+    h.run("/slop").await;
     h.run("/init").await;
     assert!(h.app.pending_prompt.is_some());
 
@@ -7134,6 +7135,7 @@ async fn run_headless_slash_models_effort_mode_and_connect() {
     events.extend(type_line("/doctor"));
     events.extend(type_line("/context"));
     events.extend(type_line("/cost"));
+    events.extend(type_line("/slop"));
     events.extend(type_line("/bg"));
     events.extend(type_line("/memory"));
     events.extend(type_line("/import"));

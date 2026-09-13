@@ -145,8 +145,28 @@ impl Config {
         // Layer 4: environment variables
         config.apply_env_overrides();
         config.expand_notify_secrets();
+        config.apply_slop_file(project_dir);
 
         Ok(config)
+    }
+
+    /// Overlay `.whycodes/slop.toml` when present (project-local tripwires).
+    pub fn apply_slop_file(&mut self, project_dir: &Path) {
+        let path = crate::project_slop_path(project_dir);
+        if !path.exists() {
+            return;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(text) => match toml::from_str::<crate::types::SlopConfig>(&text) {
+                Ok(overlay) => self.slop = self.slop.merge_with(&overlay),
+                Err(e) => {
+                    tracing::warn!("Failed to parse slop config at {}: {e}", path.display());
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to read slop config at {}: {e}", path.display());
+            }
+        }
     }
 
     /// Apply environment variable overrides to this config in-place.

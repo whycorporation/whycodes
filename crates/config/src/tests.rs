@@ -2,6 +2,7 @@
 //! cannot sink the crate's 100% production floor.
 
 use super::*;
+use crate::SlopConfig;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -829,6 +830,76 @@ fn merge_with_general_security_memory_swarm() {
     assert!(!merged.swarm.worktrees);
     assert_eq!(merged.swarm.isolation.as_deref(), Some("checkout"));
     assert_eq!(merged.automation.max_background_jobs, 3);
+    overlay.slop.verbosity = 0.3;
+    overlay.slop.delta_loc = 100;
+    let merged = base.merge_with(&overlay);
+    assert!((merged.slop.verbosity - 0.3).abs() < f64::EPSILON);
+    assert_eq!(merged.slop.delta_loc, 100);
+}
+
+#[test]
+fn slop_config_merge_and_validate() {
+    let d = SlopConfig::default();
+    assert!((d.verbosity - 0.25).abs() < f64::EPSILON);
+    assert_eq!(d.hotspots, 8);
+    let overlay = SlopConfig {
+        verbosity: 0.3,
+        erosion: 0.6,
+        delta_loc: 100,
+        block_verbosity: 0.5,
+        block_erosion: 0.8,
+        block_delta_loc: 9_000,
+        hotspots: 3,
+    };
+    let merged = d.merge_with(&overlay);
+    assert_eq!(merged.hotspots, 3);
+    assert_eq!(merged.delta_loc, 100);
+    let keep = overlay.merge_with(&SlopConfig::default());
+    assert_eq!(keep.hotspots, 3);
+
+    let mut cfg = Config::default();
+    cfg.providers
+        .insert("openai".into(), make_provider("openai"));
+    cfg.slop.verbosity = 2.0;
+    assert!(cfg.validate().is_err());
+    cfg.slop.verbosity = 0.25;
+    cfg.slop.erosion = -0.1;
+    assert!(cfg.validate().is_err());
+    cfg.slop.erosion = 0.5;
+    cfg.slop.hotspots = 0;
+    assert!(cfg.validate().is_err());
+    cfg.slop.hotspots = 8;
+    assert!(cfg.validate().is_ok());
+}
+
+#[test]
+fn apply_slop_file_overlay_and_bad_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let why = dir.path().join(".whycodes");
+    std::fs::create_dir_all(&why).unwrap();
+    std::fs::write(why.join("slop.toml"), "verbosity = 0.31\ndelta_loc = 50\n").unwrap();
+    let mut cfg = Config::default();
+    cfg.apply_slop_file(dir.path());
+    assert!((cfg.slop.verbosity - 0.31).abs() < f64::EPSILON);
+    assert_eq!(cfg.slop.delta_loc, 50);
+
+    std::fs::write(why.join("slop.toml"), "verbosity = [\n").unwrap();
+    let mut cfg = Config::default();
+    cfg.apply_slop_file(dir.path());
+    assert!((cfg.slop.verbosity - 0.25).abs() < f64::EPSILON);
+
+    let missing = dir.path().join("empty");
+    std::fs::create_dir_all(&missing).unwrap();
+    let mut cfg = Config::default();
+    cfg.apply_slop_file(&missing);
+    assert_eq!(cfg.slop.delta_loc, 800);
+
+    let _ = std::fs::remove_file(why.join("slop.toml"));
+    std::fs::create_dir(why.join("slop.toml")).unwrap();
+    let mut cfg = Config::default();
+    cfg.apply_slop_file(dir.path());
+    assert_eq!(cfg.slop.delta_loc, 800);
+    assert_eq!(crate::project_slop_path(dir.path()), why.join("slop.toml"));
 }
 
 #[test]
@@ -1629,6 +1700,14 @@ fn load_layered_merges_project_and_warns_on_bad_toml() {
         .unwrap();
         let cfg = Config::load_layered(&proj).unwrap();
         assert_eq!(cfg.default_agent, "explore");
+        std::fs::write(
+            proj.join(".whycodes/slop.toml"),
+            "verbosity = 0.33\ndelta_loc = 42\n",
+        )
+        .unwrap();
+        let cfg = Config::load_layered(&proj).unwrap();
+        assert!((cfg.slop.verbosity - 0.33).abs() < f64::EPSILON);
+        assert_eq!(cfg.slop.delta_loc, 42);
 
         std::fs::write(proj.join(".whycodes/config.toml"), "[[[not toml").unwrap();
         let cfg = Config::load_layered(&proj).unwrap();

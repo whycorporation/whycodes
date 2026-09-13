@@ -397,6 +397,10 @@ fn runtime_choice_per_command() {
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Config {
         cmd: ConfigCmd::Show
     }))));
+    assert!(!command_needs_multi_thread(&cli(Some(Commands::Slop {
+        base: None,
+        json: false,
+    }))));
 }
 
 #[test]
@@ -1407,6 +1411,7 @@ fn dummy_meta() -> ResultMeta {
         agent: "a".into(),
         usage: whycodes_core::types::Usage::default(),
         duration_ms: 1,
+        slop: None,
     }
 }
 
@@ -2997,6 +3002,7 @@ async fn cmd_run_plain_repl_slash_commands() {
         "/diff",
         "/cost",
         "/usage",
+        "/slop",
         "/context",
         "/doctor",
         "/sessions",
@@ -3684,6 +3690,7 @@ async fn cmd_run_plain_remaining_slash_and_git_diff() {
         "/redo",
         "/compact note",
         "/diff",
+        "/slop",
         "/models xai/grok-4.6",
         "/effort high",
         "/effort medium",

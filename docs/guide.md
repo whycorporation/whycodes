@@ -50,6 +50,7 @@ Commands:
   import    Import MCP, permissions, and hooks from other agents
   stats     Show usage statistics
   debug     Show debug information
+  slop      Measure agent-induced code slop (ΔLOC / verbosity / erosion)
   upgrade   Self-update
   completions  Shell completion scripts (bash, zsh, fish, powershell, elvish)
 
@@ -127,6 +128,10 @@ events are wrapped as
 
 `stream-json` event types: `init`, `text_delta`, `thinking_delta`,
 `tool_start`, `tool_end`, `usage`, `status`, `result`, `error`, `cancelled`.
+
+When a headless turn mutates a git worktree, the final `result` object may
+include a `slop` field (`delta_loc`, `verbosity`, `erosion`, `verdict`,
+`hotspots`, `unparsed_files`). See [Code slop](#code-slop).
 The last event is always `result` (with `is_error` and optional `error`).
 
 Structured formats auto-approve tool permission prompts so pipelines do not
@@ -135,6 +140,49 @@ stamped `auto-picked` in the tool result) — `--format json` / `stream-json`
 is not interactive and has no reply path. Catastrophic shell risk is still
 hard-blocked. Prefer explicit permission allow rules in config when you want
 tighter control.
+
+## Code slop
+
+Tests tell you whether generated code is *correct*. They do not tell you
+whether it is *maintainable*. `whycodes slop` is a cheap, deterministic
+signal for mass and mess on the **diff** (changed files), not a whole-repo
+average that can hide a 2k-line dump.
+
+```bash
+whycodes slop                  # working tree vs merge-base (else HEAD)
+whycodes slop --base main
+whycodes slop --json           # scripts / CI
+```
+
+TUI and `--plain` also have `/slop` (optional git ref after the command).
+Headless `generate --format json` / `stream-json` attach a `slop` object on
+the final `result` event when the turn mutated the worktree.
+
+| Number | Meaning |
+|---|---|
+| ΔLOC | Net lines added minus deleted (`git diff --numstat`) |
+| Verbosity | Flagged lines (duplication + trivial wrappers + generated-looking repetition) ÷ SLOC of changed files |
+| Erosion | Mass of functions with cyclomatic complexity > 10, divided by mass of all functions. `mass(f) = CC(f) × √SLOC(f)` |
+
+`verdict` is `ok`, `review`, or `block` from project thresholds. Default
+stance is **review**, not hard-block — large human refactors should not fail
+CI on day one.
+
+```bash
+# Fail the job only on block; comment the numbers on review
+whycodes slop --base origin/main --json | jq -e '.verdict != "block"'
+```
+
+Thresholds live in `config.toml` under `[slop]` and optionally
+`.whycodes/slop.toml` (project overlay). Starting defaults (not dogma):
+verbosity `0.25`, erosion `0.50`, ΔLOC `800`. Block defaults: `0.40` /
+`0.75` / `5000`. Files without a Rust / TypeScript / Python parser are
+listed in `unparsed_files` instead of silently scoring 0.
+
+**Do not Goodhart these metrics.** They are tripwires, not a training
+objective. Do not auto-rewrite in the same turn that produced the slop;
+start a separate cleanup turn. v1 is not an LLM-as-judge and does not
+replace `/review`.
 
 ## Interactive session
 
@@ -191,6 +239,7 @@ Both TUI and `--plain`:
 | `/fresh` | Skip the provider prompt cache on the next turn (stale cache / wedged stream) |
 | `/context` | Context window breakdown |
 | `/cost` `/usage` | Session + last-turn token usage |
+| `/slop` | ΔLOC / verbosity / erosion vs git base (not a test score) |
 | `/sessions` | Session picker (Enter to resume) |
 | `/resume [id]` | Resume by id/prefix, or open the picker |
 | `/continue` | Resume the most recently updated session |
@@ -419,6 +468,13 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 name = "build"
 description = "Default coding agent"
 mode = "primary"
+
+# Tripwires for `whycodes slop` / `/slop`. Override per repo in
+# `.whycodes/slop.toml`. Do not train the agent to minimize these.
+# [slop]
+# verbosity = 0.25
+# erosion = 0.50
+# delta_loc = 800
 ```
 
 Layers, each overriding the one above:
@@ -427,6 +483,7 @@ Layers, each overriding the one above:
 2. Global `config.toml` (platform config dir, or `$WHYCODES_HOME/config.toml`)
 3. Project `.whycodes/config.toml`
 4. `WHYCODES_*` environment variables
+5. Project `.whycodes/slop.toml` (slop thresholds only)
 
 `WHYCODES_HOME`, when set, is the instance root: config, sessions, auth,
 memory, skills and the browser profile all live under it. `whycodes debug`

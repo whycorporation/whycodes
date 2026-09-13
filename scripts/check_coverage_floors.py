@@ -46,6 +46,7 @@ FULL_COVER_CRATES = [
     "whycodes-server",
     "whycodes-format",
     "whycodes-import",
+    "whycodes-slop",
 ]
 
 # Floors as (crate, min_percent)

@@ -1,7 +1,7 @@
 //! Layered config merge.
 
 use crate::types::{
-    Config, MagicKeywordsConfig, QuestionToolConfig, ToolsConfig, default_agent,
+    Config, MagicKeywordsConfig, QuestionToolConfig, SlopConfig, ToolsConfig, default_agent,
     default_auto_index_chunks, default_auto_index_files, default_code_min_score,
     default_code_top_k, default_compaction_llm, default_compaction_threshold,
     default_consolidate_max, default_intent_guidance, default_max_background_jobs,
@@ -368,6 +368,10 @@ impl Config {
 
         if other.automation.max_background_jobs != default_max_background_jobs() {
             merged.automation.max_background_jobs = other.automation.max_background_jobs;
+        }
+
+        if other.slop != SlopConfig::default() {
+            merged.slop = merged.slop.merge_with(&other.slop);
         }
 
         merged.notify = self.notify.merge_with(&other.notify);

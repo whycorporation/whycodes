@@ -33,7 +33,8 @@
     "storage",
     "tools",
     "tui",
-    "sdk"
+    "sdk",
+    "slop"
   ],
   "command-risk": [],
   "config": [
@@ -83,6 +84,7 @@
   "schema": [
     "core"
   ],
+  "slop": [],
   "sdk": [
     "protocol"
   ],
@@ -130,6 +132,7 @@
     "memory",
     "session",
     "storage",
-    "tools"
+    "tools",
+    "slop"
   ]
 }

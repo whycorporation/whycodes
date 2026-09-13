@@ -74,6 +74,41 @@ fn cost_report_empty_usage_is_estimated() {
 }
 
 #[test]
+fn slop_report_error_and_ok() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = Config::default();
+    let out = project_slop_report(dir.path(), "", &cfg);
+    assert!(out.contains("Slop"), "{out}");
+    assert!(out.contains("error"), "{out}");
+
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .status()
+            .unwrap()
+    };
+    assert!(git(&["init", "-b", "main"]).success());
+    let _ = git(&["config", "user.email", "t@t"]);
+    let _ = git(&["config", "user.name", "t"]);
+    std::fs::write(dir.path().join("a.rs"), "fn a() { 1 }\n").unwrap();
+    assert!(git(&["add", "."]).success());
+    assert!(git(&["commit", "-m", "init"]).success());
+    std::fs::write(
+        dir.path().join("a.rs"),
+        "fn a() { if true { 1 } else { 0 } }\n",
+    )
+    .unwrap();
+    let out = project_slop_report(dir.path(), "HEAD", &cfg);
+    assert!(out.contains("verdict"), "{out}");
+    assert!(out.contains("verbosity"), "{out}");
+}
+
+#[test]
 fn persist_outcome_helpers_cover_err_none_and_ok() {
     let session = Session::new("/tmp/p".into(), "sys".into());
     persist_session_outcome(&session, "ok", Some(Ok(())));

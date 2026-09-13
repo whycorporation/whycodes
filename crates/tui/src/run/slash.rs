@@ -578,6 +578,12 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             ctx.app
                 .add_message(ChatRole::System, cost_report(ctx.session, ctx.app));
         }
+        "/slop" => {
+            ctx.app.add_message(
+                ChatRole::System,
+                project_slop_report(ctx.project_dir, rest, ctx.config),
+            );
+        }
         "/theme" | "/themes" => {
             use crate::theme::ThemeName;
             if rest.is_empty() {

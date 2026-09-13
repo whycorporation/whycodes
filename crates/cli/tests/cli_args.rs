@@ -28,6 +28,7 @@ fn test_cli_help() {
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(s.contains("run") && s.contains("generate"), "help: {}", s);
     assert!(s.contains("import"), "help should list import: {s}");
+    assert!(s.contains("slop"), "help should list slop: {s}");
     assert!(s.contains("connect"), "help should list connect: {s}");
     assert!(
         s.contains("completions"),
@@ -82,6 +83,21 @@ fn test_generate_help_documents_format() {
     assert!(
         s.contains("stream-json") || s.contains("json"),
         "generate help should mention json formats: {s}"
+    );
+}
+
+#[test]
+fn test_slop_help() {
+    let o = run(&["slop", "--help"]);
+    assert_ok(&["slop", "--help"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        s.contains("--base"),
+        "slop help should document --base: {s}"
+    );
+    assert!(
+        s.contains("--json"),
+        "slop help should document --json: {s}"
     );
 }
 
@@ -837,6 +853,7 @@ fn test_plain_repl_slash_commands_without_api_key() {
          /fresh\n\
          /diff\n\
          /cost\n\
+         /slop\n\
          /context\n\
          /doctor\n\
          /sessions\n\
