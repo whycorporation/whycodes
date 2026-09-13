@@ -155,7 +155,9 @@ fi
 # Drop coverage traces only. Never `llvm-cov clean` / `rm -rf` the compile cache.
 cov_root="$CARGO_LLVM_COV_TARGET_DIR"
 mkdir -p "$cov_root"
-printf 'Signature: 8a477f597d28d172789c096e48218643\n' >"$cov_root/CACHEDIR.TAG"
+# Do not rewrite CACHEDIR.TAG here: `ci_isolate_cargo_home.sh` already
+# wrote the Cargo signature. A second write (or CRLF) makes
+# `cargo llvm-cov clean` refuse the cache (`invalid signature`).
 # Leftover traces mixed floors to 54% (index 74.7%) and later to 59% on
 # config/protocol (in-file #[cfg(test)] never ran). cargo-llvm-cov merges
 # every *.profraw under CARGO_LLVM_COV_TARGET_DIR *and* CARGO_TARGET_DIR.

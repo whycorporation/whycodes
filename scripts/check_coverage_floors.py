@@ -23,6 +23,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+
 # Crates that must be 100% line-covered (ignore *tests.rs so host-only branches don't sink floor)
 FULL_COVER_CRATES = [
     "whycodes-function",
@@ -58,6 +60,29 @@ FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
     # arm is uncovered (785/789 = 99.5%). Restore 100% in #82.
     ("whycodes-sdk", 99.5),
 ]
+
+
+def source_line_count(filename: str, crate_dir: str) -> int:
+    """Best-effort on-disk line count for a llvm-cov filename."""
+    candidates: list[Path] = []
+    raw = Path(filename)
+    candidates.append(raw)
+    # llvm-cov on Linux: /home/.../whycodes/crates/config/src/load.rs
+    marker = f"/crates/{crate_dir}/"
+    if marker in filename.replace("\\", "/"):
+        rel = filename.replace("\\", "/").split(marker, 1)[1]
+        candidates.append(ROOT / "crates" / crate_dir / rel)
+    try:
+        candidates.append(Path(filename.split("/crates/")[1]))
+    except IndexError:
+        pass
+    for p in candidates:
+        try:
+            if p.is_file():
+                return p.read_text(encoding="utf-8", errors="ignore").count("\n") + 1
+        except OSError:
+            continue
+    return 0
 
 
 def load_report(path: Path) -> dict:
@@ -119,15 +144,11 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
         if count == 0:
             continue
         # rustc llvm-cov JSON without working --skip-expansions counts
-        # `format!` / tracing as extra lines (load.rs 800 → 1929). Prefer
-        # on-disk source size when the report is >2× the file.
-        try:
-            src_lines = Path(filename).read_text(encoding="utf-8", errors="ignore").count("\n") + 1
-        except OSError:
-            src_lines = 0
+        # `format!` / tracing as extra lines (load.rs ~800 → 1929). CI
+        # filenames are often absolute and not readable as-is; resolve
+        # against the repo root (`crates/<crate>/…`).
+        src_lines = source_line_count(filename, crate_dir)
         if src_lines > 20 and count > src_lines * 2:
-            # Expansion-inflated JSON: keep source-sized totals. If llvm
-            # already covered at least the source line count, treat as full.
             if covered >= src_lines:
                 covered = src_lines
             else:
@@ -185,5 +206,16 @@ def main() -> int:
     return 0 if ok else 1
 
 
+def _self_check() -> None:
+    n = source_line_count("/does/not/exist/crates/config/src/load.rs", "config")
+    assert n > 100, n
+    n = source_line_count(str(ROOT / "crates" / "protocol" / "src" / "ci.rs"), "protocol")
+    assert n > 50, n
+
+
 if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] == "--self-check":
+        _self_check()
+        print("check_coverage_floors: self-check ok")
+        raise SystemExit(0)
     raise SystemExit(main())
