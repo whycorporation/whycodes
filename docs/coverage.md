@@ -37,8 +37,12 @@ installed (`pkg-config sqlite3`).
   env. The Test job still runs them.
 - Crate floors at 100% also ignore `tests.rs` so host-only branches cannot
   sink the gate (`CRATE_IGNORE` in the wrapper).
-- JSON crate floors pass `LLVM_COV_FLAGS=--skip-expansions` so rustc macro
-  expansions (`format!`, tracing fields) are not counted as uncovered lines.
+- JSON crate floors inject `-skip-expansions` via
+  `scripts/llvm_cov_skip_expansions.sh` on `cargo llvm-cov report --json`
+  (`export` only). `LLVM_COV_FLAGS` is stripped from the child llvm-cov
+  process; rustup llvm-cov 21 also rejects the flag on text `show`.
+  Without the wrapper, serde/`format!` lines inflate 100% floors
+  (config 59%, protocol 78% on 0.6.1).
 
 Needs `cargo-llvm-cov` and `llvm-tools` (`llvm-cov`, `llvm-profdata`):
 
@@ -67,7 +71,7 @@ that work lands.
 | Gate | Floor | What it covers |
 |---|---|---|
 | Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
-| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, `tools` | **100%** lines | Production files only (`tests.rs` ignored) |
+| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, `tools`, `slop` | **100%** lines | Production files only (`tests.rs` ignored) |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
 comfortably above it, raise `--fail-under-lines` in

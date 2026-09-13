@@ -16,6 +16,7 @@ mod provider;
 mod run;
 mod serve;
 mod session;
+mod slop;
 #[cfg(feature = "self-update")]
 mod upgrade;
 
@@ -42,6 +43,8 @@ pub(crate) use run::*;
 pub(crate) use serve::*;
 #[allow(unused_imports)]
 pub(crate) use session::*;
+#[allow(unused_imports)]
+pub(crate) use slop::*;
 #[cfg(feature = "self-update")]
 #[allow(unused_imports)]
 pub(crate) use upgrade::*;
@@ -82,6 +85,7 @@ pub(crate) async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Resul
         Commands::Import { args } => import::cmd_import(args).await,
         Commands::Stats => session::cmd_stats().await,
         Commands::Debug { json } => debug::cmd_debug(*json).await,
+        Commands::Slop { base, json } => slop::cmd_slop(cli, base.as_deref(), *json).await,
         #[cfg(feature = "self-update")]
         Commands::Upgrade => upgrade::cmd_upgrade().await,
         Commands::Completions { shell } => cmd_completions(*shell),

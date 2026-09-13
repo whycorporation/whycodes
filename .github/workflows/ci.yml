@@ -109,6 +109,8 @@ jobs:
           sh -n scripts/tui_term_matrix.sh
           sh -n scripts/coverage.sh
           test -x scripts/coverage.sh
+          sh -n scripts/llvm_cov_skip_expansions.sh
+          test -x scripts/llvm_cov_skip_expansions.sh
           sh -n scripts/ci_isolate_cargo_home.sh
           test -x scripts/ci_isolate_cargo_home.sh
           sh -n scripts/pre-push

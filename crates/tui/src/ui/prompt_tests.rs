@@ -70,9 +70,13 @@ fn home_prompt_centers_and_narrow_drops_chips() {
     app.focus = crate::app::FocusPane::Scrollback;
     let home = rendered_rows(&mut app, 60, 8);
     assert!(
+        home.iter().any(|r| r.contains('❯')),
+        "empty home prompt must keep the ❯ prefix, got {home:?}"
+    );
+    assert!(
         home.iter()
-            .any(|r| r.contains("Ask anything") || r.contains("drop images")),
-        "unfocused empty home prompt must show the ask hint, got {home:?}"
+            .all(|r| !r.contains("Ask anything") && !r.contains("drop images")),
+        "in-box ask placeholder must not paint, got {home:?}"
     );
     let tall_home = rendered_rows(&mut app, 60, 16);
     assert!(
@@ -92,15 +96,16 @@ fn home_prompt_centers_and_narrow_drops_chips() {
     );
     assert_eq!(
         empty_prompt_hint(true, false, false, AppMode::Command, true),
-        Some("command…")
+        Some("command")
     );
+    assert!(empty_prompt_hint(true, false, false, AppMode::Normal, true).is_none());
     assert!(empty_prompt_hint(false, false, false, AppMode::Normal, true).is_none());
     assert!(empty_prompt_hint(true, true, false, AppMode::Normal, true).is_none());
     assert!(empty_prompt_hint(true, false, true, AppMode::Normal, true).is_none());
 }
 
 #[test]
-fn busy_empty_prompt_paints_ellipsis_prefix() {
+fn busy_empty_prompt_keeps_caret_prefix() {
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.add_message(crate::app::ChatRole::User, "hi");
     app.current_agent_state = crate::app::AgentState::Generating;
@@ -108,8 +113,12 @@ fn busy_empty_prompt_paints_ellipsis_prefix() {
     app.focus = crate::app::FocusPane::Prompt;
     let rows = rendered_rows(&mut app, 40, 8);
     assert!(
-        rows.iter().any(|r| r.contains('…') || r.contains("...")),
-        "busy empty focused prompt must paint the ellipsis prefix, got {rows:?}"
+        rows.iter().any(|r| r.contains('❯')),
+        "busy empty focused prompt must keep ❯, got {rows:?}"
+    );
+    assert!(
+        rows.iter().all(|r| !r.contains('…') && !r.contains("...")),
+        "busy empty prompt must not paint an in-box ellipsis, got {rows:?}"
     );
 }
 
@@ -147,15 +156,19 @@ fn empty_provider_and_model_paint_placeholders() {
 }
 
 #[test]
-fn busy_empty_focused_prompt_uses_ellipsis_prefix() {
+fn busy_empty_focused_prompt_uses_caret_not_ellipsis() {
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.current_agent_state = AgentState::Generating;
     app.input_buffer.clear();
     app.focus = crate::app::FocusPane::Prompt;
     let rows = rendered_rows(&mut app, 60, 8);
     assert!(
-        rows.iter().any(|r| r.contains('…') || r.contains("...")),
-        "busy empty prompt must show the ellipsis prefix, got {rows:?}"
+        rows.iter().any(|r| r.contains('❯')),
+        "busy empty prompt must keep ❯, got {rows:?}"
+    );
+    assert!(
+        rows.iter().all(|r| !r.contains('…') && !r.contains("...")),
+        "busy empty prompt must not show an in-box ellipsis, got {rows:?}"
     );
 }
 

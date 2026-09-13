@@ -259,6 +259,16 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Measure agent-induced code slop (ΔLOC / verbosity / erosion)
+    Slop {
+        /// Git base (default: merge-base with default branch, else HEAD)
+        #[arg(long)]
+        base: Option<String>,
+        /// Machine-readable report (verdict + thresholds)
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Self-update
     #[cfg(feature = "self-update")]
     #[command(name = "upgrade")]

@@ -23,6 +23,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+
 # Crates that must be 100% line-covered (ignore *tests.rs so host-only branches don't sink floor)
 FULL_COVER_CRATES = [
     "whycodes-function",
@@ -46,6 +48,7 @@ FULL_COVER_CRATES = [
     "whycodes-server",
     "whycodes-format",
     "whycodes-import",
+    "whycodes-slop",
 ]
 
 # Floors as (crate, min_percent)
@@ -57,6 +60,38 @@ FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
     # arm is uncovered (785/789 = 99.5%). Restore 100% in #82.
     ("whycodes-sdk", 99.5),
 ]
+
+
+def crate_rel_path(filename: str) -> tuple[str, str] | None:
+    """Return (crate_dir, path-under-crate) from an llvm-cov filename."""
+    norm = filename.replace("\\", "/")
+    if "/crates/" not in norm:
+        return None
+    rest = norm.split("/crates/", 1)[1]
+    crate_dir, _, rel = rest.partition("/")
+    if not crate_dir or not rel:
+        return None
+    return crate_dir, rel
+
+
+def source_line_count(filename: str, crate_dir: str) -> int:
+    """Best-effort on-disk line count for a llvm-cov filename."""
+    candidates: list[Path] = []
+    raw = Path(filename)
+    candidates.append(raw)
+    parsed = crate_rel_path(filename)
+    if parsed is not None:
+        dir_name, rel = parsed
+        candidates.append(ROOT / "crates" / dir_name / rel)
+        if dir_name != crate_dir:
+            candidates.append(ROOT / "crates" / crate_dir / rel)
+    for p in candidates:
+        try:
+            if p.is_file():
+                return p.read_text(encoding="utf-8", errors="ignore").count("\n") + 1
+        except OSError:
+            continue
+    return 0
 
 
 def load_report(path: Path) -> dict:
@@ -78,38 +113,33 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
     elif "files" in report:
         files = report["files"]
     else:
-        # unexpected shape — treat as empty to fail loudly
         print(f"unexpected report shape: keys={list(report.keys())}", file=sys.stderr)
         return {}
 
-    by_crate: dict[str, list] = defaultdict(list)
+    # One mapping per test binary. The same source file appears in several
+    # `data[]` entries (and under different absolute prefixes). Summing
+    # double-counts and mixes skip-expansions (2122/2122) with expansion
+    # dumps (2122/3567). Keep the mapping with the highest percent, then
+    # the smallest total. Key by crates/<dir>/<rel> so prefixes collapse.
+    best: dict[str, tuple[str, int, int]] = {}
     for f in files:
         filename = f.get("filename") or f.get("file") or ""
-        # Only consider our crate files under crates/<name>/
-        # filename is absolute or relative; look for /crates/<crate>/
-        if "/crates/" not in filename:
+        parsed = crate_rel_path(filename)
+        if parsed is None:
             continue
-        # Extract crate dir name after /crates/
-        try:
-            crate_dir = filename.split("/crates/")[1].split("/")[0]
-            crate = f"whycodes-{crate_dir}"
-        except IndexError:
-            continue
-        # Skip tests.rs basenames when caller already filtered, but double-guard
-        if filename.endswith("tests.rs"):
+        crate_dir, rel = parsed
+        crate = f"whycodes-{crate_dir}"
+        if rel.endswith("tests.rs") or filename.endswith("tests.rs"):
             continue
         summary = f.get("summary") or {}
         lines = summary.get("lines") or {}
         covered = lines.get("covered")
         count = lines.get("count")
-        # Some versions use `covered`/`count`, others `covered`/`total`
         if covered is None or count is None:
-            # Try alternative keys
             covered = summary.get("covered_lines") or lines.get("covered")
             count = summary.get("total_lines") or lines.get("count")
         if covered is None or count is None:
             continue
-        # Normalize
         try:
             covered = int(covered)
             count = int(count)
@@ -117,13 +147,34 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
             continue
         if count == 0:
             continue
+        src_lines = source_line_count(filename, crate_dir)
+        if src_lines > 20 and count > src_lines * 2:
+            covered = src_lines if covered >= src_lines else min(covered, src_lines)
+            count = src_lines
+        key = f"{crate_dir}/{rel}"
+        pct = covered / count
+        prev = best.get(key)
+        if prev is not None:
+            _, pc, pt = prev
+            prev_pct = pc / pt
+            if pct < prev_pct - 1e-12:
+                continue
+            if abs(pct - prev_pct) <= 1e-12 and count >= pt:
+                continue
+        best[key] = (crate, covered, count)
+
+    by_crate: dict[str, list] = defaultdict(list)
+    files_by_crate: dict[str, list] = defaultdict(list)
+    for key, (crate, covered, count) in best.items():
         by_crate[crate].append((covered, count))
+        files_by_crate[crate].append((key, covered, count))
 
     aggregated: dict[str, tuple[int, int]] = {}
     for crate, pairs in by_crate.items():
         cov = sum(c for c, _ in pairs)
         tot = sum(t for _, t in pairs)
         aggregated[crate] = (cov, tot)
+    aggregate_by_crate.files = files_by_crate  # type: ignore[attr-defined]
     return aggregated
 
 
@@ -160,6 +211,16 @@ def main() -> int:
         if shown + 1e-9 < floor:
             ok = False
             print(f"  -> below floor by {floor - shown:.1f}pp", file=sys.stderr)
+            files = getattr(aggregate_by_crate, "files", {}).get(crate, [])
+            for name, cov, tot in sorted(files, key=lambda x: (x[2] - x[1], x[0]), reverse=True):
+                if tot == 0:
+                    continue
+                fpct = cov / tot * 100.0
+                if cov < tot:
+                    print(
+                        f"     {name}: {cov}/{tot} ({fpct:.1f}%)",
+                        file=sys.stderr,
+                    )
 
     # Also print any whycodes crate not in floors for visibility
     extra = sorted(set(agg.keys()) - {c for c, _ in FLOORS})
@@ -169,5 +230,43 @@ def main() -> int:
     return 0 if ok else 1
 
 
+def _self_check() -> None:
+    n = source_line_count("/does/not/exist/crates/config/src/load.rs", "config")
+    assert n > 100, n
+    n = source_line_count(str(ROOT / "crates" / "protocol" / "src" / "ci.rs"), "protocol")
+    assert n > 50, n
+    report = {
+        "data": [
+            {
+                "files": [
+                    {
+                        "filename": "/runner-a/crates/config/src/load.rs",
+                        "summary": {"lines": {"covered": 800, "count": 800}},
+                    }
+                ]
+            },
+            {
+                "files": [
+                    {
+                        "filename": "/runner-b/crates/config/src/load.rs",
+                        "summary": {"lines": {"covered": 800, "count": 1929}},
+                    }
+                ]
+            },
+        ]
+    }
+    agg = aggregate_by_crate(report)
+    cov, tot = agg["whycodes-config"]
+    assert cov == tot, (cov, tot)
+    assert tot < 900, tot
+    files = getattr(aggregate_by_crate, "files", {})
+    assert "whycodes-config" in files
+    assert files["whycodes-config"][0][0] == "config/src/load.rs"
+
+
 if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] == "--self-check":
+        _self_check()
+        print("check_coverage_floors: self-check ok")
+        raise SystemExit(0)
     raise SystemExit(main())

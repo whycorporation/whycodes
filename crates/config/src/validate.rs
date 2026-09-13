@@ -106,6 +106,22 @@ impl Config {
             }
         }
 
+        if self.slop.verbosity < 0.0 || self.slop.verbosity > 1.0 {
+            issues.push(format!(
+                "slop.verbosity is {} (expected 0–1).",
+                self.slop.verbosity
+            ));
+        }
+        if self.slop.erosion < 0.0 || self.slop.erosion > 1.0 {
+            issues.push(format!(
+                "slop.erosion is {} (expected 0–1).",
+                self.slop.erosion
+            ));
+        }
+        if self.slop.hotspots == 0 {
+            issues.push("slop.hotspots is 0 (expected ≥ 1).".to_string());
+        }
+
         // Check session config
         if self.session.max_context_tokens == 0 {
             issues.push(

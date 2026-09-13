@@ -965,6 +965,11 @@ pub(crate) async fn cmd_run(
                     }
                     continue;
                 }
+                "/slop" => {
+                    let base = if rest.is_empty() { None } else { Some(rest) };
+                    print!("{}", slop_report_text(&project_dir, base, &config));
+                    continue;
+                }
                 "/cost" | "/usage" => {
                     let u = &session.usage;
                     println!("{}", "Cost / usage".bold());
@@ -1766,6 +1771,10 @@ pub(crate) async fn run_one_parallel_turn(
         agent: agent_name.to_string(),
         usage: session.usage.clone(),
         duration_ms: started.elapsed().as_millis() as u64,
+        slop: format
+            .is_structured()
+            .then(|| slop_json_for(project_dir, Some(config)))
+            .flatten(),
     };
 
     emit_parallel_outcome(format, turn_result.map_err(|e| e.to_string()), meta, &wrap)

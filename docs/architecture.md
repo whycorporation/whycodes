@@ -1,6 +1,6 @@
 # Architecture
 
-The workspace is 25 crates with one-way layering:
+The workspace is 26 crates with one-way layering:
 **foundations → services → orchestration → applications**.
 
 Allowed internal edges are allowlisted in
@@ -19,6 +19,7 @@ Two rules keep the graph acyclic:
 |---|---|---|
 | Foundations | `core` | Leaf types, `Tool` trait, sandbox settings, errors, logging, `paths` (`WHYCODES_HOME`) |
 | | `command-risk` | Shell command risk classification (pure, no I/O) |
+| | `slop` | Deterministic ΔLOC / verbosity / erosion on a git diff |
 | | `auth` | OAuth engine + token store; specs from auth plugins |
 | | `config` | Config load / merge / validate |
 | | `storage` | SQLite for sessions and memories |
@@ -50,7 +51,7 @@ Package names use the `whycodes-` prefix even when the directory is shorter
 
 | Path | What |
 |---|---|
-| `crates/` | Rust workspace (25 crates above) |
+| `crates/` | Rust workspace (26 crates above) |
 | `sdk/typescript/` | TypeScript SDK — protocol twin of `crates/sdk` |
 | `docs/` | User and contributor docs (this file, guide, know-how) |
 | `scripts/` | Installers, CI budget checks, benches |

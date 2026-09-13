@@ -49,6 +49,7 @@ whycodes-protocol = { path = "../protocol" }
 whycodes-tui = { path = "../tui" }
 whycodes-format = { path = "../format" }
 whycodes-plugin = { path = "../plugin" }
+whycodes-slop = { path = "../slop" }
 clap = { workspace = true, features = ["derive", "string"] }
 clap_complete.workspace = true
 toml.workspace = true

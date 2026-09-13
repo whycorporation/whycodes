@@ -209,3 +209,45 @@ fn read_repl_line_queue_and_eof() {
     assert!(!missing_api_key_message_for("groq", Some(&cfg)).is_empty());
     assert!(!oauth_provider_list().is_empty() || oauth_provider_list().contains("none"));
 }
+
+#[test]
+fn slop_helpers_cover_clean_error_and_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = Config::default();
+    assert!(slop_json_for(dir.path(), Some(&cfg)).is_none());
+    assert!(slop_json_for(dir.path(), None).is_none());
+    let text = slop_report_text(dir.path(), None, &cfg);
+    assert!(text.contains("Slop"), "{text}");
+    assert!(text.contains("error"), "{text}");
+
+    let t = slop_thresholds(&cfg.slop);
+    assert!((t.verbosity - 0.25).abs() < f64::EPSILON);
+
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .status()
+            .unwrap()
+    };
+    assert!(git(&["init", "-b", "main"]).success());
+    let _ = git(&["config", "user.email", "t@t"]);
+    let _ = git(&["config", "user.name", "t"]);
+    std::fs::write(dir.path().join("a.rs"), "fn a() { 1 }\n").unwrap();
+    assert!(git(&["add", "."]).success());
+    assert!(git(&["commit", "-m", "init"]).success());
+    assert!(slop_json_for(dir.path(), Some(&cfg)).is_none());
+    std::fs::write(
+        dir.path().join("a.rs"),
+        "fn a() { if true { 1 } else { 0 } }\n",
+    )
+    .unwrap();
+    let v = slop_json_for(dir.path(), Some(&cfg)).expect("dirty tree");
+    assert_eq!(v["files_changed"], 1);
+    let text = slop_report_text(dir.path(), Some("HEAD"), &cfg);
+    assert!(text.contains("verdict"), "{text}");
+}
