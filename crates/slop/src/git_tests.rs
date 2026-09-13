@@ -73,6 +73,25 @@ fn snapshot_skips_deleted_and_unknown_lang_includes_untracked() {
 }
 
 #[test]
+fn snapshot_untracked_unreadable_and_duplicate_ls_files() {
+    let dir = tempfile::tempdir().unwrap();
+    git_init(dir.path());
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    git_add_commit(dir.path(), "init");
+    std::fs::write(dir.path().join("a.rs"), "fn a() { 1 }\n").unwrap();
+    // Untracked language file that cannot be read (directory named like a file).
+    std::fs::create_dir(dir.path().join("ghost.rs")).unwrap();
+    std::fs::write(dir.path().join("plain.txt"), "hello\n").unwrap();
+    let snap = snapshot(dir.path(), Some("HEAD")).unwrap();
+    assert!(snap.files_changed >= 2, "{}", snap.files_changed);
+    assert!(
+        !snap.contents.iter().any(|(p, _)| p == "ghost.rs"),
+        "{:?}",
+        snap.contents
+    );
+}
+
+#[test]
 fn resolve_base_explicit_and_default() {
     let dir = tempfile::tempdir().unwrap();
     git_init(dir.path());

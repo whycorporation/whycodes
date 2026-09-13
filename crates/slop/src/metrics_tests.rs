@@ -73,6 +73,30 @@ fn unparsed_and_empty() {
     assert_eq!(empty.verbosity, 0.0);
 }
 
+#[test]
+fn verbosity_caps_at_one_and_sorts_hotspots() {
+    let src = SourceFile {
+        path: "tiny.rs".into(),
+        content: "fn a() { self.x = x; v.clone(); self.x = x; v.clone(); }\n".into(),
+    };
+    let s = score_files(&[src], 1);
+    assert!(s.verbosity <= 1.0);
+    let a = SourceFile {
+        path: "a.rs".into(),
+        content: "fn small() { 1 }\n".into(),
+    };
+    let b = SourceFile {
+        path: "b.rs".into(),
+        content: sloppy_rust(),
+    };
+    let scored = score_files(&[a, b], 1);
+    assert_eq!(scored.hotspots.len(), 1);
+    assert_eq!(scored.hotspots[0].function, "handle");
+    assert!(cyclomatic("a && b") >= 2);
+    assert!(cyclomatic("a || b") >= 2);
+    assert_eq!(cyclomatic("x"), 1);
+}
+
 fn sloppy_rust() -> String {
     let mut s = String::from("fn handle(x: i32) -> i32 {\n");
     for i in 0..20 {

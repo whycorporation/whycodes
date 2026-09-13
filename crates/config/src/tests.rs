@@ -856,6 +856,11 @@ fn slop_config_merge_and_validate() {
     assert_eq!(merged.delta_loc, 100);
     let keep = overlay.merge_with(&SlopConfig::default());
     assert_eq!(keep.hotspots, 3);
+    assert!((keep.verbosity - 0.3).abs() < f64::EPSILON);
+    assert!((keep.erosion - 0.6).abs() < f64::EPSILON);
+    assert!((keep.block_verbosity - 0.5).abs() < f64::EPSILON);
+    assert!((keep.block_erosion - 0.8).abs() < f64::EPSILON);
+    assert_eq!(keep.block_delta_loc, 9_000);
 
     let mut cfg = Config::default();
     cfg.providers

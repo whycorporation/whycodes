@@ -110,3 +110,12 @@ fn match_fn_name_rejects_embedded() {
     assert!(match_fn_name("fnx()", 0, "fn").is_none());
     assert_eq!(match_fn_name("fn foo", 0, "fn").as_deref(), Some("foo"));
 }
+
+#[test]
+fn py_blank_lines_inside_def_and_comment_sloc() {
+    let src = "def foo():\n\n    return 1\nnot_a_fn = 1\n";
+    let fns = py_functions(src);
+    assert_eq!(fns.len(), 1);
+    assert!(fns[0].body.contains("return 1"));
+    assert_eq!(sloc(""), 0);
+}
