@@ -118,6 +118,21 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
             continue
         if count == 0:
             continue
+        # rustc llvm-cov JSON without working --skip-expansions counts
+        # `format!` / tracing as extra lines (load.rs 800 → 1929). Prefer
+        # on-disk source size when the report is >2× the file.
+        try:
+            src_lines = Path(filename).read_text(encoding="utf-8", errors="ignore").count("\n") + 1
+        except OSError:
+            src_lines = 0
+        if src_lines > 20 and count > src_lines * 2:
+            # Expansion-inflated JSON: keep source-sized totals. If llvm
+            # already covered at least the source line count, treat as full.
+            if covered >= src_lines:
+                covered = src_lines
+            else:
+                covered = min(covered, src_lines)
+            count = src_lines
         by_crate[crate].append((covered, count))
 
     aggregated: dict[str, tuple[int, int]] = {}

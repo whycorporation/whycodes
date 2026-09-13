@@ -188,9 +188,19 @@ set -- "$@" \
     --skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails
 run "$@"
 
-# Do not pass LLVM_COV_FLAGS=--skip-expansions. rustup llvm-cov 21 treats
-# that as an unknown `llvm-cov show` flag and cargo-llvm-cov then exports
-# expansion-inflated JSON (config 2122→3567, protocol 590→776) so 100%
-# floors fail even when source lines are covered.
+# JSON floors need `--skip-expansions` so `format!` / tracing are not extra
+# uncovered lines. rustup llvm-cov 21 accepts that on `export` but not on
+# `show`. cargo-llvm-cov `report --json` uses export; `report` text uses
+# show. Set the flag only for this export, then restore.
+_prev_llvm_cov_flags="${LLVM_COV_FLAGS-}"
+LLVM_COV_FLAGS="--skip-expansions${LLVM_COV_FLAGS:+ ${LLVM_COV_FLAGS}}"
+export LLVM_COV_FLAGS
 run cargo llvm-cov report --json --ignore-filename-regex "$CRATE_IGNORE" --summary-only >"$REPORT_JSON"
+if [ -n "$_prev_llvm_cov_flags" ]; then
+    LLVM_COV_FLAGS="$_prev_llvm_cov_flags"
+    export LLVM_COV_FLAGS
+else
+    unset LLVM_COV_FLAGS
+fi
+unset _prev_llvm_cov_flags
 run python3 scripts/check_coverage_floors.py "$REPORT_JSON"
