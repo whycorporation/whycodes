@@ -9,9 +9,6 @@ use ratatui::{
     Frame,
 };
 
-/// Spinner frames for the loading animation.
-const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
 /// Startup screen state.
 pub struct StartupScreen {
     /// Progress from 0.0 to 1.0.
@@ -56,7 +53,7 @@ impl StartupScreen {
     pub fn tick(&mut self, delta_ms: u64) -> bool {
         self.elapsed_ms = self.elapsed_ms.saturating_add(delta_ms);
         self.progress = (self.elapsed_ms as f64 / self.duration_ms as f64).min(1.0);
-        self.spinner_frame = (self.spinner_frame + 1) % SPINNER_FRAMES.len();
+        self.spinner_frame = (self.spinner_frame + 1) % crate::ui::spinner::FRAMES.len();
 
         // Update status messages based on progress
         if self.progress < 0.25 {
@@ -81,7 +78,7 @@ impl StartupScreen {
 
     /// Get the current spinner character.
     pub fn spinner(&self) -> &str {
-        SPINNER_FRAMES[self.spinner_frame]
+        crate::ui::spinner::glyph(self.spinner_frame)
     }
 }
 

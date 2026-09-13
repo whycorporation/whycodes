@@ -9,6 +9,10 @@ fn strip_status_chrome_drops_cancel_and_spinner() {
         "Generating…"
     );
     assert_eq!(
+        strip_status_chrome("| Generating…  [Esc cancel]"),
+        "Generating…"
+    );
+    assert_eq!(
         strip_status_chrome("LLM request (step 1)…  [Esc cancel]"),
         "LLM request (step 1)…"
     );

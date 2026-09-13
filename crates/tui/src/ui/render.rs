@@ -26,8 +26,6 @@ use super::subagents;
 use super::toast;
 use super::todos;
 
-const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
 pub fn render(frame: &mut Frame, app: &mut TuiApp) {
     // jcode: a panic inside a widget must not tear down the alt-screen.
     // Recover with a fallback frame and keep the loop alive.
@@ -491,7 +489,7 @@ fn render_turn_status(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: 
     if area.height == 0 {
         return;
     }
-    let spin = SPINNER[app.spinner_frame % SPINNER.len()];
+    let spin = super::spinner::glyph(app.spinner_frame);
     let thinking_elapsed = if matches!(app.current_agent_state, AgentState::Thinking) {
         app.messages
             .last()
@@ -542,11 +540,10 @@ fn render_turn_status(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: 
     let stop_label = "[stop]";
     let stop_hovered = app.turn_stop_hit.hovered;
     let stop_style = if stop_hovered {
-        Style::default()
-            .fg(palette.error)
+        super::spinner::fg(palette.error, palette.bg)
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
     } else {
-        Style::default().fg(palette.error)
+        super::spinner::fg(palette.error, palette.bg)
     };
 
     let mut right_w: u16 = 0;
@@ -557,14 +554,8 @@ fn render_turn_status(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: 
 
     let left_budget = area.width.saturating_sub(right_w.saturating_add(1)) as usize;
     let mut left_spans = vec![
-        Span::styled(
-            format!("{spin} "),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            label.clone(),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!("{spin} "), super::spinner::fg(color, palette.bg)),
+        Span::styled(label.clone(), super::spinner::fg(color, palette.bg)),
     ];
     let mut used = 2 + label.width(); // spin + space + label (approx)
     if !detail.is_empty() {
@@ -578,7 +569,7 @@ fn render_turn_status(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: 
                 d
             };
             used += d.width();
-            left_spans.push(Span::styled(d, Style::default().fg(palette.dim)));
+            left_spans.push(Span::styled(d, super::spinner::fg(palette.dim, palette.bg)));
         }
     }
 
@@ -593,7 +584,7 @@ fn render_turn_status(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: 
     if let Some(ref t) = tokens_s {
         spans.push(Span::styled(
             format!("{t} "),
-            Style::default().fg(palette.dim),
+            super::spinner::fg(palette.dim, palette.bg),
         ));
     }
     let stop_x = area
@@ -663,11 +654,10 @@ fn turn_status_detail(status: &str, label: &str) -> String {
 fn strip_status_chrome(s: &str) -> String {
     let mut out = s.trim().to_string();
     // Leading braille spinner frames from older status writers.
-    const SPIN: &str = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
     while out
         .chars()
         .next()
-        .map(|c| SPIN.contains(c))
+        .map(super::spinner::is_spinner_char)
         .unwrap_or(false)
     {
         out = out

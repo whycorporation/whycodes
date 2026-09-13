@@ -13,6 +13,7 @@ pub mod render;
 pub mod scrollbar;
 pub mod sidebar;
 pub mod slash_suggest;
+pub mod spinner;
 pub mod status;
 pub mod status_bar;
 pub mod subagents;

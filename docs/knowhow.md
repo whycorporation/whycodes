@@ -144,6 +144,23 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-13 — Header spinner / generating strip flashes white
+
+**Symptom:** While a turn is busy, the top-left status glyph and the
+`generating` strip flicker white (or a bright tofu) on every frame.
+
+**Root cause:** Braille spinner dots (`⠋⠙…`) plus `Modifier::BOLD` on a span
+that only set `fg`. Windows consoles (OEM fonts / CP) cannot draw those
+dots; the cell falls back to the profile default (white). Span `bg` was
+`Color::Reset`, so the host default leaked through the theme canvas.
+
+**Fix:** Shared ASCII frames `| / - \` in `crates/tui/src/ui/spinner.rs`.
+Header and turn-status spans pin `fg` **and** `palette.bg`. No BOLD on the
+busy glyph. Legacy braille in `status_message` is still stripped.
+
+**Prevention:** Do not paint busy chrome with braille or Reset-bg spans.
+`cargo test -p whycodes-tui` covers `ui::spinner` and turn-status cell bg.
+
 ### 2026-09-13 — Coverage was a 22-minute cold rebuild
 
 **Symptom:** Every CI run sat on Coverage for ~22 minutes. Test ~5m, Build ~4m,
