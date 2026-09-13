@@ -161,6 +161,25 @@ busy glyph. Legacy braille in `status_message` is still stripped.
 **Prevention:** Do not paint busy chrome with braille or Reset-bg spans.
 `cargo test -p whycodes-tui` covers `ui::spinner` and turn-status cell bg.
 
+### 2026-09-13 — Coverage was a 22-minute cold rebuild
+
+**Symptom:** Every CI run sat on Coverage for ~22 minutes. Test ~5m, Build ~4m,
+Lint ~1m. Homebrew formula PRs paid the full Rust pipeline.
+
+**Root cause:** `CARGO_LLVM_COV_TARGET_DIR` was `$RUNNER_TEMP/llvm-cov-target`
+and `coverage.sh` `rm -rf`'d it. That stopped leftover `*.profraw` mixing into
+floors (54%), but also threw away instrumented rlibs. `CARGO_BUILD_JOBS: 1`
+then left 3 cores idle after Test/Build finished. Formula-only diffs were not
+in `paths-ignore`.
+
+**Fix:** Persist `${CARGO_TARGET_DIR}-llvm-cov`; `find -delete` traces only.
+Coverage `CARGO_BUILD_JOBS: 3`. `Formula/**` in `paths-ignore`. Release Build
+stays a required check on PRs but does not compile (binary is push-to-main).
+
+**Prevention:** Do not `rm -rf` the llvm-cov target dir to fix mixed traces.
+Purge `*.profraw` / `*.profdata`; keep rlibs. Regression:
+`scripts/test_coverage.sh`, `scripts/test_ci_isolate_cargo_home.sh`.
+
 ### 2026-09-12 — Windows TUI box lines render as `Ööö`
 
 **Symptom:** Prompt / dialog chrome (`╭─╮│╰─╯`) shows as `Ö` / `ö` (or similar OEM
@@ -2373,7 +2392,7 @@ Harness TTFF then dropped ratatui entirely: `write_splash_csi` is `SM?1049` + cl
 
 **Prevention:** Do not inject launch failures through process env while other `#[tokio::test]` launch tests run. Keep the missing-binary check ahead of temp-home allocation.
 
-Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs already have no edge between them; a single runner still serializes them. Extra self-hosted runners with separate `_work` dirs run them together.
+Linux CI wall-clock is lint then max(test, coverage). Build still reports on PRs (required check) but only compiles on push to main. Test and coverage already have no edge between them; a single runner still serializes them. Extra self-hosted runners with separate `_work` dirs run them together.
 
 ## Shared `~/.cargo` across self-hosted runner processes
 
@@ -2430,6 +2449,8 @@ Linux CI wall-clock is lint then max(test, coverage, build). Those three jobs al
 **Fix:** On CI, put traces in `$RUNNER_TEMP/llvm-cov-target` (job-scoped). Locally, `${CARGO_TARGET_DIR}-llvm-cov`. `rm -rf` that dir, `find`-delete leftover `*.profraw` under `CARGO_TARGET_DIR`, set `LLVM_PROFILE_FILE`. Stamp `CACHEDIR.TAG` with `printf`. Do not `cargo llvm-cov clean` the compile cache.
 
 **Prevention:** Coverage traces must not share a directory with a long-lived compile cache. Never write `CACHEDIR.TAG` via a heredoc from a CRLF-checked-out script.
+
+Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlibs, so Coverage stayed a 22-minute cold rebuild. Traces are now purged with `find -delete` and the compile cache lives at `${CARGO_TARGET_DIR}-llvm-cov`. See the 2026-09-13 log entry.
 
 ## SDK launch: ephemeral port stolen before spawn
 

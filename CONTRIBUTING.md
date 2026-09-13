@@ -81,8 +81,12 @@ Things to know about CI:
   are skipped there on purpose (untrusted workflow + checkout on those
   machines). Open the PR anyway; a maintainer will run the suite from a
   same-repo branch. A new push to the same PR or to `main` cancels the
-  previous CI run so the pool is not stuck on stale jobs. After lint, Test /
-  Coverage / Build run in parallel across whatever runners are online.
+  previous CI run so the pool is not stuck on stale jobs. After lint, Test and
+  Coverage run in parallel across whatever runners are online. Release Build
+  still reports on PRs (required check) but only compiles the binary on push
+  to main. Formula-only changes skip this workflow (`paths-ignore`). Coverage
+  persists instrumented rlibs under `${CARGO_TARGET_DIR}-llvm-cov` and only
+  deletes `*.profraw` / `*.profdata` between runs.
   Each job pins `CARGO_HOME` and `CARGO_TARGET_DIR` under
   `RUNNER_TOOL_CACHE/<runner>/<job>` so crates.io and `target/` survive
   `git clean` without sharing `~/.cargo` across listeners. GitHub
