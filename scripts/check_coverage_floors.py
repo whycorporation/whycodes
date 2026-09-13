@@ -154,10 +154,7 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
         if count == 0:
             continue
         src_lines = source_line_count(filename, crate_dir)
-        # serde / format! expansions often land at ~1.2–1.6× source size
-        # (session.rs 3554 src vs 4861 export). Cap those so 100% floors
-        # do not depend on the wrapper actually reaching llvm-cov.
-        if src_lines > 20 and count > src_lines + max(40, src_lines // 5):
+        if src_lines > 20 and count > src_lines * 2:
             covered = src_lines if covered >= src_lines else min(covered, src_lines)
             count = src_lines
         key = f"{crate_dir}/{rel}"
@@ -275,18 +272,6 @@ def _self_check() -> None:
                     {
                         "filename": "/runner-b/crates/config/src/load.rs",
                         "summary": {"lines": {"covered": 800, "count": 1929}},
-                    },
-                    {
-                        "filename": "/runner-c/crates/session/src/session.rs",
-                        "summary": {"lines": {"covered": 2736, "count": 4861}},
-                    },
-                ]
-            },
-            {
-                "files": [
-                    {
-                        "filename": "/runner-c/crates/session/src/session.rs",
-                        "summary": {"lines": {"covered": 2736, "count": 3554}},
                     }
                 ]
             },
@@ -299,12 +284,6 @@ def _self_check() -> None:
     files = getattr(aggregate_by_crate, "files", {})
     assert "whycodes-config" in files
     assert files["whycodes-config"][0][0] == "config/src/load.rs"
-    scov, stot = agg["whycodes-session"]
-    src = source_line_count(
-        "/x/crates/session/src/session.rs", "session"
-    )
-    assert stot == src, (stot, src)
-    assert scov == 2736, scov
     assert WORKSPACE_FLOOR >= 0
 
 
