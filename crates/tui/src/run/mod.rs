@@ -4098,8 +4098,7 @@ fn persist_general_approval_mode(mode: ApprovalMode) -> anyhow::Result<()> {
 }
 
 fn tick_spinner(app: &mut TuiApp, spinner_frame: &mut usize) {
-    const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    *spinner_frame = (*spinner_frame + 1) % FRAMES.len();
+    *spinner_frame = (*spinner_frame + 1) % crate::ui::spinner::FRAMES.len();
     app.spinner_frame = *spinner_frame;
     app.mark_dirty();
     let generic = app.status_message.contains("Generating")
@@ -4107,7 +4106,7 @@ fn tick_spinner(app: &mut TuiApp, spinner_frame: &mut usize) {
             .status_message
             .chars()
             .next()
-            .map(|c| "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(c))
+            .map(crate::ui::spinner::is_spinner_char)
             .unwrap_or(false);
     if generic {
         app.status_message.clear();

@@ -17,7 +17,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-pub const SPIN: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+pub const SPIN: &[&str] = crate::ui::spinner::FRAMES;
 
 /// Max item rows (not counting the header or overflow line).
 pub const MAX_ITEMS: usize = 8;
@@ -66,12 +66,10 @@ fn status_glyph(status: &str, spin: usize) -> &'static str {
 
 fn icon_style(status: &str, palette: &ThemePalette) -> Style {
     match status {
-        "running" => Style::default()
-            .fg(palette.warning)
-            .add_modifier(Modifier::BOLD),
-        "completed" | "done" => Style::default().fg(palette.success),
-        "failed" | "cancelled" | "killed" => Style::default().fg(palette.error),
-        _ => Style::default().fg(palette.fg),
+        "running" => crate::ui::spinner::fg(palette.warning, palette.bg),
+        "completed" | "done" => crate::ui::spinner::fg(palette.success, palette.bg),
+        "failed" | "cancelled" | "killed" => crate::ui::spinner::fg(palette.error, palette.bg),
+        _ => crate::ui::spinner::fg(palette.fg, palette.bg),
     }
 }
 

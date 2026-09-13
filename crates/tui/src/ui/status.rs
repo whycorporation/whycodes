@@ -16,8 +16,6 @@ use ratatui::{
 use std::sync::OnceLock;
 use unicode_width::UnicodeWidthStr;
 
-const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
 /// Filled upright square (not a round bullet). U+25AE BLACK VERTICAL RECTANGLE
 /// stands taller in the cell — a solid status chip rather than a flat disk.
 const STATUS_SQUARE: &str = "▮";
@@ -48,33 +46,40 @@ fn brand_wordmark(palette: &ThemePalette) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             HEADER_MARK,
-            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(palette.fg)
+                .bg(palette.bg)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "why",
-            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(palette.fg)
+                .bg(palette.bg)
+                .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("codes", Style::default().fg(palette.dim)),
+        Span::styled("codes", Style::default().fg(palette.dim).bg(palette.bg)),
     ]
 }
 
 fn status_glyph(app: &TuiApp, palette: &ThemePalette) -> Span<'static> {
+    let bg = palette.bg;
     match &app.current_agent_state {
         AgentState::Generating | AgentState::Thinking => Span::styled(
-            SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()].to_string(),
-            Style::default().fg(palette.accent),
+            super::spinner::glyph(app.spinner_frame).to_string(),
+            super::spinner::fg(palette.accent, bg),
         ),
         AgentState::WaitingForPermission | AgentState::WaitingForQuestion => Span::styled(
             STATUS_SQUARE_OPEN.to_string(),
-            Style::default().fg(palette.warning),
+            super::spinner::fg(palette.warning, bg),
         ),
         AgentState::Error(_) => Span::styled(
             STATUS_SQUARE.to_string(),
-            Style::default().fg(palette.error),
+            super::spinner::fg(palette.error, bg),
         ),
         AgentState::Idle => Span::styled(
             STATUS_SQUARE.to_string(),
-            Style::default().fg(palette.success),
+            super::spinner::fg(palette.success, bg),
         ),
     }
 }
@@ -121,7 +126,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         shortcuts_spans(app, palette)
     };
 
-    let mut left: Vec<Span<'_>> = vec![glyph, Span::raw("  ")];
+    let mut left: Vec<Span<'_>> = vec![
+        glyph,
+        Span::styled("  ", super::spinner::fg(palette.bg, palette.bg)),
+    ];
     left.extend(brand_wordmark(palette));
     if !dir.is_empty() {
         left.push(Span::styled(

@@ -108,8 +108,14 @@ fn turn_status_generating_shows_spinner_label_tokens_and_stop() {
     let rect = a.turn_stop_hit.rect.expect("stop hit rect");
     assert_eq!(rect.y, 0);
     assert_eq!(rect.x + rect.width, 100, "stop sits at the right edge");
-    // Spinner glyph painted.
-    let _ = buf;
+    let cell = buf.cell((0, 0)).expect("spinner cell");
+    assert_eq!(cell.symbol(), crate::ui::spinner::glyph(2));
+    assert_eq!(
+        cell.style().bg,
+        Some(palette.bg),
+        "spinner must pin theme bg, not Reset/white"
+    );
+    assert_eq!(cell.style().fg, Some(palette.accent));
 }
 
 #[test]
