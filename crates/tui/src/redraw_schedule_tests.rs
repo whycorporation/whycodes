@@ -92,11 +92,14 @@ fn mouse_move_is_not_user_interaction() {
 fn paste_resize_and_focus_need_a_full_terminal_clear() {
     assert!(event_needs_full_clear(&Event::Paste("long\ntext".into())));
     assert!(event_needs_full_clear(&Event::Resize(80, 24)));
-    assert!(event_needs_full_clear(&Event::FocusGained));
+    assert!(!event_needs_full_clear(&Event::FocusGained));
     assert!(!event_needs_full_clear(&Event::FocusLost));
     assert!(!event_needs_full_clear(&Event::Key(KeyEvent::from(
         KeyCode::Char('a')
     ))));
+    assert!(event_needs_focus_redraw(&Event::FocusGained));
+    assert!(!event_needs_focus_redraw(&Event::FocusLost));
+    assert!(!event_needs_focus_redraw(&Event::Paste("x".into())));
 }
 
 #[test]

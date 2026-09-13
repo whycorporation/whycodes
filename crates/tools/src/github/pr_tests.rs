@@ -323,7 +323,9 @@ async fn request_errors_and_non_json_success() {
     assert!(create.content.contains("plain-text"), "{}", create.content);
 
     drop(_g);
-    unsafe { std::env::set_var("WHYCODES_GITHUB_API_BASE", "http://127.0.0.1:1") };
+    // Re-acquire ENV_LOCK before touching the base. An unlocked
+    // `set_var("http://127.0.0.1:1")` here races a sibling loopback test
+    // (Coverage: `execute_create_list_view_merge_on_loopback`).
     let _g2 = ApiBaseGuard::set("http://127.0.0.1:1");
     for action in [
         json!({"action":"create","owner":"o","repo":"r","token":"t","title":"t","head":"h","base":"b"}),

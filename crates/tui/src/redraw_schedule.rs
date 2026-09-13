@@ -72,13 +72,20 @@ pub fn event_is_user_interaction(ev: &Event) -> bool {
 /// Bracketed paste is the usual case: the emulator echoes the payload at the
 /// cursor (or scrolls the alt-screen) before `Event::Paste` is delivered.
 /// Breathing-room rows around the prompt stay spaces in both ratatui frames,
-/// so the diff never overwrites the echo. Resize and focus-restore desync
-/// the same way. The event loop must `terminal.clear()` before the next draw.
+/// so the diff never overwrites the echo. Resize desyncs the same way. The
+/// event loop must `terminal.clear()` before the next draw.
+///
+/// `FocusGained` is **not** here. Windows PowerShell / conhost implements
+/// CSI erase with the *profile* default background (often white), so a hard
+/// clear on tab-switch flashes the whole TUI. Focus restore only resets
+/// ratatui's previous buffer so the next paint is a full themed redraw.
 pub fn event_needs_full_clear(ev: &Event) -> bool {
-    matches!(
-        ev,
-        Event::Paste(_) | Event::Resize(_, _) | Event::FocusGained
-    )
+    matches!(ev, Event::Paste(_) | Event::Resize(_, _))
+}
+
+/// Tab / window focus came back. Needs a full themed redraw, not CSI erase.
+pub fn event_needs_focus_redraw(ev: &Event) -> bool {
+    matches!(ev, Event::FocusGained)
 }
 
 /// True when a drained batch looks like a paste delivered as a flood of
