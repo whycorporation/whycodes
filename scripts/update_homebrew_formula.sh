@@ -7,8 +7,9 @@
 # `crates/cli/src/upgrade.rs`. v0.1.0 still uses the pre-rebrand `whycode-*`
 # archive names; later tags are `whycodes-*`.
 #
-# `release.yml` runs this after every tagged publish and commits the result
-# to main. Manual use is for backfill or local review:
+# `release.yml` runs this after every tagged publish. Protected `main`
+# rejects that bot push (GH013); open a follow-up PR with the rewritten
+# formula. Manual use is for backfill or local review:
 #
 #   scripts/update_homebrew_formula.sh v0.1.0
 #   scripts/update_homebrew_formula.sh 0.1.0          # leading v optional
