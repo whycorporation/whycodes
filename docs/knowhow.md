@@ -2478,6 +2478,20 @@ Linux CI wall-clock is lint then max(test, coverage). Build still reports on PRs
 
 **Prevention:** Tests that share `LlmTransport::complete` must not reuse prompt+model across success and error cases.
 
+## Coverage JSON floors ignore skip-expansions unless forced via `env`
+
+**Date:** 2026-09-13 · **Area:** `scripts/coverage.sh`, `scripts/check_coverage_floors.py`
+
+**Symptom:** PR 103 Coverage stayed `whycodes-config` 2122/3567 (59.5%) and `whycodes-protocol` 604/776 (77.8%) after every aggregator tweak. Text `show` on the same run already had expansion-inflated `load.rs` / `ci.rs`. `main` was 2030/2030 and 552/552.
+
+**JSONL / crash:** none.
+
+**Root cause:** 100% floors are defined against llvm-cov `--skip-expansions`. A shell `export LLVM_COV_FLAGS=--skip-expansions` immediately before `cargo llvm-cov report --json` did not reach `llvm-cov export` on the runner. JSON then counted serde/`format!` expansions. In-file `#[cfg(test)]` in `ci.rs` also sat on the production floor (`tests.rs$` ignore).
+
+**Fix:** `env LLVM_COV_FLAGS=--skip-expansions cargo llvm-cov report --json …`. Floor script keys files by `crates/<dir>/<rel>` and dumps per-file misses on FAIL. Protocol CI tests live in `crates/protocol/src/tests.rs`.
+
+**Prevention:** Do not set `LLVM_COV_FLAGS` for the workspace text report (`show` rejects the flag). Force the env on the JSON export process. Keep crate-floor tests in a `tests.rs` sibling.
+
 ## Coverage: TUI isolated-home dialog test sees an empty catalog
 
 **Date:** 2026-09-12 · **Area:** `crates/tui/src/input_event_tests.rs`

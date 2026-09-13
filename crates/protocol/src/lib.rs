@@ -2,6 +2,9 @@ pub mod ci;
 pub mod messages;
 pub mod sdk;
 
+#[cfg(test)]
+mod tests;
+
 pub use ci::{CiEvent, OutputFormat, ResultMeta};
 pub use sdk::{
     CompactRequest, CreateSessionRequest, ErrorCode, Handshake, HistoryMessage, ModelInfo,

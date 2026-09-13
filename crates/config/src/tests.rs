@@ -875,6 +875,47 @@ fn slop_config_merge_and_validate() {
     assert!(cfg.validate().is_err());
     cfg.slop.hotspots = 8;
     assert!(cfg.validate().is_ok());
+
+    let toml = r#"
+verbosity = 0.31
+erosion = 0.61
+delta_loc = 90
+block_verbosity = 0.51
+block_erosion = 0.81
+block_delta_loc = 4000
+hotspots = 4
+"#;
+    let parsed: SlopConfig = toml::from_str(toml).unwrap();
+    assert!((parsed.verbosity - 0.31).abs() < f64::EPSILON);
+    assert!((parsed.erosion - 0.61).abs() < f64::EPSILON);
+    assert_eq!(parsed.delta_loc, 90);
+    assert!((parsed.block_verbosity - 0.51).abs() < f64::EPSILON);
+    assert!((parsed.block_erosion - 0.81).abs() < f64::EPSILON);
+    assert_eq!(parsed.block_delta_loc, 4000);
+    assert_eq!(parsed.hotspots, 4);
+    let encoded = toml::to_string(&parsed).unwrap();
+    assert!(encoded.contains("verbosity"));
+    let round: SlopConfig = toml::from_str(&encoded).unwrap();
+    assert_eq!(round, parsed);
+
+    let nested: Config = toml::from_str("[slop]\nverbosity = 0.28\nhotspots = 2\n").unwrap();
+    assert!((nested.slop.verbosity - 0.28).abs() < f64::EPSILON);
+    assert_eq!(nested.slop.hotspots, 2);
+    assert_eq!(nested.slop.delta_loc, 800);
+
+    let empty: SlopConfig = toml::from_str("").unwrap();
+    assert_eq!(empty, SlopConfig::default());
+
+    let mut cfg = Config::default();
+    cfg.providers
+        .insert("openai".into(), make_provider("openai"));
+    cfg.slop.verbosity = -0.01;
+    assert!(cfg.validate().is_err());
+    cfg.slop.verbosity = 1.01;
+    assert!(cfg.validate().is_err());
+    cfg.slop.verbosity = 0.25;
+    cfg.slop.erosion = 1.01;
+    assert!(cfg.validate().is_err());
 }
 
 #[test]
