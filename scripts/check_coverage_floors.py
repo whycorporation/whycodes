@@ -19,6 +19,7 @@ Expects JSON from `cargo llvm-cov report --json --summary-only` or
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -50,6 +51,11 @@ FULL_COVER_CRATES = [
     "whycodes-import",
     "whycodes-slop",
 ]
+
+# Workspace floor. rustup llvm-cov `show` inflates totals with serde /
+# format! expansions (~81.4%). JSON `export -skip-expansions` is the
+# same measurement as the 100% crate floors.
+WORKSPACE_FLOOR = float(os.environ.get("FAIL_UNDER", "82"))
 
 # Floors as (crate, min_percent)
 FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
@@ -197,6 +203,22 @@ def main() -> int:
         return 1
 
     ok = True
+    ws_cov = sum(c for c, _ in agg.values())
+    ws_tot = sum(t for _, t in agg.values())
+    if ws_tot:
+        ws_pct = ws_cov / ws_tot * 100.0
+        ws_shown = round(ws_pct, 1)
+        ws_status = "OK" if ws_shown + 1e-9 >= WORKSPACE_FLOOR else "FAIL"
+        print(
+            f"{ws_status} workspace: {ws_cov}/{ws_tot} lines "
+            f"{ws_shown:.1f}% floor {WORKSPACE_FLOOR:g}%"
+        )
+        if ws_shown + 1e-9 < WORKSPACE_FLOOR:
+            ok = False
+            print(
+                f"  -> below workspace floor by {WORKSPACE_FLOOR - ws_shown:.1f}pp",
+                file=sys.stderr,
+            )
     for crate, floor in FLOORS:
         pair = agg.get(crate)
         if pair is None:
@@ -262,6 +284,7 @@ def _self_check() -> None:
     files = getattr(aggregate_by_crate, "files", {})
     assert "whycodes-config" in files
     assert files["whycodes-config"][0][0] == "config/src/load.rs"
+    assert WORKSPACE_FLOOR >= 0
 
 
 if __name__ == "__main__":

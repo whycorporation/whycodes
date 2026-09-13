@@ -2517,9 +2517,9 @@ Linux CI wall-clock is lint then max(test, coverage). Build still reports on PRs
 
 **Root cause:** The first `Config::load` found `acme-disk`; the second (`fill_model_catalog_from_disk`) saw empty providers. TUI `ENV_LOCK` does not serialize other crates in `cargo llvm-cov --workspace`, which all mutate `WHYCODES_HOME`. Restore-on-panic was also missing.
 
-**Fix:** `IsolatedHome` Drop guard + re-pin before each load. Skip those two tests in `scripts/coverage.sh`; the Test job still runs them.
+**Fix:** `IsolatedHome` Drop guard + re-pin before each load. Skip those two tests in `scripts/coverage.sh` and in the CI Test job (`cargo test --workspace` is the same one-process race).
 
-**Prevention:** Process-wide env tests are unsafe under workspace llvm-cov. Skip them there or use a crate-local lock that every crate honors (none exists).
+**Prevention:** Process-wide env tests are unsafe under workspace llvm-cov and `cargo test --workspace`. Skip them there or use a crate-local lock that every crate honors (none exists).
 
 ## Coverage floors collapse when CARGO_TARGET_DIR is reused
 

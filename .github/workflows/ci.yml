@@ -180,7 +180,13 @@ jobs:
           cache-targets: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run tests
-        run: cargo test --workspace --locked --features whycodes-storage/bundled
+        # IsolatedHome pins WHYCODES_HOME; cargo test --workspace runs crates
+        # in one process and siblings overwrite that env. Coverage already
+        # skips these two; Test must too or the catalog is empty (`[]`).
+        run: |
+          cargo test --workspace --locked --features whycodes-storage/bundled -- \
+            --skip provider_and_model_dialogs_load_custom_from_isolated_home \
+            --skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails
 
   coverage:
     name: Coverage (line floor)
