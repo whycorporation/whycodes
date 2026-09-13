@@ -47,7 +47,7 @@ need "--skip provider_and_model_dialogs_load_custom_from_isolated_home" "$dry"
 need "--skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails" "$dry"
 need "check_coverage_floors.py" "$dry"
 need "/tmp/cov.json" "$dry"
-need "LLVM_COV=scripts/llvm_cov_skip_expansions.sh" "$dry"
+need "LLVM_COV=scripts/llvm_cov_skip_expansions.sh LLVM_PROFDATA=" "$dry"
 forbid "--features" "$dry"
 
 dryf="$(COVERAGE_FEATURES=whycodes-storage/bundled "$SCRIPT" --dry-run)"
