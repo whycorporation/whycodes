@@ -188,10 +188,9 @@ set -- "$@" \
     --skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails
 run "$@"
 
-# cargo-llvm-cov JSON includes rustc macro expansions (`format!`, tracing
-# fields, `tokio::select!`) as uncovered lines. Native llvm-cov --skip-expansions
-# matches source lines. 100% crate floors are defined against that accounting.
-LLVM_COV_FLAGS="${LLVM_COV_FLAGS:---skip-expansions}"
-export LLVM_COV_FLAGS
+# Do not pass LLVM_COV_FLAGS=--skip-expansions. rustup llvm-cov 21 treats
+# that as an unknown `llvm-cov show` flag and cargo-llvm-cov then exports
+# expansion-inflated JSON (config 2122→3567, protocol 590→776) so 100%
+# floors fail even when source lines are covered.
 run cargo llvm-cov report --json --ignore-filename-regex "$CRATE_IGNORE" --summary-only >"$REPORT_JSON"
 run python3 scripts/check_coverage_floors.py "$REPORT_JSON"
