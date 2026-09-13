@@ -290,7 +290,7 @@ fn convert_blocks_message(
             }
             ContentBlock::ToolUse { id, name, input } => {
                 let id = if id.is_empty() {
-                    format!("call_{}", tool_calls.len())
+                    whycodes_core::fallback_tool_call_id(tool_calls.len())
                 } else {
                     id.clone()
                 };

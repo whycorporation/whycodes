@@ -814,7 +814,7 @@ impl Session {
                 MessageContent::Text(cap_tool_text(result.content))
             };
             let tool_call_id = if result.tool_call_id.is_empty() {
-                format!("call_{}", self.messages.len())
+                whycodes_core::fallback_tool_call_id(self.messages.len())
             } else {
                 result.tool_call_id
             };
@@ -1888,8 +1888,7 @@ mod tests {
             .tool_call_id
             .as_deref()
             .unwrap_or_default();
-        assert!(!id.is_empty(), "{id:?}");
-        assert!(id.starts_with("call_"), "{id}");
+        assert_eq!(id, "call_1");
     }
 
     #[test]

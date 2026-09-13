@@ -105,7 +105,7 @@ impl ToolCallAssembler {
                 tc.arguments = Value::Object(Default::default());
             }
             if tc.id.is_empty() {
-                tc.id = format!("call_{i}");
+                tc.id = whycodes_core::fallback_tool_call_id(i);
             }
             // else keep pre-parsed object
         }

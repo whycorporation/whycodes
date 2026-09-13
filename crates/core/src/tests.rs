@@ -1670,6 +1670,12 @@ mod types_tests {
         assert_eq!(deser.tool_call_id.as_deref(), Some("call-1"));
     }
 
+    #[test]
+    fn fallback_tool_call_id_is_call_plus_index() {
+        assert_eq!(fallback_tool_call_id(0), "call_0");
+        assert_eq!(fallback_tool_call_id(12), "call_12");
+    }
+
     // ── test_tool_definition_serialize ──────────────────────────────────
 
     #[test]
