@@ -111,9 +111,9 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
     app.esc_armed_at = None;
 }
 
-/// Hosts without bracketed paste deliver a long paste as a flood of `Key`
-/// events. Fold that flood into one `Event::Paste` so the prompt collapses
-/// it to a chip instead of wrapping a wall of text out of the box.
+/// Hosts without bracketed paste deliver a paste as a flood of `Key`
+/// events. Fold that flood into one `Event::Paste` so the prompt inserts
+/// the original text (and collapses long pastes to a chip).
 pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
     if app.modal_is_open() {
         return;
@@ -126,24 +126,33 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
     }
 
     let mut text = String::new();
+    let mut printable = 0usize;
+    let mut recovered_i = false;
+    let mut saw_windows_paste_noise = false;
     for ev in events.iter() {
         match ev {
             // Windows / enhanced keyboard emits Press+Release per key. Release
             // must not abort coalescing (or a real unbracketed paste never
             // folds) and must not be treated as a second insert.
             Event::Key(k) if k.kind == KeyEventKind::Release => {}
-            Event::Key(k)
-                if (k.kind == KeyEventKind::Press || k.kind == KeyEventKind::Repeat)
-                    && !k.modifiers.intersects(
-                        crossterm::event::KeyModifiers::CONTROL
-                            | crossterm::event::KeyModifiers::ALT
-                            | crossterm::event::KeyModifiers::SUPER,
-                    ) =>
-            {
-                match k.code {
-                    KeyCode::Char('\n' | '\r') | KeyCode::Enter => text.push('\n'),
-                    KeyCode::Char(c) => text.push(c),
-                    _ => return,
+            Event::Key(k) if k.kind == KeyEventKind::Press || k.kind == KeyEventKind::Repeat => {
+                match pasted_char_from_key(k) {
+                    Some('\n') => text.push('\n'),
+                    Some(c) => {
+                        if matches!(k.code, KeyCode::Tab)
+                            || (matches!(k.code, KeyCode::Char('i' | 'I'))
+                                && k.modifiers
+                                    .contains(crossterm::event::KeyModifiers::CONTROL))
+                        {
+                            recovered_i = true;
+                        }
+                        text.push(c);
+                        printable += 1;
+                    }
+                    None if is_windows_paste_noise(k) => {
+                        saw_windows_paste_noise = true;
+                    }
+                    None => return,
                 }
             }
             Event::Mouse(m) if matches!(m.kind, MouseEventKind::Moved) => {}
@@ -158,7 +167,12 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
     // Strip every trailing newline so "hello" + Enter + Enter in one batch
     // also stays keys. Hosts may deliver Enter as `\r`.
     let collapse_src = text.trim_end_matches('\n');
-    if !crate::paste::should_collapse(collapse_src) {
+    // Windows paste of `ikitelli` is often 8 keys with `i` as Tab —
+    // too short to chip, but must still fold so Tab does not steal focus.
+    // A lone Tab (printable == 1, recovered_i) is a real Tab: leave it.
+    let fold = crate::paste::should_collapse(collapse_src)
+        || ((saw_windows_paste_noise || recovered_i) && printable >= 2);
+    if !fold {
         return;
     }
     events.retain(|e| {
@@ -171,6 +185,40 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
         )
     });
     events.push(Event::Paste(text));
+}
+
+/// Decode one key from an unbracketed paste flood.
+///
+/// Windows ConPTY / PowerShell often maps ASCII `i` to `Tab` (historical
+/// Ctrl+I) or `Insert` (`VK_INSERT` vs `I`). Recover the letter so a paste
+/// of `ikitelli` is not `ktell`.
+fn pasted_char_from_key(k: &KeyEvent) -> Option<char> {
+    let ctrl = k
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::CONTROL);
+    let alt = k.modifiers.contains(crossterm::event::KeyModifiers::ALT);
+    let super_key = k.modifiers.contains(crossterm::event::KeyModifiers::SUPER);
+    let shift = k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
+    match k.code {
+        KeyCode::Char('\n' | '\r') | KeyCode::Enter => Some('\n'),
+        KeyCode::Char('\t') | KeyCode::Tab if !shift => Some('i'),
+        KeyCode::Char(c) if ctrl && !alt && !super_key && matches!(c, 'i' | 'I') => Some(c),
+        KeyCode::Char(c) if !ctrl && !alt && !super_key => Some(c),
+        _ => None,
+    }
+}
+
+/// Keys the Windows console injects into a paste burst that are not letters.
+///
+/// `Insert` / Shift+Insert is the classic console paste chord; treating it as
+/// a letter would prefix every paste with `i`/`I` or abort coalescing.
+fn is_windows_paste_noise(k: &KeyEvent) -> bool {
+    matches!(
+        k.code,
+        KeyCode::Null | KeyCode::Insert | KeyCode::Modifier(_)
+    ) && !k
+        .modifiers
+        .intersects(crossterm::event::KeyModifiers::ALT | crossterm::event::KeyModifiers::SUPER)
 }
 
 fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {

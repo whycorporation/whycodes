@@ -639,6 +639,27 @@ nproc pool. Never `current_thread` for TUI.
 
 ---
 
+### 2026-09-13 — Windows PowerShell paste still drops ASCII `i`
+
+**Symptom:** Pasting `ikitelli` into the TUI on Windows PowerShell inserts
+`ktell` (every ASCII `i` missing). Typing the same word is fine. Bracketed
+paste (`Event::Paste("ikitelli")`) is also fine.
+
+**Root cause:** ConPTY / PowerShell unbracketed paste delivers ASCII `i` as
+`KeyCode::Tab` (historical Ctrl+I) and injects `KeyCode::Insert` (Shift+Insert
+paste chord). `coalesce_unbracketed_paste` aborted on any non-Char key, so
+the flood never folded. Each remaining `Tab` then ran `ToggleFocus` instead
+of inserting `i`. Short words never hit the 2-line / 160-char chip threshold.
+
+**Fix:** Map Tab (and Ctrl+I) to `i` while coalescing a paste flood of 2+
+printables. Treat `Insert` / Null / Shift / Control as paste noise. Leave a
+lone Tab as Tab.
+
+**Prevention:** Do not abort unbracketed-paste coalescing on Windows
+Tab/Insert. Regression: `windows_paste_tab_as_i_in_ikitelli`.
+
+---
+
 ### 2026-09-02 — Prompt paste drops ASCII `i` (#56)
 
 **Symptom:** Pasting `iyi` / `istanbul` into the TUI prompt drops every `i`

@@ -1891,6 +1891,56 @@ fn paste_token_edits_as_a_unit_and_session_paste() {
 }
 
 #[test]
+fn windows_paste_tab_as_i_in_ikitelli() {
+    let a = app();
+    // PowerShell / ConPTY paste of `ikitelli`: ASCII `i` often arrives as
+    // Tab (Ctrl+I) mixed with Char keys. Must become one Paste, not Tab.
+    // i k i t e l l i — first and last `i` as Tab (Ctrl+I).
+    let mut events = vec![
+        key(KeyCode::Tab),
+        key(KeyCode::Char('k')),
+        key(KeyCode::Char('i')),
+        key(KeyCode::Char('t')),
+        key(KeyCode::Char('e')),
+        key(KeyCode::Char('l')),
+        key(KeyCode::Char('l')),
+        key(KeyCode::Tab),
+    ];
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert_eq!(events, vec![Event::Paste("ikitelli".into())]);
+
+    let mut a = app();
+    handle_event(&mut a, Event::Paste("ikitelli".into()));
+    assert_eq!(a.input_buffer, "ikitelli");
+}
+
+#[test]
+fn windows_paste_ctrl_i_and_insert_noise() {
+    let a = app();
+    let mut events = vec![
+        key(KeyCode::Insert),
+        key(KeyCode::Tab),
+        key(KeyCode::Char('k')),
+        Event::Key(KeyEvent::new(KeyCode::Char('\t'), KeyModifiers::CONTROL)),
+        key(KeyCode::Char('t')),
+        key(KeyCode::Char('e')),
+        key(KeyCode::Char('l')),
+        key(KeyCode::Char('l')),
+        key(KeyCode::Char('i')),
+    ];
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert_eq!(events, vec![Event::Paste("ikitelli".into())]);
+
+    let mut lone_tab = vec![key(KeyCode::Tab)];
+    coalesce_unbracketed_paste(&a, &mut lone_tab);
+    assert_eq!(
+        lone_tab,
+        vec![key(KeyCode::Tab)],
+        "a real Tab must not become the letter i"
+    );
+}
+
+#[test]
 fn turkish_i_and_dotless_i_type_and_paste() {
     let mut a = app();
     assert!(handle_event(&mut a, key(KeyCode::Char('i'))));
