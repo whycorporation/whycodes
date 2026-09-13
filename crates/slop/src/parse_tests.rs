@@ -89,6 +89,7 @@ fn brace_body_skips_strings_and_line_comments() {
     assert_eq!(end, src.len());
     assert!(brace_body("fn x();", 0).is_none());
     assert!(brace_body("fn x() ", 0).is_none());
+    assert!(brace_body("fn x() { let n = 1;", 0).is_none());
     let long = format!("fn x({}) {{ 1 }}", "a".repeat(500));
     assert!(brace_body(&long, 4).is_none());
 }
@@ -109,6 +110,15 @@ fn match_fn_name_rejects_embedded() {
     assert!(match_fn_name("xfn y", 1, "fn").is_none());
     assert!(match_fn_name("fnx()", 0, "fn").is_none());
     assert_eq!(match_fn_name("fn foo", 0, "fn").as_deref(), Some("foo"));
+    assert!(match_fn_name("notfn", 0, "fn").is_none());
+    assert_eq!(match_fn_name("fn", 0, "fn").as_deref(), Some("fn"));
+}
+
+#[test]
+fn brace_body_skips_non_string_chars() {
+    let src = "fn x() { let n = 1; }";
+    let (body, _) = brace_body(src, 0).unwrap();
+    assert!(body.contains("let n"));
 }
 
 #[test]

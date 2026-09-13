@@ -20,6 +20,41 @@ fn numstat_ignores_blank_and_empty_path() {
 }
 
 #[test]
+fn merge_untracked_skips_empty_dupes_and_unreadable() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("keep.rs"), "fn k() {}\n").unwrap();
+    std::fs::create_dir(dir.path().join("ghost.rs")).unwrap();
+    std::fs::write(dir.path().join("notes.md"), "hi\n").unwrap();
+    let mut delta = 0i64;
+    let mut files = 0usize;
+    let mut paths = vec!["keep.rs".into()];
+    merge_untracked(
+        dir.path(),
+        "\nkeep.rs\nghost.rs\nnotes.md\n",
+        &mut delta,
+        &mut files,
+        &mut paths,
+    );
+    assert_eq!(files, 2);
+    assert!(paths.contains(&"ghost.rs".into()));
+    assert!(paths.contains(&"notes.md".into()));
+    assert_eq!(paths.iter().filter(|p| *p == "keep.rs").count(), 1);
+}
+
+#[test]
+fn origin_head_name_parses_prefix_other_and_empty() {
+    assert_eq!(
+        origin_head_name("refs/remotes/origin/main\n").as_deref(),
+        Some("origin/main")
+    );
+    assert_eq!(
+        origin_head_name("refs/heads/main\n").as_deref(),
+        Some("refs/heads/main")
+    );
+    assert!(origin_head_name("  \n").is_none());
+}
+
+#[test]
 fn numstat_non_numeric_added() {
     let (delta, files, paths) = parse_numstat("x\ty\tz.rs\n");
     assert_eq!(delta, 0);
@@ -82,6 +117,8 @@ fn snapshot_untracked_unreadable_and_duplicate_ls_files() {
     // Untracked language file that cannot be read (directory named like a file).
     std::fs::create_dir(dir.path().join("ghost.rs")).unwrap();
     std::fs::write(dir.path().join("plain.txt"), "hello\n").unwrap();
+    std::fs::write(dir.path().join("also.rs"), "fn also() {}\n").unwrap();
+    // A trailing blank line from `ls-files` is skipped by normalize_path.
     let snap = snapshot(dir.path(), Some("HEAD")).unwrap();
     assert!(snap.files_changed >= 2, "{}", snap.files_changed);
     assert!(
@@ -89,6 +126,45 @@ fn snapshot_untracked_unreadable_and_duplicate_ls_files() {
         "{:?}",
         snap.contents
     );
+}
+
+#[test]
+fn snapshot_numstat_fails_on_blob_oid() {
+    let dir = tempfile::tempdir().unwrap();
+    git_init(dir.path());
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    git_add_commit(dir.path(), "init");
+    let blob = String::from_utf8_lossy(
+        &Command::new("git")
+            .args(["rev-parse", "HEAD:a.rs"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    assert!(!blob.is_empty());
+    let err = snapshot(dir.path(), Some(&blob)).unwrap_err();
+    assert!(
+        err.message.contains("diff") || err.message.contains("git"),
+        "{err}"
+    );
+}
+
+#[test]
+fn snapshot_duplicate_untracked_matches_numstat_path() {
+    let dir = tempfile::tempdir().unwrap();
+    git_init(dir.path());
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    git_add_commit(dir.path(), "init");
+    let _ = Command::new("git")
+        .args(["rm", "--cached", "a.rs"])
+        .current_dir(dir.path())
+        .status();
+    std::fs::write(dir.path().join("a.rs"), "fn a() { 1 }\n").unwrap();
+    let snap = snapshot(dir.path(), Some("HEAD")).unwrap();
+    assert!(snap.files_changed >= 1);
 }
 
 #[test]
@@ -173,6 +249,25 @@ fn default_branch_origin_non_origin_prefix() {
         .status();
     let b = default_branch(dir.path()).unwrap();
     assert!(!b.is_empty(), "{b}");
+}
+
+#[test]
+fn default_branch_empty_symbolic_ref_falls_through() {
+    let dir = tempfile::tempdir().unwrap();
+    git_init(dir.path());
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    git_add_commit(dir.path(), "init");
+    let _ = Command::new("git")
+        .args(["remote", "add", "origin", "."])
+        .current_dir(dir.path())
+        .status();
+    let head = dir.path().join(".git/refs/remotes/origin/HEAD");
+    if let Some(parent) = head.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(&head, " \n").unwrap();
+    let b = default_branch(dir.path()).unwrap();
+    assert_eq!(b, "main");
 }
 
 #[test]

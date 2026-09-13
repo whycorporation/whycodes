@@ -294,6 +294,23 @@ mod tests {
         assert!(json.contains(r#""slop""#));
         let back: CiEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(back, e);
+        let with_none = ResultMeta {
+            session_id: "s".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            agent: "a".into(),
+            usage: Usage::default(),
+            duration_ms: 1,
+            slop: None,
+        }
+        .err("x");
+        let json = serde_json::to_string(&with_none).unwrap();
+        assert!(!json.contains(r#""slop""#));
+        let back: CiEvent = serde_json::from_str(&json).unwrap();
+        match back {
+            CiEvent::Result { slop: None, .. } => {}
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

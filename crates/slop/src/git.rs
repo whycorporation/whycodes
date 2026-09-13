@@ -29,28 +29,13 @@ pub(crate) fn snapshot(dir: &Path, base: Option<&str>) -> Result<Snapshot, Error
     )?;
     let (mut delta_loc, mut files_changed, mut paths) = parse_numstat(&numstat);
 
-    if let Ok(extra) = git_ok(
+    let extra = git_ok(
         dir,
         &["ls-files", "--others", "--exclude-standard"],
         "git ls-files",
-    ) {
-        for rel in extra.lines() {
-            let rel = normalize_path(rel.trim());
-            if rel.is_empty() || paths.iter().any(|p| p == &rel) {
-                continue;
-            }
-            files_changed += 1;
-            let abs = dir.join(&rel);
-            if let Ok(text) = std::fs::read_to_string(&abs) {
-                delta_loc += text.lines().count() as i64;
-                if crate::parse::language_for_path(Path::new(&rel)).is_some() {
-                    paths.push(rel);
-                    continue;
-                }
-            }
-            paths.push(rel);
-        }
-    }
+    )
+    .unwrap_or_default();
+    merge_untracked(dir, &extra, &mut delta_loc, &mut files_changed, &mut paths);
 
     let mut contents = Vec::new();
     for rel in paths {
@@ -84,19 +69,51 @@ fn resolve_base(dir: &Path, base: Option<&str>) -> Result<String, Error> {
     git_rev_parse(dir, "HEAD")
 }
 
+pub(crate) fn merge_untracked(
+    dir: &Path,
+    extra: &str,
+    delta_loc: &mut i64,
+    files_changed: &mut usize,
+    paths: &mut Vec<String>,
+) {
+    for rel in extra.split(['\n', '\0']) {
+        let rel = normalize_path(rel.trim());
+        if rel.is_empty() || paths.iter().any(|p| p == &rel) {
+            continue;
+        }
+        *files_changed += 1;
+        let abs = dir.join(&rel);
+        if let Ok(text) = std::fs::read_to_string(&abs) {
+            *delta_loc += text.lines().count() as i64;
+            if crate::parse::language_for_path(Path::new(&rel)).is_some() {
+                paths.push(rel);
+                continue;
+            }
+        }
+        paths.push(rel);
+    }
+}
+
+pub(crate) fn origin_head_name(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if let Some(name) = s.strip_prefix("refs/remotes/origin/") {
+        return Some(format!("origin/{name}"));
+    }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
 fn default_branch(dir: &Path) -> Result<String, Error> {
     if let Ok(out) = git_ok(
         dir,
         &["symbolic-ref", "refs/remotes/origin/HEAD"],
         "git symbolic-ref",
-    ) {
-        let s = out.trim();
-        if let Some(name) = s.strip_prefix("refs/remotes/origin/") {
-            return Ok(format!("origin/{name}"));
-        }
-        if !s.is_empty() {
-            return Ok(s.to_string());
-        }
+    ) && let Some(name) = origin_head_name(&out)
+    {
+        return Ok(name);
     }
     for cand in ["main", "master"] {
         if git_rev_parse(dir, cand).is_ok() {

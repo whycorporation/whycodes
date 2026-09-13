@@ -30,7 +30,7 @@ fn clone_detects_repeated_lines() {
 fn verbosity_heuristics_each_lang() {
     let rust = verbosity_lines(
         Lang::Rust,
-        "pub fn x() -> i32 { 1 }\n    Ok(())\n    todo!\n    unimplemented!\n    self.x = x;\n    v.clone()\n// === header\n    AUTO-GENERATED\n",
+        "pub fn x() -> i32 { 1 }\n\n    Ok(())\n    todo!\n    unimplemented!\n    self.x = x;\n    v.clone()\n// === header\n    AUTO-GENERATED\n",
     );
     assert!(rust.len() >= 6, "{rust:?}");
     let ts = verbosity_lines(Lang::TypeScript, "function id(x) { return x; }\n");
