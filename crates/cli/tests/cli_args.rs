@@ -49,7 +49,7 @@ fn test_version_includes_semver_and_build_meta() {
     let o = run(&["--version"]);
     assert_ok(&["--version"], &o);
     let s = String::from_utf8_lossy(&o.stdout);
-    // clap prints: "whycodes 0.6.0 (abc1234 2026-09-13)"
+    // clap prints: "whycodes 0.6.1 (abc1234 2026-09-13)"
     assert!(
         s.contains(env!("CARGO_PKG_VERSION")),
         "version should include crate semver: {s}"
