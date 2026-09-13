@@ -641,22 +641,27 @@ nproc pool. Never `current_thread` for TUI.
 
 ### 2026-09-13 — Windows PowerShell paste still drops ASCII `i`
 
-**Symptom:** Pasting `ikitelli` into the TUI on Windows PowerShell inserts
-`ktell` (every ASCII `i` missing). Typing the same word is fine. Bracketed
-paste (`Event::Paste("ikitelli")`) is also fine.
+**Symptom:** Pasting text that contains ASCII `i` into the TUI on Windows
+PowerShell drops every `i`. Typing the same letters is fine. Bracketed
+paste (`Event::Paste`) is also fine. The 2026-09-02 `Char('i')` unbind did
+not help because the host never delivers `Char('i')`.
 
 **Root cause:** ConPTY / PowerShell unbracketed paste delivers ASCII `i` as
 `KeyCode::Tab` (historical Ctrl+I) and injects `KeyCode::Insert` (Shift+Insert
-paste chord). `coalesce_unbracketed_paste` aborted on any non-Char key, so
-the flood never folded. Each remaining `Tab` then ran `ToggleFocus` instead
-of inserting `i`. Short words never hit the 2-line / 160-char chip threshold.
+paste chord). When the whole flood lands in one poll, coalescing can fold it.
+PowerShell often delivers **one key per poll**, so `coalesce_unbracketed_paste`
+never sees 2+ printables; each Tab runs `ToggleFocus` and the letter is lost.
 
-**Fix:** Map Tab (and Ctrl+I) to `i` while coalescing a paste flood of 2+
-printables. Treat `Insert` / Null / Shift / Control as paste noise. Leave a
-lone Tab as Tab.
+**Fix:** (1) Map Tab / Ctrl+I to `i` while coalescing a 2+ printable flood.
+Treat Insert / Null / Modifier as paste noise. (2) After draining the ready
+queue, linger 12 ms once on Windows so stragglers join the batch. (3) A Tab
+or Ctrl+I within 80 ms of a prompt insert is recovered as `i` (slash/file
+complete and idle Tab still toggle / complete).
 
 **Prevention:** Do not abort unbracketed-paste coalescing on Windows
-Tab/Insert. Regression: `windows_paste_tab_as_i_in_ikitelli`.
+Tab/Insert, and do not assume a paste is one poll. Regression:
+`windows_paste_tab_as_ascii_i` and sequential Tab-after-char in
+`turkish_i_and_dotless_i_type_and_paste`.
 
 ---
 

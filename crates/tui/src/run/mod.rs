@@ -796,6 +796,12 @@ impl LoopIo {
 
     fn read_event_batch(&mut self) -> io::Result<Vec<Event>> {
         const MAX_BATCH: usize = 256;
+        // PowerShell / ConPTY often delivers an unbracketed paste one key
+        // per poll. After draining the ready queue, wait 12 ms once for
+        // stragglers so `coalesce_unbracketed_paste` can see Tab-as-`i`
+        // next to the surrounding letters. Skip on injected/scripted
+        // queues so tests do not sleep.
+        const PASTE_LINGER: Duration = Duration::from_millis(12);
         let mut batch = Vec::with_capacity(8);
         batch.push(self.read_crossterm()?);
         while batch.len() < MAX_BATCH {
@@ -803,6 +809,20 @@ impl LoopIo {
                 Ok(true) => batch.push(self.read_crossterm()?),
                 Ok(false) => break,
                 Err(e) => return Err(e),
+            }
+        }
+        if cfg!(windows)
+            && !self.force_zero_poll
+            && batch.len() < MAX_BATCH
+            && self.poll_crossterm(PASTE_LINGER)?
+        {
+            batch.push(self.read_crossterm()?);
+            while batch.len() < MAX_BATCH {
+                match self.poll_crossterm(Duration::ZERO) {
+                    Ok(true) => batch.push(self.read_crossterm()?),
+                    Ok(false) => break,
+                    Err(e) => return Err(e),
+                }
             }
         }
         Ok(batch)

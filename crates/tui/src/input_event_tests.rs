@@ -1891,27 +1891,26 @@ fn paste_token_edits_as_a_unit_and_session_paste() {
 }
 
 #[test]
-fn windows_paste_tab_as_i_in_ikitelli() {
+fn windows_paste_tab_as_ascii_i() {
     let a = app();
-    // PowerShell / ConPTY paste of `ikitelli`: ASCII `i` often arrives as
-    // Tab (Ctrl+I) mixed with Char keys. Must become one Paste, not Tab.
-    // i k i t e l l i — first and last `i` as Tab (Ctrl+I).
+    // PowerShell / ConPTY paste: ASCII `i` often arrives as Tab (Ctrl+I)
+    // mixed with Char keys. Must become one Paste, not Tab.
+    // i n i t i a l — each `i` as Tab.
     let mut events = vec![
         key(KeyCode::Tab),
-        key(KeyCode::Char('k')),
-        key(KeyCode::Char('i')),
-        key(KeyCode::Char('t')),
-        key(KeyCode::Char('e')),
-        key(KeyCode::Char('l')),
-        key(KeyCode::Char('l')),
+        key(KeyCode::Char('n')),
         key(KeyCode::Tab),
+        key(KeyCode::Char('t')),
+        key(KeyCode::Tab),
+        key(KeyCode::Char('a')),
+        key(KeyCode::Char('l')),
     ];
     coalesce_unbracketed_paste(&a, &mut events);
-    assert_eq!(events, vec![Event::Paste("ikitelli".into())]);
+    assert_eq!(events, vec![Event::Paste("initial".into())]);
 
     let mut a = app();
-    handle_event(&mut a, Event::Paste("ikitelli".into()));
-    assert_eq!(a.input_buffer, "ikitelli");
+    handle_event(&mut a, Event::Paste("initial".into()));
+    assert_eq!(a.input_buffer, "initial");
 }
 
 #[test]
@@ -1920,16 +1919,15 @@ fn windows_paste_ctrl_i_and_insert_noise() {
     let mut events = vec![
         key(KeyCode::Insert),
         key(KeyCode::Tab),
-        key(KeyCode::Char('k')),
+        key(KeyCode::Char('n')),
         Event::Key(KeyEvent::new(KeyCode::Char('\t'), KeyModifiers::CONTROL)),
         key(KeyCode::Char('t')),
-        key(KeyCode::Char('e')),
+        key(KeyCode::Tab),
+        key(KeyCode::Char('a')),
         key(KeyCode::Char('l')),
-        key(KeyCode::Char('l')),
-        key(KeyCode::Char('i')),
     ];
     coalesce_unbracketed_paste(&a, &mut events);
-    assert_eq!(events, vec![Event::Paste("ikitelli".into())]);
+    assert_eq!(events, vec![Event::Paste("initial".into())]);
 
     let mut lone_tab = vec![key(KeyCode::Tab)];
     coalesce_unbracketed_paste(&a, &mut lone_tab);
@@ -1952,6 +1950,35 @@ fn turkish_i_and_dotless_i_type_and_paste() {
     let mut a = app();
     handle_event(&mut a, Event::Paste("iyi ışık".into()));
     assert_eq!(a.input_buffer, "iyi ışık");
+
+    // PowerShell paste one key per poll: each ASCII `i` is a later Tab /
+    // Ctrl+I, so coalesce never sees the flood.
+    let mut a = app();
+    handle_event(&mut a, key(KeyCode::Char('m')));
+    handle_event(&mut a, key(KeyCode::Tab));
+    handle_event(&mut a, key(KeyCode::Char('d')));
+    handle_event(&mut a, key(KeyCode::Tab));
+    assert_eq!(a.focus, FocusPane::Prompt);
+    assert_eq!(a.input_buffer, "midi");
+
+    let mut a = app();
+    handle_event(&mut a, key(KeyCode::Char('m')));
+    handle_event(
+        &mut a,
+        Event::Key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL)),
+    );
+    handle_event(&mut a, key(KeyCode::Char('d')));
+    assert_eq!(a.input_buffer, "mid");
+
+    let mut a = app();
+    a.add_message(ChatRole::User, "one");
+    handle_event(&mut a, key(KeyCode::Tab));
+    assert_eq!(
+        a.focus,
+        FocusPane::Scrollback,
+        "idle Tab must still toggle focus"
+    );
+    assert!(a.input_buffer.is_empty());
 
     // Unbracketed short paste: each char is a Key. Scrollback used to
     // bind `i` to FocusPrompt and swallow every ASCII i.

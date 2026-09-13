@@ -1308,6 +1308,10 @@ pub struct TuiApp {
     pub(crate) input_cursor: usize,
     /// First Esc of a double-Esc clear/cancel gesture.
     pub(crate) esc_armed_at: Option<std::time::Instant>,
+    /// Last prompt insert (typed char or paste). Windows PowerShell paste
+    /// of ASCII `i` arrives as Tab / Ctrl+I one key at a time; a Tab that
+    /// follows a recent insert is recovered as `i` instead of ToggleFocus.
+    pub(crate) last_prompt_insert_at: Option<std::time::Instant>,
     /// Images staged on the prompt (drag-drop / path paste). Sent with the next turn.
     pub(crate) pending_images: Vec<crate::images::PromptImage>,
     /// Images consumed with `pending_prompt` by the run loop (taken on submit).
@@ -2096,6 +2100,7 @@ impl TuiApp {
             input_history_idx: 0,
             input_cursor: 0,
             esc_armed_at: None,
+            last_prompt_insert_at: None,
             pending_images: vec![],
             pending_submit_images: vec![],
             pending_pastes: vec![],
