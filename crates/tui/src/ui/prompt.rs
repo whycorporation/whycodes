@@ -5,7 +5,7 @@
 // Layout:
 //   (blank gap above the box)
 //   ╭─────────────────────────╮   top border
-//   │ ❯ text…                 │   1..MAX_INPUT_ROWS
+//   │ ❯ text                  │   1..MAX_INPUT_ROWS
 //   ╰──── agent · model · Med · auto ─╯   bottom border / info
 //   hint (home only)
 //
@@ -25,9 +25,10 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use whycodes_core::types::ApprovalMode;
 
-/// Placeholder when the prompt is empty and unfocused (Grok: focused empty
-/// keeps a bare caret). Command mode is usually focused, but the arm stays
-/// so a future unfocused command prompt still paints a hint.
+/// Placeholder when the prompt is empty and unfocused.
+///
+/// Grok Build: the box itself stays empty (native `|` caret). Hints live
+/// under the box on home, not inside the input.
 fn empty_prompt_hint(
     buf_empty: bool,
     prompt_focused: bool,
@@ -39,8 +40,8 @@ fn empty_prompt_hint(
         return None;
     }
     match mode {
-        AppMode::Command => Some("command…"),
-        _ if messages_empty => Some("Ask anything…  (drop images)"),
+        AppMode::Command => Some("command"),
+        _ if messages_empty => None,
         _ => Some("Tab/Space → prompt · j/k select"),
     }
 }
@@ -259,12 +260,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
         paint_attach_row(frame, attach_area, area, app, palette, border_style);
     }
 
-    // ── Text rows: │  ❯ body…  │ ────────────────────────────────────
-    // Prefix is always 2 columns. Placeholder only when empty + unfocused
-    // (Grok); focused empty keeps a bare caret after ❯.
+    // ── Text rows: │  ❯ body  │ ────────────────────────────────────
+    // Prefix is always 2 columns. Grok Build: empty focused prompt is a
+    // bare caret after ❯ — no in-box ellipsis, even while the agent is busy.
     let prefix: &str = match app.mode {
         AppMode::Command => ": ",
-        _ if busy && app.input_buffer.is_empty() && prompt_focused => "… ",
         _ => "❯ ",
     };
     let empty_hint = empty_prompt_hint(
