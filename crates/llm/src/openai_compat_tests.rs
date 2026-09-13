@@ -252,6 +252,38 @@ fn tool_role_keeps_tool_call_id() {
 }
 
 #[test]
+fn empty_tool_call_id_is_omitted_not_sent_as_empty_string() {
+    let req = req_with(vec![Message {
+        role: Role::Tool,
+        content: MessageContent::Text("ok".into()),
+        tool_call_id: Some(String::new()),
+        name: None,
+        created_at: None,
+    }]);
+    let msgs = convert_messages(&req);
+    assert_eq!(msgs.len(), 1, "empty tool_call_id must not go to xAI");
+    assert_eq!(msgs[0]["role"], "system");
+}
+
+#[test]
+fn empty_tool_use_id_is_filled() {
+    let req = req_with(vec![Message {
+        role: Role::Assistant,
+        content: MessageContent::Blocks(vec![ContentBlock::ToolUse {
+            id: String::new(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "a.rs"}),
+        }]),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }]);
+    let msgs = convert_messages(&req);
+    let id = msgs[1]["tool_calls"][0]["id"].as_str().unwrap();
+    assert!(!id.is_empty(), "{id:?}");
+}
+
+#[test]
 fn parse_tool_arguments_from_json_string() {
     let raw = Value::String(r#"{"query":"nuxt latest"}"#.into());
     let parsed = parse_tool_arguments(&raw);

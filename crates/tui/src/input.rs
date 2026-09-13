@@ -98,7 +98,7 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
     let classified = crate::images::classify_paste(data);
     attach_image_paths(app, classified.images);
 
-    let text = classified.text;
+    let text = strip_leaked_mouse_csi(&classified.text);
     if text.is_empty() {
         return;
     }
@@ -285,6 +285,133 @@ fn recover_windows_paste_i(app: &mut TuiApp, key: &KeyEvent) -> bool {
     app.esc_armed_at = None;
     app.mark_dirty();
     true
+}
+
+/// Windows ConPTY can fail to parse SGR mouse (`ESC[<btn;x;yM`) after a
+/// turn error. The leftover bytes (`<65;NaN;NaNM[`) arrive as `Key::Char`
+/// and would fill the prompt. Hold a tentative report and drop it when
+/// complete; flush into the prompt if the user was typing `<` / `[`.
+const MOUSE_CSI_FLUSH: std::time::Duration = std::time::Duration::from_millis(200);
+
+enum MouseCsi {
+    Complete(usize),
+    Prefix,
+    Invalid,
+}
+
+fn parse_mouse_csi(s: &str) -> MouseCsi {
+    let b = s.as_bytes();
+    if b.is_empty() {
+        return MouseCsi::Invalid;
+    }
+    let mut i = 0;
+    if b[0] == b'[' {
+        i = 1;
+        if i == b.len() {
+            return MouseCsi::Prefix;
+        }
+    }
+    if b[i] != b'<' {
+        return MouseCsi::Invalid;
+    }
+    i += 1;
+    if i == b.len() {
+        return MouseCsi::Prefix;
+    }
+    let body = i;
+    while i < b.len() {
+        match b[i] {
+            b'0'..=b'9' | b';' => i += 1,
+            b'N' => {
+                let rest = &b[i..];
+                if rest.starts_with(b"NaN") {
+                    i += 3;
+                } else if rest == b"N" || rest == b"Na" {
+                    return MouseCsi::Prefix;
+                } else {
+                    return MouseCsi::Invalid;
+                }
+            }
+            b'M' | b'm' if i > body => return MouseCsi::Complete(i + 1),
+            _ => return MouseCsi::Invalid,
+        }
+    }
+    MouseCsi::Prefix
+}
+
+fn strip_leaked_mouse_csi(s: &str) -> String {
+    let mut rest = s;
+    let mut stripped = false;
+    loop {
+        match parse_mouse_csi(rest) {
+            MouseCsi::Complete(n) => {
+                rest = &rest[n..];
+                stripped = true;
+            }
+            MouseCsi::Prefix if stripped && rest.starts_with('[') => {
+                rest = &rest[1..];
+            }
+            MouseCsi::Invalid if stripped && rest.starts_with('[') => {
+                rest = &rest[1..];
+                stripped = true;
+            }
+            MouseCsi::Prefix if stripped => {
+                rest = "";
+            }
+            _ => break,
+        }
+    }
+    rest.to_string()
+}
+
+fn flush_leaked_mouse_csi(app: &mut TuiApp) {
+    let pending = std::mem::take(&mut app.leaked_mouse_csi);
+    if pending.is_empty() {
+        return;
+    }
+    app.focus_prompt();
+    let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+    app.input_buffer.insert_str(pos, &pending);
+    app.input_cursor = pos + pending.len();
+    app.last_prompt_insert_at = Some(Instant::now());
+    app.slash_suggest.refresh(&app.input_buffer);
+    app.file_suggest
+        .refresh(&app.input_buffer, app.input_cursor);
+    app.esc_armed_at = None;
+    app.mark_dirty();
+}
+
+fn ingest_leaked_mouse_csi(app: &mut TuiApp, c: char) -> bool {
+    if app.leaked_mouse_csi.is_empty() {
+        let restart = c == '<'
+            || (c == '['
+                && app
+                    .last_mouse_csi_at
+                    .is_some_and(|t| t.elapsed() <= MOUSE_CSI_FLUSH));
+        if restart {
+            app.leaked_mouse_csi.push(c);
+            return true;
+        }
+        return false;
+    }
+    app.leaked_mouse_csi.push(c);
+    match parse_mouse_csi(&app.leaked_mouse_csi) {
+        MouseCsi::Complete(_) => {
+            app.leaked_mouse_csi.clear();
+            app.last_mouse_csi_at = Some(Instant::now());
+            true
+        }
+        MouseCsi::Prefix if app.leaked_mouse_csi.len() > 48 => {
+            flush_leaked_mouse_csi(app);
+            true
+        }
+        MouseCsi::Prefix => true,
+        MouseCsi::Invalid => {
+            app.leaked_mouse_csi.pop();
+            flush_leaked_mouse_csi(app);
+            false
+        }
+    }
 }
 
 fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
@@ -654,6 +781,9 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
                                 | crossterm::event::KeyModifiers::ALT,
                         ) {
                             recover_windows_paste_i(app, key);
+                            return true;
+                        }
+                        if ingest_leaked_mouse_csi(app, c) {
                             return true;
                         }
                         app.focus_prompt();

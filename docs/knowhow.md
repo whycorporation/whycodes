@@ -639,6 +639,16 @@ nproc pool. Never `current_thread` for TUI.
 
 ---
 
+### 2026-09-14 — Empty `tool_call_id` + leaked SGR mouse after xAI 400
+
+**Symptom:** After `XError` HTTP 400 `Invalid value for 'messages.N.tool_call_id': expected a non-empty string`, scrolling the TUI on Windows types `<65;NaN;NaNM[` into the prompt in a loop.
+
+**Root cause:** (1) A tool-role message with `tool_call_id: ""` was sent to xAI. (2) After that failed turn, ConPTY leaked SGR mouse reports (`ESC[<btn;x;yM`) as `Key::Char` instead of `Event::Mouse`. Unmapped chars auto-insert.
+
+**Fix:** Fill empty tool ids on assemble / session persist; omit empty `tool_call_id` on the OpenAI-compat wire. Hold and drop leaked `<…NaN…M` / `[<…M` key bursts so they never enter the prompt.
+
+**Prevention:** Never send `tool_call_id: ""`. Treat `<digits;…M` key floods as mouse CSI, not text.
+
 ### 2026-09-13 — Windows PowerShell paste still drops ASCII `i`
 
 **Symptom:** Pasting text that contains ASCII `i` into the TUI on Windows

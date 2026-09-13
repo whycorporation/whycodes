@@ -813,10 +813,15 @@ impl Session {
             } else {
                 MessageContent::Text(cap_tool_text(result.content))
             };
+            let tool_call_id = if result.tool_call_id.is_empty() {
+                format!("call_{}", self.messages.len())
+            } else {
+                result.tool_call_id
+            };
             let msg = Message {
                 role: Role::Tool,
                 content,
-                tool_call_id: Some(result.tool_call_id),
+                tool_call_id: Some(tool_call_id),
                 name: None,
                 created_at: None,
             }
@@ -1868,6 +1873,23 @@ mod tests {
         assert_eq!(session.messages[1].content.as_text(), Some("result 1"));
         assert_eq!(session.messages[2].role, Role::Tool);
         assert_eq!(session.messages[2].tool_call_id.as_deref(), Some("call-2"));
+    }
+
+    #[test]
+    fn add_tool_results_fills_empty_tool_call_id() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("use tools");
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
+            tool_call_id: String::new(),
+            content: "ok".into(),
+            is_error: false,
+        }]);
+        let id = session.messages[1]
+            .tool_call_id
+            .as_deref()
+            .unwrap_or_default();
+        assert!(!id.is_empty(), "{id:?}");
+        assert!(id.starts_with("call_"), "{id}");
     }
 
     #[test]

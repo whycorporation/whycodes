@@ -104,6 +104,9 @@ impl ToolCallAssembler {
             } else if tc.arguments.is_null() {
                 tc.arguments = Value::Object(Default::default());
             }
+            if tc.id.is_empty() {
+                tc.id = format!("call_{i}");
+            }
             // else keep pre-parsed object
         }
         calls

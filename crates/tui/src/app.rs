@@ -1312,6 +1312,11 @@ pub struct TuiApp {
     /// of ASCII `i` arrives as Tab / Ctrl+I one key at a time; a Tab that
     /// follows a recent insert is recovered as `i` instead of ToggleFocus.
     pub(crate) last_prompt_insert_at: Option<std::time::Instant>,
+    /// Partial CSI mouse report leaked as key chars (`<65;NaN;NaNM`).
+    /// Windows ConPTY sometimes fails to parse SGR mouse after a turn error
+    /// and types the sequence into the prompt instead of `Event::Mouse`.
+    pub(crate) leaked_mouse_csi: String,
+    pub(crate) last_mouse_csi_at: Option<std::time::Instant>,
     /// Images staged on the prompt (drag-drop / path paste). Sent with the next turn.
     pub(crate) pending_images: Vec<crate::images::PromptImage>,
     /// Images consumed with `pending_prompt` by the run loop (taken on submit).
@@ -2101,6 +2106,8 @@ impl TuiApp {
             input_cursor: 0,
             esc_armed_at: None,
             last_prompt_insert_at: None,
+            leaked_mouse_csi: String::new(),
+            last_mouse_csi_at: None,
             pending_images: vec![],
             pending_submit_images: vec![],
             pending_pastes: vec![],

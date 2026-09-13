@@ -52,6 +52,31 @@ fn handle_event_ignores_key_release_and_keeps_running_on_resize() {
 }
 
 #[test]
+fn leaked_sgr_mouse_csi_does_not_fill_the_prompt() {
+    let mut a = app();
+    for c in "<65;NaN;NaNM[<65;NaN;NaNM[".chars() {
+        handle_event(&mut a, key(KeyCode::Char(c)));
+    }
+    assert!(
+        a.input_buffer.is_empty(),
+        "leaked SGR mouse must not type into the prompt, got {:?}",
+        a.input_buffer
+    );
+
+    let mut a = app();
+    handle_event(
+        &mut a,
+        Event::Paste("<65;NaN;NaNM[<65;NaN;NaNM[hello".into()),
+    );
+    assert_eq!(a.input_buffer, "hello");
+
+    let mut a = app();
+    handle_event(&mut a, key(KeyCode::Char('<')));
+    handle_event(&mut a, key(KeyCode::Char('h')));
+    assert_eq!(a.input_buffer, "<h");
+}
+
+#[test]
 fn ctrl_v_attaches_stubbed_clipboard_image() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("shot.png");
