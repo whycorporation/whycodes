@@ -74,6 +74,17 @@ fn leaked_sgr_mouse_csi_does_not_fill_the_prompt() {
     handle_event(&mut a, key(KeyCode::Char('<')));
     handle_event(&mut a, key(KeyCode::Char('h')));
     assert_eq!(a.input_buffer, "<h");
+
+    let mut a = app();
+    handle_event(&mut a, key(KeyCode::Char('<')));
+    for _ in 0..50 {
+        handle_event(&mut a, key(KeyCode::Char('0')));
+    }
+    assert!(
+        a.input_buffer.starts_with("<000"),
+        "a stuck CSI prefix longer than 48 must flush, got {:?}",
+        a.input_buffer
+    );
 }
 
 #[test]

@@ -16,6 +16,7 @@ pub mod images;
 pub mod input;
 pub mod keymap;
 pub mod md_stream;
+pub(crate) mod mouse_csi;
 pub mod paste;
 pub mod redraw_schedule;
 pub mod remote;
