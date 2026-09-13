@@ -37,11 +37,12 @@ installed (`pkg-config sqlite3`).
   env. The Test job still runs them.
 - Crate floors at 100% also ignore `tests.rs` so host-only branches cannot
   sink the gate (`CRATE_IGNORE` in the wrapper).
-- JSON crate floors pass `LLVM_COV_FLAGS=--skip-expansions` only on
-  `cargo llvm-cov report --json` (export). rustup llvm-cov 21 rejects
-  that flag on text `show`; the workspace summary stays expansion-aware.
-  Without the flag, serde/`format!` lines inflate 100% floors (config
-  59%, protocol 78% on 0.6.1).
+- JSON crate floors inject `-skip-expansions` via
+  `scripts/llvm_cov_skip_expansions.sh` on `cargo llvm-cov report --json`
+  (`export` only). `LLVM_COV_FLAGS` is stripped from the child llvm-cov
+  process; rustup llvm-cov 21 also rejects the flag on text `show`.
+  Without the wrapper, serde/`format!` lines inflate 100% floors
+  (config 59%, protocol 78% on 0.6.1).
 
 Needs `cargo-llvm-cov` and `llvm-tools` (`llvm-cov`, `llvm-profdata`):
 

@@ -2478,19 +2478,19 @@ Linux CI wall-clock is lint then max(test, coverage). Build still reports on PRs
 
 **Prevention:** Tests that share `LlmTransport::complete` must not reuse prompt+model across success and error cases.
 
-## Coverage JSON floors ignore skip-expansions unless forced via `env`
+## Coverage JSON floors ignore LLVM_COV_FLAGS (child env is stripped)
 
-**Date:** 2026-09-13 · **Area:** `scripts/coverage.sh`, `scripts/check_coverage_floors.py`
+**Date:** 2026-09-13 · **Area:** `scripts/coverage.sh`, `scripts/llvm_cov_skip_expansions.sh`
 
 **Symptom:** PR 103 Coverage stayed `whycodes-config` 2122/3567 (59.5%) and `whycodes-protocol` 604/776 (77.8%) after every aggregator tweak. Text `show` on the same run already had expansion-inflated `load.rs` / `ci.rs`. `main` was 2030/2030 and 552/552.
 
 **JSONL / crash:** none.
 
-**Root cause:** 100% floors are defined against llvm-cov `--skip-expansions`. A shell `export LLVM_COV_FLAGS=--skip-expansions` immediately before `cargo llvm-cov report --json` did not reach `llvm-cov export` on the runner. JSON then counted serde/`format!` expansions. In-file `#[cfg(test)]` in `ci.rs` also sat on the production floor (`tests.rs$` ignore).
+**Root cause:** 100% floors are defined against llvm-cov `-skip-expansions`. cargo-llvm-cov reads `LLVM_COV_FLAGS` in the parent, then `ProcessBuilder::new` strips that env from the child llvm-cov. rustup llvm-cov 21 also rejects the flag on `show`. JSON then counted serde/`format!` expansions. In-file `#[cfg(test)]` in `ci.rs` also sat on the production floor (`tests.rs$` ignore).
 
-**Fix:** `env LLVM_COV_FLAGS=--skip-expansions cargo llvm-cov report --json …`. Floor script keys files by `crates/<dir>/<rel>` and dumps per-file misses on FAIL. Protocol CI tests live in `crates/protocol/src/tests.rs`.
+**Fix:** Point `LLVM_COV` at `scripts/llvm_cov_skip_expansions.sh` for the JSON export only; it injects `-skip-expansions` on `export` and passes `show` through. Protocol CI tests live in `crates/protocol/src/tests.rs`.
 
-**Prevention:** Do not set `LLVM_COV_FLAGS` for the workspace text report (`show` rejects the flag). Force the env on the JSON export process. Keep crate-floor tests in a `tests.rs` sibling.
+**Prevention:** Do not rely on `LLVM_COV_FLAGS` reaching llvm-cov. Do not set the flag for the workspace text report. Keep crate-floor tests in a `tests.rs` sibling.
 
 ## Coverage: TUI isolated-home dialog test sees an empty catalog
 
