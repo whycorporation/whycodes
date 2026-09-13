@@ -61,12 +61,14 @@ fn glyph_matches_agent_state() {
     app.current_agent_state = AgentState::Generating;
     app.spinner_frame = 3;
     let glyph = status_glyph(&app, &palette);
-    assert_eq!(glyph.content.as_ref(), SPINNER_FRAMES[3]);
+    assert_eq!(glyph.content.as_ref(), crate::ui::spinner::glyph(3));
+    assert_eq!(glyph.style.bg, Some(palette.bg));
+    assert_eq!(glyph.style.fg, Some(palette.accent));
 
     app.current_agent_state = AgentState::Thinking;
     app.spinner_frame = 7;
     let glyph = status_glyph(&app, &palette);
-    assert_eq!(glyph.content.as_ref(), SPINNER_FRAMES[7]);
+    assert_eq!(glyph.content.as_ref(), crate::ui::spinner::glyph(7));
 }
 
 #[test]
