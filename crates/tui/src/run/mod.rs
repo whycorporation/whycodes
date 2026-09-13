@@ -860,6 +860,38 @@ impl LoopTerm {
         }
     }
 
+    /// Drop the last painted buffer so the next `draw` diffs against empty
+    /// (every cell is sent) without CSI erase. Windows PowerShell paints
+    /// `ClearType::All` with the profile default background — a white flash.
+    fn reset_prev_for_full_redraw(&mut self) {
+        match self {
+            Self::Live(t) => {
+                t.current_buffer_mut().reset();
+                t.swap_buffers();
+            }
+            Self::Headless(t) => {
+                t.current_buffer_mut().reset();
+                t.swap_buffers();
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn current_buffer_mut_for_test(&mut self) -> &mut ratatui::buffer::Buffer {
+        match self {
+            Self::Live(t) => t.current_buffer_mut(),
+            Self::Headless(t) => t.current_buffer_mut(),
+        }
+    }
+
+    #[cfg(test)]
+    fn swap_buffers_for_test(&mut self) {
+        match self {
+            Self::Live(t) => t.swap_buffers(),
+            Self::Headless(t) => t.swap_buffers(),
+        }
+    }
+
     fn draw_app(
         &mut self,
         app: &mut TuiApp,
@@ -1926,6 +1958,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     app.mark_dirty();
                 }
                 apply_batch_full_clears(&mut app, &batch);
+                if batch
+                    .iter()
+                    .any(crate::redraw_schedule::event_needs_focus_redraw)
+                {
+                    terminal.reset_prev_for_full_redraw();
+                }
 
                 for ev in batch {
                     if apply_permission_overlay_event(&mut app, &mut rt, &ev) {

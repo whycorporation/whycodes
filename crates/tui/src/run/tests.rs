@@ -6270,6 +6270,31 @@ fn apply_batch_full_clears_on_paste_and_unbracketed_flood() {
         app.pending_full_clears, 0,
         "a single key must not force a full terminal clear"
     );
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_batch_full_clears(&mut app, &[Event::FocusGained]);
+    assert_eq!(
+        app.pending_full_clears, 0,
+        "FocusGained must not CSI-clear (Windows flashes the profile default bg)"
+    );
+}
+
+#[test]
+fn focus_gained_resets_prev_buffer_without_csi_clear() {
+    let mut term = LoopTerm::headless(crate::color::ColorMode::TrueColor).expect("headless");
+    term.current_buffer_mut_for_test()
+        .set_string(0, 0, "X", ratatui::style::Style::default());
+    // Make X the previous frame (swap resets the unused buffer).
+    term.swap_buffers_for_test();
+    term.reset_prev_for_full_redraw();
+    // Previous frame is gone; next draw diffs against empty (full themed paint).
+    assert_eq!(
+        term.current_buffer_mut_for_test()
+            .cell((0, 0))
+            .unwrap()
+            .symbol(),
+        " "
+    );
 }
 
 #[test]
