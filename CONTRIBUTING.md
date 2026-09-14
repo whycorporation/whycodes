@@ -48,10 +48,11 @@ Workspace Clippy policy is `[workspace.lints.clippy]` in the root `Cargo.toml`
 default group. License/source policy is `deny.toml`; advisory ignores stay in
 `.cargo/audit.toml`.
 
-Dev builds use system SQLite (`pkg-config sqlite3`). CI and release enable
-`whycodes-storage/bundled` / `whycodes-cli/bundled-sqlite` so the self-hosted
-runners and shipped binaries do not need `libsqlite3-dev`. Locally, omit the
-feature if `sqlite3` is already installed.
+Dev builds on Unix use system SQLite (`pkg-config sqlite3`). Windows always
+bundles SQLite (`rusqlite/bundled` under `cfg(windows)`) because MSVC has no
+`sqlite3.lib` (LNK1181). CI and release still pass `whycodes-storage/bundled`
+/ `whycodes-cli/bundled-sqlite` so Linux runners without `libsqlite3-dev`
+link. On Unix, omit the feature if `sqlite3` is already installed.
 
 If you changed `crates/protocol/src/sdk.rs` or the TypeScript client, also
 run the SDK tests:

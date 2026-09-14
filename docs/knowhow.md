@@ -573,7 +573,10 @@ does the same.
 
 **Prevention:** Machines without system sqlite must pass the feature. Do not
 re-enable `bundled` on the workspace dep — that brings back the 43s C compile
-on every cold check.
+on every cold Unix check. Windows is different: MSVC has no `sqlite3.lib`
+(LNK1181), so `crates/storage` enables `rusqlite/bundled` under
+`cfg(windows)` without a feature flag. Unix still needs `--features
+whycodes-storage/bundled` / `whycodes-cli/bundled-sqlite`.
 
 ---
 
@@ -2623,3 +2626,17 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 **Fix:** Grok `braille_spinner_frames` (`⠋⠙⠹⠸⠼⠴⠦⠧`) with `| / - \` fallback; pin every chat/spinner span onto `palette.bg`; live header is `Thinking…`.
 
 **Prevention:** Consecutive TestBackend paints of a live transcript must keep non-spinner cells identical and never `Color::Reset` on the canvas.
+
+## Windows: `cargo build -p whycodes-cli` LNK1181 `sqlite3.lib`
+
+**Date:** 2026-09-14 · **Area:** `crates/storage/Cargo.toml`
+
+**Symptom:** `link.exe` fatal error LNK1181: `sqlite3.lib` cannot be opened. `whycodes-cli` (bin `whycodes`) fails to compile on a stock MSVC machine.
+
+**JSONL / crash:** none.
+
+**Root cause:** Workspace `rusqlite` is unbundled so Unix dev builds use pkg-config. Windows MSVC does not ship `sqlite3.lib`.
+
+**Fix:** `crates/storage` enables `rusqlite/bundled` under `cfg(windows)` (feature unification). Unix still needs `--features whycodes-storage/bundled` when there is no system sqlite.
+
+**Prevention:** Do not tell Windows users to install system sqlite for a default `cargo build -p whycodes-cli`. The first Windows compile still pays the amalgamation (~43s cold, then cached).
