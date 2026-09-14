@@ -54,7 +54,7 @@ Before a PR, run the workspace-wide formatting, Clippy, and test commands plus:
 python scripts/check_sdk_protocol.py
 ```
 
-The budget scripts are ratchets, not formatters: new panic sites, swallowed errors, or internal crate edges require deliberate budget/allowlist changes. CI also checks benchmark ceilings, installer scripts, a release workspace build, and coverage (82% workspace floor; selected foundational crates have 100% floors). See `.github/workflows/ci.yml` and `docs/coverage.md` when a change affects those areas.
+The budget scripts are ratchets, not formatters: new panic sites, swallowed errors, or internal crate edges require deliberate budget/allowlist changes. CI also checks benchmark ceilings, installer scripts, a release workspace build, and coverage (82% workspace floor; selected foundational crates have 100% floors). See `.github/workflows/ci.yml` and `docs/coverage.md` when a change affects those areas. **Do not push coverage-related changes until `scripts/coverage.sh` is green locally** (`AGENTS.md`).
 
 ### TypeScript SDK
 
