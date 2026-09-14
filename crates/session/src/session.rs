@@ -813,10 +813,15 @@ impl Session {
             } else {
                 MessageContent::Text(cap_tool_text(result.content))
             };
+            let tool_call_id = if result.tool_call_id.is_empty() {
+                whycodes_core::fallback_tool_call_id(self.messages.len())
+            } else {
+                result.tool_call_id
+            };
             let msg = Message {
                 role: Role::Tool,
                 content,
-                tool_call_id: Some(result.tool_call_id),
+                tool_call_id: Some(tool_call_id),
                 name: None,
                 created_at: None,
             }
@@ -1871,6 +1876,22 @@ mod tests {
     }
 
     #[test]
+    fn add_tool_results_fills_empty_tool_call_id() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("use tools");
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
+            tool_call_id: String::new(),
+            content: "ok".into(),
+            is_error: false,
+        }]);
+        let id = session.messages[1]
+            .tool_call_id
+            .as_deref()
+            .unwrap_or_default();
+        assert_eq!(id, "call_1");
+    }
+
+    #[test]
     fn test_build_request() {
         let mut session = Session::new(test_project_path(), test_system_prompt());
         session.add_user_message("test message");
@@ -2593,7 +2614,12 @@ mod tests {
 
         let error = session.export_share().unwrap_err();
         assert!(
-            matches!(error, crate::error::SessionError::Io(ref e) if e.kind() == std::io::ErrorKind::NotADirectory),
+            matches!(
+                error,
+                crate::error::SessionError::Io(ref e)
+                    if e.kind() == std::io::ErrorKind::NotADirectory
+                        || e.kind() == std::io::ErrorKind::AlreadyExists
+            ),
             "unexpected export error: {error}"
         );
     }

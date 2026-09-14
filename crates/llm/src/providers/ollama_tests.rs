@@ -71,6 +71,26 @@ fn ollama_host_env_is_read_when_base_is_none() {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn ollama_host_not_unicode_falls_back_to_default_windows() {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    let _guard = ollama_host_lock();
+    let prev = std::env::var_os("OLLAMA_HOST");
+    unsafe {
+        std::env::set_var("OLLAMA_HOST", OsString::from_wide(&[0xD800]));
+    }
+    assert_eq!(
+        normalize_ollama_chat_url(None),
+        "http://localhost:11434/api/chat"
+    );
+    match prev {
+        Some(v) => unsafe { std::env::set_var("OLLAMA_HOST", v) },
+        None => unsafe { std::env::remove_var("OLLAMA_HOST") },
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn ollama_host_not_unicode_falls_back_to_default() {

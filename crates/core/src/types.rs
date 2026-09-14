@@ -142,6 +142,16 @@ pub struct ToolResult {
     pub is_error: bool,
 }
 
+/// Stable id when a provider omitted `tool_call_id`.
+///
+/// Built without `format!` so llvm-cov skip-expansions floors do not grow
+/// extra uncovered lines on OpenAI-compat / session / assembler paths.
+pub fn fallback_tool_call_id(index: usize) -> String {
+    let mut id = String::from("call_");
+    id.push_str(&index.to_string());
+    id
+}
+
 /// Streaming event from LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

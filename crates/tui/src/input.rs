@@ -98,13 +98,14 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
     let classified = crate::images::classify_paste(data);
     attach_image_paths(app, classified.images);
 
-    let text = classified.text;
+    let text = crate::mouse_csi::strip_leaked_mouse_csi(&classified.text);
     if text.is_empty() {
         return;
     }
     // Large pastes collapse to `[pasted #N ~ L lines]` so the
     // prompt does not reflow/flicker; full body is restored on submit.
     app.insert_paste_text(&text);
+    app.last_prompt_insert_at = Some(Instant::now());
     app.slash_suggest.refresh(&app.input_buffer);
     app.file_suggest
         .refresh(&app.input_buffer, app.input_cursor);
@@ -167,9 +168,10 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
     // Strip every trailing newline so "hello" + Enter + Enter in one batch
     // also stays keys. Hosts may deliver Enter as `\r`.
     let collapse_src = text.trim_end_matches('\n');
-    // Windows paste of `ikitelli` is often 8 keys with `i` as Tab —
-    // too short to chip, but must still fold so Tab does not steal focus.
-    // A lone Tab (printable == 1, recovered_i) is a real Tab: leave it.
+    // Windows paste of a short word that contains ASCII `i` is often a
+    // handful of keys with each `i` as Tab — too short to chip, but must
+    // still fold so Tab does not steal focus. A lone Tab (printable == 1,
+    // recovered_i) is a real Tab: leave it.
     let fold = crate::paste::should_collapse(collapse_src)
         || ((saw_windows_paste_noise || recovered_i) && printable >= 2);
     if !fold {
@@ -190,8 +192,8 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
 /// Decode one key from an unbracketed paste flood.
 ///
 /// Windows ConPTY / PowerShell often maps ASCII `i` to `Tab` (historical
-/// Ctrl+I) or `Insert` (`VK_INSERT` vs `I`). Recover the letter so a paste
-/// of `ikitelli` is not `ktell`.
+/// Ctrl+I) or `Insert` (`VK_INSERT` vs `I`). Recover the letter so those
+/// keys insert `i` instead of toggling focus.
 fn pasted_char_from_key(k: &KeyEvent) -> Option<char> {
     let ctrl = k
         .modifiers
@@ -219,6 +221,126 @@ fn is_windows_paste_noise(k: &KeyEvent) -> bool {
     ) && !k
         .modifiers
         .intersects(crossterm::event::KeyModifiers::ALT | crossterm::event::KeyModifiers::SUPER)
+}
+
+/// Windows ConPTY / PowerShell paste of ASCII `i` as Tab or Ctrl+I.
+///
+/// Bracketed paste is `Event::Paste` and is fine. Unbracketed paste is a
+/// key flood; when the host delivers one key per poll (common on
+/// PowerShell), [`coalesce_unbracketed_paste`] never sees 2+ printables
+/// and each `i` runs `ToggleFocus`. Recover Tab / Ctrl+I that lands
+/// within 80 ms of a prompt insert as the letter `i`. A lone Tab after
+/// idle still toggles focus.
+const WINDOWS_PASTE_I_WINDOW: std::time::Duration = std::time::Duration::from_millis(80);
+
+fn is_windows_paste_i_key(k: &KeyEvent) -> bool {
+    let alt = k.modifiers.contains(crossterm::event::KeyModifiers::ALT);
+    let super_key = k.modifiers.contains(crossterm::event::KeyModifiers::SUPER);
+    let shift = k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
+    if alt || super_key || shift {
+        return false;
+    }
+    match k.code {
+        KeyCode::Tab | KeyCode::Char('\t') => true,
+        KeyCode::Char('i' | 'I')
+            if k.modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn recover_windows_paste_i(app: &mut TuiApp, key: &KeyEvent) -> bool {
+    if !cfg!(windows) && !cfg!(test) {
+        return false;
+    }
+    if app.mode != AppMode::Normal && app.mode != AppMode::Session {
+        return false;
+    }
+    if app.file_suggest.active || app.slash_suggest.active {
+        return false;
+    }
+    if app.pending_suggestion.is_some() && app.input_buffer.trim().is_empty() {
+        return false;
+    }
+    if !is_windows_paste_i_key(key) {
+        return false;
+    }
+    let Some(at) = app.last_prompt_insert_at else {
+        return false;
+    };
+    if at.elapsed() > WINDOWS_PASTE_I_WINDOW {
+        return false;
+    }
+    app.focus_prompt();
+    let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+    app.input_buffer.insert(pos, 'i');
+    app.input_cursor = pos + 1;
+    app.last_prompt_insert_at = Some(Instant::now());
+    app.slash_suggest.refresh(&app.input_buffer);
+    app.file_suggest
+        .refresh(&app.input_buffer, app.input_cursor);
+    app.esc_armed_at = None;
+    app.mark_dirty();
+    true
+}
+
+/// Windows ConPTY can fail to parse SGR mouse (`ESC[<btn;x;yM`) after a
+/// turn error. The leftover bytes (`<65;NaN;NaNM[`) arrive as `Key::Char`
+/// and would fill the prompt. Hold a tentative report and drop it when
+/// complete; flush into the prompt if the user was typing `<` / `[`.
+const MOUSE_CSI_FLUSH: std::time::Duration = std::time::Duration::from_millis(200);
+
+fn flush_leaked_mouse_csi(app: &mut TuiApp) {
+    let pending = std::mem::take(&mut app.leaked_mouse_csi);
+    if pending.is_empty() {
+        return;
+    }
+    app.focus_prompt();
+    let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+    app.input_buffer.insert_str(pos, &pending);
+    app.input_cursor = pos + pending.len();
+    app.last_prompt_insert_at = Some(Instant::now());
+    app.slash_suggest.refresh(&app.input_buffer);
+    app.file_suggest
+        .refresh(&app.input_buffer, app.input_cursor);
+    app.esc_armed_at = None;
+    app.mark_dirty();
+}
+
+fn ingest_leaked_mouse_csi(app: &mut TuiApp, c: char) -> bool {
+    if app.leaked_mouse_csi.is_empty() {
+        let restart = c == '<'
+            || (c == '['
+                && app
+                    .last_mouse_csi_at
+                    .is_some_and(|t| t.elapsed() <= MOUSE_CSI_FLUSH));
+        if restart {
+            app.leaked_mouse_csi.push(c);
+            return true;
+        }
+        return false;
+    }
+    app.leaked_mouse_csi.push(c);
+    match crate::mouse_csi::parse_mouse_csi(&app.leaked_mouse_csi) {
+        crate::mouse_csi::MouseCsi::Complete(_) => {
+            app.leaked_mouse_csi.clear();
+            app.last_mouse_csi_at = Some(Instant::now());
+            true
+        }
+        crate::mouse_csi::MouseCsi::Prefix if app.leaked_mouse_csi.len() > 48 => {
+            flush_leaked_mouse_csi(app);
+            true
+        }
+        crate::mouse_csi::MouseCsi::Prefix => true,
+        crate::mouse_csi::MouseCsi::Invalid => {
+            app.leaked_mouse_csi.pop();
+            flush_leaked_mouse_csi(app);
+            false
+        }
+    }
 }
 
 fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
@@ -344,6 +466,9 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
             true
         }
         Some(Action::ToggleFocus) => {
+            if recover_windows_paste_i(app, key) {
+                return true;
+            }
             app.toggle_focus();
             true
         }
@@ -584,6 +709,10 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
                             crossterm::event::KeyModifiers::CONTROL
                                 | crossterm::event::KeyModifiers::ALT,
                         ) {
+                            recover_windows_paste_i(app, key);
+                            return true;
+                        }
+                        if ingest_leaked_mouse_csi(app, c) {
                             return true;
                         }
                         app.focus_prompt();
@@ -601,6 +730,7 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
                         let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
                         app.input_buffer.insert(pos, c);
                         app.input_cursor = pos + c.len_utf8();
+                        app.last_prompt_insert_at = Some(Instant::now());
                         app.slash_suggest.refresh(&app.input_buffer);
                         app.file_suggest
                             .refresh(&app.input_buffer, app.input_cursor);

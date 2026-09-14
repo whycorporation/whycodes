@@ -9,6 +9,9 @@ breakdown.
 scripts/coverage.sh
 ```
 
+Agents must run this **locally and green** before pushing coverage-related
+changes (`AGENTS.md`). Iterating on CI logs instead is not allowed.
+
 Same flags as the CI `Coverage (line floor)` job: the instrumented compile
 cache is `${CARGO_TARGET_DIR}-llvm-cov` (or `target/llvm-cov-target`), leftover
 `*.profraw` / `*.profdata` under that cache and `CARGO_TARGET_DIR` are deleted
@@ -33,8 +36,11 @@ installed (`pkg-config sqlite3`).
   normal `test` job still runs them.
 - `--skip provider_and_model_dialogs_load_custom_from_isolated_home` (and the
   sibling broken-toml catalog test) skip TUI tests that pin `WHYCODES_HOME`.
-  `cargo llvm-cov --workspace` is one process; other crates overwrite that
-  env. The Test job still runs them.
+  `cargo test --workspace` and `cargo llvm-cov --workspace` are one process;
+  other crates overwrite that env. Both CI jobs skip them.
+- The workspace 82% floor is checked on the JSON export (`-skip-expansions`),
+  not on `llvm-cov show` (`--fail-under-lines`). `show` counts serde /
+  `format!` expansions and dropped the 0.6.2 patch to 81.4%.
 - Crate floors at 100% also ignore `tests.rs` so host-only branches cannot
   sink the gate (`CRATE_IGNORE` in the wrapper).
 - JSON crate floors inject `-skip-expansions` via

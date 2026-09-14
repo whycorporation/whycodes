@@ -19,6 +19,18 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# GITHUB_ENV from a CRLF script can leave CR on path vars; cargo then
+# looks at a different directory than the one we stamp/clean.
+strip_cr() {
+    printf '%s' "$1" | tr -d '\r'
+}
+CARGO_TARGET_DIR="$(strip_cr "${CARGO_TARGET_DIR:-}")"
+CARGO_LLVM_COV_TARGET_DIR="$(strip_cr "${CARGO_LLVM_COV_TARGET_DIR:-}")"
+CARGO_HOME="$(strip_cr "${CARGO_HOME:-}")"
+[ -n "$CARGO_TARGET_DIR" ] && export CARGO_TARGET_DIR
+[ -n "$CARGO_LLVM_COV_TARGET_DIR" ] && export CARGO_LLVM_COV_TARGET_DIR
+[ -n "$CARGO_HOME" ] && export CARGO_HOME
+
 IGNORE="${IGNORE:-/usr/src/|/rustc-}"
 CRATE_IGNORE="${CRATE_IGNORE:-${IGNORE}|tests\\.rs$}"
 FAIL_UNDER="${FAIL_UNDER:-82}"
@@ -117,7 +129,7 @@ cov_cmd="cargo llvm-cov --workspace"
 if [ -n "$COVERAGE_FEATURES" ]; then
     cov_cmd="$cov_cmd --features $COVERAGE_FEATURES"
 fi
-cov_cmd="$cov_cmd --ignore-filename-regex $IGNORE --fail-under-lines $FAIL_UNDER --summary-only -- --skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index --skip launch_inherited_logins_retries_until_healthy --skip launch_isolated_home_and_tempdir_connect --skip launch_timeout_closes_stderr_then_hangs --skip launch_child_exit_is_startup_failed --skip launch_unsupported_version_does_not_retry --skip isolated_cwd_points_at_home_and_restores --skip git_log_status_diff_blame_and_commit_on_repo --skip provider_and_model_dialogs_load_custom_from_isolated_home --skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails"
+cov_cmd="$cov_cmd --ignore-filename-regex $IGNORE --summary-only -- --skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index --skip launch_inherited_logins_retries_until_healthy --skip launch_isolated_home_and_tempdir_connect --skip launch_timeout_closes_stderr_then_hangs --skip launch_child_exit_is_startup_failed --skip launch_unsupported_version_does_not_retry --skip isolated_cwd_points_at_home_and_restores --skip git_log_status_diff_blame_and_commit_on_repo --skip provider_and_model_dialogs_load_custom_from_isolated_home --skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails"
 
 report_cmd="cargo llvm-cov report --json --ignore-filename-regex $CRATE_IGNORE --summary-only"
 floors_cmd="python3 scripts/check_coverage_floors.py $REPORT_JSON"
@@ -130,8 +142,8 @@ if [ "$dry_run" -eq 1 ]; then
     say "+ cargo llvm-cov clean --workspace --profraw-only"
     say "+ purge *.profraw *.profdata from compile cache (keep rlibs)"
     say "+ $cov_cmd"
-    say "+ LLVM_COV=scripts/llvm_cov_skip_expansions.sh LLVM_PROFDATA=<real> $report_cmd > $REPORT_JSON"
-    say "+ $floors_cmd"
+    say "+ LLVM_COV_FLAGS=-skip-expansions $report_cmd > $REPORT_JSON"
+    say "+ FAIL_UNDER=$FAIL_UNDER $floors_cmd"
     exit 0
 fi
 
@@ -155,15 +167,31 @@ fi
 # Drop coverage traces only. Never `llvm-cov clean` / `rm -rf` the compile cache.
 cov_root="$CARGO_LLVM_COV_TARGET_DIR"
 mkdir -p "$cov_root"
-# Do not rewrite CACHEDIR.TAG here: `ci_isolate_cargo_home.sh` already
-# wrote the Cargo signature. A second write (or CRLF) makes
-# `cargo llvm-cov clean` refuse the cache (`invalid signature`).
-# Leftover traces mixed floors to 54% (index 74.7%) and later to 59% on
-# config/protocol (in-file #[cfg(test)] never ran). cargo-llvm-cov merges
-# every *.profraw under CARGO_LLVM_COV_TARGET_DIR *and* CARGO_TARGET_DIR.
+# Isolate script stamps CARGO_TARGET_DIR. The llvm-cov cache is
+# `${CARGO_TARGET_DIR}-llvm-cov` and needs the same Cargo signature or
+# `llvm-cov clean` refuses it (`invalid signature`) and leftover traces
+# mix expansion dumps into the next JSON floors. Write via env so a
+# CRLF-checked-out script cannot put CR in the filename.
+stamp_cachedir() {
+    _dir="$1"
+    [ -n "$_dir" ] || return 0
+    mkdir -p "$_dir"
+    printf '%s\n' \
+        'Signature: 8a477f597d28d172789f06886806bc55' \
+        '# This file is a cache directory tag created by cargo.' \
+        '# For information about cache directory tags see https://bford.info/cachedir/' \
+        >"$_dir/CACHEDIR.TAG"
+    unset _dir
+}
+stamp_cachedir "$cov_root"
+# cargo-llvm-cov clean still looks at \$CARGO_TARGET_DIR/coverage-llvm-cov
+# even when CARGO_LLVM_COV_TARGET_DIR is the sibling *-llvm-cov dir.
+if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    stamp_cachedir "${CARGO_TARGET_DIR%/}/coverage-llvm-cov"
+fi
 cargo llvm-cov clean --workspace --profraw-only >/dev/null 2>&1 || true
 find "$cov_root" \( -name '*.profraw' -o -name '*.profdata' \) -delete
-if [ -n "${CARGO_TARGET_DIR:-}" ] && [ "$CARGO_TARGET_DIR" != "$cov_root" ] && [ -d "$CARGO_TARGET_DIR" ]; then
+if [ -n "${CARGO_TARGET_DIR:-}" ] && [ -d "$CARGO_TARGET_DIR" ]; then
     find "$CARGO_TARGET_DIR" \( -name '*.profraw' -o -name '*.profdata' \) -delete
 fi
 export LLVM_PROFILE_FILE="$cov_root/whycodes-%p-%m.profraw"
@@ -174,7 +202,6 @@ if [ -n "$COVERAGE_FEATURES" ]; then
 fi
 set -- "$@" \
     --ignore-filename-regex "$IGNORE" \
-    --fail-under-lines "$FAIL_UNDER" \
     --summary-only \
     -- \
     --skip tests::watcher_picks_up_changes \
@@ -190,29 +217,13 @@ set -- "$@" \
     --skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails
 run "$@"
 
-# JSON floors need `-skip-expansions` so serde / `format!` / tracing are
-# not extra uncovered lines. rustup llvm-cov 21 accepts that on `export`
-# but not on `show`. cargo-llvm-cov `report --json` uses export; the text
-# summary above uses show. LLVM_COV_FLAGS is stripped from the child
-# llvm-cov process. cargo-llvm-cov also ignores LLVM_COV unless
-# LLVM_PROFDATA is set too — then wrap only this export:
-#   export → inject -skip-expansions
-#   show / merge / anything else → pass through
-_real_llvm_cov="${LLVM_COV:-}"
-if [ -z "$_real_llvm_cov" ]; then
-    _real_llvm_cov="$(command -v llvm-cov)"
-fi
-if [ -z "${LLVM_PROFDATA:-}" ]; then
-    LLVM_PROFDATA="$(command -v llvm-profdata)"
-    export LLVM_PROFDATA
-fi
-WHYCODES_LLVM_COV_REAL="$_real_llvm_cov"
-export WHYCODES_LLVM_COV_REAL
-LLVM_COV="$ROOT/scripts/llvm_cov_skip_expansions.sh"
-export LLVM_COV
+# JSON floors need `-skip-expansions` on `llvm-cov export`. rustup llvm-cov
+# 21 rejects that flag on `show` (workspace text report). cargo-llvm-cov
+# reads LLVM_COV_FLAGS in the *parent* and passes them as argv to llvm-cov
+# (the child env is stripped). Double-dash skip-expansions is rejected.
+# Do not set this for the workspace run above.
+LLVM_COV_FLAGS=-skip-expansions
+export LLVM_COV_FLAGS
 run cargo llvm-cov report --json --ignore-filename-regex "$CRATE_IGNORE" --summary-only >"$REPORT_JSON"
-LLVM_COV="$_real_llvm_cov"
-export LLVM_COV
-unset WHYCODES_LLVM_COV_REAL
-unset _real_llvm_cov
-run python3 scripts/check_coverage_floors.py "$REPORT_JSON"
+unset LLVM_COV_FLAGS
+FAIL_UNDER="$FAIL_UNDER" python3 scripts/check_coverage_floors.py "$REPORT_JSON"

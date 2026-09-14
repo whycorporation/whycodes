@@ -60,6 +60,28 @@ fn pre_parsed_object_kept_without_deltas() {
 }
 
 #[test]
+fn empty_tool_use_id_is_filled_on_finish() {
+    let mut a = ToolCallAssembler::new();
+    a.on_tool_use(String::new(), "read".into(), json!({"path": "a.rs"}));
+    let calls = a.finish();
+    assert_eq!(calls.len(), 1);
+    assert!(!calls[0].id.is_empty());
+    assert_eq!(calls[0].name, "read");
+}
+
+#[test]
+fn finish_keeps_non_empty_id_and_null_args_become_object() {
+    let mut a = ToolCallAssembler::new();
+    a.on_tool_use("keep-me".into(), "read".into(), Value::Null);
+    let snaps = a.pending_snapshots();
+    assert_eq!(snaps[0].2, "");
+    assert!(a.last_updated().is_some());
+    let calls = a.finish();
+    assert_eq!(calls[0].id, "keep-me");
+    assert!(calls[0].arguments.is_object());
+}
+
+#[test]
 fn empty_assembler_and_non_object_input() {
     let a = ToolCallAssembler::new();
     assert!(a.is_empty());

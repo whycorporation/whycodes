@@ -639,24 +639,39 @@ nproc pool. Never `current_thread` for TUI.
 
 ---
 
+### 2026-09-14 — Empty `tool_call_id` + leaked SGR mouse after xAI 400
+
+**Symptom:** After `XError` HTTP 400 `Invalid value for 'messages.N.tool_call_id': expected a non-empty string`, scrolling the TUI on Windows types `<65;NaN;NaNM[` into the prompt in a loop.
+
+**Root cause:** (1) A tool-role message with `tool_call_id: ""` was sent to xAI. (2) After that failed turn, ConPTY leaked SGR mouse reports (`ESC[<btn;x;yM`) as `Key::Char` instead of `Event::Mouse`. Unmapped chars auto-insert.
+
+**Fix:** Fill empty tool ids on assemble / session persist; omit empty `tool_call_id` on the OpenAI-compat wire. Hold and drop leaked `<…NaN…M` / `[<…M` key bursts so they never enter the prompt.
+
+**Prevention:** Never send `tool_call_id: ""`. Treat `<digits;…M` key floods as mouse CSI, not text.
+
 ### 2026-09-13 — Windows PowerShell paste still drops ASCII `i`
 
-**Symptom:** Pasting `ikitelli` into the TUI on Windows PowerShell inserts
-`ktell` (every ASCII `i` missing). Typing the same word is fine. Bracketed
-paste (`Event::Paste("ikitelli")`) is also fine.
+**Symptom:** Pasting text that contains ASCII `i` into the TUI on Windows
+PowerShell drops every `i`. Typing the same letters is fine. Bracketed
+paste (`Event::Paste`) is also fine. The 2026-09-02 `Char('i')` unbind did
+not help because the host never delivers `Char('i')`.
 
 **Root cause:** ConPTY / PowerShell unbracketed paste delivers ASCII `i` as
 `KeyCode::Tab` (historical Ctrl+I) and injects `KeyCode::Insert` (Shift+Insert
-paste chord). `coalesce_unbracketed_paste` aborted on any non-Char key, so
-the flood never folded. Each remaining `Tab` then ran `ToggleFocus` instead
-of inserting `i`. Short words never hit the 2-line / 160-char chip threshold.
+paste chord). When the whole flood lands in one poll, coalescing can fold it.
+PowerShell often delivers **one key per poll**, so `coalesce_unbracketed_paste`
+never sees 2+ printables; each Tab runs `ToggleFocus` and the letter is lost.
 
-**Fix:** Map Tab (and Ctrl+I) to `i` while coalescing a paste flood of 2+
-printables. Treat `Insert` / Null / Shift / Control as paste noise. Leave a
-lone Tab as Tab.
+**Fix:** (1) Map Tab / Ctrl+I to `i` while coalescing a 2+ printable flood.
+Treat Insert / Null / Modifier as paste noise. (2) After draining the ready
+queue, linger 12 ms once on Windows so stragglers join the batch. (3) A Tab
+or Ctrl+I within 80 ms of a prompt insert is recovered as `i` (slash/file
+complete and idle Tab still toggle / complete).
 
 **Prevention:** Do not abort unbracketed-paste coalescing on Windows
-Tab/Insert. Regression: `windows_paste_tab_as_i_in_ikitelli`.
+Tab/Insert, and do not assume a paste is one poll. Regression:
+`windows_paste_tab_as_ascii_i` and sequential Tab-after-char in
+`turkish_i_and_dotless_i_type_and_paste`.
 
 ---
 
@@ -2502,9 +2517,9 @@ Linux CI wall-clock is lint then max(test, coverage). Build still reports on PRs
 
 **Root cause:** The first `Config::load` found `acme-disk`; the second (`fill_model_catalog_from_disk`) saw empty providers. TUI `ENV_LOCK` does not serialize other crates in `cargo llvm-cov --workspace`, which all mutate `WHYCODES_HOME`. Restore-on-panic was also missing.
 
-**Fix:** `IsolatedHome` Drop guard + re-pin before each load. Skip those two tests in `scripts/coverage.sh`; the Test job still runs them.
+**Fix:** `IsolatedHome` Drop guard + re-pin before each load. Skip those two tests in `scripts/coverage.sh` and in the CI Test job (`cargo test --workspace` is the same one-process race).
 
-**Prevention:** Process-wide env tests are unsafe under workspace llvm-cov. Skip them there or use a crate-local lock that every crate honors (none exists).
+**Prevention:** Process-wide env tests are unsafe under workspace llvm-cov and `cargo test --workspace`. Skip them there or use a crate-local lock that every crate honors (none exists).
 
 ## Coverage floors collapse when CARGO_TARGET_DIR is reused
 

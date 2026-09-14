@@ -26,7 +26,7 @@ pub use todo::{
     apply_todowrite_args, has_open, load_todos, save_todos, terminal_count, todos_path,
 };
 pub use tool::{Tool, ToolContext, ToolFuture};
-pub use types::ApprovalMode;
+pub use types::{ApprovalMode, fallback_tool_call_id};
 
 #[cfg(test)]
 mod tests;

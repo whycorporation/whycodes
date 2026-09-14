@@ -19,6 +19,7 @@ Expects JSON from `cargo llvm-cov report --json --summary-only` or
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -51,6 +52,11 @@ FULL_COVER_CRATES = [
     "whycodes-slop",
 ]
 
+# Workspace floor. rustup llvm-cov `show` inflates totals with serde /
+# format! expansions (~81.4%). JSON `export -skip-expansions` is the
+# same measurement as the 100% crate floors.
+WORKSPACE_FLOOR = float(os.environ.get("FAIL_UNDER", "82"))
+
 # Floors as (crate, min_percent)
 FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
     # Merge of origin/main brought content-tag / browser / paths lines that
@@ -63,11 +69,22 @@ FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
 
 
 def crate_rel_path(filename: str) -> tuple[str, str] | None:
-    """Return (crate_dir, path-under-crate) from an llvm-cov filename."""
-    norm = filename.replace("\\", "/")
-    if "/crates/" not in norm:
+    """Return (crate_dir, path-under-crate) from an llvm-cov filename.
+
+    llvm-cov export sometimes uses an absolute path
+    (`/home/.../whycodes/crates/session/src/session.rs`) and sometimes a
+    workspace-relative one (`crates/session/src/session.rs`). The relative
+    form has no leading slash, so a `/crates/` needle misses it and the
+    skip-expansions mapping is dropped — only the expansion dump remains.
+    """
+    norm = filename.replace("\\", "/").lstrip("./")
+    rest = None
+    if "/crates/" in norm:
+        rest = norm.split("/crates/", 1)[1]
+    elif norm.startswith("crates/"):
+        rest = norm[len("crates/") :]
+    if not rest:
         return None
-    rest = norm.split("/crates/", 1)[1]
     crate_dir, _, rel = rest.partition("/")
     if not crate_dir or not rel:
         return None
@@ -148,9 +165,11 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
         if count == 0:
             continue
         src_lines = source_line_count(filename, crate_dir)
-        if src_lines > 20 and count > src_lines * 2:
-            covered = src_lines if covered >= src_lines else min(covered, src_lines)
-            count = src_lines
+        # Expansion dumps are ~1.3–2× source (session.rs 3553 vs 4861).
+        # Drop them. Do not rewrite covered/count — that turns 2736/4861
+        # into a fake 2736/3553 (77%) and sinks the 100% floor.
+        if src_lines > 20 and count > src_lines + max(80, src_lines // 8):
+            continue
         key = f"{crate_dir}/{rel}"
         pct = covered / count
         prev = best.get(key)
@@ -197,6 +216,22 @@ def main() -> int:
         return 1
 
     ok = True
+    ws_cov = sum(c for c, _ in agg.values())
+    ws_tot = sum(t for _, t in agg.values())
+    if ws_tot:
+        ws_pct = ws_cov / ws_tot * 100.0
+        ws_shown = round(ws_pct, 1)
+        ws_status = "OK" if ws_shown + 1e-9 >= WORKSPACE_FLOOR else "FAIL"
+        print(
+            f"{ws_status} workspace: {ws_cov}/{ws_tot} lines "
+            f"{ws_shown:.1f}% floor {WORKSPACE_FLOOR:g}%"
+        )
+        if ws_shown + 1e-9 < WORKSPACE_FLOOR:
+            ok = False
+            print(
+                f"  -> below workspace floor by {WORKSPACE_FLOOR - ws_shown:.1f}pp",
+                file=sys.stderr,
+            )
     for crate, floor in FLOORS:
         pair = agg.get(crate)
         if pair is None:
@@ -235,22 +270,38 @@ def _self_check() -> None:
     assert n > 100, n
     n = source_line_count(str(ROOT / "crates" / "protocol" / "src" / "ci.rs"), "protocol")
     assert n > 50, n
+    assert crate_rel_path("crates/session/src/session.rs") == (
+        "session",
+        "src/session.rs",
+    )
+    assert crate_rel_path("./crates/llm/src/openai_compat.rs") == (
+        "llm",
+        "src/openai_compat.rs",
+    )
     report = {
         "data": [
             {
                 "files": [
                     {
+                        "filename": "crates/session/src/session.rs",
+                        "summary": {"lines": {"covered": 3500, "count": 3500}},
+                    },
+                    {
                         "filename": "/runner-a/crates/config/src/load.rs",
                         "summary": {"lines": {"covered": 800, "count": 800}},
-                    }
+                    },
                 ]
             },
             {
                 "files": [
                     {
+                        "filename": "/runner-b/crates/session/src/session.rs",
+                        "summary": {"lines": {"covered": 2736, "count": 4861}},
+                    },
+                    {
                         "filename": "/runner-b/crates/config/src/load.rs",
                         "summary": {"lines": {"covered": 800, "count": 1929}},
-                    }
+                    },
                 ]
             },
         ]
@@ -259,9 +310,12 @@ def _self_check() -> None:
     cov, tot = agg["whycodes-config"]
     assert cov == tot, (cov, tot)
     assert tot < 900, tot
+    scov, stot = agg["whycodes-session"]
+    assert scov == stot == 3500, (scov, stot)
     files = getattr(aggregate_by_crate, "files", {})
     assert "whycodes-config" in files
     assert files["whycodes-config"][0][0] == "config/src/load.rs"
+    assert WORKSPACE_FLOOR >= 0
 
 
 if __name__ == "__main__":

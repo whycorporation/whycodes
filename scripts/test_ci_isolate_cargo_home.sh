@@ -62,7 +62,7 @@ target1="$(printf '%s\n' "$out1" | sed -n 's/^CARGO_TARGET_DIR=//p')"
     printf 'error: CARGO_TARGET_DIR missing CACHEDIR.TAG\n' >&2
     exit 1
 }
-grep -q 'Signature: 8a477f597d28d172789c096e48218643' "$target1/CACHEDIR.TAG" || {
+grep -q 'Signature: 8a477f597d28d172789f06886806bc55' "$target1/CACHEDIR.TAG" || {
     printf 'error: CACHEDIR.TAG signature missing\n' >&2
     exit 1
 }

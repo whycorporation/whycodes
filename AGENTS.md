@@ -65,6 +65,31 @@ The user should **not** have to say “commit and push” every time. This is th
 
 Exceptions (skip commit/push unless asked): pure Q&A with no file edits; the user forbids commit for that turn; only secret or out-of-repo paths were touched.
 
+## Measure coverage locally before pushing (required)
+
+Do **not** push a PR (or a coverage-related commit) until the same floors CI
+checks have passed **on this machine**. Guessing from CI logs and iterating
+on `origin` is not allowed.
+
+Run this when any of the following changed: `scripts/coverage.sh`,
+`scripts/check_coverage_floors.py`, `scripts/llvm_cov_skip_expansions.sh`,
+`.github/workflows/ci.yml` Coverage job, a crate in
+`scripts/check_coverage_floors.py` `FULL_COVER_CRATES`, or production lines
+that those 100% floors count.
+
+```bash
+# Same wrapper as CI `Coverage (line floor)`. Needs cargo-llvm-cov +
+# llvm-tools-preview. Windows: use Git Bash; rustup llvm-cov is under
+# lib/rustlib/<host>/bin (the wrapper prepends it).
+scripts/coverage.sh
+# or, if system sqlite is missing:
+COVERAGE_FEATURES=whycodes-storage/bundled scripts/coverage.sh
+```
+
+Pass means the script exits 0 and prints `OK` for the workspace 82% floor
+and every crate floor. A red CI Coverage job is not a substitute for this
+run. How to measure, flags, and floors: [`docs/coverage.md`](docs/coverage.md).
+
 ## Workspace map
 
 26 crates, one-way layering. Full map and allowed edges:

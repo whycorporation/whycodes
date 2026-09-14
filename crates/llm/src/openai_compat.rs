@@ -251,8 +251,11 @@ fn convert_one_message(msg: &Message, args_format: ToolArgumentsFormat) -> Optio
         }
     };
 
-    if let Some(tool_call_id) = &msg.tool_call_id {
-        obj["tool_call_id"] = Value::String(tool_call_id.clone());
+    if let Some(tool_call_id) = msg.tool_call_id.as_deref().filter(|s| !s.is_empty()) {
+        obj["tool_call_id"] = Value::String(tool_call_id.to_string());
+    } else if msg.role == Role::Tool {
+        // Strict OpenAI-compat hosts (xAI) reject `tool_call_id: ""`.
+        return None;
     }
     if let Some(name) = &msg.name {
         obj["name"] = Value::String(name.clone());
@@ -286,8 +289,13 @@ fn convert_blocks_message(
                 image_parts.push(image_part(source));
             }
             ContentBlock::ToolUse { id, name, input } => {
+                let id = if id.is_empty() {
+                    whycodes_core::fallback_tool_call_id(tool_calls.len())
+                } else {
+                    id.clone()
+                };
                 tool_calls.push(obj([
-                    ("id", jstr(id)),
+                    ("id", jstr(&id)),
                     ("type", jstr("function")),
                     (
                         "function",
