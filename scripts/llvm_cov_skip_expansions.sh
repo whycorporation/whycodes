@@ -1,13 +1,17 @@
-#!/usr/bin/env sh
+#!/bin/sh
 # Inject `-skip-expansions` into `llvm-cov export` only.
 #
-# cargo-llvm-cov reads LLVM_COV_FLAGS in the parent, then ProcessBuilder
-# strips that env from the child. rustup llvm-cov 21 also rejects the flag
-# on `show` (text report). Point LLVM_COV at this wrapper for the JSON
-# floor export so serde/`format!` lines do not inflate 100% crates.
+# cargo-llvm-cov ProcessBuilder strips LLVM_COV_FLAGS (and often other
+# WHYCODES_* env) from the child. Bake the real binary into this file
+# at generation time (`coverage.sh` writes a copy with @@REAL@@ replaced).
+# rustup llvm-cov 21 rejects the flag on `show`; only `export` gets it.
 set -eu
 
-real="${WHYCODES_LLVM_COV_REAL:?WHYCODES_LLVM_COV_REAL must be the real llvm-cov}"
+real="${WHYCODES_LLVM_COV_REAL:-@@REAL@@}"
+if [ "$real" = "@@REAL@@" ] || [ -z "$real" ]; then
+    printf 'error: llvm-cov wrapper has no real binary path\n' >&2
+    exit 1
+fi
 
 is_export=0
 have_skip=0

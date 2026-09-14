@@ -130,7 +130,7 @@ if [ "$dry_run" -eq 1 ]; then
     say "+ cargo llvm-cov clean --workspace --profraw-only"
     say "+ purge *.profraw *.profdata from compile cache (keep rlibs)"
     say "+ $cov_cmd"
-    say "+ LLVM_COV=scripts/llvm_cov_skip_expansions.sh LLVM_PROFDATA=<real> $report_cmd > $REPORT_JSON"
+    say "+ LLVM_COV=\$CARGO_LLVM_COV_TARGET_DIR/llvm-cov-wrap/llvm-cov $report_cmd > $REPORT_JSON"
     say "+ FAIL_UNDER=$FAIL_UNDER $floors_cmd"
     exit 0
 fi
@@ -158,8 +158,14 @@ mkdir -p "$cov_root"
 # Isolate script stamps CARGO_TARGET_DIR. The llvm-cov cache is
 # `${CARGO_TARGET_DIR}-llvm-cov` and needs the same Cargo signature or
 # `llvm-cov clean` refuses it (`invalid signature`) and leftover traces
-# mix expansion dumps into the next JSON floors.
-printf 'Signature: 8a477f597d28d172789c096e48218643\n' >"$cov_root/CACHEDIR.TAG"
+# mix expansion dumps into the next JSON floors. Write via env so a
+# CRLF-checked-out script cannot put CR in the filename.
+CARGO_LLVM_COV_TARGET_DIR="$cov_root" python3 -c "
+from pathlib import Path
+import os
+p = Path(os.environ['CARGO_LLVM_COV_TARGET_DIR']) / 'CACHEDIR.TAG'
+p.write_bytes(b'Signature: 8a477f597d28d172789c096e48218643\n')
+"
 cargo llvm-cov clean --workspace --profraw-only >/dev/null 2>&1 || true
 find "$cov_root" \( -name '*.profraw' -o -name '*.profdata' \) -delete
 if [ -n "${CARGO_TARGET_DIR:-}" ] && [ "$CARGO_TARGET_DIR" != "$cov_root" ] && [ -d "$CARGO_TARGET_DIR" ]; then
@@ -189,8 +195,10 @@ set -- "$@" \
 run "$@"
 
 # JSON floors need `-skip-expansions`. rustup llvm-cov 21 accepts that on
-# `export` but not on `show`. Pair LLVM_COV with LLVM_PROFDATA so
-# cargo-llvm-cov 0.9.1 uses the wrapper (otherwise it uses rustlib).
+# `export` but not on `show`. cargo-llvm-cov 0.9.1 uses LLVM_COV only when
+# LLVM_PROFDATA is also set, and strips child env. Write a wrapper named
+# `llvm-cov` next to the compile cache (not /tmp: some runners mount
+# tmp noexec) with the real binary path baked in.
 _real_llvm_cov="${LLVM_COV:-}"
 if [ -z "$_real_llvm_cov" ]; then
     _real_llvm_cov="$(command -v llvm-cov)"
@@ -199,13 +207,13 @@ if [ -z "${LLVM_PROFDATA:-}" ]; then
     LLVM_PROFDATA="$(command -v llvm-profdata)"
     export LLVM_PROFDATA
 fi
-WHYCODES_LLVM_COV_REAL="$_real_llvm_cov"
-export WHYCODES_LLVM_COV_REAL
-LLVM_COV="$ROOT/scripts/llvm_cov_skip_expansions.sh"
+_wrap_dir="$cov_root/llvm-cov-wrap"
+python3 "$ROOT/scripts/write_llvm_cov_wrapper.py" "$_real_llvm_cov" "$_wrap_dir/llvm-cov"
+LLVM_COV="$_wrap_dir/llvm-cov"
 export LLVM_COV
 run cargo llvm-cov report --json --ignore-filename-regex "$CRATE_IGNORE" --summary-only >"$REPORT_JSON"
 LLVM_COV="$_real_llvm_cov"
 export LLVM_COV
-unset WHYCODES_LLVM_COV_REAL
+unset _wrap_dir
 unset _real_llvm_cov
 FAIL_UNDER="$FAIL_UNDER" python3 scripts/check_coverage_floors.py "$REPORT_JSON"
