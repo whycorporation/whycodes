@@ -17,7 +17,7 @@ use ratatui::{
 };
 use std::sync::Arc;
 use unicode_width::UnicodeWidthStr;
-use whycodes_format::diff::{looks_like_diff, parse_diff_line};
+use whycodes_format::diff::{looks_like_diff, parse_diff_line, preview_file_path};
 use whycodes_format::highlight::{detect_language, highlight_code_spans};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
@@ -315,9 +315,11 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     let row = ChatRowPaint {
         x: area.x,
         width: content_width,
+        fg: palette.fg,
         bg: palette.bg,
         caret_style: Style::default()
             .fg(palette.accent)
+            .bg(palette.bg)
             .add_modifier(Modifier::BOLD),
     };
     let mut y = area.y;
@@ -479,6 +481,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
 pub(crate) struct ChatRowPaint {
     x: u16,
     width: u16,
+    fg: Color,
     bg: Color,
     caret_style: Style,
 }
@@ -572,7 +575,14 @@ fn paint_chat_row(
     if caret {
         let remaining = end.saturating_sub(x);
         if remaining > 0 {
-            buf.set_stringn(x, y, "▌", remaining as usize, row.caret_style);
+            let mut caret = row.caret_style;
+            if caret.bg.is_none() || caret.bg == Some(Color::Reset) {
+                caret = caret.bg(row.bg);
+            }
+            if caret.fg.is_none() || caret.fg == Some(Color::Reset) {
+                caret = caret.fg(row.fg);
+            }
+            buf.set_stringn(x, y, "▌", remaining as usize, caret);
             x = x.saturating_add(1);
         }
     }
@@ -590,7 +600,16 @@ fn paint_chat_row(
                 continue;
             }
             let remaining = end - x;
-            buf.set_stringn(x, y, text, remaining as usize, span.style);
+            // Pin theme canvas: a span with no / Reset fg/bg flashes host-default
+            // white on every paint (Grok never writes Color::Reset on chrome).
+            let mut style = span.style;
+            if style.bg.is_none() || style.bg == Some(Color::Reset) {
+                style = style.bg(row.bg);
+            }
+            if style.fg.is_none() || style.fg == Some(Color::Reset) {
+                style = style.fg(row.fg);
+            }
+            buf.set_stringn(x, y, text, remaining as usize, style);
             let w = text.width().min(remaining as usize) as u16;
             x = x.saturating_add(w);
         }
@@ -855,8 +874,7 @@ fn render_message(
                     } => {
                         flush_group(&mut lines, &mut group);
                         let bullet = if status == "running" {
-                            crate::ui::subagents::SPIN
-                                [app.spinner_frame % crate::ui::subagents::SPIN.len()]
+                            crate::ui::spinner::glyph(app.spinner_frame)
                         } else if status == "completed" {
                             "✓"
                         } else {
@@ -1002,11 +1020,11 @@ fn thinking_lines(
     let show_body = t.show_body();
     let content_w = width.saturating_sub(2);
 
-    // Grok: live is `Thinking...` with the timer on the right (`1.4s`).
+    // Grok: live is `Thinking…` (U+2026) with the timer on the right (`1.4s`).
     // Finished is `Thought for 1.4s` with no chevron on the right.
     let elapsed = t.format_elapsed();
     let header_spans: Vec<Span<'static>> = if t.is_running() {
-        vec![Span::styled("Thinking...".to_string(), label_style)]
+        vec![Span::styled("Thinking…".to_string(), label_style)]
     } else {
         vec![
             Span::styled("Thought".to_string(), label_style),
@@ -1753,18 +1771,15 @@ fn tool_header_verb(name: &str, running: bool) -> String {
         ("read", false) => "Read".into(),
         ("run", true) => "Running".into(),
         ("run", false) => "Run".into(),
-        ("grep", true) => "Searching".into(),
-        ("grep", false) => "Searched".into(),
+        ("grep" | "glob", _) => "Search".into(),
         ("repomap", true) => "Mapping".into(),
         ("repomap", false) => "Mapped".into(),
         ("list" | "list_dir", true) => "Listing".into(),
         ("list" | "list_dir", false) => "Listed".into(),
-        ("edit" | "write" | "apply_patch", true) => "Editing".into(),
-        ("edit" | "write" | "apply_patch", false) => "Edited".into(),
+        ("edit" | "write" | "apply_patch", _) => "Edit".into(),
         ("web_fetch" | "webfetch" | "fetch", true) => "Fetching".into(),
         ("web_fetch" | "webfetch" | "fetch", false) => "Fetched".into(),
-        ("web_search", true) => "Searching".into(),
-        ("web_search", false) => "Searched".into(),
+        ("web_search", _) => "Search".into(),
         (_, true) => "Calling".into(),
         (other, false) => {
             let mut chars = other.chars();
@@ -1895,7 +1910,7 @@ fn verb_group_line(run: &[ToolRef<'_>], paint: ToolPaint<'_>) -> Line<'static> {
 /// open). The rail pulses down the column while the command is running.
 ///
 /// ```text
-/// ┃ Thinking...                                          1.4s
+/// ┃ Thinking…                                          1.4s
 /// ┃ …
 ///   • Read  path/to/file.rs
 /// ┃ • Run  cargo test
@@ -1947,18 +1962,48 @@ fn tool_block(
     }
     header.push(Span::styled(TOOL_BULLET.to_string(), name_style));
     header.push(Span::styled(display.to_string(), name_style));
-    if !summary.is_empty() {
-        header.push(Span::styled(" ".to_string(), detail));
-        header.push(Span::styled(summary, summary_style));
+    let is_search =
+        matches!(tool_display_name(name), "grep") || matches!(name, "glob" | "web_search");
+    if is_search {
+        let pattern = search_term(name, input);
+        if !pattern.is_empty() {
+            header.push(Span::styled(" ".to_string(), detail));
+            if name == "glob" {
+                header.push(Span::styled(pattern, summary_style));
+            } else {
+                header.push(Span::styled(format!("{pattern:?}"), summary_style));
+            }
+        }
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+        if !path.is_empty() && path != "." {
+            header.push(Span::styled(" in ".to_string(), name_style));
+            header.push(Span::styled(path.to_string(), summary_style));
+        }
+        let chip = grep_match_summary(result);
+        if !chip.is_empty() {
+            header.push(Span::styled(format!(" {chip}"), detail));
+        }
+    } else {
+        let mut shown = summary;
+        if shown.is_empty()
+            && let Some(r) = result
+            && let Some(path) = preview_file_path(r)
+        {
+            shown = path.to_string();
+        }
+        if !shown.is_empty() {
+            header.push(Span::styled(" ".to_string(), detail));
+            header.push(Span::styled(shown, summary_style));
+        }
     }
 
-    if expanded && let Some(r) = result {
-        if is_error {
+    if let Some(r) = result {
+        if is_error && expanded {
             header.push(Span::styled("  ✕".to_string(), name_style));
-        } else if looks_like_diff(r) {
+        } else if !is_error && looks_like_diff(r) {
             let (a, d) = diff_stat(r);
             if a > 0 || d > 0 {
-                header.push(Span::styled("  ".to_string(), detail));
+                header.push(Span::styled(" ".to_string(), detail));
                 if a > 0 {
                     header.push(Span::styled(
                         format!("+{a}"),
@@ -1968,34 +2013,17 @@ fn tool_block(
                     ));
                 }
                 if a > 0 && d > 0 {
-                    header.push(Span::styled(" ".to_string(), detail));
+                    header.push(Span::styled("/".to_string(), detail));
                 }
                 if d > 0 {
                     header.push(Span::styled(
-                        format!("−{d}"),
+                        format!("-{d}"),
                         Style::default()
                             .fg(palette.diff_remove)
                             .add_modifier(Modifier::BOLD),
                     ));
                 }
             }
-        } else if matches!(name, "grep" | "search_code" | "rg")
-            && let Some(n) = grep_match_count(r)
-        {
-            header.push(Span::styled(
-                format!("  {n}"),
-                Style::default()
-                    .fg(palette.highlight)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            header.push(Span::styled(
-                if n == 1 {
-                    " match".to_string()
-                } else {
-                    " matches".to_string()
-                },
-                detail,
-            ));
         }
     }
 
@@ -2038,6 +2066,63 @@ fn grep_match_count(content: &str) -> Option<usize> {
         .filter(|l| parse_grep_hit(l).is_some_and(|h| h.is_match))
         .count();
     if n > 0 { Some(n) } else { None }
+}
+
+fn grep_file_count(content: &str) -> usize {
+    let mut seen = Vec::new();
+    for line in content.lines() {
+        if let Some(hit) = parse_grep_hit(line)
+            && !seen.iter().any(|p| p == hit.path)
+        {
+            seen.push(hit.path.to_string());
+        }
+    }
+    seen.len()
+}
+
+/// Grok search chip: `(no matches)` / `(1 match)` / `(N matches in M files)`.
+fn grep_match_summary(result: Option<&str>) -> String {
+    let Some(content) = result else {
+        return String::new();
+    };
+    let trimmed = content.trim();
+    if trimmed.is_empty()
+        || trimmed == "No matches found."
+        || trimmed.contains("(no matches)")
+        || trimmed.contains("(no files)")
+    {
+        return "(no matches)".into();
+    }
+    match grep_match_count(content) {
+        None => String::new(),
+        Some(0) => "(no matches)".into(),
+        Some(1) => "(1 match)".into(),
+        Some(n) => {
+            let files = grep_file_count(content);
+            if files > 1 {
+                format!("({n} matches in {files} files)")
+            } else {
+                format!("({n} matches)")
+            }
+        }
+    }
+}
+
+fn search_term(name: &str, input: &serde_json::Value) -> String {
+    if name == "glob" {
+        return input
+            .get("pattern")
+            .or_else(|| input.get("glob"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    input
+        .get("pattern")
+        .or_else(|| input.get("query"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 /// Collapsed = header only; expanded (`l`) = body.
@@ -2328,8 +2413,22 @@ fn tool_result_diff(
     let rem_bg = palette.diff_line_bg(palette.diff_remove);
 
     let mut lines = Vec::new();
+    let mut saw_hunk_body = false;
     for line in content.lines().take(budget) {
         let kind = diff_line_kind(line, is_error);
+        if matches!(kind, DiffPaint::Hunk) && saw_hunk_body {
+            lines.push(Line::from(vec![
+                meta_gutter(),
+                Span::styled("┃ ".to_string(), Style::default().fg(palette.dim)),
+                Span::styled("…".to_string(), Style::default().fg(palette.dim)),
+            ]));
+        }
+        if matches!(
+            kind,
+            DiffPaint::Add | DiffPaint::Remove | DiffPaint::Context
+        ) {
+            saw_hunk_body = true;
+        }
         let (rail_color, body_color, line_bg) = match kind {
             DiffPaint::Error => (palette.error, palette.error, None),
             DiffPaint::FileHeader => (palette.dim, palette.fg, None),
@@ -2367,7 +2466,7 @@ fn tool_result_diff(
             Span::styled("┃ ".to_string(), paint(rail_color, false)),
         ];
 
-        // Grok-style: line number + marker + body all green/red.
+        // Grok-style: dim/line-colored gutter + syntect body on add/remove.
         // Format: `  12|-body` or bare `+body`.
         let parts = parse_diff_line(line);
         if let Some(m) = parts.marker {
@@ -2389,7 +2488,16 @@ fn tool_result_diff(
                 + 1;
             let body_budget = text_w.saturating_sub(used).max(1);
             let body_shown = hard_truncate_line(parts.body, body_budget);
-            spans.push(Span::styled(body_shown, paint(body_color, false)));
+            if matches!(kind, DiffPaint::Add | DiffPaint::Remove) && !is_error {
+                spans.extend(highlight_diff_body(
+                    &body_shown,
+                    content,
+                    line_bg,
+                    paint(body_color, false),
+                ));
+            } else {
+                spans.push(Span::styled(body_shown, paint(body_color, false)));
+            }
         } else {
             let shown = hard_truncate_line(line, text_w);
             spans.push(Span::styled(shown, paint(body_color, false)));
@@ -2422,6 +2530,42 @@ enum DiffPaint {
     Remove,
     Meta,
     Context,
+}
+
+/// Syntect-highlight a diff hunk body, keeping insert/delete band bg.
+fn highlight_diff_body(
+    body: &str,
+    preview: &str,
+    line_bg: Option<Color>,
+    fallback: Style,
+) -> Vec<Span<'static>> {
+    if body.is_empty() {
+        return vec![Span::styled(String::new(), fallback)];
+    }
+    let lang = preview_file_path(preview).and_then(detect_language);
+    let hl = highlight_code_spans(body, lang);
+    let Some(row) = hl.first() else {
+        return vec![Span::styled(body.to_string(), fallback)];
+    };
+    if row.len() < 2 {
+        return vec![Span::styled(body.to_string(), fallback)];
+    }
+    let mut spans = Vec::with_capacity(row.len());
+    for ((r, g, b), text) in row.iter() {
+        let t = text.trim_end_matches('\n');
+        if t.is_empty() {
+            continue;
+        }
+        let mut style = Style::default().fg(crate::color::paint_rgb(*r, *g, *b));
+        if let Some(bg) = line_bg {
+            style = style.bg(bg);
+        }
+        spans.push(Span::styled(t.to_string(), style));
+    }
+    if spans.is_empty() {
+        spans.push(Span::styled(body.to_string(), fallback));
+    }
+    spans
 }
 
 fn diff_line_kind(line: &str, is_error: bool) -> DiffPaint {

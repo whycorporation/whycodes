@@ -5030,7 +5030,7 @@ async fn apply_remote_hydrate_success() {
 #[test]
 fn spinner_wraps_and_only_clears_generic_progress() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
-    let last = crate::ui::spinner::FRAMES.len() - 1;
+    let last = crate::ui::spinner::frame_count() - 1;
     let mut frame = last;
     app.status_message = "Generating response".into();
 

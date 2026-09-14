@@ -2609,3 +2609,17 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 **Fix:** `pnpm run deploy`.
 
 **Prevention:** Call package scripts with `pnpm run <name>` when the name collides with a pnpm built-in (`deploy`, `test`, `install`, …).
+
+## TUI: spinner / thinking chrome must stay 1-col and never write `Color::Reset`
+
+**Date:** 2026-09-14 · **Area:** `crates/tui` chat / spinner / turn-status
+
+**Symptom:** Busy frames flash white, or the label after the spinner / thinking rail jumps one cell. Live `Thinking...` (three ASCII dots) also fails to match Grok Build.
+
+**JSONL / crash:** none.
+
+**Root cause:** Braille spinner glyphs are missing from CP437 ConHost (tofu / white flash). Spans with no background leak host-default `Color::Reset`. ASCII `Thinking...` is not U+2026.
+
+**Fix:** Grok `braille_spinner_frames` (`⠋⠙⠹⠸⠼⠴⠦⠧`) with `| / - \` fallback; pin every chat/spinner span onto `palette.bg`; live header is `Thinking…`.
+
+**Prevention:** Consecutive TestBackend paints of a live transcript must keep non-spinner cells identical and never `Color::Reset` on the canvas.

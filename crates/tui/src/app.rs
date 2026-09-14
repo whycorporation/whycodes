@@ -962,17 +962,10 @@ impl ThinkingBlock {
 
     /// Collapsed/finished header label without expand hint.
     ///
-    /// Grok-style: running shows `Thinking` (+ live elapsed when available);
-    /// finished is `Thought for Xs`. Always includes the word "Thinking" /
-    /// "Thought" so the user can see that reasoning happened.
+    /// Grok-style: running is `Thinking…` (U+2026); finished is `Thought for Xs`.
     pub fn header_label(&self) -> String {
         if self.is_running() {
-            let elapsed = self.format_elapsed();
-            if elapsed.is_empty() || elapsed == "0.0s" {
-                "Thinking…".into()
-            } else {
-                format!("Thinking · {elapsed}")
-            }
+            "Thinking…".into()
         } else {
             format!("Thought for {}", self.format_elapsed())
         }

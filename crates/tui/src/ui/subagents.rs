@@ -17,8 +17,6 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-pub const SPIN: &[&str] = crate::ui::spinner::FRAMES;
-
 /// Max item rows (not counting the header or overflow line).
 pub const MAX_ITEMS: usize = 8;
 
@@ -57,7 +55,7 @@ pub fn strip_height(app: &TuiApp) -> u16 {
 
 fn status_glyph(status: &str, spin: usize) -> &'static str {
     match status {
-        "running" => SPIN[spin % SPIN.len()],
+        "running" => crate::ui::spinner::glyph(spin),
         "completed" | "done" => "\u{2713}",              // ✓
         "failed" | "cancelled" | "killed" => "\u{2717}", // ✗
         _ => "\u{25a1}",                                 // □

@@ -1539,6 +1539,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // abort the join handle so "Cancelling…" can never stick forever.
     let mut cancel_requested_at: Option<Instant> = None;
     let mut spinner_frame: usize = 0;
+    let mut spinner_dwell: u32 = 0;
     // Title may arrive before TurnOutcome restores the real rt.session; hold it.
     let mut pending_async_title: Option<(String, String)> = None;
     let mut update_rx = opts.update_rx;
@@ -1647,7 +1648,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             after_turn_events_drain(&mut app, &mut rt.event_rx, &config, &file_index);
 
             if should_tick_spinner(&app, rt.agent_busy) {
-                tick_spinner(&mut app, &mut spinner_frame);
+                spinner_dwell = spinner_dwell.saturating_add(1);
+                if spinner_dwell >= crate::ui::spinner::TICK_DIVISOR {
+                    spinner_dwell = 0;
+                    tick_spinner(&mut app, &mut spinner_frame);
+                }
+            } else {
+                spinner_dwell = 0;
             }
 
             // ── Permission / question requests (queued; one at a time) ─
@@ -4156,7 +4163,7 @@ fn persist_general_approval_mode(mode: ApprovalMode) -> anyhow::Result<()> {
 }
 
 fn tick_spinner(app: &mut TuiApp, spinner_frame: &mut usize) {
-    *spinner_frame = (*spinner_frame + 1) % crate::ui::spinner::FRAMES.len();
+    *spinner_frame = (*spinner_frame + 1) % crate::ui::spinner::frame_count();
     app.spinner_frame = *spinner_frame;
     app.mark_dirty();
     let generic = app.status_message.contains("Generating")
