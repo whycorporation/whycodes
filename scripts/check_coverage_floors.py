@@ -165,12 +165,11 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
         if count == 0:
             continue
         src_lines = source_line_count(filename, crate_dir)
-        # skip-expansions still ~1.0× source. Expansion dumps are ~1.3–2×
-        # (session.rs 3553 src vs 4861). Cap so a dropped relative mapping
-        # cannot sink a 100% floor.
+        # Expansion dumps are ~1.3–2× source (session.rs 3553 vs 4861).
+        # Drop them. Do not rewrite covered/count — that turns 2736/4861
+        # into a fake 2736/3553 (77%) and sinks the 100% floor.
         if src_lines > 20 and count > src_lines + max(80, src_lines // 8):
-            covered = src_lines if covered >= src_lines else min(covered, src_lines)
-            count = src_lines
+            continue
         key = f"{crate_dir}/{rel}"
         pct = covered / count
         prev = best.get(key)

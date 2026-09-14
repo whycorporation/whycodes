@@ -176,12 +176,11 @@ stamp_cachedir() {
     _dir="$1"
     [ -n "$_dir" ] || return 0
     mkdir -p "$_dir"
-    CARGO_LLVM_COV_STAMP_DIR="$_dir" python3 -c "
-from pathlib import Path
-import os
-p = Path(os.environ['CARGO_LLVM_COV_STAMP_DIR']) / 'CACHEDIR.TAG'
-p.write_bytes(b'Signature: 8a477f597d28d172789c096e48218643\n')
-"
+    printf '%s\n' \
+        'Signature: 8a477f597d28d172789f06886806bc55' \
+        '# This file is a cache directory tag created by cargo.' \
+        '# For information about cache directory tags see https://bford.info/cachedir/' \
+        >"$_dir/CACHEDIR.TAG"
     unset _dir
 }
 stamp_cachedir "$cov_root"

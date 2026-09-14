@@ -254,6 +254,12 @@ mod file_claims_tests {
         assert!(!key.contains("foo"), "{key}");
         let cur = FileClaimRegistry::claim_key(Path::new("./."));
         assert!(!cur.is_empty());
+        #[cfg(windows)]
+        let abs = Path::new(r"C:\definitely-missing-whycodes-xyz\bar.rs");
+        #[cfg(not(windows))]
+        let abs = Path::new("/definitely-missing-whycodes-xyz/bar.rs");
+        let abs_key = FileClaimRegistry::claim_key(abs);
+        assert!(abs_key.contains("bar.rs"), "{abs_key}");
 
         let hits = Arc::new(AtomicUsize::new(0));
         let hits2 = Arc::clone(&hits);
@@ -695,6 +701,7 @@ mod logging_tests {
         );
         tracing::debug!(?tmp, "debug-field");
         tracing::info!(message = "str-msg", sid = "s2", extra2 = "y");
+        tracing::info!("plain-no-fields");
         set_panic_cleanup(|| {});
         let _ = std::panic::catch_unwind(|| panic!("hook-cleanup"));
         clear_panic_cleanup();

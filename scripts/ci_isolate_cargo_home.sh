@@ -44,7 +44,13 @@ esac
 mkdir -p "$home" "$target"
 # Cargo (and llvm-cov clean) require this exact first line. A heredoc from a
 # CRLF-checked-out script produced "invalid signature"; printf is one LF.
-printf 'Signature: 8a477f597d28d172789c096e48218643\n' >"$target/CACHEDIR.TAG"
+# Cargo's own tag (not the cachedir spec hash). `llvm-cov clean` compares
+# this first line and aborts on mismatch (`invalid signature`).
+printf '%s\n' \
+    'Signature: 8a477f597d28d172789f06886806bc55' \
+    '# This file is a cache directory tag created by cargo.' \
+    '# For information about cache directory tags see https://bford.info/cachedir/' \
+    >"$target/CACHEDIR.TAG"
 
 if [ -d "$home/registry/index" ] || [ -d "$home/registry/src" ]; then
     hit=1

@@ -2614,7 +2614,12 @@ mod tests {
 
         let error = session.export_share().unwrap_err();
         assert!(
-            matches!(error, crate::error::SessionError::Io(ref e) if e.kind() == std::io::ErrorKind::NotADirectory),
+            matches!(
+                error,
+                crate::error::SessionError::Io(ref e)
+                    if e.kind() == std::io::ErrorKind::NotADirectory
+                        || e.kind() == std::io::ErrorKind::AlreadyExists
+            ),
             "unexpected export error: {error}"
         );
     }

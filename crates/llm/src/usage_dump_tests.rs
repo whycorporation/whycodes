@@ -92,4 +92,15 @@ fn write_line_reports_open_and_write_failures() {
     if std::path::Path::new("/dev/full").exists() {
         write_line(std::path::Path::new("/dev/full"), &json!({"source": "x"}));
     }
+
+    struct FailW;
+    impl std::io::Write for FailW {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("nope"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    write_value(FailW, &json!({"source": "x"}), "fail");
 }
