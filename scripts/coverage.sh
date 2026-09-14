@@ -172,15 +172,27 @@ mkdir -p "$cov_root"
 # `llvm-cov clean` refuses it (`invalid signature`) and leftover traces
 # mix expansion dumps into the next JSON floors. Write via env so a
 # CRLF-checked-out script cannot put CR in the filename.
-CARGO_LLVM_COV_TARGET_DIR="$cov_root" python3 -c "
+stamp_cachedir() {
+    _dir="$1"
+    [ -n "$_dir" ] || return 0
+    mkdir -p "$_dir"
+    CARGO_LLVM_COV_STAMP_DIR="$_dir" python3 -c "
 from pathlib import Path
 import os
-p = Path(os.environ['CARGO_LLVM_COV_TARGET_DIR']) / 'CACHEDIR.TAG'
+p = Path(os.environ['CARGO_LLVM_COV_STAMP_DIR']) / 'CACHEDIR.TAG'
 p.write_bytes(b'Signature: 8a477f597d28d172789c096e48218643\n')
 "
+    unset _dir
+}
+stamp_cachedir "$cov_root"
+# cargo-llvm-cov clean still looks at \$CARGO_TARGET_DIR/coverage-llvm-cov
+# even when CARGO_LLVM_COV_TARGET_DIR is the sibling *-llvm-cov dir.
+if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    stamp_cachedir "${CARGO_TARGET_DIR%/}/coverage-llvm-cov"
+fi
 cargo llvm-cov clean --workspace --profraw-only >/dev/null 2>&1 || true
 find "$cov_root" \( -name '*.profraw' -o -name '*.profdata' \) -delete
-if [ -n "${CARGO_TARGET_DIR:-}" ] && [ "$CARGO_TARGET_DIR" != "$cov_root" ] && [ -d "$CARGO_TARGET_DIR" ]; then
+if [ -n "${CARGO_TARGET_DIR:-}" ] && [ -d "$CARGO_TARGET_DIR" ]; then
     find "$CARGO_TARGET_DIR" \( -name '*.profraw' -o -name '*.profdata' \) -delete
 fi
 export LLVM_PROFILE_FILE="$cov_root/whycodes-%p-%m.profraw"

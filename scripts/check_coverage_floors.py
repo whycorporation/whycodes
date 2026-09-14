@@ -69,11 +69,22 @@ FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
 
 
 def crate_rel_path(filename: str) -> tuple[str, str] | None:
-    """Return (crate_dir, path-under-crate) from an llvm-cov filename."""
-    norm = filename.replace("\\", "/")
-    if "/crates/" not in norm:
+    """Return (crate_dir, path-under-crate) from an llvm-cov filename.
+
+    llvm-cov export sometimes uses an absolute path
+    (`/home/.../whycodes/crates/session/src/session.rs`) and sometimes a
+    workspace-relative one (`crates/session/src/session.rs`). The relative
+    form has no leading slash, so a `/crates/` needle misses it and the
+    skip-expansions mapping is dropped — only the expansion dump remains.
+    """
+    norm = filename.replace("\\", "/").lstrip("./")
+    rest = None
+    if "/crates/" in norm:
+        rest = norm.split("/crates/", 1)[1]
+    elif norm.startswith("crates/"):
+        rest = norm[len("crates/") :]
+    if not rest:
         return None
-    rest = norm.split("/crates/", 1)[1]
     crate_dir, _, rel = rest.partition("/")
     if not crate_dir or not rel:
         return None
@@ -154,7 +165,10 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
         if count == 0:
             continue
         src_lines = source_line_count(filename, crate_dir)
-        if src_lines > 20 and count > src_lines * 2:
+        # skip-expansions still ~1.0× source. Expansion dumps are ~1.3–2×
+        # (session.rs 3553 src vs 4861). Cap so a dropped relative mapping
+        # cannot sink a 100% floor.
+        if src_lines > 20 and count > src_lines + max(80, src_lines // 8):
             covered = src_lines if covered >= src_lines else min(covered, src_lines)
             count = src_lines
         key = f"{crate_dir}/{rel}"
@@ -257,22 +271,38 @@ def _self_check() -> None:
     assert n > 100, n
     n = source_line_count(str(ROOT / "crates" / "protocol" / "src" / "ci.rs"), "protocol")
     assert n > 50, n
+    assert crate_rel_path("crates/session/src/session.rs") == (
+        "session",
+        "src/session.rs",
+    )
+    assert crate_rel_path("./crates/llm/src/openai_compat.rs") == (
+        "llm",
+        "src/openai_compat.rs",
+    )
     report = {
         "data": [
             {
                 "files": [
                     {
+                        "filename": "crates/session/src/session.rs",
+                        "summary": {"lines": {"covered": 3500, "count": 3500}},
+                    },
+                    {
                         "filename": "/runner-a/crates/config/src/load.rs",
                         "summary": {"lines": {"covered": 800, "count": 800}},
-                    }
+                    },
                 ]
             },
             {
                 "files": [
                     {
+                        "filename": "/runner-b/crates/session/src/session.rs",
+                        "summary": {"lines": {"covered": 2736, "count": 4861}},
+                    },
+                    {
                         "filename": "/runner-b/crates/config/src/load.rs",
                         "summary": {"lines": {"covered": 800, "count": 1929}},
-                    }
+                    },
                 ]
             },
         ]
@@ -281,6 +311,8 @@ def _self_check() -> None:
     cov, tot = agg["whycodes-config"]
     assert cov == tot, (cov, tot)
     assert tot < 900, tot
+    scov, stot = agg["whycodes-session"]
+    assert scov == stot == 3500, (scov, stot)
     files = getattr(aggregate_by_crate, "files", {})
     assert "whycodes-config" in files
     assert files["whycodes-config"][0][0] == "config/src/load.rs"

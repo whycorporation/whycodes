@@ -90,6 +90,7 @@ need "lib/rustlib/" "$src"
 need 'rustc --print sysroot' "$src"
 need "LLVM_COV_FLAGS=-skip-expansions" "$src"
 need "strip_cr" "$src"
+need "coverage-llvm-cov" "$src"
 forbid 'rm -rf "$cov_root"' "$src"
 # Double-dash form is rejected by rustup llvm-cov 21.
 if printf '%s\n' "$src" | grep -F -q -- '--skip-expansions'; then
