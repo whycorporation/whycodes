@@ -19,6 +19,18 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# GITHUB_ENV from a CRLF script can leave CR on path vars; cargo then
+# looks at a different directory than the one we stamp/clean.
+strip_cr() {
+    printf '%s' "$1" | tr -d '\r'
+}
+CARGO_TARGET_DIR="$(strip_cr "${CARGO_TARGET_DIR:-}")"
+CARGO_LLVM_COV_TARGET_DIR="$(strip_cr "${CARGO_LLVM_COV_TARGET_DIR:-}")"
+CARGO_HOME="$(strip_cr "${CARGO_HOME:-}")"
+[ -n "$CARGO_TARGET_DIR" ] && export CARGO_TARGET_DIR
+[ -n "$CARGO_LLVM_COV_TARGET_DIR" ] && export CARGO_LLVM_COV_TARGET_DIR
+[ -n "$CARGO_HOME" ] && export CARGO_HOME
+
 IGNORE="${IGNORE:-/usr/src/|/rustc-}"
 CRATE_IGNORE="${CRATE_IGNORE:-${IGNORE}|tests\\.rs$}"
 FAIL_UNDER="${FAIL_UNDER:-82}"
@@ -130,7 +142,7 @@ if [ "$dry_run" -eq 1 ]; then
     say "+ cargo llvm-cov clean --workspace --profraw-only"
     say "+ purge *.profraw *.profdata from compile cache (keep rlibs)"
     say "+ $cov_cmd"
-    say "+ LLVM_COV=\$CARGO_LLVM_COV_TARGET_DIR/llvm-cov-wrap/llvm-cov $report_cmd > $REPORT_JSON"
+    say "+ LLVM_COV_FLAGS=-skip-expansions $report_cmd > $REPORT_JSON"
     say "+ FAIL_UNDER=$FAIL_UNDER $floors_cmd"
     exit 0
 fi
@@ -194,26 +206,13 @@ set -- "$@" \
     --skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails
 run "$@"
 
-# JSON floors need `-skip-expansions`. rustup llvm-cov 21 accepts that on
-# `export` but not on `show`. cargo-llvm-cov 0.9.1 uses LLVM_COV only when
-# LLVM_PROFDATA is also set, and strips child env. Write a wrapper named
-# `llvm-cov` next to the compile cache (not /tmp: some runners mount
-# tmp noexec) with the real binary path baked in.
-_real_llvm_cov="${LLVM_COV:-}"
-if [ -z "$_real_llvm_cov" ]; then
-    _real_llvm_cov="$(command -v llvm-cov)"
-fi
-if [ -z "${LLVM_PROFDATA:-}" ]; then
-    LLVM_PROFDATA="$(command -v llvm-profdata)"
-    export LLVM_PROFDATA
-fi
-_wrap_dir="$cov_root/llvm-cov-wrap"
-python3 "$ROOT/scripts/write_llvm_cov_wrapper.py" "$_real_llvm_cov" "$_wrap_dir/llvm-cov"
-LLVM_COV="$_wrap_dir/llvm-cov"
-export LLVM_COV
+# JSON floors need `-skip-expansions` on `llvm-cov export`. rustup llvm-cov
+# 21 rejects that flag on `show` (workspace text report). cargo-llvm-cov
+# reads LLVM_COV_FLAGS in the *parent* and passes them as argv to llvm-cov
+# (the child env is stripped). Double-dash skip-expansions is rejected.
+# Do not set this for the workspace run above.
+LLVM_COV_FLAGS=-skip-expansions
+export LLVM_COV_FLAGS
 run cargo llvm-cov report --json --ignore-filename-regex "$CRATE_IGNORE" --summary-only >"$REPORT_JSON"
-LLVM_COV="$_real_llvm_cov"
-export LLVM_COV
-unset _wrap_dir
-unset _real_llvm_cov
+unset LLVM_COV_FLAGS
 FAIL_UNDER="$FAIL_UNDER" python3 scripts/check_coverage_floors.py "$REPORT_JSON"

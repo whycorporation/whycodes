@@ -31,6 +31,8 @@ fi
 
 home="${cargo_base}/${runner}/${job}"
 target="${target_base}/${runner}/${job}"
+home="$(printf '%s' "$home" | tr -d '\r')"
+target="$(printf '%s' "$target" | tr -d '\r')"
 
 case "$home" in
     "${HOME%/}/.cargo"|"${HOME%/}/.cargo"/*)
