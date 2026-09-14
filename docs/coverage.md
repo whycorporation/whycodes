@@ -9,6 +9,9 @@ breakdown.
 scripts/coverage.sh
 ```
 
+Agents must run this **locally and green** before pushing coverage-related
+changes (`AGENTS.md`). Iterating on CI logs instead is not allowed.
+
 Same flags as the CI `Coverage (line floor)` job: the instrumented compile
 cache is `${CARGO_TARGET_DIR}-llvm-cov` (or `target/llvm-cov-target`), leftover
 `*.profraw` / `*.profdata` under that cache and `CARGO_TARGET_DIR` are deleted
