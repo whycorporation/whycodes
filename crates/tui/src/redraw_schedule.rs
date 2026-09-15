@@ -77,8 +77,9 @@ pub fn event_is_user_interaction(ev: &Event) -> bool {
 ///
 /// `FocusGained` is **not** here. Windows PowerShell / conhost implements
 /// CSI erase with the *profile* default background (often white), so a hard
-/// clear on tab-switch flashes the whole TUI. Focus restore only resets
-/// ratatui's previous buffer so the next paint is a full themed redraw.
+/// clear on tab-switch flashes the whole TUI. Focus restore hides the
+/// caret and resets ratatui's previous buffer so the next paint is a full
+/// themed redraw (no CSI erase, no cursor sweeping the cell dump).
 pub fn event_needs_full_clear(ev: &Event) -> bool {
     matches!(ev, Event::Paste(_) | Event::Resize(_, _))
 }

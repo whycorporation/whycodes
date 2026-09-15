@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::color::{ColorMode, QuantizingBackend, detect_color_mode, set_active_color_mode};
-use crossterm::cursor::SetCursorStyle;
+use crossterm::cursor::{Hide, SetCursorStyle};
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
     KeyCode, KeyEventKind, KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags,
@@ -15,8 +15,8 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-    size as term_size, supports_keyboard_enhancement,
+    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, size as term_size, supports_keyboard_enhancement,
 };
 use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
@@ -883,13 +883,22 @@ impl LoopTerm {
     /// Drop the last painted buffer so the next `draw` diffs against empty
     /// (every cell is sent) without CSI erase. Windows PowerShell paints
     /// `ClearType::All` with the profile default background — a white flash.
+    ///
+    /// Hide the caret first: a full cell dump with a visible cursor looks
+    /// like the bar sweeping the screen top-to-bottom (conhost / WT).
     fn reset_prev_for_full_redraw(&mut self) {
         match self {
             Self::Live(t) => {
+                if let Err(e) = t.hide_cursor() {
+                    tracing::debug!(error = %e, "hide cursor before full redraw failed");
+                }
                 t.current_buffer_mut().reset();
                 t.swap_buffers();
             }
             Self::Headless(t) => {
+                if let Err(e) = t.hide_cursor() {
+                    tracing::debug!(error = %e, "hide cursor before full redraw failed");
+                }
                 t.current_buffer_mut().reset();
                 t.swap_buffers();
             }
@@ -922,8 +931,21 @@ impl LoopTerm {
             return Err(anyhow::anyhow!("tui draw failed"));
         }
         match self {
-            Self::Live(t) => draw_into(t, app),
-            Self::Headless(t) => draw_into(t, app),
+            Self::Live(t) => {
+                // Hide + CSI ?2026 before the cell dump. ratatui only hides
+                // the cursor *after* flush, so a FocusGained full redraw
+                // otherwise walks the hardware caret down every row.
+                begin_cell_dump(t.backend_mut());
+                let result = draw_into(t, app);
+                end_cell_dump(t.backend_mut());
+                result
+            }
+            Self::Headless(t) => {
+                if let Err(e) = t.hide_cursor() {
+                    tracing::debug!(error = %e, "hide cursor before headless draw failed");
+                }
+                draw_into(t, app)
+            }
         }
     }
 
@@ -960,6 +982,24 @@ fn on_terminal_new_failed(e: &impl std::fmt::Display) {
 
 fn log_resize_failed(kind: &str, e: impl std::fmt::Display) {
     tracing::debug!(error = %e, "{kind} terminal resize failed");
+}
+
+/// Hide the caret and start a synchronized frame before a cell dump.
+///
+/// Windows PowerShell / conhost keep the hardware cursor visible while
+/// ratatui `MoveTo`+`Print`s every cell. That reads as the blinking bar
+/// sweeping top-to-bottom on tab-switch (FocusGained full redraw).
+/// `CSI ?2026` is ignored on hosts that do not implement it.
+fn begin_cell_dump(out: &mut impl Write) {
+    if let Err(e) = execute!(out, Hide, BeginSynchronizedUpdate) {
+        tracing::debug!(error = %e, "begin cell dump failed");
+    }
+}
+
+fn end_cell_dump(out: &mut impl Write) {
+    if let Err(e) = execute!(out, EndSynchronizedUpdate) {
+        tracing::debug!(error = %e, "end cell dump failed");
+    }
 }
 
 fn draw_into<B: ratatui::backend::Backend>(

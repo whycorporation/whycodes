@@ -144,6 +144,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-15 — Windows tab-switch walks the caret down the screen
+
+**Symptom:** Leave the WhyCodes tab and come back: the blinking bar caret
+sweeps from the top of the alt-screen to the prompt (PowerShell / conhost /
+Windows Terminal). No white flash.
+
+**Root cause:** `FocusGained` still forces a full themed redraw
+(`reset_prev_for_full_redraw` + every cell sent). ratatui hides the cursor
+*after* `flush`, so Windows paints `MoveTo`+`Print` with the hardware caret
+visible. Each cell write moves it down a row.
+
+**Fix:** `begin_cell_dump` emits `CSI ?25l` (Hide) and `CSI ?2026h`
+(synchronized update) before `draw`; `EndSynchronizedUpdate` after.
+`reset_prev_for_full_redraw` also `hide_cursor`s first. Still no
+`terminal.clear()` on focus (profile-bg flash).
+
+**Prevention:** Do not dump every cell while the caret is shown. Assert Hide
++ `?2026` on `begin_cell_dump` /
+`cell_dump_guard_hides_cursor_and_brackets_synchronized_update`.
+
 ### 2026-09-13 — Coverage flake: GitHub PR list hits `127.0.0.1:1`
 
 **Symptom:** `github::pr::tests::execute_create_list_view_merge_on_loopback`
@@ -172,11 +192,12 @@ Windows Terminal tabs.
 default background, not the last SGR bg — often white.
 
 **Fix:** `event_needs_full_clear` is only Paste / Resize. Focus restore
-resets ratatui's previous buffer (`current.reset` + `swap_buffers`) so the
-next draw is a full *themed* paint with no CSI erase.
+hides the caret and resets ratatui's previous buffer (`current.reset` +
+`swap_buffers`) so the next draw is a full *themed* paint with no CSI erase
+and no hardware-caret sweep.
 
 **Prevention:** Do not `terminal.clear()` on focus. A full redraw is
-`reset_prev_for_full_redraw`, not ClearType::All.
+`reset_prev_for_full_redraw` (hide first), not ClearType::All.
 
 ### 2026-09-13 — Header spinner / generating strip flashes white
 
@@ -862,7 +883,8 @@ previous ratatui buffer instead of CSI erase (Windows profile-bg flash).
 
 **Prevention:** Do not treat "the prompt got shorter" as "the PTY is dirty".
 Only force `terminal.clear()` when something wrote *outside* ratatui (paste
-echo, resize, focus restore) or the layout jumps (submit / new session).
+echo, resize) or the layout jumps (submit / new session). Focus restore
+hides the caret and resets the previous buffer — it must not CSI-erase.
 
 ### 2026-08-30 — Session token usage: Codex double-count, cold cache, stale meter
 

@@ -86,6 +86,31 @@ async fn run_injected(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 }
 
 #[test]
+fn cell_dump_guard_hides_cursor_and_brackets_synchronized_update() {
+    let mut out = Vec::new();
+    begin_cell_dump(&mut out);
+    end_cell_dump(&mut out);
+    let bytes = String::from_utf8_lossy(&out);
+    assert!(
+        bytes.contains("\u{1b}[?25l"),
+        "Hide (CSI ?25l) before cells: {bytes:?}"
+    );
+    assert!(
+        bytes.contains("\u{1b}[?2026h"),
+        "BeginSynchronizedUpdate missing: {bytes:?}"
+    );
+    assert!(
+        bytes.contains("\u{1b}[?2026l"),
+        "EndSynchronizedUpdate missing: {bytes:?}"
+    );
+    let hide = bytes.find("\u{1b}[?25l").expect("hide");
+    let begin = bytes.find("\u{1b}[?2026h").expect("begin");
+    let end = bytes.find("\u{1b}[?2026l").expect("end");
+    assert!(hide < begin, "hide before begin-sync: {bytes:?}");
+    assert!(begin < end, "begin-sync before end-sync: {bytes:?}");
+}
+
+#[test]
 fn restore_terminal_resets_cursor_style_to_user_default() {
     let mut out = Vec::new();
     restore_terminal_on(&mut out);
