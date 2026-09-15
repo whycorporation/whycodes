@@ -148,21 +148,22 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 **Symptom:** Leave the WhyCodes tab and come back: the blinking bar caret
 sweeps from the top of the alt-screen to the prompt (PowerShell / conhost /
-Windows Terminal). No white flash.
+Windows Terminal). Same sweep on first open (splash / empty home). No
+white flash.
 
-**Root cause:** `FocusGained` still forces a full themed redraw
-(`reset_prev_for_full_redraw` + every cell sent). ratatui hides the cursor
-*after* `flush`, so Windows paints `MoveTo`+`Print` with the hardware caret
-visible. Each cell write moves it down a row.
+**Root cause:** Full cell dumps (splash, first home paint, FocusGained)
+run while the hardware caret is visible. ratatui hides the cursor *after*
+`flush`. Windows paints `MoveTo`+`Print` with the bar shown, so each cell
+write moves it down a row. Chat-tab restore was wrapped; splash /
+`EnterAlternateScreen` were not.
 
-**Fix:** `begin_cell_dump` emits `CSI ?25l` (Hide) and `CSI ?2026h`
-(synchronized update) before `draw`; `EndSynchronizedUpdate` after.
+**Fix:** Hide immediately after alt-screen. `draw_splash` and `draw_app`
+wrap the dump with `CSI ?25l` + `CSI ?2026h` / `?2026l`.
 `reset_prev_for_full_redraw` also `hide_cursor`s first. Still no
 `terminal.clear()` on focus (profile-bg flash).
 
-**Prevention:** Do not dump every cell while the caret is shown. Assert Hide
-+ `?2026` on `begin_cell_dump` /
-`cell_dump_guard_hides_cursor_and_brackets_synchronized_update`.
+**Prevention:** Do not dump every cell while the caret is shown. Assert
+Hide on alt-screen enter and on `begin_cell_dump`.
 
 ### 2026-09-13 — Coverage flake: GitHub PR list hits `127.0.0.1:1`
 

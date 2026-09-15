@@ -951,8 +951,21 @@ impl LoopTerm {
 
     fn draw_splash(&mut self) -> anyhow::Result<()> {
         match self {
-            Self::Live(t) => t.draw(render_splash).map(|_| ()).map_err(Into::into),
-            Self::Headless(t) => t.draw(render_splash).map(|_| ()).map_err(Into::into),
+            Self::Live(t) => {
+                // Same guard as `draw_app`: the splash fills every cell and
+                // is the first paint after alt-screen. A visible caret walks
+                // the dump on Windows PowerShell (home screen, not chat).
+                begin_cell_dump(t.backend_mut());
+                let result = t.draw(render_splash).map(|_| ()).map_err(Into::into);
+                end_cell_dump(t.backend_mut());
+                result
+            }
+            Self::Headless(t) => {
+                if let Err(e) = t.hide_cursor() {
+                    tracing::debug!(error = %e, "hide cursor before splash failed");
+                }
+                t.draw(render_splash).map(|_| ()).map_err(Into::into)
+            }
         }
     }
 
@@ -988,8 +1001,9 @@ fn log_resize_failed(kind: &str, e: impl std::fmt::Display) {
 ///
 /// Windows PowerShell / conhost keep the hardware cursor visible while
 /// ratatui `MoveTo`+`Print`s every cell. That reads as the blinking bar
-/// sweeping top-to-bottom on tab-switch (FocusGained full redraw).
-/// `CSI ?2026` is ignored on hosts that do not implement it.
+/// sweeping top-to-bottom on first paint (splash / empty home) and on
+/// tab-switch (FocusGained full redraw). `CSI ?2026` is ignored on hosts
+/// that do not implement it.
 fn begin_cell_dump(out: &mut impl Write) {
     if let Err(e) = execute!(out, Hide, BeginSynchronizedUpdate) {
         tracing::debug!(error = %e, "begin cell dump failed");
@@ -1263,7 +1277,7 @@ fn enter_raw_and_alt(
              Run inside a real terminal, or use `whycodes --plain`."
         )
     })?;
-    execute!(out, EnterAlternateScreen).map_err(|e| {
+    execute!(out, EnterAlternateScreen, Hide).map_err(|e| {
         let _ = disable_raw_mode();
         whycodes_core::logging::emit(
             "whycodes_tui",
@@ -1281,7 +1295,11 @@ fn enable_mouse_paste_cursor(out: &mut impl Write) {
         out,
         EnableMouseCapture,
         EnableBracketedPaste,
-        SetCursorStyle::BlinkingBar
+        SetCursorStyle::BlinkingBar,
+        // Shape only — keep hidden until the next draw places the bar
+        // on the prompt. Showing it here lets Windows walk the first
+        // home-screen dump (splash → themed prompt).
+        Hide
     ) {
         tracing::debug!(error = %e, "enable mouse/paste/cursor after first paint failed");
     }

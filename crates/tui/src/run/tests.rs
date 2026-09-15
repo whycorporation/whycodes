@@ -7848,6 +7848,10 @@ fn write_splash_csi_emits_alt_screen_and_label() {
     write_splash_csi(&mut out).unwrap();
     let s = String::from_utf8_lossy(&out);
     assert!(s.contains("\x1b[?1049h"), "alt-screen");
+    assert!(
+        s.contains("\x1b[?25l"),
+        "harness splash must hide caret before the label: {s:?}"
+    );
     assert!(s.contains("whycodes"), "{s:?}");
     restore_splash_csi(&mut out);
     let s = String::from_utf8_lossy(&out);
@@ -7859,8 +7863,32 @@ fn enter_raw_and_alt_ok_and_restore_backend() {
     let mut out = Vec::new();
     enter_raw_and_alt(&mut out, || Ok(())).unwrap();
     assert!(!out.is_empty());
+    let bytes = String::from_utf8_lossy(&out);
+    assert!(
+        bytes.contains("\u{1b}[?25l"),
+        "alt-screen enter must hide caret before splash: {bytes:?}"
+    );
     restore_live_backend(&mut out, true);
     restore_live_backend(&mut out, false);
+}
+
+#[test]
+fn enable_mouse_paste_cursor_keeps_caret_hidden() {
+    let mut out = Vec::new();
+    enable_mouse_paste_cursor(&mut out);
+    let bytes = String::from_utf8_lossy(&out);
+    assert!(
+        bytes.contains("\u{1b}[5 q"),
+        "blinking-bar DECSCUSR: {bytes:?}"
+    );
+    let hide = bytes
+        .rfind("\u{1b}[?25l")
+        .expect("Hide after first-paint setup");
+    let bar = bytes.find("\u{1b}[5 q").expect("bar");
+    assert!(
+        hide > bar,
+        "Hide must follow SetCursorStyle so the first home dump is caret-free: {bytes:?}"
+    );
 }
 
 #[test]
