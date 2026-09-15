@@ -144,6 +144,30 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-16 — Selection copy froze the TUI; Windows copy never landed
+
+**Symptom:** Releasing a mouse text selection (copy) froze the terminal
+for seconds on Windows PowerShell without WSL. On classic conhost the
+copy also silently did nothing.
+
+**Root cause:** `copy_text` shelled out to `wl-copy` / `xclip` (×2) /
+`pbcopy` on every platform. None can exist on Windows, and each failed
+`CreateProcess` walks the whole PATH × PATHEXT (plus Defender) — four
+attempts on a long/overflowed PATH is seconds, synchronous in the event
+loop. OSC 52 (the only Windows path) is ignored by classic conhost.
+
+**Fix:** Windows uses a direct Win32 `CF_UNICODETEXT` write
+(`windows_clipboard::set_text`: GlobalAlloc + OpenClipboard retry +
+SetClipboardData) — no process spawn, no code-page dependence. Unix
+helpers run only off-Windows. `clip.exe` was rejected: it decodes via
+the console *input* CP (whycodes only sets output CP 65001 → Turkish
+garbles on CP857) and stores a UTF-16 BOM as literal text.
+
+**Prevention:** Never spawn Unix clipboard helpers on Windows, and never
+add a synchronous process spawn to a per-interaction input path. Unit
+tests skip the native write (`!cfg!(test)`) so `cargo test` does not
+clobber the developer's clipboard.
+
 ### 2026-09-16 — Long PowerShell paste submits half the clipboard
 
 **Symptom:** Pasting a long multi-line text into the prompt on Windows
