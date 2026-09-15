@@ -3562,6 +3562,44 @@ fn websearch_runtime_names_get_search_header() {
 }
 
 #[test]
+fn search_chip_only_counts_grep_hits() {
+    // Web snippets may hold times or host:port text shaped like
+    // `path:line:` — that must never become a match chip.
+    let palette = ThemeName::DefaultDark.palette();
+    let paint = || ToolPaint {
+        is_error: false,
+        palette: &palette,
+        expanded: false,
+        width: 80,
+        spin: 0,
+    };
+    let web = joined(&tool_block(
+        "websearch",
+        &json!({"query": "rust"}),
+        Some(
+            "Rust 1.0 released\nMeetup at 12:30:45 downtown\nSee https://example.com:8080: docs mirror",
+        ),
+        paint(),
+    ));
+    assert!(
+        web.contains("Search") && web.contains("\"rust\""),
+        "web header, got {web}"
+    );
+    assert!(
+        !web.contains("match"),
+        "no grep chip on web results, got {web}"
+    );
+    // grep keeps its chip.
+    let grep = joined(&tool_block(
+        "grep",
+        &json!({"pattern": "foo"}),
+        Some("src/a.rs:1:foo\n\n(1 match; pattern `foo`)"),
+        paint(),
+    ));
+    assert!(grep.contains("(1 match)"), "grep chip kept, got {grep}");
+}
+
+#[test]
 fn consecutive_busy_frames_do_not_shift_finished_cells() {
     use crate::app::{AgentState, ChatBlock, ThinkingBlock};
     use ratatui::Terminal;

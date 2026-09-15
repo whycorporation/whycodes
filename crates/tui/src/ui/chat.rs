@@ -1981,7 +1981,14 @@ fn tool_block(
             header.push(Span::styled(" in ".to_string(), name_style));
             header.push(Span::styled(path.to_string(), summary_style));
         }
-        let chip = grep_match_summary(result);
+        // Match chips only count grep hits: web snippets and glob paths
+        // may hold `path:line:`-shaped text (times, host:port) that is not
+        // a search hit.
+        let chip = if matches!(tool_display_name(name), "grep") {
+            grep_match_summary(result)
+        } else {
+            String::new()
+        };
         if !chip.is_empty() {
             header.push(Span::styled(format!(" {chip}"), detail));
         }
