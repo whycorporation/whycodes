@@ -144,6 +144,32 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-15 — Caret strobe per frame + resize white flash (ratatui erase)
+
+**Symptom:** After the submit/paste CSI-erase fix, flicker remained: the
+prompt caret visibly strobes while a turn streams (~25 fps), and dragging
+the window edge still flashes the profile background (white).
+
+**Root cause:** (1) `begin_cell_dump` sent `Hide` *before*
+`BeginSynchronizedUpdate`, so `?2026` hosts (Windows Terminal) present the
+caret-off state at the top of every draw — hide/show cycles outside the
+atomic frame. (2) ratatui 0.30 `resize`/`clear_viewport` sends
+`clear_region(ClearType::All)` on every fullscreen resize (twice on
+horizontal shrink) — CSI 2J, painted with the profile bg on Windows; our
+loop never calls it, ratatui does internally.
+
+**Fix:** `execute!(BeginSynchronizedUpdate, Hide)` — hide → cells → show
+now sit inside one synchronized frame; non-`?2026` hosts still get Hide
+before the cell writes (anti-sweep unchanged). `QuantizingBackend::clear`
+and `clear_region` are suppressed: every clear caller also resets the prev
+buffer and `render` fill_blanks the whole frame, so the next draw rewrites
+every themed cell — the erase added nothing but the flash.
+
+**Prevention:** Keep `Hide` inside the sync region
+(`cell_dump_guard_hides_cursor_and_brackets_synchronized_update` asserts
+the order). No CSI erase may reach the wire from the TUI backend
+(`backend_clear_is_suppressed_no_csi_erase_reaches_the_inner_backend`).
+
 ### 2026-09-15 — Submit / paste / session switch flashed the profile bg
 
 **Symptom:** Every Enter (submit), paste, double-Esc draft clear, and

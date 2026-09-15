@@ -985,15 +985,22 @@ fn log_resize_failed(kind: &str, e: impl std::fmt::Display) {
     tracing::debug!(error = %e, "{kind} terminal resize failed");
 }
 
-/// Hide the caret and start a synchronized frame before a cell dump.
+/// Start a synchronized frame, then hide the caret, before a cell dump.
 ///
 /// Windows PowerShell / conhost keep the hardware cursor visible while
 /// ratatui `MoveTo`+`Print`s every cell. That reads as the blinking bar
 /// sweeping top-to-bottom on first paint (splash / empty home) and on
 /// tab-switch (FocusGained full redraw). `CSI ?2026` is ignored on hosts
 /// that do not implement it.
+///
+/// Order matters: `BeginSynchronizedUpdate` must come **before** `Hide` so
+/// the hide → cells → show cycle sits inside one atomic frame. With `Hide`
+/// first, hosts that honour `?2026` present the caret-off state at the top
+/// of every draw — during streaming (~25 fps) the prompt caret visibly
+/// strobes. Hosts that ignore `?2026` still get `Hide` ahead of the cell
+/// writes, so the anti-sweep behaviour is unchanged.
 fn begin_cell_dump(out: &mut impl Write) {
-    if let Err(e) = execute!(out, Hide, BeginSynchronizedUpdate) {
+    if let Err(e) = execute!(out, BeginSynchronizedUpdate, Hide) {
         tracing::debug!(error = %e, "begin cell dump failed");
     }
 }

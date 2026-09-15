@@ -100,7 +100,12 @@ fn cell_dump_guard_hides_cursor_and_brackets_synchronized_update() {
     let hide = bytes.find("\u{1b}[?25l").expect("hide");
     let begin = bytes.find("\u{1b}[?2026h").expect("begin");
     let end = bytes.find("\u{1b}[?2026l").expect("end");
-    assert!(hide < begin, "hide before begin-sync: {bytes:?}");
+    // Hide must sit INSIDE the synchronized region (after begin, before
+    // end): with Hide first, ?2026 hosts present the caret-off state at
+    // the top of every frame and the prompt caret strobes during
+    // streaming. Non-?2026 hosts still see Hide before the cell writes.
+    assert!(begin < hide, "begin-sync before hide: {bytes:?}");
+    assert!(hide < end, "hide inside the sync region: {bytes:?}");
     assert!(begin < end, "begin-sync before end-sync: {bytes:?}");
 }
 
