@@ -1613,6 +1613,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     }
     app.needs_redraw = false;
     app.pending_full_clears = 0;
+    // Live Windows console only: conhost / PowerShell paste is an
+    // unbracketed key flood, so a mid-paste Enter must not submit half the
+    // clipboard. Scripted/headless queues deliver one event per batch and
+    // must keep same-turn Enter submits.
+    app.paste_enter_guard = cfg!(windows) && !headless;
 
     if !bench_clock {
         whycodes_core::logging::emit(
@@ -2027,6 +2032,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     }
                 };
                 let mut batch = batch;
+                // One id per batch: the paste Enter guard compares the
+                // batch of the last prompt insert with the batch of the
+                // Enter to spot one-key-per-poll paste floods.
+                app.input_batch_seq = app.input_batch_seq.wrapping_add(1);
                 if batch
                     .iter()
                     .any(crate::redraw_schedule::event_is_user_interaction)

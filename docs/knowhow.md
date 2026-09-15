@@ -144,6 +144,31 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-16 — Long PowerShell paste submits half the clipboard
+
+**Symptom:** Pasting a long multi-line text into the prompt on Windows
+PowerShell / conhost (no WSL, no bracketed paste) inserts the first part,
+then "starts working": an embedded newline submitted half the clipboard
+as a prompt and a turn began.
+
+**Root cause:** Unbracketed paste is a key flood, often one key per poll
+(2026-09-13 `i` entry). `coalesce_unbracketed_paste` only folds what
+shares a batch; with per-key batches nothing folds, each char types, and
+the first `Enter` in the flood is indistinguishable from a submit.
+
+**Fix:** Live-Windows-only Enter guard (`paste_flood_enter`): an Enter
+within 80 ms of a prompt insert that happened in an *earlier* event batch
+cannot have been typed — insert `\n` instead of submitting. Same-batch
+"typed line + Enter" (startup catch-up, scripted tests) still submits;
+the guarded newline does not refresh `last_prompt_insert_at`, so held /
+re-pressed Enter ages out and submits. `input_batch_seq` bumps once per
+live batch; scripted queues (one event per batch) leave the guard off.
+
+**Prevention:** Do not treat an Enter inside a key flood as submit on
+Windows. Tests: `paste_flood_enter_becomes_newline_not_submit`,
+`same_batch_enter_still_submits_and_stale_enter_submits`,
+`repeated_enter_ages_out_of_the_flood_window_and_submits`.
+
 ### 2026-09-15 — Caret strobe per frame + resize white flash (ratatui erase)
 
 **Symptom:** After the submit/paste CSI-erase fix, flicker remained: the

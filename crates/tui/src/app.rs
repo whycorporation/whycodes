@@ -1306,6 +1306,19 @@ pub struct TuiApp {
     /// of ASCII `i` arrives as Tab / Ctrl+I one key at a time; a Tab that
     /// follows a recent insert is recovered as `i` instead of ToggleFocus.
     pub(crate) last_prompt_insert_at: Option<std::time::Instant>,
+    /// Monotonic id of the event batch being processed (live loop bumps it
+    /// once per batch). Lets the Enter guard tell "typed line + Enter queued
+    /// in one batch" (startup catch-up → submit) apart from a one-key-per-
+    /// poll paste flood, where Enter lands in a *later* batch than the chars.
+    pub(crate) input_batch_seq: u64,
+    /// `input_batch_seq` at the last prompt insert.
+    pub(crate) last_prompt_insert_batch: u64,
+    /// Windows live console only: an Enter right on the heels of prompt
+    /// inserts from an earlier batch is a pasted newline, not submit.
+    /// Hosts without bracketed paste (conhost / PowerShell) deliver a paste
+    /// as keys — often one per poll — so a mid-paste Enter used to submit
+    /// half the clipboard and start a turn.
+    pub(crate) paste_enter_guard: bool,
     /// Partial CSI mouse report leaked as key chars (`<65;NaN;NaNM`).
     /// Windows ConPTY sometimes fails to parse SGR mouse after a turn error
     /// and types the sequence into the prompt instead of `Event::Mouse`.
@@ -2101,6 +2114,9 @@ impl TuiApp {
             input_cursor: 0,
             esc_armed_at: None,
             last_prompt_insert_at: None,
+            input_batch_seq: 0,
+            last_prompt_insert_batch: 0,
+            paste_enter_guard: false,
             leaked_mouse_csi: String::new(),
             last_mouse_csi_at: None,
             pending_images: vec![],
