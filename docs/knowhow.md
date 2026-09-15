@@ -144,6 +144,21 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-15 — Windows first open paints twice (splash then home)
+
+**Symptom:** Caret sweep is gone, but opening WhyCodes still flickers twice
+(black splash, then themed home). PowerShell / Windows Terminal.
+
+**Root cause:** Interactive `run` painted `draw_splash` (black + "whycodes")
+before `TuiApp`, then the loop painted the real home. Two full-screen dumps.
+Hydrate after splash also dirtied a third frame when recents/status changed.
+
+**Fix:** Interactive first paint is one themed `draw_app` after hydrate.
+`WHYCODES_BENCH` still uses splash so TTFF does not wait on chrome.
+
+**Prevention:** Do not `draw_splash` then `draw_app` on the interactive
+path. Splash is harness-only (`paint_first_frame_sync` / `WHYCODES_BENCH`).
+
 ### 2026-09-15 — Windows tab-switch walks the caret down the screen
 
 **Symptom:** Leave the WhyCodes tab and come back: the blinking bar caret

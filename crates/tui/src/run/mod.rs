@@ -1466,35 +1466,39 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
     let color_mode = detect_color_mode();
     set_active_color_mode(color_mode);
-    // Attach + splash before TuiApp / Config (Linux, macOS, Windows).
+    // Attach before TuiApp / Config. Interactive first paint is the themed
+    // home — a black splash then home is two full-screen dumps (Windows
+    // flicker). `WHYCODES_BENCH` still uses splash so TTFF does not wait
+    // on chrome.
     let (mut terminal, keyboard_enhanced, tw, th) = if headless && !live_buf {
         (LoopTerm::headless(color_mode)?, false, 80u16, 24u16)
     } else {
         attach_for_loop(color_mode, live_buf)?
     };
 
-    if draw_fail {
-        terminal.restore(keyboard_enhanced);
-        return Err(anyhow::anyhow!("tui draw failed"));
-    }
-    if let Err(e) = terminal.draw_splash() {
+    let restore_attach = |terminal: LoopTerm| {
         terminal.restore(keyboard_enhanced);
         if !headless {
             whycodes_core::logging::clear_panic_cleanup();
         }
-        return Err(e);
+    };
+
+    if draw_fail {
+        restore_attach(terminal);
+        return Err(anyhow::anyhow!("tui draw failed"));
     }
     let bench_clock = std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty());
     let bench = crate::bench::config_from_env();
-    crate::bench::record_draw();
     if let Some(ref b) = bench {
+        if let Err(e) = terminal.draw_splash() {
+            restore_attach(terminal);
+            return Err(e);
+        }
+        crate::bench::record_draw();
         while !crate::bench::should_stop(b) {
             std::thread::sleep(Duration::from_millis(50));
         }
-        terminal.restore(keyboard_enhanced);
-        if !headless {
-            whycodes_core::logging::clear_panic_cleanup();
-        }
+        restore_attach(terminal);
         crate::bench::write_results(b);
         return Ok(TuiExit::Quit);
     }
@@ -1512,19 +1516,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     app.config.color_mode = color_mode;
     app.config.extra.quantize_for(color_mode);
     apply_boot_prompt(&mut app, missing_key, opts.initial_prompt.clone());
-
-    if !bench_clock {
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "info",
-            "tui.first_frame",
-            Some(serde_json::json!({ "w": tw, "h": th })),
-        );
-    }
-
-    if let LoopTerm::Live(ref mut term) = terminal {
-        enable_mouse_paste_cursor(term.backend_mut());
-    }
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<TurnEvent>();
     let (done_tx, done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
@@ -1614,6 +1605,30 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
         false,
     )
     .await;
+
+    if let LoopTerm::Live(ref mut term) = terminal {
+        enable_mouse_paste_cursor(term.backend_mut());
+    }
+    let mut first_draw_fail = false;
+    match terminal.draw_app(&mut app, &mut first_draw_fail) {
+        Ok(_) => crate::bench::record_draw(),
+        Err(e) => {
+            restore_attach(terminal);
+            return Err(e);
+        }
+    }
+    app.needs_redraw = false;
+    app.pending_full_clears = 0;
+
+    if !bench_clock {
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "info",
+            "tui.first_frame",
+            Some(serde_json::json!({ "w": tw, "h": th })),
+        );
+    }
+
     // Paste / resize / focus can echo glyphs onto the PTY outside ratatui's
     // diff. Clear the terminal on the next paint so leftover text cannot sit
     // in the unpainted rows beside the prompt. Ordinary Backspace/Delete
@@ -5120,8 +5135,10 @@ fn load_app_todos(app: &mut TuiApp) {
     ));
 }
 
-/// Paint, then hydrate. Deferred boot work the first 80×24 home frame does
-/// not need (issue #49).
+/// Load deferred chrome before the first *visible* interactive paint.
+///
+/// Interactive `run` no longer paints a black splash then the themed home
+/// (two full-screen dumps). Bench still uses splash and never reaches here.
 #[allow(clippy::too_many_arguments)]
 async fn hydrate_after_first_frame(
     app: &mut TuiApp,
