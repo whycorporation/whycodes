@@ -318,7 +318,6 @@ pub struct LoopInject {
     pub poll_err: bool,
     pub read_err: bool,
     pub draw_fail: bool,
-    pub clear_fail: bool,
     /// Seed the catalog / suggestion / auth channels before the first poll.
     pub catalog: Option<(String, String, u32)>,
     pub suggest: Option<String>,
@@ -866,17 +865,6 @@ impl LoopTerm {
                     log_resize_failed("headless", e);
                 }
             }
-        }
-    }
-
-    fn clear(&mut self, fail: &mut bool) -> anyhow::Result<()> {
-        if *fail {
-            *fail = false;
-            return Err(anyhow::anyhow!("tui clear failed"));
-        }
-        match self {
-            Self::Live(t) => t.clear().map_err(Into::into),
-            Self::Headless(t) => t.clear().map_err(Into::into),
         }
     }
 
@@ -1438,7 +1426,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let headless = loop_io.is_headless();
     let live_buf = opts.inject.live_buf;
     let mut draw_fail = opts.inject.draw_fail;
-    let mut clear_fail = opts.inject.clear_fail;
     let seed_catalog = opts.inject.catalog.take();
     let seed_suggest = opts.inject.suggest.take();
     let seed_auth = opts.inject.auth.take();
@@ -1630,9 +1617,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     }
 
     // Paste / resize / focus can echo glyphs onto the PTY outside ratatui's
-    // diff. Clear the terminal on the next paint so leftover text cannot sit
-    // in the unpainted rows beside the prompt. Ordinary Backspace/Delete
-    // must not bump `pending_full_clears` — home gutters already fill_blank.
+    // diff. Force a full themed redraw on the next paint so leftover text
+    // cannot sit in the unpainted rows beside the prompt. Ordinary
+    // Backspace/Delete must not bump `pending_full_clears` — home gutters
+    // already fill_blank.
     // Deep-idle + malloc_trim clocks (jcode redraw_schedule / idle_heap).
     let mut last_user_input = Instant::now();
     let mut idle_trim_armed = true;
@@ -1683,14 +1671,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             let animate = rt.agent_busy || app.running_task_count() > 0;
             if app.needs_redraw || animate {
                 if app.pending_full_clears > 0 {
-                    if let Err(e) = terminal.clear(&mut clear_fail) {
-                        whycodes_core::logging::emit(
-                            "whycodes_tui",
-                            "warn",
-                            "tui.full_clear_failed",
-                            Some(serde_json::json!({ "error": e.to_string() })),
-                        );
-                    }
+                    // Full *themed* redraw, not CSI erase: Windows paints
+                    // ClearType::All with the profile default background
+                    // (white flash on every submit / paste / session
+                    // switch), and the erase flushes outside the
+                    // synchronized-update dump. `render` fill_blanks the
+                    // whole frame, so resetting the previous buffer makes
+                    // the next draw rewrite every cell — paste echo is
+                    // overwritten without an intermediate blank frame.
+                    terminal.reset_prev_for_full_redraw();
                     app.pending_full_clears = app.pending_full_clears.saturating_sub(1);
                 }
                 let (_draw_area, snapshot) = match terminal.draw_app(&mut app, &mut draw_fail) {

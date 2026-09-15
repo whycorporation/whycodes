@@ -9,7 +9,6 @@ thread_local! {
     static CROSSTERM_POLL_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static CROSSTERM_READ_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static DRAW_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static CLEAR_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static TEST_CATALOG_WINDOW: std::cell::RefCell<Option<(String, String, u32)>> =
         const { std::cell::RefCell::new(None) };
     static TEST_SUGGEST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
@@ -45,10 +44,6 @@ fn set_draw_fail(v: bool) {
     DRAW_FAIL.with(|c| c.set(v));
 }
 
-fn set_clear_fail(v: bool) {
-    CLEAR_FAIL.with(|c| c.set(v));
-}
-
 fn set_test_catalog_window(v: Option<(String, String, u32)>) {
     TEST_CATALOG_WINDOW.with(|c| *c.borrow_mut() = v);
 }
@@ -69,7 +64,6 @@ fn take_loop_inject() -> LoopInject {
         poll_err: CROSSTERM_POLL_ERR.with(|c| c.replace(false)),
         read_err: CROSSTERM_READ_ERR.with(|c| c.replace(false)),
         draw_fail: DRAW_FAIL.with(|c| c.replace(false)),
-        clear_fail: CLEAR_FAIL.with(|c| c.replace(false)),
         catalog: TEST_CATALOG_WINDOW.with(|c| c.borrow_mut().take()),
         suggest: TEST_SUGGEST.with(|c| c.borrow_mut().take()),
         auth: TEST_AUTH_EVENT.with(|c| c.borrow_mut().take()),
@@ -7976,7 +7970,7 @@ fn loop_term_headless_and_live_buf_draw() {
     let mut term = LoopTerm::headless(color).unwrap();
     term.resize(Rect::new(0, 0, 40, 12));
     let mut no_fail = false;
-    let _ = term.clear(&mut no_fail);
+    term.reset_prev_for_full_redraw();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.pending_full_clears = 1;
     let (area, snapshot) = term.draw_app(&mut app, &mut no_fail).unwrap();
@@ -7987,7 +7981,7 @@ fn loop_term_headless_and_live_buf_draw() {
     let mut live = LoopTerm::live(TuiWriter::Buf(Vec::new()), color).unwrap();
     live.resize(Rect::new(0, 0, 80, 24));
     let mut live_fail = false;
-    let _ = live.clear(&mut live_fail);
+    live.reset_prev_for_full_redraw();
     app.mouse_sel = Some(crate::app::MouseSelection {
         anchor_x: 1,
         anchor_y: 1,
@@ -8001,8 +7995,7 @@ fn loop_term_headless_and_live_buf_draw() {
 
     let mut tiny = LoopTerm::headless(color).unwrap();
     tiny.resize(Rect::new(0, 0, 0, 0));
-    let mut tiny_fail = false;
-    let _ = tiny.clear(&mut tiny_fail);
+    tiny.reset_prev_for_full_redraw();
     tiny.restore(false);
 }
 
@@ -8642,7 +8635,7 @@ async fn run_headless_quit_confirm_enter_stops_via_handle_event() {
 }
 
 #[tokio::test]
-async fn run_headless_clear_fail_still_draws_then_quits() {
+async fn run_headless_paste_full_redraw_then_quits() {
     let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
@@ -8651,11 +8644,12 @@ async fn run_headless_clear_fail_still_draws_then_quits() {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
     }
+    // Paste bumps `pending_full_clears`; the loop must take the themed
+    // full-redraw path (reset prev buffer, no CSI erase) and keep running.
     set_headless_events(Some(std::collections::VecDeque::from([
         Event::Paste("paste-echo".into()),
         ctrl('q'),
     ])));
-    set_clear_fail(true);
     let exit = run_injected(boot_opts(dir.path(), "sk-test"))
         .await
         .unwrap();
@@ -8667,7 +8661,6 @@ async fn run_headless_clear_fail_still_draws_then_quits() {
         Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
         None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
     }
-    set_clear_fail(false);
     assert_eq!(exit, TuiExit::Quit);
 }
 

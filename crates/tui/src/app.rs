@@ -1282,7 +1282,8 @@ pub struct TuiApp {
     /// Paint when true. Cleared after a successful draw unless animation
     /// (spinner / live toast) still needs frames. See the TUI event loop.
     pub(crate) needs_redraw: bool,
-    /// Extra `terminal.clear()` paints. Bracketed-paste echo (and key-flood
+    /// Extra full-redraw paints (reset prev buffer, every cell rewritten —
+    /// never CSI erase). Bracketed-paste echo (and key-flood
     /// paste on hosts without bracketed paste) writes onto the PTY outside
     /// ratatui's diff; breathing-room cells stay spaces in both frames so
     /// the leftover sits left of the centered home prompt until we force a
@@ -2064,7 +2065,8 @@ impl TuiApp {
         self.needs_redraw = true;
     }
 
-    /// Force `terminal.clear()` on the next `n` paints (at least one).
+    /// Force a full themed redraw (every cell rewritten, no CSI erase) on
+    /// the next `n` paints (at least one).
     ///
     /// Use 2 after a paste so an emulator that echoes *after* `Event::Paste`
     /// is still wiped on the follow-up frame.

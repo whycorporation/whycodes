@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-15 — Submit / paste / session switch flashed the profile bg
+
+**Symptom:** Every Enter (submit), paste, double-Esc draft clear, and
+session switch blinked the whole TUI to the profile default background
+(white on Windows PowerShell) before the themed frame returned.
+
+**Root cause:** `pending_full_clears` still ran `terminal.clear()` — CSI
+erase, which Windows paints with the *profile* bg — and that erase flushed
+**outside** the `?2026` synchronized-update dump, so the blank frame was
+always visible. The focus path had already switched to
+`reset_prev_for_full_redraw`; the paste/submit path had not.
+
+**Fix:** The loop's `pending_full_clears` branch calls
+`reset_prev_for_full_redraw()` (hide caret + reset prev buffer). `render`
+`fill_blank`s the entire frame, so the next draw rewrites every cell inside
+the synchronized update — paste echo is still overwritten, with no
+intermediate erase. `LoopTerm::clear` and the `clear_fail` injection are
+gone.
+
+**Prevention:** There is no `terminal.clear()` left in the event loop; do
+not reintroduce one. A "full clear" is always reset-prev + themed dump.
+Regression: `run_headless_paste_full_redraw_then_quits`.
+
 ### 2026-09-15 — Windows first open paints twice (splash then home)
 
 **Symptom:** Caret sweep is gone, but opening WhyCodes still flickers twice
