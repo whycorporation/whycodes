@@ -106,6 +106,7 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
     // prompt does not reflow/flicker; full body is restored on submit.
     app.insert_paste_text(&text);
     app.last_prompt_insert_at = Some(Instant::now());
+    app.last_prompt_insert_batch = app.input_batch_seq;
     app.slash_suggest.refresh(&app.input_buffer);
     app.file_suggest
         .refresh(&app.input_buffer, app.input_cursor);
@@ -252,6 +253,45 @@ fn is_windows_paste_i_key(k: &KeyEvent) -> bool {
     }
 }
 
+/// Enter mid-paste on hosts without bracketed paste (conhost / PowerShell).
+///
+/// Those hosts deliver a paste as a key flood — often one key per poll — so
+/// `coalesce_unbracketed_paste` never sees the whole text and an embedded
+/// newline reaches the prompt as a bare Enter: half the clipboard submits
+/// and a turn starts. An Enter that lands within the flood window of a
+/// prompt insert from an *earlier* batch cannot have been typed (humans
+/// pause longer than [`WINDOWS_PASTE_I_WINDOW`] before Enter); insert the
+/// newline instead. Same-batch "typed line + Enter" (startup catch-up,
+/// scripted queues) still submits, and the guard is armed only for the live
+/// Windows console (`TuiApp::paste_enter_guard`).
+fn paste_flood_enter(app: &TuiApp) -> bool {
+    if !app.paste_enter_guard {
+        return false;
+    }
+    if app.input_buffer.trim().is_empty() {
+        return false;
+    }
+    if app.last_prompt_insert_batch == app.input_batch_seq {
+        return false;
+    }
+    let Some(at) = app.last_prompt_insert_at else {
+        return false;
+    };
+    at.elapsed() <= WINDOWS_PASTE_I_WINDOW
+}
+
+/// Insert the guarded Enter as a newline at the cursor. Deliberately does
+/// **not** refresh `last_prompt_insert_at`: a held/repeated Enter must age
+/// out of the flood window and submit, not stack newlines forever.
+fn insert_paste_newline(app: &mut TuiApp) {
+    app.focus_prompt();
+    let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+    app.input_buffer.insert(pos, '\n');
+    app.input_cursor = pos + 1;
+    app.esc_armed_at = None;
+    app.mark_dirty();
+}
+
 fn recover_windows_paste_i(app: &mut TuiApp, key: &KeyEvent) -> bool {
     if !cfg!(windows) && !cfg!(test) {
         return false;
@@ -279,6 +319,7 @@ fn recover_windows_paste_i(app: &mut TuiApp, key: &KeyEvent) -> bool {
     app.input_buffer.insert(pos, 'i');
     app.input_cursor = pos + 1;
     app.last_prompt_insert_at = Some(Instant::now());
+    app.last_prompt_insert_batch = app.input_batch_seq;
     app.slash_suggest.refresh(&app.input_buffer);
     app.file_suggest
         .refresh(&app.input_buffer, app.input_cursor);
@@ -303,6 +344,7 @@ fn flush_leaked_mouse_csi(app: &mut TuiApp) {
     app.input_buffer.insert_str(pos, &pending);
     app.input_cursor = pos + pending.len();
     app.last_prompt_insert_at = Some(Instant::now());
+    app.last_prompt_insert_batch = app.input_batch_seq;
     app.slash_suggest.refresh(&app.input_buffer);
     app.file_suggest
         .refresh(&app.input_buffer, app.input_cursor);
@@ -524,7 +566,11 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
             app.slash_suggest.dismiss();
             match app.mode {
                 AppMode::Normal => {
-                    app.submit_input();
+                    if paste_flood_enter(app) {
+                        insert_paste_newline(app);
+                    } else {
+                        app.submit_input();
+                    }
                 }
                 AppMode::Command => {
                     let cmd = app.command.buffer.clone();
@@ -731,6 +777,7 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
                         app.input_buffer.insert(pos, c);
                         app.input_cursor = pos + c.len_utf8();
                         app.last_prompt_insert_at = Some(Instant::now());
+                        app.last_prompt_insert_batch = app.input_batch_seq;
                         app.slash_suggest.refresh(&app.input_buffer);
                         app.file_suggest
                             .refresh(&app.input_buffer, app.input_cursor);

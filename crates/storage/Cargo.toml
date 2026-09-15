@@ -7,9 +7,10 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-# System sqlite (pkg-config) is used by default for fast dev builds.
-# CI/release enable `bundled` (`--features whycodes-storage/bundled` or
-# `whycodes-cli/bundled-sqlite`) so machines without libsqlite3-dev still
+# Unix: system sqlite (pkg-config) by default for fast dev builds.
+# Windows: always bundled — MSVC has no sqlite3.lib unless the SDK is
+# installed by hand (LNK1181). CI/release still pass `bundled` /
+# `whycodes-cli/bundled-sqlite` so Linux runners without libsqlite3-dev
 # link. Compiling the amalgamation is ~43s cold, cached afterwards.
 default = []
 bundled = ["rusqlite/bundled"]
@@ -22,6 +23,11 @@ serde_json.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
+
+# Windows has no system sqlite3.lib on a typical MSVC install. Feature
+# unification turns on rusqlite/bundled for this target only.
+[target.'cfg(windows)'.dependencies]
+rusqlite = { workspace = true, features = ["bundled"] }
 
 [dev-dependencies]
 tempfile.workspace = true

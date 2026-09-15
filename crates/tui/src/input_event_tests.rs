@@ -6155,3 +6155,93 @@ fn command_mode_types_letters_and_skips_control_chords() {
     assert!(handle_event(&mut a, alt));
     assert_eq!(a.command.buffer, "si");
 }
+
+#[test]
+fn paste_flood_enter_becomes_newline_not_submit() {
+    // conhost / PowerShell without bracketed paste: keys arrive one per
+    // poll. An Enter right after inserts from an earlier batch is a pasted
+    // newline — half the clipboard must not submit and start a turn.
+    let mut a = app();
+    a.paste_enter_guard = true;
+    a.input_batch_seq = 1;
+    for c in "yarim kalan satir".chars() {
+        handle_event(&mut a, key(KeyCode::Char(c)));
+    }
+    a.input_batch_seq = 2; // Enter lands in the next poll batch
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(
+        a.pending_prompt.is_none(),
+        "mid-paste Enter must not submit: {:?}",
+        a.pending_prompt
+    );
+    assert_eq!(a.input_buffer, "yarim kalan satir\n");
+
+    // Flood continues into the same draft.
+    for c in "devami".chars() {
+        handle_event(&mut a, key(KeyCode::Char(c)));
+    }
+    assert_eq!(a.input_buffer, "yarim kalan satir\ndevami");
+}
+
+#[test]
+fn same_batch_enter_still_submits_and_stale_enter_submits() {
+    // Startup catch-up: typed line + Enter queued into ONE batch → submit.
+    let mut a = app();
+    a.paste_enter_guard = true;
+    a.input_batch_seq = 3;
+    for c in "selam".chars() {
+        handle_event(&mut a, key(KeyCode::Char(c)));
+    }
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.pending_prompt.as_deref(), Some("selam"));
+
+    // Typed then a human pause before Enter (stale insert) → submit.
+    let mut b = app();
+    b.paste_enter_guard = true;
+    b.input_batch_seq = 1;
+    for c in "merhaba".chars() {
+        handle_event(&mut b, key(KeyCode::Char(c)));
+    }
+    b.input_batch_seq = 2;
+    b.last_prompt_insert_at =
+        Some(std::time::Instant::now() - std::time::Duration::from_millis(500));
+    assert!(handle_event(&mut b, key(KeyCode::Enter)));
+    assert_eq!(b.pending_prompt.as_deref(), Some("merhaba"));
+}
+
+#[test]
+fn paste_enter_guard_off_keeps_cross_batch_submit() {
+    // Headless / scripted queues run one event per batch; the guard is only
+    // armed for the live Windows console, so scripted Enter still submits.
+    let mut a = app();
+    assert!(!a.paste_enter_guard);
+    a.input_batch_seq = 1;
+    for c in "script".chars() {
+        handle_event(&mut a, key(KeyCode::Char(c)));
+    }
+    a.input_batch_seq = 2;
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.pending_prompt.as_deref(), Some("script"));
+}
+
+#[test]
+fn repeated_enter_ages_out_of_the_flood_window_and_submits() {
+    // The guarded newline does not refresh last_prompt_insert_at, so a held
+    // or re-pressed Enter submits once the flood window has passed.
+    let mut a = app();
+    a.paste_enter_guard = true;
+    a.input_batch_seq = 1;
+    for c in "son satir".chars() {
+        handle_event(&mut a, key(KeyCode::Char(c)));
+    }
+    a.input_batch_seq = 2;
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(a.pending_prompt.is_none());
+    // Age the last real insert past the window: the next Enter submits the
+    // whole draft (trailing newline trimmed by submit_input).
+    a.last_prompt_insert_at =
+        Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
+    a.input_batch_seq = 3;
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert_eq!(a.pending_prompt.as_deref(), Some("son satir"));
+}

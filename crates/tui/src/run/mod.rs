@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::color::{ColorMode, QuantizingBackend, detect_color_mode, set_active_color_mode};
-use crossterm::cursor::SetCursorStyle;
+use crossterm::cursor::{Hide, SetCursorStyle};
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
     KeyCode, KeyEventKind, KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags,
@@ -15,8 +15,8 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-    size as term_size, supports_keyboard_enhancement,
+    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, size as term_size, supports_keyboard_enhancement,
 };
 use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
@@ -318,7 +318,6 @@ pub struct LoopInject {
     pub poll_err: bool,
     pub read_err: bool,
     pub draw_fail: bool,
-    pub clear_fail: bool,
     /// Seed the catalog / suggestion / auth channels before the first poll.
     pub catalog: Option<(String, String, u32)>,
     pub suggest: Option<String>,
@@ -869,27 +868,25 @@ impl LoopTerm {
         }
     }
 
-    fn clear(&mut self, fail: &mut bool) -> anyhow::Result<()> {
-        if *fail {
-            *fail = false;
-            return Err(anyhow::anyhow!("tui clear failed"));
-        }
-        match self {
-            Self::Live(t) => t.clear().map_err(Into::into),
-            Self::Headless(t) => t.clear().map_err(Into::into),
-        }
-    }
-
     /// Drop the last painted buffer so the next `draw` diffs against empty
     /// (every cell is sent) without CSI erase. Windows PowerShell paints
     /// `ClearType::All` with the profile default background — a white flash.
+    ///
+    /// Hide the caret first: a full cell dump with a visible cursor looks
+    /// like the bar sweeping the screen top-to-bottom (conhost / WT).
     fn reset_prev_for_full_redraw(&mut self) {
         match self {
             Self::Live(t) => {
+                if let Err(e) = t.hide_cursor() {
+                    tracing::debug!(error = %e, "hide cursor before full redraw failed");
+                }
                 t.current_buffer_mut().reset();
                 t.swap_buffers();
             }
             Self::Headless(t) => {
+                if let Err(e) = t.hide_cursor() {
+                    tracing::debug!(error = %e, "hide cursor before full redraw failed");
+                }
                 t.current_buffer_mut().reset();
                 t.swap_buffers();
             }
@@ -922,15 +919,41 @@ impl LoopTerm {
             return Err(anyhow::anyhow!("tui draw failed"));
         }
         match self {
-            Self::Live(t) => draw_into(t, app),
-            Self::Headless(t) => draw_into(t, app),
+            Self::Live(t) => {
+                // Hide + CSI ?2026 before the cell dump. ratatui only hides
+                // the cursor *after* flush, so a FocusGained full redraw
+                // otherwise walks the hardware caret down every row.
+                begin_cell_dump(t.backend_mut());
+                let result = draw_into(t, app);
+                end_cell_dump(t.backend_mut());
+                result
+            }
+            Self::Headless(t) => {
+                if let Err(e) = t.hide_cursor() {
+                    tracing::debug!(error = %e, "hide cursor before headless draw failed");
+                }
+                draw_into(t, app)
+            }
         }
     }
 
     fn draw_splash(&mut self) -> anyhow::Result<()> {
         match self {
-            Self::Live(t) => t.draw(render_splash).map(|_| ()).map_err(Into::into),
-            Self::Headless(t) => t.draw(render_splash).map(|_| ()).map_err(Into::into),
+            Self::Live(t) => {
+                // Same guard as `draw_app`: the splash fills every cell and
+                // is the first paint after alt-screen. A visible caret walks
+                // the dump on Windows PowerShell (home screen, not chat).
+                begin_cell_dump(t.backend_mut());
+                let result = t.draw(render_splash).map(|_| ()).map_err(Into::into);
+                end_cell_dump(t.backend_mut());
+                result
+            }
+            Self::Headless(t) => {
+                if let Err(e) = t.hide_cursor() {
+                    tracing::debug!(error = %e, "hide cursor before splash failed");
+                }
+                t.draw(render_splash).map(|_| ()).map_err(Into::into)
+            }
         }
     }
 
@@ -960,6 +983,32 @@ fn on_terminal_new_failed(e: &impl std::fmt::Display) {
 
 fn log_resize_failed(kind: &str, e: impl std::fmt::Display) {
     tracing::debug!(error = %e, "{kind} terminal resize failed");
+}
+
+/// Start a synchronized frame, then hide the caret, before a cell dump.
+///
+/// Windows PowerShell / conhost keep the hardware cursor visible while
+/// ratatui `MoveTo`+`Print`s every cell. That reads as the blinking bar
+/// sweeping top-to-bottom on first paint (splash / empty home) and on
+/// tab-switch (FocusGained full redraw). `CSI ?2026` is ignored on hosts
+/// that do not implement it.
+///
+/// Order matters: `BeginSynchronizedUpdate` must come **before** `Hide` so
+/// the hide → cells → show cycle sits inside one atomic frame. With `Hide`
+/// first, hosts that honour `?2026` present the caret-off state at the top
+/// of every draw — during streaming (~25 fps) the prompt caret visibly
+/// strobes. Hosts that ignore `?2026` still get `Hide` ahead of the cell
+/// writes, so the anti-sweep behaviour is unchanged.
+fn begin_cell_dump(out: &mut impl Write) {
+    if let Err(e) = execute!(out, BeginSynchronizedUpdate, Hide) {
+        tracing::debug!(error = %e, "begin cell dump failed");
+    }
+}
+
+fn end_cell_dump(out: &mut impl Write) {
+    if let Err(e) = execute!(out, EndSynchronizedUpdate) {
+        tracing::debug!(error = %e, "end cell dump failed");
+    }
 }
 
 fn draw_into<B: ratatui::backend::Backend>(
@@ -1223,7 +1272,7 @@ fn enter_raw_and_alt(
              Run inside a real terminal, or use `whycodes --plain`."
         )
     })?;
-    execute!(out, EnterAlternateScreen).map_err(|e| {
+    execute!(out, EnterAlternateScreen, Hide).map_err(|e| {
         let _ = disable_raw_mode();
         whycodes_core::logging::emit(
             "whycodes_tui",
@@ -1241,7 +1290,11 @@ fn enable_mouse_paste_cursor(out: &mut impl Write) {
         out,
         EnableMouseCapture,
         EnableBracketedPaste,
-        SetCursorStyle::BlinkingBar
+        SetCursorStyle::BlinkingBar,
+        // Shape only — keep hidden until the next draw places the bar
+        // on the prompt. Showing it here lets Windows walk the first
+        // home-screen dump (splash → themed prompt).
+        Hide
     ) {
         tracing::debug!(error = %e, "enable mouse/paste/cursor after first paint failed");
     }
@@ -1380,7 +1433,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let headless = loop_io.is_headless();
     let live_buf = opts.inject.live_buf;
     let mut draw_fail = opts.inject.draw_fail;
-    let mut clear_fail = opts.inject.clear_fail;
     let seed_catalog = opts.inject.catalog.take();
     let seed_suggest = opts.inject.suggest.take();
     let seed_auth = opts.inject.auth.take();
@@ -1408,35 +1460,39 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
     let color_mode = detect_color_mode();
     set_active_color_mode(color_mode);
-    // Attach + splash before TuiApp / Config (Linux, macOS, Windows).
+    // Attach before TuiApp / Config. Interactive first paint is the themed
+    // home — a black splash then home is two full-screen dumps (Windows
+    // flicker). `WHYCODES_BENCH` still uses splash so TTFF does not wait
+    // on chrome.
     let (mut terminal, keyboard_enhanced, tw, th) = if headless && !live_buf {
         (LoopTerm::headless(color_mode)?, false, 80u16, 24u16)
     } else {
         attach_for_loop(color_mode, live_buf)?
     };
 
-    if draw_fail {
-        terminal.restore(keyboard_enhanced);
-        return Err(anyhow::anyhow!("tui draw failed"));
-    }
-    if let Err(e) = terminal.draw_splash() {
+    let restore_attach = |terminal: LoopTerm| {
         terminal.restore(keyboard_enhanced);
         if !headless {
             whycodes_core::logging::clear_panic_cleanup();
         }
-        return Err(e);
+    };
+
+    if draw_fail {
+        restore_attach(terminal);
+        return Err(anyhow::anyhow!("tui draw failed"));
     }
     let bench_clock = std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty());
     let bench = crate::bench::config_from_env();
-    crate::bench::record_draw();
     if let Some(ref b) = bench {
+        if let Err(e) = terminal.draw_splash() {
+            restore_attach(terminal);
+            return Err(e);
+        }
+        crate::bench::record_draw();
         while !crate::bench::should_stop(b) {
             std::thread::sleep(Duration::from_millis(50));
         }
-        terminal.restore(keyboard_enhanced);
-        if !headless {
-            whycodes_core::logging::clear_panic_cleanup();
-        }
+        restore_attach(terminal);
         crate::bench::write_results(b);
         return Ok(TuiExit::Quit);
     }
@@ -1454,19 +1510,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     app.config.color_mode = color_mode;
     app.config.extra.quantize_for(color_mode);
     apply_boot_prompt(&mut app, missing_key, opts.initial_prompt.clone());
-
-    if !bench_clock {
-        whycodes_core::logging::emit(
-            "whycodes_tui",
-            "info",
-            "tui.first_frame",
-            Some(serde_json::json!({ "w": tw, "h": th })),
-        );
-    }
-
-    if let LoopTerm::Live(ref mut term) = terminal {
-        enable_mouse_paste_cursor(term.backend_mut());
-    }
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<TurnEvent>();
     let (done_tx, done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
@@ -1539,6 +1582,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // abort the join handle so "Cancelling…" can never stick forever.
     let mut cancel_requested_at: Option<Instant> = None;
     let mut spinner_frame: usize = 0;
+    let mut spinner_dwell: u32 = 0;
     // Title may arrive before TurnOutcome restores the real rt.session; hold it.
     let mut pending_async_title: Option<(String, String)> = None;
     let mut update_rx = opts.update_rx;
@@ -1555,10 +1599,40 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
         false,
     )
     .await;
+
+    if let LoopTerm::Live(ref mut term) = terminal {
+        enable_mouse_paste_cursor(term.backend_mut());
+    }
+    let mut first_draw_fail = false;
+    match terminal.draw_app(&mut app, &mut first_draw_fail) {
+        Ok(_) => crate::bench::record_draw(),
+        Err(e) => {
+            restore_attach(terminal);
+            return Err(e);
+        }
+    }
+    app.needs_redraw = false;
+    app.pending_full_clears = 0;
+    // Live Windows console only: conhost / PowerShell paste is an
+    // unbracketed key flood, so a mid-paste Enter must not submit half the
+    // clipboard. Scripted/headless queues deliver one event per batch and
+    // must keep same-turn Enter submits.
+    app.paste_enter_guard = cfg!(windows) && !headless;
+
+    if !bench_clock {
+        whycodes_core::logging::emit(
+            "whycodes_tui",
+            "info",
+            "tui.first_frame",
+            Some(serde_json::json!({ "w": tw, "h": th })),
+        );
+    }
+
     // Paste / resize / focus can echo glyphs onto the PTY outside ratatui's
-    // diff. Clear the terminal on the next paint so leftover text cannot sit
-    // in the unpainted rows beside the prompt. Ordinary Backspace/Delete
-    // must not bump `pending_full_clears` — home gutters already fill_blank.
+    // diff. Force a full themed redraw on the next paint so leftover text
+    // cannot sit in the unpainted rows beside the prompt. Ordinary
+    // Backspace/Delete must not bump `pending_full_clears` — home gutters
+    // already fill_blank.
     // Deep-idle + malloc_trim clocks (jcode redraw_schedule / idle_heap).
     let mut last_user_input = Instant::now();
     let mut idle_trim_armed = true;
@@ -1609,14 +1683,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             let animate = rt.agent_busy || app.running_task_count() > 0;
             if app.needs_redraw || animate {
                 if app.pending_full_clears > 0 {
-                    if let Err(e) = terminal.clear(&mut clear_fail) {
-                        whycodes_core::logging::emit(
-                            "whycodes_tui",
-                            "warn",
-                            "tui.full_clear_failed",
-                            Some(serde_json::json!({ "error": e.to_string() })),
-                        );
-                    }
+                    // Full *themed* redraw, not CSI erase: Windows paints
+                    // ClearType::All with the profile default background
+                    // (white flash on every submit / paste / session
+                    // switch), and the erase flushes outside the
+                    // synchronized-update dump. `render` fill_blanks the
+                    // whole frame, so resetting the previous buffer makes
+                    // the next draw rewrite every cell — paste echo is
+                    // overwritten without an intermediate blank frame.
+                    terminal.reset_prev_for_full_redraw();
                     app.pending_full_clears = app.pending_full_clears.saturating_sub(1);
                 }
                 let (_draw_area, snapshot) = match terminal.draw_app(&mut app, &mut draw_fail) {
@@ -1647,7 +1722,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             after_turn_events_drain(&mut app, &mut rt.event_rx, &config, &file_index);
 
             if should_tick_spinner(&app, rt.agent_busy) {
-                tick_spinner(&mut app, &mut spinner_frame);
+                spinner_dwell = spinner_dwell.saturating_add(1);
+                if spinner_dwell >= crate::ui::spinner::TICK_DIVISOR {
+                    spinner_dwell = 0;
+                    tick_spinner(&mut app, &mut spinner_frame);
+                }
+            } else {
+                spinner_dwell = 0;
             }
 
             // ── Permission / question requests (queued; one at a time) ─
@@ -1951,6 +2032,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     }
                 };
                 let mut batch = batch;
+                // One id per batch: the paste Enter guard compares the
+                // batch of the last prompt insert with the batch of the
+                // Enter to spot one-key-per-poll paste floods.
+                app.input_batch_seq = app.input_batch_seq.wrapping_add(1);
                 if batch
                     .iter()
                     .any(crate::redraw_schedule::event_is_user_interaction)
@@ -4156,7 +4241,7 @@ fn persist_general_approval_mode(mode: ApprovalMode) -> anyhow::Result<()> {
 }
 
 fn tick_spinner(app: &mut TuiApp, spinner_frame: &mut usize) {
-    *spinner_frame = (*spinner_frame + 1) % crate::ui::spinner::FRAMES.len();
+    *spinner_frame = (*spinner_frame + 1) % crate::ui::spinner::frame_count();
     app.spinner_frame = *spinner_frame;
     app.mark_dirty();
     let generic = app.status_message.contains("Generating")
@@ -5055,8 +5140,10 @@ fn load_app_todos(app: &mut TuiApp) {
     ));
 }
 
-/// Paint, then hydrate. Deferred boot work the first 80×24 home frame does
-/// not need (issue #49).
+/// Load deferred chrome before the first *visible* interactive paint.
+///
+/// Interactive `run` no longer paints a black splash then the themed home
+/// (two full-screen dumps). Bench still uses splash and never reaches here.
 #[allow(clippy::too_many_arguments)]
 async fn hydrate_after_first_frame(
     app: &mut TuiApp,

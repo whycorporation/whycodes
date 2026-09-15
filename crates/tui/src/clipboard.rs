@@ -27,10 +27,100 @@ pub fn copy_text(text: &str) -> bool {
     }
     let osc = osc52(text);
     let mut ok = write_osc52_to(&mut io::stdout().lock(), &osc);
-    ok |= try_wl_copy(text);
-    ok |= try_xclip(text);
-    ok |= try_pbcopy(text);
+    if cfg!(windows) {
+        // Native Win32 clipboard. The Unix helpers can never exist here,
+        // and each failed `CreateProcess` walks the whole PATH × PATHEXT
+        // (plus Defender) — four attempts froze the TUI for seconds on
+        // hosts with a long PATH. Classic conhost also ignores OSC 52, so
+        // this is the only path that actually lands on Windows.
+        // `!cfg!(test)`: unit tests must not clobber the developer's real
+        // clipboard (the stub covers copy_text's logic).
+        ok |= !cfg!(test) && windows_clipboard::set_text(text);
+    } else {
+        ok |= try_wl_copy(text);
+        ok |= try_xclip(text);
+        ok |= try_pbcopy(text);
+    }
     ok
+}
+
+/// Direct `CF_UNICODETEXT` write — no process spawn, no code-page loss.
+///
+/// `clip.exe` was rejected: it interprets input via the console *input*
+/// code page (whycodes only sets the output CP to 65001, so Turkish text
+/// garbles on CP857 hosts) and a UTF-16 BOM is stored as literal text.
+mod windows_clipboard {
+    #[cfg(not(windows))]
+    pub(super) fn set_text(_text: &str) -> bool {
+        false
+    }
+
+    #[cfg(windows)]
+    pub(super) fn set_text(text: &str) -> bool {
+        use core::ffi::c_void;
+
+        const CF_UNICODETEXT: u32 = 13;
+        const GMEM_MOVEABLE: u32 = 0x0002;
+
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn OpenClipboard(hwnd_new_owner: *mut c_void) -> i32;
+            fn EmptyClipboard() -> i32;
+            fn SetClipboardData(u_format: u32, h_mem: *mut c_void) -> *mut c_void;
+            fn CloseClipboard() -> i32;
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GlobalAlloc(u_flags: u32, dw_bytes: usize) -> *mut c_void;
+            fn GlobalLock(h_mem: *mut c_void) -> *mut c_void;
+            fn GlobalUnlock(h_mem: *mut c_void) -> i32;
+            fn GlobalFree(h_mem: *mut c_void) -> *mut c_void;
+        }
+
+        // CF_UNICODETEXT convention is CRLF; normalize so a mixed
+        // transcript does not paste with doubled or bare newlines.
+        let normalized = text.replace("\r\n", "\n").replace('\n', "\r\n");
+        let mut wide: Vec<u16> = normalized.encode_utf16().collect();
+        wide.push(0);
+        let byte_len = wide.len().saturating_mul(2);
+
+        unsafe {
+            let mem = GlobalAlloc(GMEM_MOVEABLE, byte_len);
+            if mem.is_null() {
+                return false;
+            }
+            let dst = GlobalLock(mem);
+            if dst.is_null() {
+                GlobalFree(mem);
+                return false;
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), dst.cast::<u16>(), wide.len());
+            GlobalUnlock(mem);
+
+            // Another process can hold the clipboard for a moment
+            // (clipboard managers, RDP). A few short retries, then give up.
+            let mut opened = false;
+            for _ in 0..5 {
+                if OpenClipboard(std::ptr::null_mut()) != 0 {
+                    opened = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            if !opened {
+                GlobalFree(mem);
+                return false;
+            }
+            let stored = EmptyClipboard() != 0 && !SetClipboardData(CF_UNICODETEXT, mem).is_null();
+            CloseClipboard();
+            if !stored {
+                GlobalFree(mem);
+                return false;
+            }
+            // Success: the system owns `mem` now — do not free it.
+            true
+        }
+    }
 }
 
 thread_local! {
