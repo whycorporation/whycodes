@@ -1760,6 +1760,9 @@ fn tool_display_name(name: &str) -> &str {
         "bash" | "shell" | "run_terminal_command" => "run",
         "read_file" => "read",
         "search_code" | "rg" => "grep",
+        // Runtime names are `websearch` / `mcp_websearch` (no underscore);
+        // `web_search` only survives in old snapshots/imports.
+        "websearch" | "web_search" | "mcp_websearch" => "websearch",
         other => other,
     }
 }
@@ -1779,7 +1782,7 @@ fn tool_header_verb(name: &str, running: bool) -> String {
         ("edit" | "write" | "apply_patch", _) => "Edit".into(),
         ("web_fetch" | "webfetch" | "fetch", true) => "Fetching".into(),
         ("web_fetch" | "webfetch" | "fetch", false) => "Fetched".into(),
-        ("web_search", _) => "Search".into(),
+        ("websearch", _) => "Search".into(),
         (_, true) => "Calling".into(),
         (other, false) => {
             let mut chars = other.chars();
@@ -1829,7 +1832,7 @@ fn verb_kind(name: &str) -> Option<VerbKind> {
         "read" => Some(VerbKind::File),
         "grep" | "glob" | "repomap" => Some(VerbKind::Search),
         "list" | "list_dir" => Some(VerbKind::Dir),
-        "web_search" => Some(VerbKind::WebSearch),
+        "websearch" => Some(VerbKind::WebSearch),
         "web_fetch" | "webfetch" | "fetch" => Some(VerbKind::WebFetch),
         "memory_search" | "memory" => Some(VerbKind::Memory),
         _ => None,
@@ -1962,8 +1965,7 @@ fn tool_block(
     }
     header.push(Span::styled(TOOL_BULLET.to_string(), name_style));
     header.push(Span::styled(display.to_string(), name_style));
-    let is_search =
-        matches!(tool_display_name(name), "grep") || matches!(name, "glob" | "web_search");
+    let is_search = matches!(tool_display_name(name), "grep" | "glob" | "websearch");
     if is_search {
         let pattern = search_term(name, input);
         if !pattern.is_empty() {

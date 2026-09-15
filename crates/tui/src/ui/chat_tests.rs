@@ -3534,6 +3534,34 @@ fn grep_header_no_matches_and_edit_diffstat_on_collapsed() {
 }
 
 #[test]
+fn websearch_runtime_names_get_search_header() {
+    // Runtime canonical names are `websearch` / `mcp_websearch` (no
+    // underscore); `web_search` only survives in old snapshots/imports.
+    let palette = ThemeName::DefaultDark.palette();
+    for name in ["websearch", "mcp_websearch", "web_search"] {
+        assert_eq!(super::tool_header_verb(name, true), "Search");
+        assert_eq!(super::tool_header_verb(name, false), "Search");
+        assert_eq!(super::verb_kind(name), Some(super::VerbKind::WebSearch));
+        let header = joined(&tool_block(
+            name,
+            &json!({"query": "rust"}),
+            Some("hits"),
+            ToolPaint {
+                is_error: false,
+                palette: &palette,
+                expanded: false,
+                width: 80,
+                spin: 0,
+            },
+        ));
+        assert!(
+            header.contains("Search") && header.contains("\"rust\""),
+            "{name} header must be Search \"query\", got {header}"
+        );
+    }
+}
+
+#[test]
 fn consecutive_busy_frames_do_not_shift_finished_cells() {
     use crate::app::{AgentState, ChatBlock, ThinkingBlock};
     use ratatui::Terminal;
@@ -3549,7 +3577,19 @@ fn consecutive_busy_frames_do_not_shift_finished_cells() {
         .push(ChatBlock::Thinking(ThinkingBlock::new(
             "live-one\nlive-two\nlive-three",
         )));
+    // Search headers (new Grok chrome) must also sit under the flicker guard.
+    app.add_tool_call("g1".into(), "websearch".into(), json!({"query": "rust"}));
+    app.add_tool_result("g1", "hits", false);
+    app.add_tool_call("g2".into(), "grep".into(), json!({"pattern": "foo"}));
+    app.add_tool_result(
+        "g2",
+        "src/a.rs:1:foo\nsrc/b.rs:2:foo\n\n(2 matches in 2 files; pattern `foo`)",
+        false,
+    );
     app.current_agent_state = AgentState::Generating;
+    // Expanded so the per-tool Search "query" headers (not the collapsed
+    // bucket line) paint on both frames.
+    app.messages[last].results_expanded = true;
     app.spinner_frame = 0;
 
     let palette = app.config.palette();
@@ -3612,5 +3652,15 @@ fn consecutive_busy_frames_do_not_shift_finished_cells() {
         text_b.contains("finished answer body") && text_b.contains("finished prompt"),
         "finished bubbles must keep content on the next frame, got {text_b}"
     );
+    for (tag, text) in [("a", &text_a), ("b", &text_b)] {
+        assert!(
+            text.contains("Search") && text.contains("\"rust\"") && text.contains("\"foo\""),
+            "search headers must paint on frame {tag}, got {text}"
+        );
+        assert!(
+            text.contains("(2 matches in 2 files)"),
+            "search chip must paint on frame {tag}, got {text}"
+        );
+    }
     let _ = prompt_cells;
 }
