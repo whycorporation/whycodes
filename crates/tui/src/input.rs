@@ -151,6 +151,18 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
                         text.push(c);
                         printable += 1;
                     }
+                    // VK_INSERT vs `I`: a bare Insert that follows flood text
+                    // (this batch, or the still-open window from the previous
+                    // batch) is a pasted letter `i`. A *leading* Insert with
+                    // no flood context stays the Shift+Insert chord artifact.
+                    None if matches!(k.code, KeyCode::Insert)
+                        && k.modifiers.is_empty()
+                        && (printable > 0 || in_paste_flood(app)) =>
+                    {
+                        recovered_i = true;
+                        text.push('i');
+                        printable += 1;
+                    }
                     None if is_windows_paste_noise(k) => {
                         saw_windows_paste_noise = true;
                     }
@@ -190,6 +202,20 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
     events.push(Event::Paste(text));
 }
 
+/// Windows delivers AltGr as Ctrl+Alt (`CONTROL | ALT` on the key event),
+/// and conhost paste synthesizes the same modifiers via `VkKeyScanW`.
+/// Turkish / German / … layouts type `@ [ ] { } \ | ~ €` that way, so a
+/// printable non-alphanumeric char under Ctrl+Alt is layout text, not a
+/// chord. ASCII letters/digits stay chords (Ctrl+Alt+W must not type `w`).
+fn is_altgr_text(modifiers: crossterm::event::KeyModifiers, c: char) -> bool {
+    use crossterm::event::KeyModifiers as Mods;
+    modifiers.contains(Mods::CONTROL)
+        && modifiers.contains(Mods::ALT)
+        && !modifiers.contains(Mods::SUPER)
+        && !c.is_control()
+        && !c.is_ascii_alphanumeric()
+}
+
 /// Decode one key from an unbracketed paste flood.
 ///
 /// Windows ConPTY / PowerShell often maps ASCII `i` to `Tab` (historical
@@ -205,7 +231,12 @@ fn pasted_char_from_key(k: &KeyEvent) -> Option<char> {
     match k.code {
         KeyCode::Char('\n' | '\r') | KeyCode::Enter => Some('\n'),
         KeyCode::Char('\t') | KeyCode::Tab if !shift => Some('i'),
-        KeyCode::Char(c) if ctrl && !alt && !super_key && matches!(c, 'i' | 'I') => Some(c),
+        // Ctrl+I is the historical Tab; ConPTY can also stamp the AltGr
+        // pair onto a pasted `i` — `Char('i')` + CONTROL|ALT (2026-09-16
+        // field log). Both are the letter, not a chord, inside a flood.
+        KeyCode::Char(c) if ctrl && !super_key && matches!(c, 'i' | 'I') => Some(c),
+        // AltGr symbols (`@`, `[`, `{`, …) — must not abort coalescing.
+        KeyCode::Char(c) if is_altgr_text(k.modifiers, c) => Some(c),
         KeyCode::Char(c) if !ctrl && !alt && !super_key => Some(c),
         _ => None,
     }
@@ -216,12 +247,15 @@ fn pasted_char_from_key(k: &KeyEvent) -> Option<char> {
 /// `Insert` / Shift+Insert is the classic console paste chord; treating it as
 /// a letter would prefix every paste with `i`/`I` or abort coalescing.
 fn is_windows_paste_noise(k: &KeyEvent) -> bool {
-    matches!(
-        k.code,
-        KeyCode::Null | KeyCode::Insert | KeyCode::Modifier(_)
-    ) && !k
-        .modifiers
-        .intersects(crossterm::event::KeyModifiers::ALT | crossterm::event::KeyModifiers::SUPER)
+    // A bare modifier press (AltGr going down mid-flood carries the ALT
+    // bit) is never text; it must not abort coalescing either.
+    if matches!(k.code, KeyCode::Modifier(_)) {
+        return true;
+    }
+    matches!(k.code, KeyCode::Null | KeyCode::Insert)
+        && !k
+            .modifiers
+            .intersects(crossterm::event::KeyModifiers::ALT | crossterm::event::KeyModifiers::SUPER)
 }
 
 /// Windows ConPTY / PowerShell paste of ASCII `i` as Tab or Ctrl+I.
@@ -235,20 +269,25 @@ fn is_windows_paste_noise(k: &KeyEvent) -> bool {
 const WINDOWS_PASTE_I_WINDOW: std::time::Duration = std::time::Duration::from_millis(80);
 
 fn is_windows_paste_i_key(k: &KeyEvent) -> bool {
+    let ctrl = k
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::CONTROL);
     let alt = k.modifiers.contains(crossterm::event::KeyModifiers::ALT);
     let super_key = k.modifiers.contains(crossterm::event::KeyModifiers::SUPER);
     let shift = k.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
-    if alt || super_key || shift {
+    if super_key || shift {
         return false;
     }
     match k.code {
-        KeyCode::Tab | KeyCode::Char('\t') => true,
-        KeyCode::Char('i' | 'I')
-            if k.modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL) =>
-        {
-            true
-        }
+        KeyCode::Tab | KeyCode::Char('\t') if !alt => true,
+        // VK_INSERT vs `I`: a bare Insert inside the flood window is a
+        // pasted letter. Shift+Insert (paste chord) is excluded above;
+        // Ctrl/Alt+Insert chords here.
+        KeyCode::Insert if !ctrl && !alt => true,
+        // Ctrl+I (historical Tab) — ConPTY can stamp the AltGr pair on a
+        // pasted `i`, so `Char('i')` + CONTROL|ALT counts too (2026-09-16
+        // field log: every `i` in a pasted URL arrived exactly like that).
+        KeyCode::Char('i' | 'I') if ctrl => true,
         _ => false,
     }
 }
@@ -265,10 +304,36 @@ fn is_windows_paste_i_key(k: &KeyEvent) -> bool {
 /// scripted queues) still submits, and the guard is armed only for the live
 /// Windows console (`TuiApp::paste_enter_guard`).
 fn paste_flood_enter(app: &TuiApp) -> bool {
-    if !app.paste_enter_guard {
+    if app.input_buffer.trim().is_empty() {
         return false;
     }
-    if app.input_buffer.trim().is_empty() {
+    in_paste_flood(app)
+}
+
+/// Debug breadcrumb: a key that could not be mapped to text was discarded
+/// while an unbracketed paste flood was in flight. `unified.jsonl` then
+/// names the exact code/modifiers when a paste still loses characters.
+fn log_paste_key_dropped(app: &TuiApp, key: &KeyEvent) {
+    if !in_paste_flood(app) {
+        return;
+    }
+    whycodes_core::logging::emit(
+        "whycodes_tui",
+        "debug",
+        "tui.paste_key_dropped",
+        Some(serde_json::json!({
+            "code": format!("{:?}", key.code),
+            "mods": format!("{:?}", key.modifiers),
+        })),
+    );
+}
+
+/// True while a one-key-per-poll unbracketed paste flood is in flight:
+/// the last prompt insert came from an *earlier* live batch and landed
+/// within [`WINDOWS_PASTE_I_WINDOW`]. Armed only for the live Windows
+/// console ([`TuiApp::paste_enter_guard`]).
+fn in_paste_flood(app: &TuiApp) -> bool {
+    if !app.paste_enter_guard {
         return false;
     }
     if app.last_prompt_insert_batch == app.input_batch_seq {
@@ -288,6 +353,11 @@ fn insert_paste_newline(app: &mut TuiApp) {
     let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
     app.input_buffer.insert(pos, '\n');
     app.input_cursor = pos + 1;
+    // The newline terminates a `/command` or `@token` draft — close any
+    // popup so the rest of the flood does not complete/accept into it.
+    app.slash_suggest.refresh(&app.input_buffer);
+    app.file_suggest
+        .refresh(&app.input_buffer, app.input_cursor);
     app.esc_armed_at = None;
     app.mark_dirty();
 }
@@ -299,9 +369,10 @@ fn recover_windows_paste_i(app: &mut TuiApp, key: &KeyEvent) -> bool {
     if app.mode != AppMode::Normal && app.mode != AppMode::Session {
         return false;
     }
-    if app.file_suggest.active || app.slash_suggest.active {
-        return false;
-    }
+    // The slash/file popups do NOT block recovery: pasting `/init` or
+    // `@im iyi` opens them mid-flood, and a Tab-complete there used to
+    // replace the half-pasted draft with a command/file name. An idle Tab
+    // (no insert within the flood window) still completes in the popups.
     if app.pending_suggestion.is_some() && app.input_buffer.trim().is_empty() {
         return false;
     }
@@ -439,12 +510,23 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
         // arrows navigate. These guards precede the slash-suggest ones; the
         // two popups are mutually exclusive by construction.
         Some(Action::ToggleFocus) if app.file_suggest.active => {
+            // Pasted `i` arrives as Tab on Windows (see recover_windows_
+            // paste_i); accepting a match mid-flood would mangle the paste.
+            if recover_windows_paste_i(app, key) {
+                return true;
+            }
             app.file_suggest
                 .accept(&mut app.input_buffer, &mut app.input_cursor);
             app.mark_dirty();
             true
         }
         Some(Action::SubmitInput) if app.file_suggest.active => {
+            // A newline inside an unbracketed paste flood is pasted text,
+            // not "accept this file" — same guard as the plain submit path.
+            if paste_flood_enter(app) {
+                insert_paste_newline(app);
+                return true;
+            }
             if app.file_suggest.matches.is_empty() {
                 app.file_suggest.dismiss();
             } else {
@@ -482,6 +564,11 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
             true
         }
         Some(Action::ToggleFocus) if app.slash_suggest.active => {
+            // Pasting `/init` per key: the `i` is a Tab — completing here
+            // used to replace the half-pasted draft with a command name.
+            if recover_windows_paste_i(app, key) {
+                return true;
+            }
             if let Some(cmd) = app.slash_suggest.current()
                 && cmd.name != app.input_buffer
             {
@@ -751,11 +838,17 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
                     if let KeyCode::Char(c) = key.code {
                         // Unmapped Ctrl/Alt chords must not type a letter
                         // (Ctrl+W used to insert `w` before word-kill existed).
+                        // Exception: AltGr symbols (Ctrl+Alt on Windows) are
+                        // layout text — `@` on Turkish Q is AltGr+Q and was
+                        // swallowed here on both type and unbracketed paste.
                         if key.modifiers.intersects(
                             crossterm::event::KeyModifiers::CONTROL
                                 | crossterm::event::KeyModifiers::ALT,
-                        ) {
-                            recover_windows_paste_i(app, key);
+                        ) && !is_altgr_text(key.modifiers, c)
+                        {
+                            if !recover_windows_paste_i(app, key) {
+                                log_paste_key_dropped(app, key);
+                            }
                             return true;
                         }
                         if ingest_leaked_mouse_csi(app, c) {
@@ -765,8 +858,12 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
                         // Second `/` while the draft is already a bare slash
                         // (typical after Esc dismisses the popup but leaves `/`)
                         // reopens the menu instead of turning the buffer into
-                        // `//`, which matches no command names.
-                        if c == '/' && is_bare_slash_draft(&app.input_buffer) {
+                        // `//`, which matches no command names. Mid-paste the
+                        // second `/` is literal text (`//server`, `// note`).
+                        if c == '/'
+                            && is_bare_slash_draft(&app.input_buffer)
+                            && !in_paste_flood(app)
+                        {
                             app.input_buffer = "/".to_string();
                             app.input_cursor = 1;
                             app.slash_suggest.refresh(&app.input_buffer);
@@ -782,6 +879,11 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
                         app.file_suggest
                             .refresh(&app.input_buffer, app.input_cursor);
                         app.esc_armed_at = None;
+                    } else if !recover_windows_paste_i(app, key) {
+                        // Non-text key (Insert delivered for a pasted `i`
+                        // is recovered above). Anything else dropped inside
+                        // a flood is logged so unified.jsonl names the code.
+                        log_paste_key_dropped(app, key);
                     }
                 }
                 AppMode::Command => {
@@ -789,7 +891,8 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
                         if key.modifiers.intersects(
                             crossterm::event::KeyModifiers::CONTROL
                                 | crossterm::event::KeyModifiers::ALT,
-                        ) {
+                        ) && !is_altgr_text(key.modifiers, c)
+                        {
                             return true;
                         }
                         app.command.buffer.push(c);
@@ -1990,11 +2093,12 @@ fn handle_model_type(app: &mut TuiApp, key: &KeyEvent) -> bool {
         KeyCode::Char(c)
             if app.model_selection.searching
                 && !c.is_control()
-                && !key.modifiers.intersects(
-                    crossterm::event::KeyModifiers::CONTROL
-                        | crossterm::event::KeyModifiers::ALT
-                        | crossterm::event::KeyModifiers::SUPER,
-                ) =>
+                && (is_altgr_text(key.modifiers, c)
+                    || !key.modifiers.intersects(
+                        crossterm::event::KeyModifiers::CONTROL
+                            | crossterm::event::KeyModifiers::ALT
+                            | crossterm::event::KeyModifiers::SUPER,
+                    )) =>
         {
             app.model_selection.query.push(c);
             app.model_selection.clamp_selected();

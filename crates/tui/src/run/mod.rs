@@ -796,11 +796,17 @@ impl LoopIo {
     fn read_event_batch(&mut self) -> io::Result<Vec<Event>> {
         const MAX_BATCH: usize = 256;
         // PowerShell / ConPTY often delivers an unbracketed paste one key
-        // per poll. After draining the ready queue, wait 12 ms once for
-        // stragglers so `coalesce_unbracketed_paste` can see Tab-as-`i`
-        // next to the surrounding letters. Skip on injected/scripted
-        // queues so tests do not sleep.
+        // per poll. After draining the ready queue, keep waiting 12 ms for
+        // the next key **while the flood continues**, so the whole paste
+        // lands in one batch → one insert, one paint (no typewriter echo)
+        // and `coalesce_unbracketed_paste` can fold it. Bounds: humans type
+        // with >12 ms gaps (one linger miss ends the loop), a mouse/resize
+        // event ends it (drag-select must not lag), LINGER_MAX_BATCH caps
+        // memory, and the 400 ms deadline caps paint starvation. Skip on
+        // injected/scripted queues so tests do not sleep.
         const PASTE_LINGER: Duration = Duration::from_millis(12);
+        const PASTE_LINGER_TOTAL: Duration = Duration::from_millis(400);
+        const LINGER_MAX_BATCH: usize = 4096;
         let mut batch = Vec::with_capacity(8);
         batch.push(self.read_crossterm()?);
         while batch.len() < MAX_BATCH {
@@ -810,15 +816,26 @@ impl LoopIo {
                 Err(e) => return Err(e),
             }
         }
-        if cfg!(windows)
-            && !self.force_zero_poll
-            && batch.len() < MAX_BATCH
-            && self.poll_crossterm(PASTE_LINGER)?
+        if !cfg!(windows)
+            || self.force_zero_poll
+            || !batch.iter().all(|e| matches!(e, Event::Key(_)))
         {
-            batch.push(self.read_crossterm()?);
-            while batch.len() < MAX_BATCH {
+            return Ok(batch);
+        }
+        let deadline = std::time::Instant::now() + PASTE_LINGER_TOTAL;
+        'linger: while batch.len() < LINGER_MAX_BATCH && std::time::Instant::now() < deadline {
+            if !self.poll_crossterm(PASTE_LINGER)? {
+                break;
+            }
+            loop {
+                let ev = self.read_crossterm()?;
+                let is_key = matches!(ev, Event::Key(_));
+                batch.push(ev);
+                if !is_key || batch.len() >= LINGER_MAX_BATCH {
+                    break 'linger;
+                }
                 match self.poll_crossterm(Duration::ZERO) {
-                    Ok(true) => batch.push(self.read_crossterm()?),
+                    Ok(true) => {}
                     Ok(false) => break,
                     Err(e) => return Err(e),
                 }

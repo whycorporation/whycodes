@@ -6245,3 +6245,308 @@ fn repeated_enter_ages_out_of_the_flood_window_and_submits() {
     assert!(handle_event(&mut a, key(KeyCode::Enter)));
     assert_eq!(a.pending_prompt.as_deref(), Some("son satir"));
 }
+
+/// AltGr on Windows arrives as Ctrl+Alt with the produced char.
+fn altgr(c: char) -> Event {
+    Event::Key(KeyEvent::new(
+        KeyCode::Char(c),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    ))
+}
+
+#[test]
+fn altgr_symbols_type_into_the_prompt() {
+    // Turkish Q: `@` is AltGr+Q; German: `{ } [ ] \ ~` are AltGr chords.
+    // These were swallowed as "unmapped Ctrl/Alt chord" on type and paste.
+    let mut a = app();
+    for c in ['@', '[', ']', '{', '}', '\\', '~', '€'] {
+        assert!(handle_event(&mut a, altgr(c)));
+    }
+    assert_eq!(a.input_buffer, "@[]{}\\~€");
+
+    // Real Ctrl/Alt letter chords still do not type.
+    let mut a = app();
+    assert!(handle_event(
+        &mut a,
+        Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT))
+    ));
+    assert!(handle_event(&mut a, altgr('x')));
+    assert!(a.input_buffer.is_empty(), "{:?}", a.input_buffer);
+}
+
+#[test]
+fn altgr_symbols_survive_unbracketed_paste_coalescing() {
+    // conhost paste synthesizes `@` as Ctrl+Alt+Q (u_char '@'); coalescing
+    // used to abort on it and the per-key path then swallowed the char.
+    let a = app();
+    let mut events = vec![
+        key(KeyCode::Insert),
+        key(KeyCode::Char('a')),
+        altgr('@'),
+        key(KeyCode::Char('b')),
+    ];
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert_eq!(events, vec![Event::Paste("a@b".into())]);
+
+    // A bare AltGr modifier press mid-flood is noise, not an abort.
+    let a = app();
+    let mut events = vec![
+        key(KeyCode::Insert),
+        key(KeyCode::Char('x')),
+        Event::Key(KeyEvent::new(
+            KeyCode::Modifier(crossterm::event::ModifierKeyCode::RightAlt),
+            KeyModifiers::ALT,
+        )),
+        altgr('@'),
+        key(KeyCode::Char('y')),
+    ];
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert_eq!(events, vec![Event::Paste("x@y".into())]);
+}
+
+#[test]
+fn altgr_symbols_type_into_command_and_model_search() {
+    let mut a = app();
+    a.mode = AppMode::Command;
+    a.key_context = KeymapContext::Command;
+    assert!(handle_event(&mut a, altgr('@')));
+    assert_eq!(a.command.buffer, "@");
+
+    let mut a = app();
+    open_model_dialog(&mut a);
+    a.model_selection.searching = true;
+    assert!(handle_event(&mut a, altgr('@')));
+    assert_eq!(a.model_selection.query, "@");
+}
+
+#[test]
+fn paste_flood_double_slash_is_not_collapsed() {
+    // Pasting text that starts with `//` one key per poll: the second `/`
+    // used to be treated as "reopen the slash menu" and vanished.
+    let mut a = app();
+    a.paste_enter_guard = true;
+    a.input_batch_seq = 1;
+    handle_event(&mut a, key(KeyCode::Char('/')));
+    a.input_batch_seq = 2;
+    handle_event(&mut a, key(KeyCode::Char('/')));
+    a.input_batch_seq = 3;
+    handle_event(&mut a, key(KeyCode::Char('x')));
+    assert_eq!(a.input_buffer, "//x");
+
+    // Typed second `/` after a human pause still reopens the menu.
+    let mut b = app();
+    b.paste_enter_guard = true;
+    b.input_batch_seq = 1;
+    handle_event(&mut b, key(KeyCode::Char('/')));
+    b.last_prompt_insert_at =
+        Some(std::time::Instant::now() - std::time::Duration::from_millis(500));
+    b.input_batch_seq = 2;
+    handle_event(&mut b, key(KeyCode::Char('/')));
+    assert_eq!(b.input_buffer, "/");
+    assert!(b.slash_suggest.active);
+}
+
+#[test]
+fn paste_flood_tab_in_slash_popup_recovers_i_not_complete() {
+    // Pasting "/init" per key: `/` opens the slash menu and the pasted `i`
+    // arrives as Tab. Tab-complete used to replace the whole draft with the
+    // selected command name, corrupting the paste.
+    let mut a = app();
+    a.input_batch_seq = 1;
+    handle_event(&mut a, key(KeyCode::Char('/')));
+    assert!(a.slash_suggest.active);
+    a.input_batch_seq = 2;
+    handle_event(&mut a, key(KeyCode::Tab));
+    assert_eq!(a.input_buffer, "/i");
+    a.input_batch_seq = 3;
+    for c in "nit".chars() {
+        handle_event(&mut a, key(KeyCode::Char(c)));
+    }
+    assert_eq!(a.input_buffer, "/init");
+
+    // Idle Tab (insert aged past the flood window) still completes.
+    let mut b = app();
+    handle_event(&mut b, key(KeyCode::Char('/')));
+    assert!(b.slash_suggest.active);
+    b.last_prompt_insert_at =
+        Some(std::time::Instant::now() - std::time::Duration::from_millis(500));
+    handle_event(&mut b, key(KeyCode::Tab));
+    assert!(
+        b.input_buffer.len() > 1 && b.input_buffer.starts_with('/'),
+        "idle Tab must complete the selection: {:?}",
+        b.input_buffer
+    );
+}
+
+#[test]
+fn paste_flood_url_keeps_at_and_i() {
+    // Field report: pasting https://www.youtube.com/@whycodesai/featured on
+    // PowerShell lost the `i`. Per-key flood: `@` arrives as AltGr
+    // (Ctrl+Alt+Q on Turkish Q), the `i` as Tab, one key per poll batch.
+    let mut a = app();
+    a.paste_enter_guard = true;
+    let mut seq = 0u64;
+    let mut send = |a: &mut TuiApp, ev: Event| {
+        seq += 1;
+        a.input_batch_seq = seq;
+        handle_event(a, ev);
+    };
+    for c in "https://www.youtube.com/".chars() {
+        send(&mut a, key(KeyCode::Char(c)));
+    }
+    send(&mut a, altgr('@'));
+    for c in "whycodesa".chars() {
+        send(&mut a, key(KeyCode::Char(c)));
+    }
+    send(&mut a, key(KeyCode::Tab)); // pasted `i`
+    for c in "/featured".chars() {
+        send(&mut a, key(KeyCode::Char(c)));
+    }
+    assert_eq!(
+        a.input_buffer,
+        "https://www.youtube.com/@whycodesai/featured"
+    );
+    assert_eq!(a.focus, FocusPane::Prompt);
+
+    // Same URL with the `i` delivered as a bare Insert (VK_INSERT vs `I`).
+    let mut b = app();
+    b.paste_enter_guard = true;
+    let mut seq = 0u64;
+    let mut send = |b: &mut TuiApp, ev: Event| {
+        seq += 1;
+        b.input_batch_seq = seq;
+        handle_event(b, ev);
+    };
+    for c in "https://www.youtube.com/".chars() {
+        send(&mut b, key(KeyCode::Char(c)));
+    }
+    send(&mut b, altgr('@'));
+    for c in "whycodesa".chars() {
+        send(&mut b, key(KeyCode::Char(c)));
+    }
+    send(&mut b, key(KeyCode::Insert)); // pasted `i`
+    for c in "/featured".chars() {
+        send(&mut b, key(KeyCode::Char(c)));
+    }
+    assert_eq!(
+        b.input_buffer,
+        "https://www.youtube.com/@whycodesai/featured"
+    );
+}
+
+#[test]
+fn paste_flood_ctrl_alt_i_is_the_letter_i() {
+    // Field log 2026-09-16: pasting https://github.com/multica-ai/multica
+    // lost every `i` — ConPTY delivered each as Char('i') + CONTROL|ALT
+    // (historical Ctrl+I Tab plus the AltGr pair). Per-key flood:
+    let ctrl_alt_i = || {
+        Event::Key(KeyEvent::new(
+            KeyCode::Char('i'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ))
+    };
+    let mut a = app();
+    a.paste_enter_guard = true;
+    let mut seq = 0u64;
+    let mut send = |a: &mut TuiApp, ev: Event| {
+        seq += 1;
+        a.input_batch_seq = seq;
+        handle_event(a, ev);
+    };
+    for c in "https://g".chars() {
+        send(&mut a, key(KeyCode::Char(c)));
+    }
+    send(&mut a, ctrl_alt_i());
+    for c in "thub.com/mult".chars() {
+        send(&mut a, key(KeyCode::Char(c)));
+    }
+    send(&mut a, ctrl_alt_i());
+    for c in "ca-a".chars() {
+        send(&mut a, key(KeyCode::Char(c)));
+    }
+    send(&mut a, ctrl_alt_i());
+    for c in "/mult".chars() {
+        send(&mut a, key(KeyCode::Char(c)));
+    }
+    send(&mut a, ctrl_alt_i());
+    for c in "ca".chars() {
+        send(&mut a, key(KeyCode::Char(c)));
+    }
+    assert_eq!(a.input_buffer, "https://github.com/multica-ai/multica");
+
+    // Same flood folded into one batch must coalesce, not abort.
+    let b = app();
+    let mut events = vec![
+        key(KeyCode::Char('g')),
+        ctrl_alt_i(),
+        key(KeyCode::Char('t')),
+        key(KeyCode::Char('h')),
+    ];
+    coalesce_unbracketed_paste(&b, &mut events);
+    assert_eq!(events, vec![Event::Paste("gith".into())]);
+
+    // A real Ctrl+Alt+I chord at idle still does not type.
+    let mut c = app();
+    handle_event(&mut c, ctrl_alt_i());
+    assert!(c.input_buffer.is_empty(), "{:?}", c.input_buffer);
+}
+
+#[test]
+fn windows_paste_insert_mid_flood_is_ascii_i() {
+    // Per-key: an Insert right after a prompt insert is a pasted `i`;
+    // an idle Insert stays inert (it is unmapped chrome today).
+    let mut a = app();
+    a.input_batch_seq = 1;
+    handle_event(&mut a, key(KeyCode::Char('m')));
+    a.input_batch_seq = 2;
+    handle_event(&mut a, key(KeyCode::Insert));
+    a.input_batch_seq = 3;
+    handle_event(&mut a, key(KeyCode::Char('d')));
+    assert_eq!(a.input_buffer, "mid");
+
+    let mut b = app();
+    handle_event(&mut b, key(KeyCode::Insert));
+    assert!(b.input_buffer.is_empty(), "{:?}", b.input_buffer);
+
+    // Folded batch: Insert after text in the same batch is `i`; the leading
+    // Insert (Shift+Insert chord artifact) is still noise
+    // (windows_paste_ctrl_i_and_insert_noise covers the leading case).
+    let c = app();
+    let mut events = vec![
+        key(KeyCode::Char('s')),
+        key(KeyCode::Char('a')),
+        key(KeyCode::Insert),
+        key(KeyCode::Char('/')),
+    ];
+    coalesce_unbracketed_paste(&c, &mut events);
+    assert_eq!(events, vec![Event::Paste("sai/".into())]);
+}
+
+#[test]
+fn paste_flood_enter_and_tab_in_file_popup_stay_text() {
+    // Pasting "bak @sr\n…" per key opens the `@` picker mid-flood; the
+    // embedded newline must insert (not accept a match / dismiss-submit),
+    // and a pasted `i`-as-Tab must insert instead of accepting.
+    let mut a = app();
+    a.paste_enter_guard = true;
+    a.input_batch_seq = 1;
+    for c in "bak @sr".chars() {
+        handle_event(&mut a, key(KeyCode::Char(c)));
+    }
+    assert!(a.file_suggest.active);
+    a.input_batch_seq = 2;
+    assert!(handle_event(&mut a, key(KeyCode::Enter)));
+    assert!(a.pending_prompt.is_none(), "{:?}", a.pending_prompt);
+    assert_eq!(a.input_buffer, "bak @sr\n");
+    assert!(
+        !a.file_suggest.active,
+        "newline ends the @token; the picker closes"
+    );
+
+    a.input_batch_seq = 3;
+    handle_event(&mut a, key(KeyCode::Char('@')));
+    assert!(a.file_suggest.active);
+    a.input_batch_seq = 4;
+    handle_event(&mut a, key(KeyCode::Tab));
+    assert_eq!(a.input_buffer, "bak @sr\n@i");
+}

@@ -144,6 +144,57 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-16 — PowerShell paste/type drops `@` (AltGr) and mangles `/…` text
+
+**Symptom:** On Windows PowerShell / conhost (Turkish and other non-US
+layouts), pasting — and typing — `@` did nothing, and pasting text that
+starts with `/` came out corrupted (`//` collapsed to `/`; a paste like
+`/init …` was replaced by a random command name).
+
+**Root cause:** (1) AltGr arrives as Ctrl+Alt (`VkKeyScanW` synthesis on
+paste, same for live keys). `handle_key`'s "unmapped Ctrl/Alt chords must
+not type" guard swallowed `Char('@')`+CONTROL|ALT, and
+`pasted_char_from_key` returned `None` for it — aborting the whole
+unbracketed-paste coalescing. (2) The "second `/` on a bare-slash draft
+reopens the menu" special case ate literal `//` mid-flood. (3) A pasted
+`i`-as-Tab or embedded Enter while the slash/`@file` popup was open ran
+complete/accept, replacing the half-pasted draft
+(`recover_windows_paste_i` refused to run while a popup was active).
+
+**Fix:** `is_altgr_text` (CONTROL+ALT, printable, not ASCII alphanumeric
+→ layout text) inserts in prompt / command mode / model search and folds
+in coalescing; bare `Modifier(_)` presses count as paste noise. The
+bare-slash reopen is skipped while `in_paste_flood` (guard + earlier
+batch + 80 ms window). Popup Tab/Enter first try `i`-recovery /
+`paste_flood_enter`; a guarded newline refreshes both popups so the token
+closes. Real Ctrl+Alt+letter chords still do not type.
+
+**Follow-up (same day):** with `@` fixed, pastes still lost every `i`.
+Guessed delivery #1: bare `Insert` (VK_INSERT vs `I`) — recovered inside
+the flood window; leading Insert stays the Shift+Insert chord artifact.
+Any key still dropped inside a flood now logs `tui.paste_key_dropped`
+(code + modifiers). That breadcrumb then caught the real delivery on this
+host: **`Char('i')` + CONTROL|ALT** — historical Ctrl+I (Tab) with the
+AltGr pair stamped on. `is_windows_paste_i_key` and
+`pasted_char_from_key` accept Ctrl(+Alt)+`i`; an idle Ctrl+Alt+I chord
+still does not type. Test: `paste_flood_ctrl_alt_i_is_the_letter_i`
+(exact `github.com/multica-ai/multica` repro).
+
+**Typewriter echo:** with the letters fixed, a one-key-per-poll paste
+still painted per character. `read_event_batch`'s 12 ms straggler linger
+is now a rolling loop: it keeps waiting while keys keep arriving, so the
+whole paste lands as one batch → one insert, one paint. Bounds: a 12 ms
+gap (human typing) ends it, any mouse/resize event ends it (drag-select
+must not lag), 4096 events / 400 ms cap paint starvation. Do not extend
+the linger to non-key events.
+
+**Prevention:** Never treat CONTROL|ALT+printable-symbol as a chord on
+Windows — it is AltGr. Popup accept/complete must respect the paste-flood
+window. Tests: `altgr_symbols_*`, `paste_flood_double_slash_is_not_collapsed`,
+`paste_flood_tab_in_slash_popup_recovers_i_not_complete`,
+`paste_flood_enter_and_tab_in_file_popup_stay_text`,
+`paste_flood_url_keeps_at_and_i`, `windows_paste_insert_mid_flood_is_ascii_i`.
+
 ### 2026-09-17 — Copying a code block also copied line numbers and ` █` tails
 
 **Symptom:** Drag-copying commands from an assistant code block pasted
