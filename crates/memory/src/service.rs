@@ -390,12 +390,16 @@ impl MemoryService {
         if !self.settings.enabled || !self.settings.auto_index {
             return Ok(None);
         }
-        let db = self.open_db()?;
-        let existing = db.list_code_chunks(&self.bank_key, 1)?;
-        if !existing.is_empty() {
+        if !self.code_index_is_empty()? {
             return Ok(None);
         }
         Ok(Some(self.rebuild_auto_index()?))
+    }
+
+    /// Cheap probe: no code chunks stored yet for this bank.
+    pub fn code_index_is_empty(&self) -> Result<bool> {
+        let db = self.open_db()?;
+        Ok(db.list_code_chunks(&self.bank_key, 1)?.is_empty())
     }
 
     fn rebuild_auto_index(&self) -> Result<usize> {
@@ -646,6 +650,45 @@ pub fn maybe_auto_retain(
             Vec::new()
         }
     }
+}
+
+/// Non-blocking [`maybe_auto_index`]: the cheap "already indexed?" probe runs
+/// inline; a fresh build (file walk + embedding of thousands of chunks) moves
+/// to a background thread so session startup and the first turn never wait on
+/// it. Returns the build thread's handle when a build was started.
+pub fn maybe_auto_index_background(
+    project_path: &Path,
+    data_dir: &Path,
+    settings: &MemorySettings,
+) -> Option<std::thread::JoinHandle<Option<usize>>> {
+    if !settings.enabled || !settings.auto_index {
+        return None;
+    }
+    let svc = match MemoryService::open(project_path, data_dir, settings.clone()) {
+        Ok(svc) => svc,
+        Err(e) => {
+            tracing::debug!("auto_index open failed: {e}");
+            return None;
+        }
+    };
+    match svc.code_index_is_empty() {
+        Ok(true) => {}
+        Ok(false) => return None,
+        Err(e) => {
+            tracing::debug!("auto_index probe failed: {e}");
+            return None;
+        }
+    }
+    let project = project_path.to_path_buf();
+    let data = data_dir.to_path_buf();
+    let settings = settings.clone();
+    Some(std::thread::spawn(move || {
+        let n = maybe_auto_index(&project, &data, &settings);
+        if let Some(n) = n {
+            tracing::info!(chunks = n, "background code auto-index complete");
+        }
+        n
+    }))
 }
 
 /// Best-effort: build code index if empty. Returns chunks indexed, if any.
@@ -1281,6 +1324,28 @@ mod tests {
             .unwrap();
         let sess = svc.search_sessions("same text", 5, -1.0).unwrap();
         assert!(sess.len() >= 2);
+    }
+
+    #[test]
+    fn maybe_auto_index_background_builds_then_skips() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(
+            project.join("src/lib.rs"),
+            "/// Background auto index probe.\npub fn background_probe() {}\n",
+        )
+        .unwrap();
+        let settings = MemorySettings::default();
+        assert!(
+            maybe_auto_index_background(&project, &data, &MemorySettings::disabled()).is_none()
+        );
+        let handle =
+            maybe_auto_index_background(&project, &data, &settings).expect("build started");
+        let n = handle.join().expect("index thread");
+        assert!(n.is_some_and(|n| n > 0), "{n:?}");
+        assert!(maybe_auto_index_background(&project, &data, &settings).is_none());
     }
 
     #[test]

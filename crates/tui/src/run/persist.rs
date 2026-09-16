@@ -43,15 +43,6 @@ fn persist_session_outcome(session: &Session, reason: &str, outcome: Option<Resu
     }
 }
 
-fn toast_indexed_chunks(app: &mut TuiApp, n: usize) {
-    if n > 0 {
-        app.toasts.push(
-            crate::toast::ToastKind::Info,
-            format!("Indexed {n} code chunks"),
-        );
-    }
-}
-
 fn doctor_key_label(key_ok: bool) -> &'static str {
     if key_ok {
         "set"
@@ -222,17 +213,18 @@ pub(super) fn memory_settings_for(
 }
 
 /// Best-effort code index when the TUI session starts (skips if already indexed).
-/// Empty projects return `Some(0)` — do not toast or dirty the idle home.
-pub(super) fn maybe_session_auto_index(
-    project_dir: &std::path::Path,
-    config: &Config,
-    app: &mut TuiApp,
-) {
+/// A fresh build runs on a background thread so startup and the first turn
+/// never block on the file walk + embedding; completion is logged, not toasted.
+pub(super) fn maybe_session_auto_index(project_dir: &std::path::Path, config: &Config) {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if let Some(n) =
-        whycodes_memory::maybe_auto_index(project_dir, &data_dir, &memory_settings(config))
+    if whycodes_memory::maybe_auto_index_background(
+        project_dir,
+        &data_dir,
+        &memory_settings(config),
+    )
+    .is_some()
     {
-        toast_indexed_chunks(app, n);
+        tracing::info!("code auto-index started in background");
     }
 }
 
@@ -259,6 +251,19 @@ pub(super) fn refresh_session_memory(
     config: &Config,
     query: Option<&str>,
 ) {
+    // Trivial chit-chat ("selam", "hi"): recall adds nothing, and a rebuild
+    // (AGENTS.md/skills disk walk + SQLite recall scans) would also invalidate
+    // the provider prompt-cache prefix. Keep the hydrated prompt byte-stable;
+    // rebuild only if the session has no prompt yet, without the query.
+    let query = match query {
+        Some(q) if whycodes_agent::is_trivial_title_seed(q) => {
+            if !session.system_prompt.is_empty() {
+                return;
+            }
+            None
+        }
+        other => other,
+    };
     let (provider, model) = agent.route();
     let base = Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project_dir);
     session.set_system_prompt(&with_project_memory(&base, project_dir, config, query));

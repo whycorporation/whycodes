@@ -127,6 +127,10 @@ fn skips_trivial_greetings() {
     assert!(is_trivial_title_seed("selam"));
     assert!(is_trivial_title_seed("Hi!"));
     assert!(is_trivial_title_seed("merhaba nasılsın"));
+    assert!(is_trivial_title_seed("naber"));
+    assert!(is_trivial_title_seed("nasılsın?"));
+    assert!(is_trivial_title_seed("günaydın"));
+    assert!(is_trivial_title_seed("naber kanka"));
     assert!(is_trivial_title_seed("ping"));
     assert!(!is_trivial_title_seed(
         "fix the auth retry bug in session.rs"

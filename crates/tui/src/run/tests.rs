@@ -2354,8 +2354,7 @@ fn memory_and_index_helpers() {
     let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let config = Config::default();
-    let mut app = TuiApp::from_config(TuiAppConfig::default());
-    maybe_session_auto_index(dir.path(), &config, &mut app);
+    maybe_session_auto_index(dir.path(), &config);
     let prompt = with_project_memory("base prompt", dir.path(), &config, Some("query"));
     assert!(prompt.contains("base prompt"));
     let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
@@ -2375,16 +2374,38 @@ fn memory_and_index_helpers() {
 }
 
 #[test]
-fn auto_index_zero_chunks_does_not_toast() {
+fn trivial_query_keeps_system_prompt_byte_stable() {
     let _home = isolate_home_fresh();
     let dir = tempfile::tempdir().unwrap();
     let config = Config::default();
-    let mut app = TuiApp::from_config(TuiAppConfig::default());
-    maybe_session_auto_index(dir.path(), &config, &mut app);
-    assert!(
-        app.toasts.is_empty(),
-        "empty project must not toast Indexed 0 code chunks"
+    let mut session = Session::new(dir.path().to_path_buf(), "hydrated prompt".into());
+    let agent = Agent::new(whycodes_core::types::AgentInfo {
+        name: "build".into(),
+        description: String::new(),
+        mode: AgentMode::Primary,
+        permission: whycodes_core::types::PermissionSet::default(),
+        model: None,
+        system_prompt: Some("sys".into()),
+        temperature: None,
+        top_p: None,
+    });
+    // "selam" must not rebuild: prefix stays byte-stable for the prompt cache.
+    refresh_session_memory(&mut session, &agent, dir.path(), &config, Some("selam"));
+    assert_eq!(session.system_prompt, "hydrated prompt");
+    // Trivial query on an empty prompt rebuilds without recall.
+    session.system_prompt.clear();
+    refresh_session_memory(&mut session, &agent, dir.path(), &config, Some("merhaba"));
+    assert!(!session.system_prompt.is_empty());
+    // A real prompt rebuilds as before.
+    session.set_system_prompt("hydrated prompt");
+    refresh_session_memory(
+        &mut session,
+        &agent,
+        dir.path(),
+        &config,
+        Some("fix the login flow in src/auth.rs"),
     );
+    assert_ne!(session.system_prompt, "hydrated prompt");
 }
 
 #[tokio::test]

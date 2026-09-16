@@ -5198,7 +5198,7 @@ async fn hydrate_after_first_frame(
     hydrate_session_picker(app);
     hydrate_deferred_api_key(api_key, provider, model, config, app);
     rt.agent.load_mcp(config).await;
-    maybe_session_auto_index(project_dir, config, app);
+    maybe_session_auto_index(project_dir, config);
     refresh_sidebar(app, config, file_index);
     load_app_todos(app);
     settle_first_frame_hydrate(app, &hydrate_before, animate);

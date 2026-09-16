@@ -2325,6 +2325,14 @@ fn refresh_session_memory_and_open_memory_service() {
     let mut session = whycodes_session::session::Session::new(dir.to_path_buf(), "sys".into());
     let agent = Agent::new(agent_info_for(&cli(None), &config));
     refresh_session_memory(&mut session, &agent, dir, &config, Some("query"));
+    // Trivial chit-chat keeps the prompt byte-stable (prompt-cache friendly).
+    session.set_system_prompt("hydrated prompt");
+    refresh_session_memory(&mut session, &agent, dir, &config, Some("selam"));
+    assert_eq!(session.system_prompt, "hydrated prompt");
+    // Trivial query on an empty prompt still rebuilds (without recall).
+    session.system_prompt.clear();
+    refresh_session_memory(&mut session, &agent, dir, &config, Some("merhaba"));
+    assert!(!session.system_prompt.is_empty());
     let mut c = cli(None);
     c.dir = Some(dir.to_string_lossy().into_owned());
     open_memory_service(&c, &config).unwrap();
