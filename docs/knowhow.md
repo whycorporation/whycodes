@@ -144,6 +144,36 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-17 — Copying a code block also copied line numbers and ` █` tails
+
+**Symptom:** Drag-copying commands from an assistant code block pasted
+`  1 cargo build …` (gutter numbers included) and every middle line of a
+multi-line drag ended with a space plus a stray character.
+
+**Root cause:** Two layers. (1) `render_code` paints a ` {:>2} ` numbered
+gutter; selection extraction reads raw cells, so the numbers are content.
+(2) Linear selection spans middle rows to full width, which includes the
+chat scrollbar column — its `█` cells are painted `fg == bg` (invisible
+solid fill), so `collapse_interior_spaces` left ` █` at each line end.
+
+**Fix:** `CellGrid::from_buffer` snapshots any `fg == bg` (non-Reset) cell
+as a pad space — the user never saw a glyph there; covers every scrollbar,
+chat and modal. `clean_copied_lines` gains `strip_code_gutter_numbers`:
+shape-based (per user rule: shapes, not word lists) — a run of ≥2
+consecutive right-aligned `spaces digits space` numbers counting up by 1
+is a gutter; digits are blanked (columns kept) so `dedent_common` strips
+the gutter width and wrapped continuations stay aligned. A lone numbered
+line is only stripped when it is the entire selection, so prose like
+`2 files changed` survives multi-line copies.
+
+**Prevention:** Anything painted `fg == bg` is invisible by definition —
+mask it at snapshot time, not per-feature. Clipboard cleanup stays
+shape-based in `clipboard.rs`; tests:
+`code_gutter_numbers_are_stripped_from_multi_line_copy`,
+`code_gutter_stripped_on_lone_line_and_wrapped_continuation`,
+`prose_numbers_are_not_mistaken_for_a_gutter`,
+`from_buffer_masks_invisible_fill_cells_as_pad`.
+
 ### 2026-09-16 — Selection copy froze the TUI; Windows copy never landed
 
 **Symptom:** Releasing a mouse text selection (copy) froze the terminal

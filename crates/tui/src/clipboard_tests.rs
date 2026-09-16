@@ -184,6 +184,67 @@ fn uniform_inset_fully_stripped() {
 }
 
 #[test]
+fn code_gutter_numbers_are_stripped_from_multi_line_copy() {
+    // render_code shape: chat inset + ` {:>2} ` gutter + command.
+    let cells = grid_padded(
+        &[
+            "    1 cargo build -p whycodes-cli",
+            "    2 cargo run -p whycodes-cli -- -d .",
+            "    3 cargo test",
+        ],
+        44,
+    );
+    let t = text_from_cells(&cells, 0, 0, 43, 2);
+    assert_eq!(
+        t,
+        "cargo build -p whycodes-cli\ncargo run -p whycodes-cli -- -d .\ncargo test"
+    );
+}
+
+#[test]
+fn code_gutter_stripped_on_lone_line_and_wrapped_continuation() {
+    // Single command selected alone: the one numbered line is the whole copy.
+    let one = grid_padded(&["   12 cargo fmt --all --check"], 34);
+    assert_eq!(
+        text_from_cells(&one, 0, 0, 33, 0),
+        "cargo fmt --all --check"
+    );
+
+    // Wrapped command: hang indent (gutter width) continues the run.
+    let wrapped = grid_padded(
+        &[
+            "    1 cargo clippy --workspace \\",
+            "      -- -D warnings",
+            "    2 ok",
+        ],
+        36,
+    );
+    let t = text_from_cells(&wrapped, 0, 0, 35, 2);
+    assert_eq!(t, "cargo clippy --workspace \\\n-- -D warnings\nok");
+}
+
+#[test]
+fn prose_numbers_are_not_mistaken_for_a_gutter() {
+    // Non-consecutive numbers: data, not a gutter.
+    let data = grid_padded(&["  1 foo", "  3 bar"], 12);
+    assert_eq!(text_from_cells(&data, 0, 0, 11, 1), "1 foo\n3 bar");
+
+    // A lone numbered line among prose keeps its number.
+    let mixed = grid_padded(&["  summary:", "  2 files changed"], 20);
+    assert_eq!(
+        text_from_cells(&mixed, 0, 0, 19, 1),
+        "summary:\n2 files changed"
+    );
+}
+
+#[test]
+fn code_gutter_keeps_relative_code_indent() {
+    let cells = grid_padded(&["    1 if x:", "    2     return 1", "    3 end"], 22);
+    let t = text_from_cells(&cells, 0, 0, 21, 2);
+    assert_eq!(t, "if x:\n    return 1\nend");
+}
+
+#[test]
 fn clip_excludes_cells_outside_modal() {
     // Full-width screen: modal occupies cols 10..30, rows 2..5.
     // Chat "LEAK" sits left of the modal on the same rows.
