@@ -144,6 +144,30 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-16 — Interactive TUI wrote nothing to unified.jsonl (fast path)
+
+**Symptom:** `tail unified.jsonl` shows no `tui.*` / `turn.*` lines for any
+interactive session; the newest lines are days old. Diagnosis workflows in
+this file silently look at stale data. Noticed while chasing a paste bug:
+the fresh `tui.paste_key_dropped` breadcrumb could never land.
+
+**Root cause:** Bare `whycodes` and `whycodes -d <dir>` take the TTFF fast
+path (`early_tui_run_dir_from` → `cmd_run_fast_tui`), which skips clap and
+`async_main` — and with them `init_logging` **and** `ignore_sigpipe`.
+Every `emit` is a no-op without `logging::init` (STATE unset). Only
+flagged invocations (`--plain`, subcommands) ever logged.
+
+**Fix:** `cmd_run_fast_tui` (after the `WHYCODES_BENCH` early return, so
+the bench clock stays clean) calls `ignore_sigpipe()` and
+`logging::init` with env-only level (`WHYCODES_LOG_LEVEL` /
+`WHYCODES_LOG_FILE`, no config I/O on the TTFF path, `with_stderr:
+false`).
+
+**Prevention:** Any new pre-clap fast path must keep the process
+safeguards: SIGPIPE ignore + JSONL logging init. If unified.jsonl has no
+recent `tui.starting`, suspect an init-skipping entry path before
+suspecting the logger.
+
 ### 2026-09-16 — PowerShell paste/type drops `@` (AltGr) and mangles `/…` text
 
 **Symptom:** On Windows PowerShell / conhost (Turkish and other non-US
