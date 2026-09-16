@@ -6,7 +6,7 @@ use ratatui::style::Color;
 pub mod dark {
     use super::Color;
 
-    pub const STEP1_BG: Color = Color::Rgb(0x0a, 0x0a, 0x0a);
+    pub const STEP1_BG: Color = Color::Rgb(0x0c, 0x0c, 0x0c);
     pub const STEP2_PANEL: Color = Color::Rgb(0x14, 0x14, 0x14);
     pub const STEP3_ELEMENT: Color = Color::Rgb(0x1e, 0x1e, 0x1e);
     pub const STEP6: Color = Color::Rgb(0x3c, 0x3c, 0x3c);
