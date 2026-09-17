@@ -218,3 +218,40 @@ fn slash_printer_helpers_cover_repl_status_lines() {
     assert!(git_unavailable_line("enoent").contains("enoent"));
     assert!(git_status_failed_line("fatal").contains("fatal"));
 }
+
+/// Bare `whycodes` paints the home screen through `cmd_run_fast_tui`. That
+/// path used to hard-code `update_rx: None` and the update modal vanished
+/// (v0.6.4). Keep the spawn inside this function's source.
+#[test]
+fn fast_tui_source_spawns_the_update_check() {
+    let src = include_str!("run.rs");
+    let start = src
+        .find("pub(crate) fn cmd_run_fast_tui")
+        .expect("cmd_run_fast_tui");
+    let rest = &src[start..];
+    let end = rest[1..]
+        .find("\npub(crate) ")
+        .map(|i| i + 1)
+        .unwrap_or(rest.len());
+    let fn_src = &rest[..end];
+    assert!(
+        fn_src.contains("spawn_update_check_if"),
+        "cmd_run_fast_tui must spawn the GitHub update check"
+    );
+    assert!(
+        fn_src.contains("should_auto_update_fast_path"),
+        "cmd_run_fast_tui must honor CI / WHYCODES_NO_AUTO_UPDATE / WHYCODES_BENCH"
+    );
+    assert!(
+        fn_src.contains("update_rx,"),
+        "cmd_run_fast_tui must pass the spawned receiver into TuiRunOptions"
+    );
+    let assigned_none = fn_src.lines().any(|line| {
+        let t = line.trim();
+        t.starts_with("update_rx:") && t.contains("None")
+    });
+    assert!(
+        !assigned_none,
+        "cmd_run_fast_tui must not assign update_rx: None (home-screen confirm never appears)"
+    );
+}

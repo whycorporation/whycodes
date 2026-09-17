@@ -87,7 +87,8 @@ Things to know about CI:
   previous CI run so the pool is not stuck on stale jobs. After lint, Test and
   Coverage run in parallel across whatever runners are online. Release Build
   still reports on PRs (required check) but only compiles the binary on push
-  to main. Formula-only changes skip this workflow (`paths-ignore`). Coverage
+  to main. Formula-only **pushes** to main skip this workflow (`paths-ignore`);
+  formula PRs still run it (the ruleset requires those checks). Coverage
   persists instrumented rlibs under `${CARGO_TARGET_DIR}-llvm-cov` and only
   deletes `*.profraw` / `*.profdata` between runs.
   Each job pins `CARGO_HOME` and `CARGO_TARGET_DIR` under
@@ -131,10 +132,15 @@ fix a non-obvious bug. After such edits, run the manual host pass in
 [docs/tui-term-matrix.md](docs/tui-term-matrix.md)
 (`scripts/tui_term_matrix.sh`) on at least Alacritty and one VTE terminal.
 
+Bare `whycodes` takes the clap-free fast path (`cmd_run_fast_tui`). Do not
+strip logging init, SIGPIPE ignore, or the home-screen update check from it —
+see [AGENTS.md](AGENTS.md) “Interactive TUI fast path”.
+
 ### Agent rules
 
 Agent-facing repository rules are in [AGENTS.md](AGENTS.md); they apply to
-human contributors just the same.
+human contributors just the same. Releases (tag, Homebrew follow-up, docs-only
+PR deadlock) are documented there under “Releases”.
 
 ## Secrets and local scratch
 

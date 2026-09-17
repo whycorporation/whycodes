@@ -416,8 +416,8 @@ pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
     let exit = rt
         .block_on(async {
             // Must spawn inside this runtime: `tokio::spawn` in the update
-            // check panics without one, and clap-free boot used to pass
-            // `update_rx: None` so the home-screen confirm never appeared.
+            // check panics without one. Clap-free boot used to omit the
+            // GitHub check, so the home-screen confirm never appeared.
             let update_rx =
                 super::debug::spawn_update_check_if(super::debug::should_auto_update_fast_path());
             whycodes_tui::run(whycodes_tui::TuiRunOptions {
