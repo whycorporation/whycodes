@@ -57,6 +57,7 @@ fn auto_update_on_for_interactive_run_and_off_otherwise() {
     assert!(!should_auto_update_with_env(&run, true, true, false, false));
     assert!(!should_auto_update_with_env(&run, true, false, true, false));
     assert!(!should_auto_update_with_env(&run, true, false, false, true));
+    assert!(spawn_update_check_if(false).is_none());
     let dump = collect_debug();
     let _ = cmd_version("rustc");
     let _ = cmd_version("definitely-missing-bin");
