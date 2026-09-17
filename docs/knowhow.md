@@ -144,6 +144,25 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-17 — Home-screen update modal never appeared (fast path)
+
+**Symptom:** A newer GitHub release used to open an "Update available" confirm
+on the empty home screen. After the TTFF fast path landed, the modal never
+showed for `whycodes` / `whycodes -d .`.
+
+**Root cause:** `cmd_run_fast_tui` skipped clap/`async_main` and hard-coded
+`update_rx: None`. The GitHub `check_latest` spawn lived only in
+`cmd_run` → `spawn_update_check`. Bare invoke is the interactive default.
+
+**Fix:** Spawn the same background check inside the fast-path Tokio runtime
+via `spawn_update_check_if(should_auto_update_fast_path())`. Env gates
+(`CI` / `WHYCODES_NO_AUTO_UPDATE` / `WHYCODES_BENCH`) still skip it. The
+GitHub fetch stays off first paint.
+
+**Prevention:** Do not add a TUI entry that paints the home screen without
+an `update_rx`. Extra flags still skip the fast path and keep
+`spawn_update_check` on `cmd_run`.
+
 ### 2026-09-16 — Interactive TUI wrote nothing to unified.jsonl (fast path)
 
 **Symptom:** `tail unified.jsonl` shows no `tui.*` / `turn.*` lines for any

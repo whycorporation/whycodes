@@ -414,24 +414,32 @@ pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
         .enable_time()
         .build()?;
     let exit = rt
-        .block_on(whycodes_tui::run(whycodes_tui::TuiRunOptions {
-            project_dir,
-            provider: "anthropic".into(),
-            model: "claude-sonnet-4-20250514".into(),
-            api_key: String::new(),
-            agent_name: "build".into(),
-            max_turns: None,
-            initial_prompt: None,
-            config: Config::default(),
-            resume_session_id: None,
-            remote: None,
-            defer_config_load: true,
-            provider_from_cli: false,
-            model_from_cli: false,
-            agent_from_cli: false,
-            update_rx: None,
-            inject: Default::default(),
-        }))
+        .block_on(async {
+            // Must spawn inside this runtime: `tokio::spawn` in the update
+            // check panics without one, and clap-free boot used to pass
+            // `update_rx: None` so the home-screen confirm never appeared.
+            let update_rx =
+                super::debug::spawn_update_check_if(super::debug::should_auto_update_fast_path());
+            whycodes_tui::run(whycodes_tui::TuiRunOptions {
+                project_dir,
+                provider: "anthropic".into(),
+                model: "claude-sonnet-4-20250514".into(),
+                api_key: String::new(),
+                agent_name: "build".into(),
+                max_turns: None,
+                initial_prompt: None,
+                config: Config::default(),
+                resume_session_id: None,
+                remote: None,
+                defer_config_load: true,
+                provider_from_cli: false,
+                model_from_cli: false,
+                agent_from_cli: false,
+                update_rx,
+                inject: Default::default(),
+            })
+            .await
+        })
         .map_err(map_tui_run_error)?;
     match exit {
         whycodes_tui::TuiExit::Quit => Ok(()),

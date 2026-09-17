@@ -2021,6 +2021,35 @@ fn spawn_update_check_disabled_returns_none() {
     c.no_auto_update = true;
     let config = Config::default();
     assert!(spawn_update_check(&c, &config).is_none());
+    assert!(spawn_update_check_if(false).is_none());
+}
+
+#[test]
+fn should_auto_update_fast_path_respects_env() {
+    let _home = IsolatedHome::new();
+    let prev_no = std::env::var_os("WHYCODES_NO_AUTO_UPDATE");
+    let prev_bench = std::env::var_os("WHYCODES_BENCH");
+    unsafe {
+        std::env::remove_var("WHYCODES_NO_AUTO_UPDATE");
+        std::env::remove_var("WHYCODES_BENCH");
+    }
+    assert!(should_auto_update_fast_path());
+    unsafe { std::env::set_var("WHYCODES_NO_AUTO_UPDATE", "1") };
+    assert!(!should_auto_update_fast_path());
+    unsafe { std::env::remove_var("WHYCODES_NO_AUTO_UPDATE") };
+    unsafe { std::env::set_var("CI", "true") };
+    assert!(!should_auto_update_fast_path());
+    unsafe { std::env::remove_var("CI") };
+    unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
+    assert!(!should_auto_update_fast_path());
+    match prev_no {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_NO_AUTO_UPDATE", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_NO_AUTO_UPDATE") },
+    }
+    match prev_bench {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
+    }
 }
 
 #[test]

@@ -346,7 +346,18 @@ pub(crate) fn spawn_update_check(
     cli: &Cli,
     config: &Config,
 ) -> Option<tokio::sync::mpsc::UnboundedReceiver<whycodes_tui::UpdateOffer>> {
-    if !should_auto_update(cli, config.general.auto_update) {
+    spawn_update_check_if(should_auto_update(cli, config.general.auto_update))
+}
+
+/// Same GitHub check as [`spawn_update_check`], with the gate already decided.
+///
+/// The clap-free TUI fast path (`whycodes` / `whycodes -d .`) never builds a
+/// `Cli`, so it cannot call [`spawn_update_check`]. Passing `false` is a no-op
+/// so tests and `--no-auto-update` stay a single branch.
+pub(crate) fn spawn_update_check_if(
+    enabled: bool,
+) -> Option<tokio::sync::mpsc::UnboundedReceiver<whycodes_tui::UpdateOffer>> {
+    if !enabled {
         return None;
     }
     #[cfg(feature = "self-update")]
@@ -377,10 +388,19 @@ pub(crate) fn spawn_update_check(
     }
     #[cfg(not(feature = "self-update"))]
     {
-        let _ = cli;
-        let _ = config;
         None
     }
+}
+
+/// Env gates for the clap-free TUI fast path.
+///
+/// Extra flags (`--no-auto-update`, `--plain`, a prompt) skip
+/// [`crate::early_tui_run_dir_from`], so this path never sees a CLI flag.
+/// `CI` / `WHYCODES_NO_AUTO_UPDATE` / `WHYCODES_BENCH` still skip the check.
+pub(crate) fn should_auto_update_fast_path() -> bool {
+    std::env::var_os("WHYCODES_NO_AUTO_UPDATE").is_none()
+        && std::env::var_os("CI").is_none()
+        && !std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty())
 }
 
 pub(crate) async fn after_tui_exit(exit: whycodes_tui::TuiExit) -> anyhow::Result<()> {
