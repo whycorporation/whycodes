@@ -390,6 +390,24 @@ pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
             whycodes_tui::TuiExit::Upgrade => Ok(()),
         };
     }
+    // The fast path skips clap/async_main, but must not skip the process
+    // safeguards: SIGPIPE ignore (knowhow rule 3) and always-on JSONL
+    // logging — without this every interactive `whycodes` / `whycodes -d .`
+    // session wrote nothing to unified.jsonl, so `tui.*` / `turn.*`
+    // diagnosis was blind. Env-only log level keeps config I/O off TTFF;
+    // direct `emit` lines land regardless of the tracing filter.
+    crate::ignore_sigpipe();
+    let opts = whycodes_core::logging::InitOptions {
+        data_dir: Config::data_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        log_level: std::env::var("WHYCODES_LOG_LEVEL").ok(),
+        log_file: std::env::var_os("WHYCODES_LOG_FILE").map(PathBuf::from),
+        debug: false,
+        // TUI: keep stderr quiet while the alternate screen is active.
+        with_stderr: false,
+    };
+    if let Err(e) = whycodes_core::logging::init(opts) {
+        eprintln!("warning: failed to initialize logging: {e}");
+    }
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_io()

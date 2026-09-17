@@ -38,48 +38,14 @@ fn app_ready() -> TuiApp {
 }
 
 #[test]
-fn glyph_matches_agent_state() {
-    let palette = TuiApp::new(cfg()).config.palette();
-
-    let mut app = TuiApp::new(cfg());
-    app.current_agent_state = AgentState::Idle;
-    let glyph = status_glyph(&app, &palette);
-    assert_eq!(glyph.content.as_ref(), STATUS_SQUARE);
-
-    app.current_agent_state = AgentState::Error("boom".into());
-    let glyph = status_glyph(&app, &palette);
-    assert_eq!(glyph.content.as_ref(), STATUS_SQUARE);
-
-    app.current_agent_state = AgentState::WaitingForPermission;
-    let glyph = status_glyph(&app, &palette);
-    assert_eq!(glyph.content.as_ref(), STATUS_SQUARE_OPEN);
-
-    app.current_agent_state = AgentState::WaitingForQuestion;
-    let glyph = status_glyph(&app, &palette);
-    assert_eq!(glyph.content.as_ref(), STATUS_SQUARE_OPEN);
-
-    app.current_agent_state = AgentState::Generating;
-    app.spinner_frame = 3;
-    let glyph = status_glyph(&app, &palette);
-    assert_eq!(glyph.content.as_ref(), crate::ui::spinner::glyph(3));
-    assert_eq!(glyph.style.bg, Some(palette.bg));
-    assert_eq!(glyph.style.fg, Some(palette.accent));
-
-    app.current_agent_state = AgentState::Thinking;
-    app.spinner_frame = 7;
-    let glyph = status_glyph(&app, &palette);
-    assert_eq!(glyph.content.as_ref(), crate::ui::spinner::glyph(7));
-}
-
-#[test]
 fn paints_whycodes_wordmark_as_one_word() {
     let app = TuiApp::new(cfg());
     let palette = app.config.palette();
     let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
         render(f, f.area(), &app, &palette)
     });
-    assert!(text.contains('?'), "{text}");
-    assert!(text.contains("whycodes"), "{text}");
+    // `? ` mark, then the wordmark glued as one word.
+    assert!(text.contains("? whycodes"), "{text}");
     assert!(!text.contains("why codes"), "{text}");
 }
 

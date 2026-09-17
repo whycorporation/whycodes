@@ -767,6 +767,72 @@ const PLAN_MARKERS: &[&str] = &[
     "adim adim",
 ];
 
+/// Work-shaped text: directives, plan asks, or control words that steer an
+/// in-flight task. Used by triviality detection — a short message with any of
+/// these keeps the full model and context ("commit", "devam", "evet", "dur").
+pub(crate) fn looks_actionish(lower: &str) -> bool {
+    if starts_with_any(lower, CHANGE_STARTERS)
+        || CHANGE_MARKERS.iter().any(|m| lower.contains(m))
+        || PLAN_MARKERS.iter().any(|m| lower.contains(m))
+    {
+        return true;
+    }
+    // Confirmations / continuations ("evet", "ok", "devam") answer a pending
+    // proposal; standalone verbs the space-suffixed markers above miss.
+    const CONTROL_WORDS: &[&str] = &[
+        "ok",
+        "okay",
+        "yes",
+        "no",
+        "go",
+        "run",
+        "do",
+        "commit",
+        "push",
+        "pull",
+        "merge",
+        "deploy",
+        "build",
+        "test",
+        "retry",
+        "ship",
+        "continue",
+        "proceed",
+        "stop",
+        "cancel",
+        "undo",
+        "revert",
+        "evet",
+        "hayır",
+        "hayir",
+        "tamam",
+        "olur",
+        "devam",
+        "yap",
+        "yapma",
+        "dur",
+        "durdur",
+        "iptal",
+        "yaz",
+        "sil",
+        "kur",
+        "başlat",
+        "baslat",
+        "çalıştır",
+        "calistir",
+        "dene",
+        "gönder",
+        "gonder",
+        "onayla",
+        "onaylıyorum",
+        "onayliyorum",
+    ];
+    lower
+        .split_whitespace()
+        .map(|w| w.trim_matches(['.', '!', '?', ',']))
+        .any(|w| CONTROL_WORDS.contains(&w))
+}
+
 fn score_markers(
     lower: &str,
     markers: &[&str],

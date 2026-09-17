@@ -7,7 +7,8 @@
 //! rectangle: first line from the anchor to the end, middle lines full width,
 //! last line from the start to the head. Per-line trailing pad is stripped,
 //! multi-line selections lose their common left indent (safe-area / SIDE_PAD /
-//! assistant gutter), and empty pad-only rows are dropped.
+//! assistant gutter), code-block line-number gutters are blanked out, and
+//! empty pad-only rows are dropped.
 //!
 //! OSC 52 works in Kitty/WezTerm/iTerm/Alacritty/Windows Terminal; on Linux we
 //! also try `wl-copy` / `xclip` when available.
@@ -27,10 +28,100 @@ pub fn copy_text(text: &str) -> bool {
     }
     let osc = osc52(text);
     let mut ok = write_osc52_to(&mut io::stdout().lock(), &osc);
-    ok |= try_wl_copy(text);
-    ok |= try_xclip(text);
-    ok |= try_pbcopy(text);
+    if cfg!(windows) {
+        // Native Win32 clipboard. The Unix helpers can never exist here,
+        // and each failed `CreateProcess` walks the whole PATH × PATHEXT
+        // (plus Defender) — four attempts froze the TUI for seconds on
+        // hosts with a long PATH. Classic conhost also ignores OSC 52, so
+        // this is the only path that actually lands on Windows.
+        // `!cfg!(test)`: unit tests must not clobber the developer's real
+        // clipboard (the stub covers copy_text's logic).
+        ok |= !cfg!(test) && windows_clipboard::set_text(text);
+    } else {
+        ok |= try_wl_copy(text);
+        ok |= try_xclip(text);
+        ok |= try_pbcopy(text);
+    }
     ok
+}
+
+/// Direct `CF_UNICODETEXT` write — no process spawn, no code-page loss.
+///
+/// `clip.exe` was rejected: it interprets input via the console *input*
+/// code page (whycodes only sets the output CP to 65001, so Turkish text
+/// garbles on CP857 hosts) and a UTF-16 BOM is stored as literal text.
+mod windows_clipboard {
+    #[cfg(not(windows))]
+    pub(super) fn set_text(_text: &str) -> bool {
+        false
+    }
+
+    #[cfg(windows)]
+    pub(super) fn set_text(text: &str) -> bool {
+        use core::ffi::c_void;
+
+        const CF_UNICODETEXT: u32 = 13;
+        const GMEM_MOVEABLE: u32 = 0x0002;
+
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn OpenClipboard(hwnd_new_owner: *mut c_void) -> i32;
+            fn EmptyClipboard() -> i32;
+            fn SetClipboardData(u_format: u32, h_mem: *mut c_void) -> *mut c_void;
+            fn CloseClipboard() -> i32;
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GlobalAlloc(u_flags: u32, dw_bytes: usize) -> *mut c_void;
+            fn GlobalLock(h_mem: *mut c_void) -> *mut c_void;
+            fn GlobalUnlock(h_mem: *mut c_void) -> i32;
+            fn GlobalFree(h_mem: *mut c_void) -> *mut c_void;
+        }
+
+        // CF_UNICODETEXT convention is CRLF; normalize so a mixed
+        // transcript does not paste with doubled or bare newlines.
+        let normalized = text.replace("\r\n", "\n").replace('\n', "\r\n");
+        let mut wide: Vec<u16> = normalized.encode_utf16().collect();
+        wide.push(0);
+        let byte_len = wide.len().saturating_mul(2);
+
+        unsafe {
+            let mem = GlobalAlloc(GMEM_MOVEABLE, byte_len);
+            if mem.is_null() {
+                return false;
+            }
+            let dst = GlobalLock(mem);
+            if dst.is_null() {
+                GlobalFree(mem);
+                return false;
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), dst.cast::<u16>(), wide.len());
+            GlobalUnlock(mem);
+
+            // Another process can hold the clipboard for a moment
+            // (clipboard managers, RDP). A few short retries, then give up.
+            let mut opened = false;
+            for _ in 0..5 {
+                if OpenClipboard(std::ptr::null_mut()) != 0 {
+                    opened = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            if !opened {
+                GlobalFree(mem);
+                return false;
+            }
+            let stored = EmptyClipboard() != 0 && !SetClipboardData(CF_UNICODETEXT, mem).is_null();
+            CloseClipboard();
+            if !stored {
+                GlobalFree(mem);
+                return false;
+            }
+            // Success: the system owns `mem` now — do not free it.
+            true
+        }
+    }
 }
 
 thread_local! {
@@ -291,6 +382,7 @@ pub fn text_from_cells_linear(
 ///
 /// Screen cells include layout chrome the user never wants:
 /// - trailing background fill (already stripped in extract)
+/// - code-block line-number gutters (`  1 cargo build …`)
 /// - **space-between** footer gaps (`path` + 80 spaces + `status`)
 /// - shared left inset (SIDE_PAD / safe area)
 /// - empty message-gap rows
@@ -304,6 +396,9 @@ fn clean_copied_lines(mut lines: Vec<String>) -> Vec<String> {
     }
     // Collapse runs of blank lines to a single blank (message gaps).
     lines = collapse_blank_runs(lines);
+    // Blank rendered code-block line numbers before interior-space collapse,
+    // so the code body (not the number) counts as leading indent.
+    lines = strip_code_gutter_numbers(lines);
     // Kill space-between layout: after the first non-space, any run of
     // spaces becomes a single space. Leading indent is preserved so
     // dedent can still recover relative code indent.
@@ -398,6 +493,84 @@ fn collapse_interior_spaces(s: &str) -> String {
     }
     // Trailing ws intentionally dropped (matches trim_end).
     out
+}
+
+/// Leading-gutter shape of one raw screen line: `spaces, digits, space-or-end`.
+/// Returns `(number, end)` where `end` is the byte index just past the digits.
+fn gutter_shape(line: &str) -> Option<(u64, usize)> {
+    let lead = leading_spaces(line);
+    let digits = line[lead..].bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits > 5 {
+        return None;
+    }
+    let end = lead + digits;
+    if end < line.len() && line.as_bytes()[end] != b' ' {
+        return None;
+    }
+    let num: u64 = line[lead..end].parse().ok()?;
+    Some((num, end))
+}
+
+fn leading_spaces(line: &str) -> usize {
+    line.bytes().take_while(|&b| b == b' ').count()
+}
+
+/// Blank out rendered code-block line numbers (`render_code` /
+/// `render_diff_code` paint `  1 cargo build …` gutters).
+///
+/// Shape-based: a run of consecutive lines whose leading `spaces digits space`
+/// numbers end on one column (the gutter right-aligns) and count up by exactly
+/// 1 is a rendered gutter, not content. The digits are overwritten with spaces
+/// so columns are preserved — `dedent_common` then strips the whole gutter
+/// width and keeps wrapped continuations aligned under the code. Continuation
+/// rows (hang indent past the number column) ride along inside a run.
+///
+/// A lone numbered line is only treated as a gutter when the selection holds
+/// nothing else, so prose like `2 files changed` survives a multi-line copy.
+fn strip_code_gutter_numbers(mut lines: Vec<String>) -> Vec<String> {
+    let shapes: Vec<Option<(u64, usize)>> = lines.iter().map(|l| gutter_shape(l)).collect();
+    let nonblank_total = lines.iter().filter(|l| !l.is_empty()).count();
+    let mut i = 0;
+    while i < lines.len() {
+        let Some((first_num, end)) = shapes[i] else {
+            i += 1;
+            continue;
+        };
+        let mut members = vec![i];
+        let mut run_nonblank = 1usize;
+        let mut tail = i;
+        let mut last = first_num;
+        let mut j = i + 1;
+        while j < lines.len() {
+            match shapes[j] {
+                Some((num, e)) if e == end && num == last.saturating_add(1) => {
+                    members.push(j);
+                    last = num;
+                    tail = j;
+                    run_nonblank += 1;
+                }
+                _ if !lines[j].is_empty() && leading_spaces(&lines[j]) > end => {
+                    // Wrap continuation: hang indent reaches the code column.
+                    tail = j;
+                    run_nonblank += 1;
+                }
+                _ => break,
+            }
+            j += 1;
+        }
+        let lone_block = members.len() == 1 && run_nonblank == nonblank_total;
+        if members.len() >= 2 || lone_block {
+            for &k in &members {
+                let lead = leading_spaces(&lines[k]);
+                lines[k].replace_range(lead..end, &" ".repeat(end - lead));
+                if lines[k].bytes().all(|b| b == b' ') {
+                    lines[k].clear();
+                }
+            }
+        }
+        i = tail + 1;
+    }
+    lines
 }
 
 /// Remove the largest run of leading ASCII spaces shared by every non-empty line.

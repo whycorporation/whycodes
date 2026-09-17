@@ -31,6 +31,7 @@ impl Widget for SparseLines {
         let row = super::ChatRowPaint {
             x: area.x,
             width: area.width,
+            fg: Color::White,
             bg: self.bg,
             caret_style: Style::default(),
         };
@@ -163,7 +164,7 @@ fn tool_result_diff_paints_add_remove_colours() {
         err_text.contains("old") || err_text.contains("new"),
         "error diffs still paint the body, got {err_text}"
     );
-    // Full line body stays green/red (not syntax-overwritten).
+    // Markers stay insert/delete coloured; body may pick up syntect fg.
     let add_body = lines
         .iter()
         .flat_map(|l| l.spans.iter())
@@ -174,8 +175,8 @@ fn tool_result_diff_paints_add_remove_colours() {
         .flat_map(|l| l.spans.iter())
         .find(|s| s.content.as_ref() == "old")
         .expect("- body");
-    assert_eq!(add_body.style.fg, Some(palette.diff_add));
-    assert_eq!(rem_body.style.fg, Some(palette.diff_remove));
+    assert!(add_body.style.bg.is_some(), "insert band bg");
+    assert!(rem_body.style.bg.is_some(), "delete band bg");
     // Left line numbers also green/red.
     let line_nos: Vec<_> = lines
         .iter()
@@ -422,7 +423,12 @@ fn tool_block_grep_header_shows_match_chip() {
     );
     let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(header.contains('•'), "Grok bullet, got {header}");
-    assert!(header.contains("Searched"), "got {header}");
+    assert!(header.contains("Search"), "got {header}");
+    assert!(header.contains("\"foo\""), "quoted pattern, got {header}");
+    assert!(
+        header.contains("(2 matches in 2 files)"),
+        "Grok match summary, got {header}"
+    );
     assert!(header.contains("foo"), "got {header}");
 }
 
@@ -806,6 +812,7 @@ fn selected_concat_slice_marks_first_content_across_halves() {
     let row = super::ChatRowPaint {
         x: 0,
         width: area.width,
+        fg: Color::White,
         bg: Color::Black,
         caret_style: Style::default().fg(Color::Yellow),
     };
@@ -1060,15 +1067,19 @@ fn live_thinking_puts_elapsed_on_the_right() {
     let lines = super::thinking_lines(&t, &palette, 60, 0);
     let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(
-        header.contains("Thinking..."),
-        "Grok live header is Thinking..., got {header:?}"
+        header.contains("Thinking…"),
+        "Grok live header is Thinking… (U+2026), got {header:?}"
+    );
+    assert!(
+        !header.contains("Thinking..."),
+        "must not use three ASCII dots: {header:?}"
     );
     assert!(
         !header.contains('·'),
         "elapsed sits on the right, not after a mid-dot: {header:?}"
     );
     assert!(
-        header.contains('s') || header.contains("Thinking..."),
+        header.contains('s') || header.contains("Thinking…"),
         "got {header:?}"
     );
 }
@@ -1532,6 +1543,7 @@ fn paint_chat_row_caret_and_band() {
     let row = super::ChatRowPaint {
         x: 0,
         width: 12,
+        fg: Color::White,
         bg: Color::Black,
         caret_style: Style::default().fg(Color::White),
     };
@@ -1550,6 +1562,7 @@ fn paint_chat_row_caret_and_band() {
     let tiny_row = super::ChatRowPaint {
         x: 0,
         width: 4,
+        fg: Color::White,
         bg: Color::Black,
         caret_style: Style::default().fg(Color::White),
     };
@@ -1629,16 +1642,16 @@ fn execute_tool_and_header_verbs_cover_aliases() {
     assert_eq!(super::tool_header_verb("read_file", false), "Read");
     assert_eq!(super::tool_header_verb("bash", true), "Running");
     assert_eq!(super::tool_header_verb("bash", false), "Run");
-    assert_eq!(super::tool_header_verb("search_code", true), "Searching");
-    assert_eq!(super::tool_header_verb("search_code", false), "Searched");
+    assert_eq!(super::tool_header_verb("search_code", true), "Search");
+    assert_eq!(super::tool_header_verb("search_code", false), "Search");
     assert_eq!(super::tool_header_verb("list_dir", true), "Listing");
     assert_eq!(super::tool_header_verb("list_dir", false), "Listed");
-    assert_eq!(super::tool_header_verb("write", true), "Editing");
-    assert_eq!(super::tool_header_verb("write", false), "Edited");
+    assert_eq!(super::tool_header_verb("write", true), "Edit");
+    assert_eq!(super::tool_header_verb("write", false), "Edit");
     assert_eq!(super::tool_header_verb("web_fetch", true), "Fetching");
     assert_eq!(super::tool_header_verb("web_fetch", false), "Fetched");
-    assert_eq!(super::tool_header_verb("web_search", true), "Searching");
-    assert_eq!(super::tool_header_verb("web_search", false), "Searched");
+    assert_eq!(super::tool_header_verb("web_search", true), "Search");
+    assert_eq!(super::tool_header_verb("web_search", false), "Search");
     assert_eq!(super::tool_header_verb("custom", true), "Calling");
     assert_eq!(super::tool_header_verb("custom", false), "Custom");
     assert_eq!(super::tool_header_verb("", false), "Called");
@@ -2182,7 +2195,7 @@ fn tool_header_verb_covers_named_and_fallback() {
     assert_eq!(super::tool_header_verb("list_dir", false), "Listed");
     assert_eq!(super::tool_header_verb("web_fetch", true), "Fetching");
     assert_eq!(super::tool_header_verb("web_fetch", false), "Fetched");
-    assert_eq!(super::tool_header_verb("web_search", false), "Searched");
+    assert_eq!(super::tool_header_verb("web_search", false), "Search");
     assert_eq!(super::tool_header_verb("", false), "Called");
     assert!(super::tool_header_verb("custom_tool", false).starts_with('C'));
     assert_eq!(super::verb_kind("read"), Some(super::VerbKind::File));
@@ -2818,6 +2831,7 @@ fn paint_chat_row_fills_and_skips_empty() {
     let row = super::ChatRowPaint {
         x: 0,
         width: 0,
+        fg: Color::White,
         bg: Color::Black,
         caret_style: Style::default(),
     };
@@ -2825,6 +2839,7 @@ fn paint_chat_row_fills_and_skips_empty() {
     let row = super::ChatRowPaint {
         x: 0,
         width: 10,
+        fg: Color::White,
         bg: Color::Black,
         caret_style: Style::default().fg(Color::White),
     };
@@ -2907,7 +2922,7 @@ fn tool_block_expanded_headers_execute_error_diff_grep_and_hints() {
         paint(true, false),
     );
     let header = joined(&diff);
-    assert!(header.contains("+2") && header.contains("−1"), "{header}");
+    assert!(header.contains("+2") && header.contains("-1"), "{header}");
 
     let grep = tool_block(
         "grep",
@@ -2954,7 +2969,7 @@ fn tool_block_expanded_headers_execute_error_diff_grep_and_hints() {
         .unwrap_or_default()
         .to_string();
     assert!(
-        header.contains('+') && !header.contains('−'),
+        header.contains('+') && !header.contains("-1") && !header.contains('−'),
         "add-only diff header must paint +N without a delete chip, got {header}"
     );
     let del_only = tool_block(
@@ -2969,8 +2984,8 @@ fn tool_block_expanded_headers_execute_error_diff_grep_and_hints() {
         .unwrap_or_default()
         .to_string();
     assert!(
-        header.contains('−') && !header.contains('+'),
-        "delete-only diff header must paint −N without an add chip, got {header}"
+        (header.contains("-1") || header.contains('−')) && !header.contains('+'),
+        "delete-only diff header must paint -N without an add chip, got {header}"
     );
 
     let rail = super::accent_line(
@@ -3362,4 +3377,328 @@ fn home_recents_without_timestamp_still_list_the_title() {
         truncated.ends_with('…') && truncated.starts_with("hello"),
         "long home titles must ellipsize, got {truncated:?}"
     );
+}
+
+fn buffer_text(buf: &Buffer) -> String {
+    let area = buf.area();
+    let mut out = String::new();
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            if let Some(cell) = buf.cell((x, y)) {
+                out.push_str(cell.symbol());
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+#[test]
+fn grok_chat_flow_headers_paint_thinking_search_edit_read_run() {
+    use crate::app::{AgentState, ChatBlock, ThinkingBlock};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "match grok chrome");
+    app.add_message(ChatRole::Assistant, "done.");
+    app.add_tool_call("g1".into(), "grep".into(), json!({"pattern": "foo"}));
+    app.add_tool_result(
+        "g1",
+        "src/a.rs:1:foo\nsrc/b.rs:2:foo\n\n(2 matches in 2 files; pattern `foo`)",
+        false,
+    );
+    app.add_tool_call("e1".into(), "edit".into(), json!({"path": "src/main.rs"}));
+    app.add_tool_result("e1", "Edited src/main.rs\n\n  12|-old\n  12|+new\n", false);
+    app.add_tool_call("r1".into(), "read".into(), json!({"path": "src/lib.rs"}));
+    app.add_tool_result("r1", "# src/lib.rs\n     1|fn main() {}\n", false);
+    app.add_tool_call("b1".into(), "bash".into(), json!({"command": "cargo test"}));
+    app.add_tool_result("b1", "ok\n", false);
+    let last = app.messages.len() - 1;
+    let mut live = ThinkingBlock::new("weigh the options\nand a second line");
+    live.collapsed = true;
+    app.messages[last]
+        .blocks
+        .insert(0, ChatBlock::Thinking(live));
+    let mut done = ThinkingBlock::finished("closed thought body");
+    done.collapsed = true;
+    app.messages[last]
+        .blocks
+        .insert(1, ChatBlock::Thinking(done));
+
+    let palette = app.config.palette();
+    let lines = super::render_message(&app.messages[last], &app, &palette, last, 100, None, false);
+    let text = joined(&lines);
+    assert!(
+        text.contains("Thinking…"),
+        "live thinking header uses U+2026, got {text}"
+    );
+    assert!(
+        !text.contains("Thinking..."),
+        "must not use three ASCII dots: {text}"
+    );
+    assert!(
+        text.contains("Thought for"),
+        "finished thinking header, got {text}"
+    );
+    assert!(text.contains('┃'), "thinking rail U+2503, got {text}");
+    assert!(
+        text.contains("Search") && text.contains("\"foo\""),
+        "grep header Search \"pattern\", got {text}"
+    );
+    assert!(
+        text.contains("(2 matches in 2 files)") || text.contains("matches in"),
+        "grep match summary, got {text}"
+    );
+    assert!(
+        text.contains("Edit") && text.contains("src/main.rs"),
+        "edit header, got {text}"
+    );
+    assert!(
+        text.contains('+') && (text.contains("-1") || text.contains('−')),
+        "edit collapsed diffstat, got {text}"
+    );
+    assert!(
+        text.contains("Read") && text.contains("src/lib.rs"),
+        "read header, got {text}"
+    );
+    assert!(
+        text.contains("Run") && text.contains("cargo test"),
+        "run header, got {text}"
+    );
+    assert!(text.contains('•'), "quiet tool bullet column, got {text}");
+
+    app.messages[last].results_expanded = true;
+    let expanded =
+        super::render_message(&app.messages[last], &app, &palette, last, 100, None, false);
+    let exp = joined(&expanded);
+    assert!(
+        exp.contains("src/a.rs") && exp.contains("src/b.rs"),
+        "expanded grep groups by path, got {exp}"
+    );
+
+    app.current_agent_state = AgentState::Generating;
+    let backend = TestBackend::new(100, 28);
+    let mut terminal = Terminal::new(backend).expect("term");
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw");
+    let painted = buffer_text(terminal.backend().buffer());
+    assert!(
+        painted.contains("Thinking…")
+            || painted.contains("Thought for")
+            || painted.contains("Search"),
+        "TestBackend mixed transcript must paint Grok chrome, got {painted}"
+    );
+}
+
+#[test]
+fn grep_header_no_matches_and_edit_diffstat_on_collapsed() {
+    let palette = ThemeName::DefaultDark.palette();
+    let none = tool_block(
+        "grep",
+        &json!({"pattern": "zzz"}),
+        Some("No matches found."),
+        ToolPaint {
+            is_error: false,
+            palette: &palette,
+            expanded: false,
+            width: 80,
+            spin: 0,
+        },
+    );
+    let header = joined(&none);
+    assert!(
+        header.contains("Search") && header.contains("(no matches)"),
+        "zero-hit search chip, got {header}"
+    );
+
+    let edit = tool_block(
+        "edit",
+        &json!({"path": "src/main.rs"}),
+        Some("Edited src/main.rs\n\n  12|-old\n  12|+new\n+also\n"),
+        ToolPaint {
+            is_error: false,
+            palette: &palette,
+            expanded: false,
+            width: 80,
+            spin: 0,
+        },
+    );
+    let header = joined(&edit);
+    assert!(
+        header.contains("Edit") && header.contains("src/main.rs"),
+        "{header}"
+    );
+    assert!(header.contains("+2") && header.contains("-1"), "{header}");
+}
+
+#[test]
+fn websearch_runtime_names_get_search_header() {
+    // Runtime canonical names are `websearch` / `mcp_websearch` (no
+    // underscore); `web_search` only survives in old snapshots/imports.
+    let palette = ThemeName::DefaultDark.palette();
+    for name in ["websearch", "mcp_websearch", "web_search"] {
+        assert_eq!(super::tool_header_verb(name, true), "Search");
+        assert_eq!(super::tool_header_verb(name, false), "Search");
+        assert_eq!(super::verb_kind(name), Some(super::VerbKind::WebSearch));
+        let header = joined(&tool_block(
+            name,
+            &json!({"query": "rust"}),
+            Some("hits"),
+            ToolPaint {
+                is_error: false,
+                palette: &palette,
+                expanded: false,
+                width: 80,
+                spin: 0,
+            },
+        ));
+        assert!(
+            header.contains("Search") && header.contains("\"rust\""),
+            "{name} header must be Search \"query\", got {header}"
+        );
+    }
+}
+
+#[test]
+fn search_chip_only_counts_grep_hits() {
+    // Web snippets may hold times or host:port text shaped like
+    // `path:line:` — that must never become a match chip.
+    let palette = ThemeName::DefaultDark.palette();
+    let paint = || ToolPaint {
+        is_error: false,
+        palette: &palette,
+        expanded: false,
+        width: 80,
+        spin: 0,
+    };
+    let web = joined(&tool_block(
+        "websearch",
+        &json!({"query": "rust"}),
+        Some(
+            "Rust 1.0 released\nMeetup at 12:30:45 downtown\nSee https://example.com:8080: docs mirror",
+        ),
+        paint(),
+    ));
+    assert!(
+        web.contains("Search") && web.contains("\"rust\""),
+        "web header, got {web}"
+    );
+    assert!(
+        !web.contains("match"),
+        "no grep chip on web results, got {web}"
+    );
+    // grep keeps its chip.
+    let grep = joined(&tool_block(
+        "grep",
+        &json!({"pattern": "foo"}),
+        Some("src/a.rs:1:foo\n\n(1 match; pattern `foo`)"),
+        paint(),
+    ));
+    assert!(grep.contains("(1 match)"), "grep chip kept, got {grep}");
+}
+
+#[test]
+fn consecutive_busy_frames_do_not_shift_finished_cells() {
+    use crate::app::{AgentState, ChatBlock, ThinkingBlock};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "finished prompt stays put");
+    app.add_message(ChatRole::Assistant, "finished answer body");
+    let last = app.messages.len() - 1;
+    app.messages[last]
+        .blocks
+        .push(ChatBlock::Thinking(ThinkingBlock::new(
+            "live-one\nlive-two\nlive-three",
+        )));
+    // Search headers (new Grok chrome) must also sit under the flicker guard.
+    app.add_tool_call("g1".into(), "websearch".into(), json!({"query": "rust"}));
+    app.add_tool_result("g1", "hits", false);
+    app.add_tool_call("g2".into(), "grep".into(), json!({"pattern": "foo"}));
+    app.add_tool_result(
+        "g2",
+        "src/a.rs:1:foo\nsrc/b.rs:2:foo\n\n(2 matches in 2 files; pattern `foo`)",
+        false,
+    );
+    app.current_agent_state = AgentState::Generating;
+    // Expanded so the per-tool Search "query" headers (not the collapsed
+    // bucket line) paint on both frames.
+    app.messages[last].results_expanded = true;
+    app.spinner_frame = 0;
+
+    let palette = app.config.palette();
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).expect("term");
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw a");
+    let a = terminal.backend().buffer().clone();
+
+    app.spinner_frame = 3;
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw b");
+    let b = terminal.backend().buffer().clone();
+
+    let area = a.area();
+    assert_eq!(a.area(), b.area());
+    let mut prompt_cells = Vec::new();
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            let ca = a.cell((x, y)).expect("a");
+            let cb = b.cell((x, y)).expect("b");
+            let sa = ca.symbol();
+            let sb = cb.symbol();
+            assert_ne!(
+                ca.bg,
+                Color::Reset,
+                "canvas Reset at ({x},{y}) flashes white"
+            );
+            assert_ne!(cb.bg, Color::Reset, "canvas Reset at ({x},{y})");
+            assert_ne!(ca.fg, Color::Reset, "fg Reset at ({x},{y})");
+            assert_ne!(cb.fg, Color::Reset, "fg Reset at ({x},{y})");
+            let spinnerish = crate::ui::spinner::is_spinner_char(sa.chars().next().unwrap_or('\0'))
+                || crate::ui::spinner::is_spinner_char(sb.chars().next().unwrap_or('\0'));
+            if spinnerish || sa == "┃" || sb == "┃" {
+                continue;
+            }
+            // Live elapsed (`0.0s` → `0.1s`) may tick between paints; skip those digits.
+            let ch = sa.chars().next().unwrap_or('\0');
+            if ch.is_ascii_digit() || ch == '.' {
+                continue;
+            }
+            assert_eq!(
+                sa, sb,
+                "non-spinner cell ({x},{y}) shifted: {sa:?} vs {sb:?}"
+            );
+            if "finished prompt stays put".contains(sa) || sa == "f" || sa == "p" {
+                prompt_cells.push((x, y));
+            }
+        }
+    }
+    let text_a = buffer_text(&a);
+    let text_b = buffer_text(&b);
+    assert!(
+        text_a.contains("finished answer body") && text_a.contains("finished prompt"),
+        "finished bubbles must keep content, got {text_a}"
+    );
+    assert!(
+        text_b.contains("finished answer body") && text_b.contains("finished prompt"),
+        "finished bubbles must keep content on the next frame, got {text_b}"
+    );
+    for (tag, text) in [("a", &text_a), ("b", &text_b)] {
+        assert!(
+            text.contains("Search") && text.contains("\"rust\"") && text.contains("\"foo\""),
+            "search headers must paint on frame {tag}, got {text}"
+        );
+        assert!(
+            text.contains("(2 matches in 2 files)"),
+            "search chip must paint on frame {tag}, got {text}"
+        );
+    }
+    let _ = prompt_cells;
 }

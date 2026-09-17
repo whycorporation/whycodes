@@ -49,6 +49,10 @@ impl CellGrid {
     }
 
     /// Flatten a ratatui buffer into the packed grid.
+    ///
+    /// Cells painted `fg == bg` are invisible fill (scrollbar track/thumb
+    /// `█`): the user never saw a glyph there, so they are snapshotted as
+    /// pad spaces — otherwise a full-width drag copies ` █` line tails.
     pub fn from_buffer(buf: &Buffer) -> Self {
         let a = buf.area();
         let n = a.width as usize * a.height as usize;
@@ -57,7 +61,15 @@ impl CellGrid {
         off.push(0);
         for y in a.y..a.y.saturating_add(a.height) {
             for x in a.x..a.x.saturating_add(a.width) {
-                data.push_str(buf[(x, y)].symbol());
+                let cell = &buf[(x, y)];
+                let invisible = cell.fg == cell.bg
+                    && cell.fg != ratatui::style::Color::Reset
+                    && !cell.symbol().is_empty();
+                if invisible {
+                    data.push(' ');
+                } else {
+                    data.push_str(cell.symbol());
+                }
                 off.push(data.len() as u32);
             }
         }

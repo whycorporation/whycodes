@@ -331,12 +331,17 @@ pub(crate) fn memory_settings_for(
 }
 
 /// Best-effort code index on session start (skips if already indexed).
+/// A fresh build runs on a background thread so the first turn never waits.
 pub(crate) fn maybe_session_auto_index(project_dir: &std::path::Path, config: &Config) {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if let Some(n) =
-        whycodes_memory::maybe_auto_index(project_dir, &data_dir, &memory_settings(config))
+    if whycodes_memory::maybe_auto_index_background(
+        project_dir,
+        &data_dir,
+        &memory_settings(config),
+    )
+    .is_some()
     {
-        println!("{} Auto-indexed {n} code chunks", "📇".dimmed());
+        println!("{} Indexing code in the background…", "📇".dimmed());
     }
 }
 
@@ -364,6 +369,19 @@ pub(crate) fn refresh_session_memory(
     config: &Config,
     query: Option<&str>,
 ) {
+    // Trivial chit-chat ("selam", "hi"): recall adds nothing, and a rebuild
+    // (AGENTS.md/skills disk walk + SQLite recall scans) would also invalidate
+    // the provider prompt-cache prefix. Keep the existing prompt byte-stable;
+    // rebuild only if the session has no prompt yet, without the query.
+    let query = match query {
+        Some(q) if whycodes_agent::is_trivial_title_seed(q) => {
+            if !session.system_prompt.is_empty() {
+                return;
+            }
+            None
+        }
+        other => other,
+    };
     let (provider, model) = agent.route();
     let base = Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project_dir);
     session.set_system_prompt(&with_project_memory(&base, project_dir, config, query));

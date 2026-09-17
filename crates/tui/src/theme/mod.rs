@@ -543,7 +543,9 @@ fn palette_default_dark() -> ThemePalette {
         border: STEP7_BORDER,
         border_focused: PRIMARY,
         accent: SECONDARY,
-        user_msg: SECONDARY,
+        // Grok Build `accent_user` is text_secondary gray (#c8c8c8), not an
+        // accent color — the user bubble `❯` must not read as a blue arrow.
+        user_msg: TEXT_SECONDARY,
         assistant_msg: PRIMARY_BRIGHT,
         system_msg: TEXT_MUTED,
         tool_msg: YELLOW,

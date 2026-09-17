@@ -373,7 +373,7 @@ const SCENARIOS: &[BehaviorScenario] = &[
     case!(
         "guidance_always_ambiguous",
         "authorization",
-        "auth maybe",
+        "auth flow maybe broken",
         Ambiguous,
         "build",
         "write",
@@ -384,7 +384,7 @@ const SCENARIOS: &[BehaviorScenario] = &[
     case!(
         "ambiguous_read",
         "authorization",
-        "auth maybe",
+        "auth flow maybe broken",
         Ambiguous,
         "build",
         "read",
