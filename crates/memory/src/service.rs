@@ -683,11 +683,8 @@ pub fn maybe_auto_index_background(
     let data = data_dir.to_path_buf();
     let settings = settings.clone();
     Some(std::thread::spawn(move || {
-        let n = maybe_auto_index(&project, &data, &settings);
-        if let Some(n) = n {
-            tracing::info!(chunks = n, "background code auto-index complete");
-        }
-        n
+        maybe_auto_index(&project, &data, &settings)
+            .inspect(|n| tracing::info!(chunks = n, "background code auto-index complete"))
     }))
 }
 
@@ -1349,6 +1346,25 @@ mod tests {
     }
 
     #[test]
+    fn maybe_auto_index_background_skips_open_and_probe_errors() {
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let settings = MemorySettings::default();
+
+        // Service open fails: `data/memory` exists as a file.
+        let blocked = dir.path().join("data-open-err");
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::write(blocked.join("memory"), "not a dir").unwrap();
+        assert!(maybe_auto_index_background(&project, &blocked, &settings).is_none());
+
+        // Open succeeds but the emptiness probe fails: db path is a directory.
+        let probe = dir.path().join("data-probe-err");
+        std::fs::create_dir_all(probe.join("whycodes.db")).unwrap();
+        assert!(maybe_auto_index_background(&project, &probe, &settings).is_none());
+    }
+
+    #[test]
     fn consolidate_skips_already_deleted_row() {
         let settings = MemorySettings {
             consolidate: true,
@@ -1509,6 +1525,12 @@ mod tests {
         std::fs::create_dir_all(&data).unwrap();
         std::fs::create_dir_all(data.join("whycodes.db")).unwrap();
         assert!(maybe_auto_index(&project, &data, &MemorySettings::default()).is_none());
+
+        // Service open failure ends the sync path the same way.
+        let blocked = dir.path().join("data-open-err");
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::write(blocked.join("memory"), "not a dir").unwrap();
+        assert!(maybe_auto_index(&project, &blocked, &MemorySettings::default()).is_none());
     }
 
     #[test]

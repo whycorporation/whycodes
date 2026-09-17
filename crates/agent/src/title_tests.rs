@@ -136,6 +136,9 @@ fn skips_trivial_greetings() {
         "fix the auth retry bug in session.rs"
     ));
     assert!(!is_trivial_title_seed("read crates/tui/src/run.rs"));
+    // Short dotted name is a file, not chit-chat; final punctuation is not.
+    assert!(!is_trivial_title_seed("main.rs"));
+    assert!(is_trivial_title_seed("selam."));
 
     let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
     session.title_source = whycodes_session::TitleSource::Heuristic;
