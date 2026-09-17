@@ -962,17 +962,10 @@ impl ThinkingBlock {
 
     /// Collapsed/finished header label without expand hint.
     ///
-    /// Grok-style: running shows `Thinking` (+ live elapsed when available);
-    /// finished is `Thought for Xs`. Always includes the word "Thinking" /
-    /// "Thought" so the user can see that reasoning happened.
+    /// Grok-style: running is `Thinking…` (U+2026); finished is `Thought for Xs`.
     pub fn header_label(&self) -> String {
         if self.is_running() {
-            let elapsed = self.format_elapsed();
-            if elapsed.is_empty() || elapsed == "0.0s" {
-                "Thinking…".into()
-            } else {
-                format!("Thinking · {elapsed}")
-            }
+            "Thinking…".into()
         } else {
             format!("Thought for {}", self.format_elapsed())
         }
@@ -1289,7 +1282,8 @@ pub struct TuiApp {
     /// Paint when true. Cleared after a successful draw unless animation
     /// (spinner / live toast) still needs frames. See the TUI event loop.
     pub(crate) needs_redraw: bool,
-    /// Extra `terminal.clear()` paints. Bracketed-paste echo (and key-flood
+    /// Extra full-redraw paints (reset prev buffer, every cell rewritten —
+    /// never CSI erase). Bracketed-paste echo (and key-flood
     /// paste on hosts without bracketed paste) writes onto the PTY outside
     /// ratatui's diff; breathing-room cells stay spaces in both frames so
     /// the leftover sits left of the centered home prompt until we force a
@@ -1312,6 +1306,19 @@ pub struct TuiApp {
     /// of ASCII `i` arrives as Tab / Ctrl+I one key at a time; a Tab that
     /// follows a recent insert is recovered as `i` instead of ToggleFocus.
     pub(crate) last_prompt_insert_at: Option<std::time::Instant>,
+    /// Monotonic id of the event batch being processed (live loop bumps it
+    /// once per batch). Lets the Enter guard tell "typed line + Enter queued
+    /// in one batch" (startup catch-up → submit) apart from a one-key-per-
+    /// poll paste flood, where Enter lands in a *later* batch than the chars.
+    pub(crate) input_batch_seq: u64,
+    /// `input_batch_seq` at the last prompt insert.
+    pub(crate) last_prompt_insert_batch: u64,
+    /// Windows live console only: an Enter right on the heels of prompt
+    /// inserts from an earlier batch is a pasted newline, not submit.
+    /// Hosts without bracketed paste (conhost / PowerShell) deliver a paste
+    /// as keys — often one per poll — so a mid-paste Enter used to submit
+    /// half the clipboard and start a turn.
+    pub(crate) paste_enter_guard: bool,
     /// Partial CSI mouse report leaked as key chars (`<65;NaN;NaNM`).
     /// Windows ConPTY sometimes fails to parse SGR mouse after a turn error
     /// and types the sequence into the prompt instead of `Event::Mouse`.
@@ -2071,7 +2078,8 @@ impl TuiApp {
         self.needs_redraw = true;
     }
 
-    /// Force `terminal.clear()` on the next `n` paints (at least one).
+    /// Force a full themed redraw (every cell rewritten, no CSI erase) on
+    /// the next `n` paints (at least one).
     ///
     /// Use 2 after a paste so an emulator that echoes *after* `Event::Paste`
     /// is still wiped on the follow-up frame.
@@ -2106,6 +2114,9 @@ impl TuiApp {
             input_cursor: 0,
             esc_armed_at: None,
             last_prompt_insert_at: None,
+            input_batch_seq: 0,
+            last_prompt_insert_batch: 0,
+            paste_enter_guard: false,
             leaked_mouse_csi: String::new(),
             last_mouse_csi_at: None,
             pending_images: vec![],

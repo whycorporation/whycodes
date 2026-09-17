@@ -6,7 +6,7 @@ use ratatui::style::Color;
 pub mod dark {
     use super::Color;
 
-    pub const STEP1_BG: Color = Color::Rgb(0x0a, 0x0a, 0x0a);
+    pub const STEP1_BG: Color = Color::Rgb(0x0c, 0x0c, 0x0c);
     pub const STEP2_PANEL: Color = Color::Rgb(0x14, 0x14, 0x14);
     pub const STEP3_ELEMENT: Color = Color::Rgb(0x1e, 0x1e, 0x1e);
     pub const STEP6: Color = Color::Rgb(0x3c, 0x3c, 0x3c);
@@ -22,6 +22,9 @@ pub mod dark {
     pub const CYAN: Color = Color::Rgb(0x56, 0xb6, 0xc2);
     pub const YELLOW: Color = Color::Rgb(0xe5, 0xc0, 0x7b);
     pub const TEXT: Color = Color::Rgb(0xee, 0xee, 0xee);
+    /// Grok `text_secondary` / `accent_user` (`FG_DARK` #c8c8c8): the user
+    /// prompt `❯` is a neutral light gray in Grok Build, not an accent hue.
+    pub const TEXT_SECONDARY: Color = Color::Rgb(0xc8, 0xc8, 0xc8);
     pub const TEXT_MUTED: Color = Color::Rgb(0x80, 0x80, 0x80);
 }
 

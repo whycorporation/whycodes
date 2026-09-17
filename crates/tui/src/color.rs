@@ -384,12 +384,20 @@ impl<B: Backend> Backend for QuantizingBackend<B> {
         self.inner.set_cursor_position(position)
     }
 
+    /// Never CSI-erase. Windows PowerShell / conhost paint `ClearType::All`
+    /// with the *profile* default background (often white), so every erase
+    /// is a full-screen flash — ratatui 0.30 sends one on every fullscreen
+    /// resize (`clear_viewport`, plus a second on horizontal shrink).
+    /// Callers that clear also reset the previous buffer, and `render`
+    /// `fill_blank`s the whole frame, so the next draw rewrites every cell
+    /// with the theme anyway; the erase adds nothing but the flash.
     fn clear(&mut self) -> Result<(), Self::Error> {
-        self.inner.clear()
+        Ok(())
     }
 
-    fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
-        self.inner.clear_region(clear_type)
+    /// See [`Self::clear`]: suppressed for the same reason.
+    fn clear_region(&mut self, _clear_type: ClearType) -> Result<(), Self::Error> {
+        Ok(())
     }
 
     fn size(&self) -> Result<Size, Self::Error> {

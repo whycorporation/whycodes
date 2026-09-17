@@ -176,7 +176,14 @@ mod tests {
         unsafe { std::env::set_var("PATH", dir.path()) };
         let cwd = tempfile::tempdir().unwrap();
         assert!(git_toplevel(cwd.path()).is_none());
-        std::fs::write(&git, "#!/bin/sh\nexit 1\n").unwrap();
+        // Fresh script in a fresh dir: rewriting `git` in place ETXTBSY-races
+        // any unlocked sibling test whose MemoryService::open spawns git
+        // while this PATH is active.
+        let dir2 = tempfile::tempdir().unwrap();
+        let git2 = dir2.path().join("git");
+        std::fs::write(&git2, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&git2, std::fs::Permissions::from_mode(0o755)).unwrap();
+        unsafe { std::env::set_var("PATH", dir2.path()) };
         assert!(git_toplevel(cwd.path()).is_none());
         crate::restore_os_env("PATH", prev);
     }

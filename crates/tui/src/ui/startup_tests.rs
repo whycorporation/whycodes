@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 #[test]
 fn tick_advances_progress_status_and_completes() {
     let mut s = StartupScreen::new(100);
-    assert_eq!(s.spinner(), crate::ui::spinner::FRAMES[0]);
+    assert_eq!(s.spinner(), crate::ui::spinner::glyph(0));
     assert!(!s.tick(10));
     assert!(s.progress > 0.0);
     assert!(s.status.contains("Loading configuration"));

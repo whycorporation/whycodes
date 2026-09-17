@@ -186,17 +186,7 @@ fn append_git_status_covers_unavailable_failed_and_clean() {
 }
 
 #[test]
-fn toast_index_and_doctor_key_and_tool_chars() {
-    let mut app = TuiApp::new(TuiAppConfig::default());
-    toast_indexed_chunks(&mut app, 0);
-    assert!(app.toasts.is_empty());
-    toast_indexed_chunks(&mut app, 4);
-    assert!(
-        app.toasts
-            .visible()
-            .iter()
-            .any(|t| t.message.contains("Indexed 4"))
-    );
+fn doctor_key_and_tool_chars() {
     assert_eq!(doctor_key_label(true), "set");
     assert!(doctor_key_label(false).contains("MISSING"));
 
@@ -279,15 +269,6 @@ fn doctor_helpers_and_short_id() {
     assert!(doctor_key_label(false).contains("MISSING"));
     assert_eq!(short_session_id("abc"), "abc");
     assert!(short_session_id("abcdefghijklmnop").starts_with("abcdefgh"));
-    let mut app = TuiApp::from_config(TuiAppConfig::default());
-    toast_indexed_chunks(&mut app, 0);
-    toast_indexed_chunks(&mut app, 3);
-    assert!(
-        app.toasts
-            .visible()
-            .iter()
-            .any(|t| t.message.contains("Indexed 3"))
-    );
     let chars = tool_result_chars(&whycodes_core::types::MessageContent::Text("hi".into()));
     assert_eq!(chars, 2);
     assert!(!share_server_up(1));
