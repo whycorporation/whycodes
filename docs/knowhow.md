@@ -161,7 +161,8 @@ GitHub fetch stays off first paint.
 
 **Prevention:** Do not add a TUI entry that paints the home screen without
 an `update_rx`. Extra flags still skip the fast path and keep
-`spawn_update_check` on `cmd_run`.
+`spawn_update_check` on `cmd_run`. `cmd::run::tests::fast_tui_source_spawns_the_update_check`
+ratchets the source. Release playbook: `AGENTS.md` “Releases” + “Interactive TUI fast path”.
 
 ### 2026-09-16 — Interactive TUI wrote nothing to unified.jsonl (fast path)
 

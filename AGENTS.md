@@ -65,6 +65,54 @@ The user should **not** have to say “commit and push” every time. This is th
 
 Exceptions (skip commit/push unless asked): pure Q&A with no file edits; the user forbids commit for that turn; only secret or out-of-repo paths were touched.
 
+## Releases (required when the user asks to ship)
+
+`main` is ruleset-protected: **no direct pushes**, including `gh pr merge --admin`.
+Everything lands through a PR whose required checks actually run.
+
+1. **Never open a docs-only PR** (`**.md`, `docs/**`, `landing/**`).
+   `ci.yml` `pull_request.paths-ignore` skips those paths, so the four required
+   checks stay `expected` forever and the PR cannot merge. Bundle a `.rs` /
+   `Cargo.toml` / `Formula/` / workflow change, or the PR is stuck.
+2. **Patch / minor:** bump `[workspace.package] version` in the root
+   `Cargo.toml` and `cd sdk/typescript && npm version X.Y.Z --no-git-tag-version`.
+   `cargo check -p whycodes-cli` refreshes `Cargo.lock`. Open `release/vX.Y.Z`,
+   wait for Lint / Test (linux) / Coverage / Build (linux), merge.
+3. **Tag the merge commit**, not the bump commit:
+   `git tag -a vX.Y.Z <merge-sha> && git push origin vX.Y.Z`.
+   That starts `.github/workflows/release.yml` (4 targets + publish + landing).
+   Do **not** re-tag if a job fails.
+4. **Homebrew job always fails** (it pushes `Formula/whycodes.rb` straight to
+   `main`; the ruleset rejects it). After the GitHub release exists, run
+   `scripts/update_homebrew_formula.sh vX.Y.Z` on a `chore/homebrew-vX.Y.Z`
+   branch and open a PR. `Formula/**` is ignored on **push** to main, **not**
+   on pull requests — a formula-only PR must still run CI (v0.6.3 deadlock).
+5. Coverage flakes (`poll_matches_adopts_fuzzy_hits…` and similar) on a
+   formula-only PR are not a product regression. `gh run rerun <id> --failed`;
+   do not bump versions or re-tag to “fix” them.
+
+Playbook detail: [`docs/packaging.md`](docs/packaging.md). Recurring traps:
+[`docs/knowhow.md`](docs/knowhow.md) (2026-09-17 update-modal / fast-path entries).
+
+## Interactive TUI fast path (do not strip)
+
+Bare `whycodes` / `whycodes -d <dir>` / `whycodes run -d <dir>` skip clap and
+`async_main` (`early_tui_run_dir_from` → `cmd_run_fast_tui`). That **is** the
+interactive default. Extra flags (`--plain`, `--no-auto-update`, a prompt)
+still take `cmd_run`.
+
+`cmd_run_fast_tui` must keep all of:
+
+- `ignore_sigpipe()` + `logging::init` (env-only level, `with_stderr: false`)
+- `spawn_update_check_if(should_auto_update_fast_path())` **inside** the Tokio
+  runtime (`tokio::spawn` panics without one)
+- `after_tui_exit` on `TuiExit::Upgrade`
+
+Do **not** pass `update_rx: None` on this path. `WHYCODES_BENCH` may still
+early-return before the runtime. Remote attach (`cmd_connect`) is allowed to
+skip the GitHub check. `crates/cli/src/cmd/run_tests.rs` ratchets the source
+so a TTFF cleanup cannot drop the spawn again.
+
 ## Measure coverage locally before pushing (required)
 
 Do **not** push a PR (or a coverage-related commit) until the same floors CI
@@ -105,4 +153,4 @@ Dependency rule of thumb: **leaf types and traits stay in `core`**; I/O and poli
 
 See **[`docs/knowhow.md`](docs/knowhow.md)** — living log of silent exits, mouse/event-loop return values, `/dev/tty`, SIGPIPE, context-window vs rate limits, etc.
 
-When you fix a non-obvious bug of that kind: **append a short entry** to that file (template at the bottom) so the next session does not repeat it.
+When you fix a non-obvious bug of that kind: **append a short entry** to that file (template at the bottom) so the next session does not repeat it. Shipping a tag: follow **Releases** above. Touching `cmd_run_fast_tui`: follow **Interactive TUI fast path**.
