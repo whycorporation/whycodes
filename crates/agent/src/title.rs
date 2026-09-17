@@ -180,63 +180,39 @@ pub fn should_refine_title(session: &Session) -> bool {
         || session.title_source == whycodes_session::TitleSource::Default
 }
 
-/// Short chit-chat / smoke pings where a model title adds little value.
+/// Short chit-chat where full context / a flagship model adds little value.
+///
+/// Judged by the *shape* of the text, not a greeting whitelist: short (few
+/// words, few characters), no code or project cues, and no work-shaped words.
+/// That covers greetings and simple small-talk in any language ("selam",
+/// "naber kanka", "how are you", "bu ne demek") while directives and
+/// confirmations stay non-trivial however short ("commit", "devam", "evet",
+/// "fix it") — those steer real work and keep the full model + context.
 pub fn is_trivial_title_seed(text: &str) -> bool {
     let t = text.trim();
     if t.is_empty() {
         return true;
     }
-    // Long prompts always refine.
-    if t.chars().count() > 48 {
+    // Short by shape: few characters, few words, single line. Real questions
+    // about the project run longer even in Turkish ("Compaction nasıl
+    // çalışıyor?" is 27 chars) while chit-chat stays under both limits.
+    if t.chars().count() > 20 || t.lines().count() > 1 || t.split_whitespace().count() > 3 {
         return false;
     }
-    let lower = t.to_ascii_lowercase();
-    // Exact / near-exact greetings and health checks.
-    const EXACT: &[&str] = &[
-        "hi",
-        "hi!",
-        "hello",
-        "hello!",
-        "hey",
-        "hey!",
-        "yo",
-        "sup",
-        "selam",
-        "selam!",
-        "merhaba",
-        "merhaba!",
-        "sa",
-        "slm",
-        "test",
-        "ping",
-        "pong",
-        "ok",
-        "thanks",
-        "teşekkürler",
-        "tesekkurler",
-        "thx",
-        "ty",
-    ];
-    if EXACT.iter().any(|g| lower == *g) {
-        return true;
-    }
-    // "hi there", "selam nasılsın" — still casual, few tokens, no paths.
-    let words: Vec<&str> = lower.split_whitespace().collect();
-    if words.len() <= 3
-        && !t.contains('/')
-        && !t.contains('\\')
-        && !t.contains('.')
-        && !t.contains('`')
-        && GREETING_HEADS.iter().any(|h| words.first() == Some(h))
+    // Code / project cues: paths, code spans, flags, identifiers, numbers.
+    if t.contains([
+        '/', '\\', '`', '=', '_', '(', ')', '{', '}', '<', '>', '@', '#', '$',
+    ]) || t.chars().any(|c| c.is_ascii_digit())
     {
-        return true;
+        return false;
     }
-    false
+    // Dotted names ("main.rs") — but allow sentence-final punctuation.
+    if t.trim_end_matches(['.', '!', '?']).contains('.') {
+        return false;
+    }
+    // Work-shaped words anywhere in a short message → keep full context.
+    !crate::intent::looks_actionish(&t.to_ascii_lowercase())
 }
-
-const GREETING_HEADS: &[&str] = &[
-    "hi", "hello", "hey", "yo", "sup", "selam", "merhaba", "sa", "slm", "test", "ping",
-];
 
 /// Apply a generated title string, logging success/empty results.
 pub fn apply_refine_result(session: &mut Session, title: &str, model: &str) {

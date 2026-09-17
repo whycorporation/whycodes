@@ -625,16 +625,14 @@ fn bottom_meta_hover_underlines_agent_and_model() {
 }
 
 #[test]
-fn prompt_box_border_uses_agent_color() {
+fn prompt_box_border_uses_theme_border_color() {
     let backend = TestBackend::new(80, 16);
     let mut terminal = Terminal::new(backend).expect("test terminal");
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.agent_name = "build".into();
     app.focus = crate::app::FocusPane::Prompt;
     let palette = app.config.palette();
-    let expected = app
-        .config
-        .agent_color(&app.agent_name, app.agent_cycle_idx, &palette);
+    let expected = palette.border;
 
     terminal
         .draw(|f| {
@@ -668,12 +666,12 @@ fn prompt_box_border_uses_agent_color() {
     assert_eq!(
         corner_fg,
         Some(expected),
-        "box corners should use the agent color"
+        "box corners should use the neutral theme border color"
     );
     assert_eq!(
         side_fg,
         Some(expected),
-        "box side borders should use the agent color"
+        "box side borders should use the neutral theme border color"
     );
 }
 

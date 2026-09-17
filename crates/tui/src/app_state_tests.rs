@@ -1138,9 +1138,14 @@ fn thinking_header_shows_elapsed_and_push_capped_splits_utf8() {
         .checked_sub(std::time::Duration::from_millis(1400))
         .expect("elapsed");
     let label = tb.header_label();
+    assert_eq!(
+        label, "Thinking…",
+        "running header is Thinking…; elapsed sits on the right of the paint, got {label}"
+    );
+    let elapsed = tb.format_elapsed();
     assert!(
-        label.contains("Thinking") && label.contains('·'),
-        "running thinking with elapsed must include the time, got {label}"
+        elapsed.contains('s'),
+        "elapsed still formats for the right-side timer, got {elapsed}"
     );
 
     let mut cap = crate::app::ThinkingBlock::new("x".repeat(crate::app::THINKING_MAX_CHARS - 1));

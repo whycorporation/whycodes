@@ -299,3 +299,28 @@ fn color_mode_and_named_rgb_helpers() {
     let _ = term.backend_mut().append_lines(0);
     let _ = Backend::flush(term.backend_mut());
 }
+
+#[test]
+fn backend_clear_is_suppressed_no_csi_erase_reaches_the_inner_backend() {
+    // ratatui 0.30 CSI-erases on every fullscreen resize (clear_viewport).
+    // Windows paints that with the profile default background — a white
+    // flash while dragging the window edge. The wrapper swallows both
+    // clear entry points; the next draw rewrites every themed cell anyway.
+    let backend = QuantizingBackend::new(TestBackend::new(4, 2), ColorMode::TrueColor);
+    let mut term = ratatui::Terminal::new(backend).expect("terminal");
+    term.draw(|f| {
+        if let Some(cell) = f.buffer_mut().cell_mut((0, 0)) {
+            cell.set_char('x');
+        }
+    })
+    .expect("draw");
+    term.backend_mut().clear().expect("clear");
+    term.backend_mut()
+        .clear_region(ratatui::backend::ClearType::All)
+        .expect("clear_region");
+    assert_eq!(
+        term.backend().inner.buffer().cell((0, 0)).unwrap().symbol(),
+        "x",
+        "suppressed clear must not erase the inner backend"
+    );
+}

@@ -53,7 +53,7 @@ impl StartupScreen {
     pub fn tick(&mut self, delta_ms: u64) -> bool {
         self.elapsed_ms = self.elapsed_ms.saturating_add(delta_ms);
         self.progress = (self.elapsed_ms as f64 / self.duration_ms as f64).min(1.0);
-        self.spinner_frame = (self.spinner_frame + 1) % crate::ui::spinner::FRAMES.len();
+        self.spinner_frame = (self.spinner_frame + 1) % crate::ui::spinner::frame_count();
 
         // Update status messages based on progress
         if self.progress < 0.25 {

@@ -155,7 +155,7 @@ fn thinking_widget_lines(t: &ThinkingBlock, palette: &ThemePalette) -> Vec<Line<
 
     let elapsed = t.format_elapsed();
     let mut header_spans: Vec<Span<'static>> = if t.is_running() {
-        vec![Span::styled("Thinking...".to_string(), label)]
+        vec![Span::styled("Thinking…".to_string(), label)]
     } else {
         vec![
             Span::styled("Thought".to_string(), label),

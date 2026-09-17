@@ -144,6 +144,245 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-16 — Interactive TUI wrote nothing to unified.jsonl (fast path)
+
+**Symptom:** `tail unified.jsonl` shows no `tui.*` / `turn.*` lines for any
+interactive session; the newest lines are days old. Diagnosis workflows in
+this file silently look at stale data. Noticed while chasing a paste bug:
+the fresh `tui.paste_key_dropped` breadcrumb could never land.
+
+**Root cause:** Bare `whycodes` and `whycodes -d <dir>` take the TTFF fast
+path (`early_tui_run_dir_from` → `cmd_run_fast_tui`), which skips clap and
+`async_main` — and with them `init_logging` **and** `ignore_sigpipe`.
+Every `emit` is a no-op without `logging::init` (STATE unset). Only
+flagged invocations (`--plain`, subcommands) ever logged.
+
+**Fix:** `cmd_run_fast_tui` (after the `WHYCODES_BENCH` early return, so
+the bench clock stays clean) calls `ignore_sigpipe()` and
+`logging::init` with env-only level (`WHYCODES_LOG_LEVEL` /
+`WHYCODES_LOG_FILE`, no config I/O on the TTFF path, `with_stderr:
+false`).
+
+**Prevention:** Any new pre-clap fast path must keep the process
+safeguards: SIGPIPE ignore + JSONL logging init. If unified.jsonl has no
+recent `tui.starting`, suspect an init-skipping entry path before
+suspecting the logger.
+
+### 2026-09-16 — PowerShell paste/type drops `@` (AltGr) and mangles `/…` text
+
+**Symptom:** On Windows PowerShell / conhost (Turkish and other non-US
+layouts), pasting — and typing — `@` did nothing, and pasting text that
+starts with `/` came out corrupted (`//` collapsed to `/`; a paste like
+`/init …` was replaced by a random command name).
+
+**Root cause:** (1) AltGr arrives as Ctrl+Alt (`VkKeyScanW` synthesis on
+paste, same for live keys). `handle_key`'s "unmapped Ctrl/Alt chords must
+not type" guard swallowed `Char('@')`+CONTROL|ALT, and
+`pasted_char_from_key` returned `None` for it — aborting the whole
+unbracketed-paste coalescing. (2) The "second `/` on a bare-slash draft
+reopens the menu" special case ate literal `//` mid-flood. (3) A pasted
+`i`-as-Tab or embedded Enter while the slash/`@file` popup was open ran
+complete/accept, replacing the half-pasted draft
+(`recover_windows_paste_i` refused to run while a popup was active).
+
+**Fix:** `is_altgr_text` (CONTROL+ALT, printable, not ASCII alphanumeric
+→ layout text) inserts in prompt / command mode / model search and folds
+in coalescing; bare `Modifier(_)` presses count as paste noise. The
+bare-slash reopen is skipped while `in_paste_flood` (guard + earlier
+batch + 80 ms window). Popup Tab/Enter first try `i`-recovery /
+`paste_flood_enter`; a guarded newline refreshes both popups so the token
+closes. Real Ctrl+Alt+letter chords still do not type.
+
+**Follow-up (same day):** with `@` fixed, pastes still lost every `i`.
+Guessed delivery #1: bare `Insert` (VK_INSERT vs `I`) — recovered inside
+the flood window; leading Insert stays the Shift+Insert chord artifact.
+Any key still dropped inside a flood now logs `tui.paste_key_dropped`
+(code + modifiers). That breadcrumb then caught the real delivery on this
+host: **`Char('i')` + CONTROL|ALT** — historical Ctrl+I (Tab) with the
+AltGr pair stamped on. `is_windows_paste_i_key` and
+`pasted_char_from_key` accept Ctrl(+Alt)+`i`; an idle Ctrl+Alt+I chord
+still does not type. Test: `paste_flood_ctrl_alt_i_is_the_letter_i`
+(exact `github.com/multica-ai/multica` repro).
+
+**Typewriter echo:** with the letters fixed, a one-key-per-poll paste
+still painted per character. `read_event_batch`'s 12 ms straggler linger
+is now a rolling loop: it keeps waiting while keys keep arriving, so the
+whole paste lands as one batch → one insert, one paint. Bounds: a 12 ms
+gap (human typing) ends it, any mouse/resize event ends it (drag-select
+must not lag), 4096 events / 400 ms cap paint starvation. Do not extend
+the linger to non-key events.
+
+**Prevention:** Never treat CONTROL|ALT+printable-symbol as a chord on
+Windows — it is AltGr. Popup accept/complete must respect the paste-flood
+window. Tests: `altgr_symbols_*`, `paste_flood_double_slash_is_not_collapsed`,
+`paste_flood_tab_in_slash_popup_recovers_i_not_complete`,
+`paste_flood_enter_and_tab_in_file_popup_stay_text`,
+`paste_flood_url_keeps_at_and_i`, `windows_paste_insert_mid_flood_is_ascii_i`.
+
+### 2026-09-17 — Copying a code block also copied line numbers and ` █` tails
+
+**Symptom:** Drag-copying commands from an assistant code block pasted
+`  1 cargo build …` (gutter numbers included) and every middle line of a
+multi-line drag ended with a space plus a stray character.
+
+**Root cause:** Two layers. (1) `render_code` paints a ` {:>2} ` numbered
+gutter; selection extraction reads raw cells, so the numbers are content.
+(2) Linear selection spans middle rows to full width, which includes the
+chat scrollbar column — its `█` cells are painted `fg == bg` (invisible
+solid fill), so `collapse_interior_spaces` left ` █` at each line end.
+
+**Fix:** `CellGrid::from_buffer` snapshots any `fg == bg` (non-Reset) cell
+as a pad space — the user never saw a glyph there; covers every scrollbar,
+chat and modal. `clean_copied_lines` gains `strip_code_gutter_numbers`:
+shape-based (per user rule: shapes, not word lists) — a run of ≥2
+consecutive right-aligned `spaces digits space` numbers counting up by 1
+is a gutter; digits are blanked (columns kept) so `dedent_common` strips
+the gutter width and wrapped continuations stay aligned. A lone numbered
+line is only stripped when it is the entire selection, so prose like
+`2 files changed` survives multi-line copies.
+
+**Prevention:** Anything painted `fg == bg` is invisible by definition —
+mask it at snapshot time, not per-feature. Clipboard cleanup stays
+shape-based in `clipboard.rs`; tests:
+`code_gutter_numbers_are_stripped_from_multi_line_copy`,
+`code_gutter_stripped_on_lone_line_and_wrapped_continuation`,
+`prose_numbers_are_not_mistaken_for_a_gutter`,
+`from_buffer_masks_invisible_fill_cells_as_pad`.
+
+### 2026-09-16 — Selection copy froze the TUI; Windows copy never landed
+
+**Symptom:** Releasing a mouse text selection (copy) froze the terminal
+for seconds on Windows PowerShell without WSL. On classic conhost the
+copy also silently did nothing.
+
+**Root cause:** `copy_text` shelled out to `wl-copy` / `xclip` (×2) /
+`pbcopy` on every platform. None can exist on Windows, and each failed
+`CreateProcess` walks the whole PATH × PATHEXT (plus Defender) — four
+attempts on a long/overflowed PATH is seconds, synchronous in the event
+loop. OSC 52 (the only Windows path) is ignored by classic conhost.
+
+**Fix:** Windows uses a direct Win32 `CF_UNICODETEXT` write
+(`windows_clipboard::set_text`: GlobalAlloc + OpenClipboard retry +
+SetClipboardData) — no process spawn, no code-page dependence. Unix
+helpers run only off-Windows. `clip.exe` was rejected: it decodes via
+the console *input* CP (whycodes only sets output CP 65001 → Turkish
+garbles on CP857) and stores a UTF-16 BOM as literal text.
+
+**Prevention:** Never spawn Unix clipboard helpers on Windows, and never
+add a synchronous process spawn to a per-interaction input path. Unit
+tests skip the native write (`!cfg!(test)`) so `cargo test` does not
+clobber the developer's clipboard.
+
+### 2026-09-16 — Long PowerShell paste submits half the clipboard
+
+**Symptom:** Pasting a long multi-line text into the prompt on Windows
+PowerShell / conhost (no WSL, no bracketed paste) inserts the first part,
+then "starts working": an embedded newline submitted half the clipboard
+as a prompt and a turn began.
+
+**Root cause:** Unbracketed paste is a key flood, often one key per poll
+(2026-09-13 `i` entry). `coalesce_unbracketed_paste` only folds what
+shares a batch; with per-key batches nothing folds, each char types, and
+the first `Enter` in the flood is indistinguishable from a submit.
+
+**Fix:** Live-Windows-only Enter guard (`paste_flood_enter`): an Enter
+within 80 ms of a prompt insert that happened in an *earlier* event batch
+cannot have been typed — insert `\n` instead of submitting. Same-batch
+"typed line + Enter" (startup catch-up, scripted tests) still submits;
+the guarded newline does not refresh `last_prompt_insert_at`, so held /
+re-pressed Enter ages out and submits. `input_batch_seq` bumps once per
+live batch; scripted queues (one event per batch) leave the guard off.
+
+**Prevention:** Do not treat an Enter inside a key flood as submit on
+Windows. Tests: `paste_flood_enter_becomes_newline_not_submit`,
+`same_batch_enter_still_submits_and_stale_enter_submits`,
+`repeated_enter_ages_out_of_the_flood_window_and_submits`.
+
+### 2026-09-15 — Caret strobe per frame + resize white flash (ratatui erase)
+
+**Symptom:** After the submit/paste CSI-erase fix, flicker remained: the
+prompt caret visibly strobes while a turn streams (~25 fps), and dragging
+the window edge still flashes the profile background (white).
+
+**Root cause:** (1) `begin_cell_dump` sent `Hide` *before*
+`BeginSynchronizedUpdate`, so `?2026` hosts (Windows Terminal) present the
+caret-off state at the top of every draw — hide/show cycles outside the
+atomic frame. (2) ratatui 0.30 `resize`/`clear_viewport` sends
+`clear_region(ClearType::All)` on every fullscreen resize (twice on
+horizontal shrink) — CSI 2J, painted with the profile bg on Windows; our
+loop never calls it, ratatui does internally.
+
+**Fix:** `execute!(BeginSynchronizedUpdate, Hide)` — hide → cells → show
+now sit inside one synchronized frame; non-`?2026` hosts still get Hide
+before the cell writes (anti-sweep unchanged). `QuantizingBackend::clear`
+and `clear_region` are suppressed: every clear caller also resets the prev
+buffer and `render` fill_blanks the whole frame, so the next draw rewrites
+every themed cell — the erase added nothing but the flash.
+
+**Prevention:** Keep `Hide` inside the sync region
+(`cell_dump_guard_hides_cursor_and_brackets_synchronized_update` asserts
+the order). No CSI erase may reach the wire from the TUI backend
+(`backend_clear_is_suppressed_no_csi_erase_reaches_the_inner_backend`).
+
+### 2026-09-15 — Submit / paste / session switch flashed the profile bg
+
+**Symptom:** Every Enter (submit), paste, double-Esc draft clear, and
+session switch blinked the whole TUI to the profile default background
+(white on Windows PowerShell) before the themed frame returned.
+
+**Root cause:** `pending_full_clears` still ran `terminal.clear()` — CSI
+erase, which Windows paints with the *profile* bg — and that erase flushed
+**outside** the `?2026` synchronized-update dump, so the blank frame was
+always visible. The focus path had already switched to
+`reset_prev_for_full_redraw`; the paste/submit path had not.
+
+**Fix:** The loop's `pending_full_clears` branch calls
+`reset_prev_for_full_redraw()` (hide caret + reset prev buffer). `render`
+`fill_blank`s the entire frame, so the next draw rewrites every cell inside
+the synchronized update — paste echo is still overwritten, with no
+intermediate erase. `LoopTerm::clear` and the `clear_fail` injection are
+gone.
+
+**Prevention:** There is no `terminal.clear()` left in the event loop; do
+not reintroduce one. A "full clear" is always reset-prev + themed dump.
+Regression: `run_headless_paste_full_redraw_then_quits`.
+
+### 2026-09-15 — Windows first open paints twice (splash then home)
+
+**Symptom:** Caret sweep is gone, but opening WhyCodes still flickers twice
+(black splash, then themed home). PowerShell / Windows Terminal.
+
+**Root cause:** Interactive `run` painted `draw_splash` (black + "whycodes")
+before `TuiApp`, then the loop painted the real home. Two full-screen dumps.
+Hydrate after splash also dirtied a third frame when recents/status changed.
+
+**Fix:** Interactive first paint is one themed `draw_app` after hydrate.
+`WHYCODES_BENCH` still uses splash so TTFF does not wait on chrome.
+
+**Prevention:** Do not `draw_splash` then `draw_app` on the interactive
+path. Splash is harness-only (`paint_first_frame_sync` / `WHYCODES_BENCH`).
+
+### 2026-09-15 — Windows tab-switch walks the caret down the screen
+
+**Symptom:** Leave the WhyCodes tab and come back: the blinking bar caret
+sweeps from the top of the alt-screen to the prompt (PowerShell / conhost /
+Windows Terminal). Same sweep on first open (splash / empty home). No
+white flash.
+
+**Root cause:** Full cell dumps (splash, first home paint, FocusGained)
+run while the hardware caret is visible. ratatui hides the cursor *after*
+`flush`. Windows paints `MoveTo`+`Print` with the bar shown, so each cell
+write moves it down a row. Chat-tab restore was wrapped; splash /
+`EnterAlternateScreen` were not.
+
+**Fix:** Hide immediately after alt-screen. `draw_splash` and `draw_app`
+wrap the dump with `CSI ?25l` + `CSI ?2026h` / `?2026l`.
+`reset_prev_for_full_redraw` also `hide_cursor`s first. Still no
+`terminal.clear()` on focus (profile-bg flash).
+
+**Prevention:** Do not dump every cell while the caret is shown. Assert
+Hide on alt-screen enter and on `begin_cell_dump`.
+
 ### 2026-09-13 — Coverage flake: GitHub PR list hits `127.0.0.1:1`
 
 **Symptom:** `github::pr::tests::execute_create_list_view_merge_on_loopback`
@@ -172,11 +411,12 @@ Windows Terminal tabs.
 default background, not the last SGR bg — often white.
 
 **Fix:** `event_needs_full_clear` is only Paste / Resize. Focus restore
-resets ratatui's previous buffer (`current.reset` + `swap_buffers`) so the
-next draw is a full *themed* paint with no CSI erase.
+hides the caret and resets ratatui's previous buffer (`current.reset` +
+`swap_buffers`) so the next draw is a full *themed* paint with no CSI erase
+and no hardware-caret sweep.
 
 **Prevention:** Do not `terminal.clear()` on focus. A full redraw is
-`reset_prev_for_full_redraw`, not ClearType::All.
+`reset_prev_for_full_redraw` (hide first), not ClearType::All.
 
 ### 2026-09-13 — Header spinner / generating strip flashes white
 
@@ -573,7 +813,10 @@ does the same.
 
 **Prevention:** Machines without system sqlite must pass the feature. Do not
 re-enable `bundled` on the workspace dep — that brings back the 43s C compile
-on every cold check.
+on every cold Unix check. Windows is different: MSVC has no `sqlite3.lib`
+(LNK1181), so `crates/storage` enables `rusqlite/bundled` under
+`cfg(windows)` without a feature flag. Unix still needs `--features
+whycodes-storage/bundled` / `whycodes-cli/bundled-sqlite`.
 
 ---
 
@@ -859,7 +1102,8 @@ previous ratatui buffer instead of CSI erase (Windows profile-bg flash).
 
 **Prevention:** Do not treat "the prompt got shorter" as "the PTY is dirty".
 Only force `terminal.clear()` when something wrote *outside* ratatui (paste
-echo, resize, focus restore) or the layout jumps (submit / new session).
+echo, resize) or the layout jumps (submit / new session). Focus restore
+hides the caret and resets the previous buffer — it must not CSI-erase.
 
 ### 2026-08-30 — Session token usage: Codex double-count, cold cache, stale meter
 
@@ -2609,3 +2853,31 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 **Fix:** `pnpm run deploy`.
 
 **Prevention:** Call package scripts with `pnpm run <name>` when the name collides with a pnpm built-in (`deploy`, `test`, `install`, …).
+
+## TUI: spinner / thinking chrome must stay 1-col and never write `Color::Reset`
+
+**Date:** 2026-09-14 · **Area:** `crates/tui` chat / spinner / turn-status
+
+**Symptom:** Busy frames flash white, or the label after the spinner / thinking rail jumps one cell. Live `Thinking...` (three ASCII dots) also fails to match Grok Build.
+
+**JSONL / crash:** none.
+
+**Root cause:** Braille spinner glyphs are missing from CP437 ConHost (tofu / white flash). Spans with no background leak host-default `Color::Reset`. ASCII `Thinking...` is not U+2026.
+
+**Fix:** Grok `braille_spinner_frames` (`⠋⠙⠹⠸⠼⠴⠦⠧`) with `| / - \` fallback; pin every chat/spinner span onto `palette.bg`; live header is `Thinking…`.
+
+**Prevention:** Consecutive TestBackend paints of a live transcript must keep non-spinner cells identical and never `Color::Reset` on the canvas.
+
+## Windows: `cargo build -p whycodes-cli` LNK1181 `sqlite3.lib`
+
+**Date:** 2026-09-14 · **Area:** `crates/storage/Cargo.toml`
+
+**Symptom:** `link.exe` fatal error LNK1181: `sqlite3.lib` cannot be opened. `whycodes-cli` (bin `whycodes`) fails to compile on a stock MSVC machine.
+
+**JSONL / crash:** none.
+
+**Root cause:** Workspace `rusqlite` is unbundled so Unix dev builds use pkg-config. Windows MSVC does not ship `sqlite3.lib`.
+
+**Fix:** `crates/storage` enables `rusqlite/bundled` under `cfg(windows)` (feature unification). Unix still needs `--features whycodes-storage/bundled` when there is no system sqlite.
+
+**Prevention:** Do not tell Windows users to install system sqlite for a default `cargo build -p whycodes-cli`. The first Windows compile still pays the amalgamation (~43s cold, then cached).

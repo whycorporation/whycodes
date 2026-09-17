@@ -548,3 +548,41 @@ fn find_syntax_aliases_and_first_line() {
     let _ = highlight_code_spans(shebang, None);
     let _ = highlight_uncached("\n\n", None);
 }
+
+fn token_fgs(lines: &[Vec<CodeSpan>]) -> std::collections::BTreeSet<(u8, u8, u8)> {
+    lines
+        .iter()
+        .flat_map(|row| row.iter())
+        .filter(|(_, t)| {
+            let s = t.as_str();
+            s.contains("fn")
+                || s.contains("let")
+                || s.contains("hi")
+                || s.contains("main")
+                || s.contains("//")
+        })
+        .map(|((r, g, b), _)| (*r, *g, *b))
+        .collect()
+}
+
+#[test]
+fn grok_night_and_day_keep_distinct_token_foregrounds() {
+    let _theme = lock_theme();
+    let code = "fn main() { let x = \"hi\"; }\n// comment\n";
+    set_syntax_theme(SyntaxTheme::GrokNight);
+    let night = highlight_code_spans(code, Some("rust"));
+    let night_fgs = token_fgs(night.as_ref());
+    assert!(
+        night_fgs.len() >= 2,
+        "Grok Night keyword vs string vs comment must not collapse: {night_fgs:?}"
+    );
+
+    set_syntax_theme(SyntaxTheme::GrokDay);
+    let day = highlight_code_spans(code, Some("rust"));
+    let day_fgs = token_fgs(day.as_ref());
+    assert!(
+        day_fgs.len() >= 2,
+        "Grok Day keyword vs string vs comment must not collapse: {day_fgs:?}"
+    );
+    set_syntax_theme(SyntaxTheme::GrokNight);
+}

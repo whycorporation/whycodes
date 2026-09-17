@@ -181,8 +181,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
     let prompt_focused =
         app.focus == crate::app::FocusPane::Prompt || matches!(app.mode, AppMode::Command);
 
-    // Box chrome matches the agent identity (same color as the footer
-    // name / header chip). Prefix stays bright when focused, dim idle.
+    // Box chrome is the neutral theme border (Grok noir gray); only the
+    // ❯ prefix and bottom meta pick up the agent identity color.
+    // Prefix stays bright when focused, dim idle.
     // No panel fill — canvas bg shows through.
     let agent_color = app
         .config
@@ -245,7 +246,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
     // paste echo (or a previously taller box) sits here beside the input.
     crate::ui::layout::fill_blank(frame, chunks[0], palette.bg);
 
-    let border_style = Style::default().fg(agent_color);
+    let border_style = Style::default().fg(palette.border);
 
     // ── Top: ╭──────────╮ ───────────────────────────────────────────
     let top_border = chunks[1];

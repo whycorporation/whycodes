@@ -337,13 +337,15 @@ fn apply_appends_text_block_on_multimodal_user() {
 
 #[test]
 fn qmark_without_change_and_bare_imperative() {
-    let q = classify_user_intent("huh?");
+    let q = classify_user_intent("what does this repository actually do?");
     assert_eq!(q.intent, UserIntent::Question);
-    let c = classify_user_intent("please");
+    let c = classify_user_intent("the quick brown fox jumps");
     assert!(
         matches!(c.intent, UserIntent::Change | UserIntent::Ambiguous),
         "{c:?}"
     );
+    // Short chit-chat questions are trivial by shape ("huh?", "nasılsın?").
+    assert_eq!(classify_user_intent("huh?").intent, UserIntent::Trivial);
     let t = classify_user_intent("hi");
     assert_eq!(t.intent, UserIntent::Trivial);
     assert_eq!(t.confidence, 0.95);
@@ -434,7 +436,7 @@ fn git_stash_list_is_read_only() {
 
 #[test]
 fn qmark_without_thresholds_is_question_and_imperative_is_change() {
-    let q = classify_user_intent("Ready?");
+    let q = classify_user_intent("deployment pipeline ready?");
     assert_eq!(q.intent, UserIntent::Question, "{q:?}");
     let change = classify_user_intent("Ship the patch");
     assert!(

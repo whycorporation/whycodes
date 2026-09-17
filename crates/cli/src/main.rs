@@ -457,7 +457,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
 /// Ignore SIGPIPE so a closed stdout pipe cannot kill the process.
 #[cfg(unix)]
-fn ignore_sigpipe() {
+pub(crate) fn ignore_sigpipe() {
     // libc::SIG_IGN without pulling libc as a hard dep for this one call.
     unsafe extern "C" {
         fn signal(sig: i32, handler: usize) -> usize;
@@ -470,7 +470,7 @@ fn ignore_sigpipe() {
 }
 
 #[cfg(not(unix))]
-fn ignore_sigpipe() {}
+pub(crate) fn ignore_sigpipe() {}
 
 /// Resolve data dir + env/config filters and install the process logger.
 fn init_logging(cli: &Cli) {

@@ -1,5 +1,5 @@
 // ── ui/status.rs: Top header + bottom cwd / context bar ────────────────
-// Top: status square + `?whycodes` (fg why, dim codes) · project · shortcuts.
+// Top: `? whycodes` (fg why, dim codes) · project · shortcuts.
 // Bottom: git branch + cwd (click-to-copy, hover underline) · Grok context bar.
 
 use crate::app::{AgentState, AppMode, FocusPane, TuiApp};
@@ -15,12 +15,6 @@ use ratatui::{
 };
 use std::sync::OnceLock;
 use unicode_width::UnicodeWidthStr;
-
-/// Filled upright square (not a round bullet). U+25AE BLACK VERTICAL RECTANGLE
-/// stands taller in the cell — a solid status chip rather than a flat disk.
-const STATUS_SQUARE: &str = "▮";
-/// Hollow upright square while waiting on the user.
-const STATUS_SQUARE_OPEN: &str = "▯";
 
 /// Grok-style branch glyph (process-lifetime cache).
 fn branch_icon() -> &'static str {
@@ -41,11 +35,11 @@ fn branch_icon() -> &'static str {
     })
 }
 
-/// Home-matching wordmark: `?` then bold fg `why` + dim `codes`.
+/// Home-matching wordmark: `? ` then bold fg `why` + dim `codes`.
 fn brand_wordmark(palette: &ThemePalette) -> Vec<Span<'static>> {
     vec![
         Span::styled(
-            HEADER_MARK,
+            format!("{HEADER_MARK} "),
             Style::default()
                 .fg(palette.fg)
                 .bg(palette.bg)
@@ -62,34 +56,10 @@ fn brand_wordmark(palette: &ThemePalette) -> Vec<Span<'static>> {
     ]
 }
 
-fn status_glyph(app: &TuiApp, palette: &ThemePalette) -> Span<'static> {
-    let bg = palette.bg;
-    match &app.current_agent_state {
-        AgentState::Generating | AgentState::Thinking => Span::styled(
-            super::spinner::glyph(app.spinner_frame).to_string(),
-            super::spinner::fg(palette.accent, bg),
-        ),
-        AgentState::WaitingForPermission | AgentState::WaitingForQuestion => Span::styled(
-            STATUS_SQUARE_OPEN.to_string(),
-            super::spinner::fg(palette.warning, bg),
-        ),
-        AgentState::Error(_) => Span::styled(
-            STATUS_SQUARE.to_string(),
-            super::spinner::fg(palette.error, bg),
-        ),
-        AgentState::Idle => Span::styled(
-            STATUS_SQUARE.to_string(),
-            super::spinner::fg(palette.success, bg),
-        ),
-    }
-}
-
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     if area.height == 0 || area.width < 8 {
         return;
     }
-
-    let glyph = status_glyph(app, palette);
 
     let title_raw = app.session_title.trim();
     let dir_raw = app.project_label.trim();
@@ -126,11 +96,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         shortcuts_spans(app, palette)
     };
 
-    let mut left: Vec<Span<'_>> = vec![
-        glyph,
-        Span::styled("  ", super::spinner::fg(palette.bg, palette.bg)),
-    ];
-    left.extend(brand_wordmark(palette));
+    let mut left: Vec<Span<'_>> = brand_wordmark(palette);
     if !dir.is_empty() {
         left.push(Span::styled(
             format!("  ·  {dir}"),
