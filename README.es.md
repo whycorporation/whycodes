@@ -7,7 +7,10 @@
   <a href="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml"><img src="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/whycorporation/whycodes/releases"><img src="https://img.shields.io/github/v/release/whycorporation/whycodes" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://discord.gg/H2KsKYEdT8"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord de WhyCodes"></a>
+  <a href="https://t.me/whycodesai"><img src="https://img.shields.io/badge/Telegram-whycodesai-26A5E4?logo=telegram&logoColor=white" alt="Telegram de WhyCodes"></a>
   <a href="https://x.com/whycodesai"><img src="https://img.shields.io/badge/X-@whycodesai-black" alt="Seguir a @whycodesai en X"></a>
+  <a href="https://www.youtube.com/@whycodesai"><img src="https://img.shields.io/badge/YouTube-@whycodesai-FF0000?logo=youtube&logoColor=white" alt="YouTube de WhyCodes"></a>
   <a href="https://github.com/sponsors/whycorporation"><img src="https://img.shields.io/badge/sponsor-whycorporation-ea4aaa" alt="Patrocinar WhyCodes"></a>
 </p>
 
@@ -191,6 +194,17 @@ repositorio. Al participar aceptas el
 [SUPPORT.md](SUPPORT.md). Reporta vulnerabilidades a través de
 [SECURITY.md](SECURITY.md), no en issues públicas.
 
+## Comunidad
+
+Los mismos enlaces que en [why.codes](https://why.codes):
+
+- [GitHub](https://github.com/whycorporation/whycodes)
+- [Discord](https://discord.gg/H2KsKYEdT8)
+- [Telegram](https://t.me/whycodesai)
+- [X @whycodesai](https://x.com/whycodesai)
+- [YouTube](https://www.youtube.com/@whycodesai)
+- [Patrocinar](https://github.com/sponsors/whycorporation)
+
 ## Patrocinadores
 
 WhyCodes se desarrolla de forma independiente y necesita financiación para
@@ -211,4 +225,4 @@ seguir publicando. Patrocina el proyecto en
 
 ## Licencia
 
-[MIT](LICENSE) · [why.codes](https://why.codes) · [X @whycodesai](https://x.com/whycodesai) · [Patrocinar](https://github.com/sponsors/whycorporation)
+[MIT](LICENSE) · [why.codes](https://why.codes) · [GitHub](https://github.com/whycorporation/whycodes) · [Discord](https://discord.gg/H2KsKYEdT8) · [Telegram](https://t.me/whycodesai) · [X @whycodesai](https://x.com/whycodesai) · [YouTube](https://www.youtube.com/@whycodesai) · [Patrocinar](https://github.com/sponsors/whycorporation)
