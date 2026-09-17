@@ -19,7 +19,9 @@ on:
       - 'docs/**'
       - '.github/ISSUE_TEMPLATE/**'
       - 'landing/**'
-      - 'Formula/**'
+      # No 'Formula/**' here: the main ruleset requires these checks on
+      # every PR, so a formula-only bump PR must still trigger them
+      # (otherwise it deadlocks in 'expected' — see v0.6.3).
 
 env:
   CARGO_TERM_COLOR: always
