@@ -1325,6 +1325,8 @@ mod tests {
 
     #[test]
     fn maybe_auto_index_background_builds_then_skips() {
+        // Serialize with project_key PATH tests: opens spawn `git`.
+        let _path = crate::recover_lock(&crate::TEST_PATH_LOCK);
         let dir = tempdir().unwrap();
         let data = dir.path().join("data");
         let project = dir.path().join("proj");
@@ -1347,6 +1349,8 @@ mod tests {
 
     #[test]
     fn maybe_auto_index_background_skips_open_and_probe_errors() {
+        // Serialize with project_key PATH tests: opens spawn `git`.
+        let _path = crate::recover_lock(&crate::TEST_PATH_LOCK);
         let dir = tempdir().unwrap();
         let project = dir.path().join("proj");
         std::fs::create_dir_all(&project).unwrap();
