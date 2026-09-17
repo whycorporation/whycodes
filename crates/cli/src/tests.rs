@@ -4357,10 +4357,23 @@ async fn cmd_generate_fail_scripted_and_no_memory() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    let err = cmd_generate(&c, &["x".into()], Some(1), 1, OutputFormat::Text).await;
+    // Work-shaped prompts: trivial chit-chat goes tool-free, and tool-free
+    // turns consult the process-global semantic ResponseCache — a hit from a
+    // sibling test would mask the scripted failure.
+    let err = cmd_generate(
+        &c,
+        &["summarize crates/cli/src/main.rs".into()],
+        Some(1),
+        1,
+        OutputFormat::Text,
+    )
+    .await;
     let err2 = cmd_generate(
         &c,
-        &["a".into(), "b".into()],
+        &[
+            "inspect crates/agent/src/lib.rs".into(),
+            "inspect crates/tui/src/lib.rs".into(),
+        ],
         Some(1),
         2,
         OutputFormat::Json,
@@ -5744,11 +5757,23 @@ async fn cmd_generate_stream_json_fail_and_text_parallel() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    let err = cmd_generate(&c, &["x".into()], Some(1), 1, OutputFormat::StreamJson).await;
+    // Work-shaped prompts keep tools on, so the process-global semantic
+    // ResponseCache never masks the scripted failure (see the sibling test).
+    let err = cmd_generate(
+        &c,
+        &["stream crates/llm/src/lib.rs".into()],
+        Some(1),
+        1,
+        OutputFormat::StreamJson,
+    )
+    .await;
     assert!(err.is_err());
     let err = cmd_generate(
         &c,
-        &["a".into(), "b".into()],
+        &[
+            "parse crates/core/src/lib.rs".into(),
+            "parse crates/config/src/lib.rs".into(),
+        ],
         Some(1),
         2,
         OutputFormat::StreamJson,
