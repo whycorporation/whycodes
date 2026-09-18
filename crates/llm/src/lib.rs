@@ -4,6 +4,7 @@ pub mod client_identity;
 pub mod endpoint;
 pub mod error_class;
 pub mod fallback;
+pub mod harmony;
 pub(crate) mod json_value;
 pub mod model_catalog;
 pub mod oauth_refresh;
@@ -36,6 +37,7 @@ pub use endpoint::{
     provider_config_skips_api_key, provider_requires_api_key,
 };
 pub use error_class::{ClassifiedError, ErrorKind, classify, classify_message};
+pub use harmony::uses_harmony_dialect;
 pub use model_catalog::{
     CATALOG_TTL, CatalogFetchRequest, ModelCatalog, base_url_from_provider_config,
     catalog_request_from_config, context_window_for_model_id, fetch_model_catalog,

@@ -140,6 +140,8 @@ impl Agent {
         let mut compact_failures: u32 = 0;
         let mut compact_paused = false;
         let mut overflow_retries: u32 = 0;
+        let mut harmony_retries: u32 = 0;
+        let harmony = whycodes_llm::uses_harmony_dialect(provider_name, model);
 
         loop {
             // Cached schemas; extra activations still apply per step.
@@ -577,6 +579,29 @@ impl Agent {
             let tool_calls = assembler.finish();
             let step_ms = step_t0.elapsed().as_millis();
 
+            if harmony
+                && let Some(hit) = harmony_leak(&accumulated_text, &thinking_acc, &tool_calls)
+            {
+                crate::speculative_read::abort_all(&mut speculative_reads);
+                let summary = hit.summary();
+                tracing::warn!(
+                    co_signal = hit.co_signal.as_str(),
+                    retry = harmony_retries,
+                    "harmony protocol leak; discarding draft"
+                );
+                emit(
+                    &events,
+                    TurnEvent::Status(format!("{summary} — retrying this step…")),
+                );
+                if harmony_retries >= 2 {
+                    return Err(whycodes_core::Error::Agent(format!(
+                        "{summary}; stopped after {harmony_retries} retries"
+                    )));
+                }
+                harmony_retries = harmony_retries.saturating_add(1);
+                continue;
+            }
+
             if self.response_cache
                 && !cache_hit
                 && request.tools.is_empty()
@@ -853,6 +878,25 @@ fn next_compact_failures(failures: u32, still_over: bool) -> u32 {
     } else {
         0
     }
+}
+
+fn harmony_leak(
+    visible: &str,
+    thinking: &crate::thinking_acc::ThinkingAccumulator,
+    tool_calls: &[whycodes_core::types::ToolCall],
+) -> Option<whycodes_core::harmony::Hit> {
+    if let Some(hit) = whycodes_core::harmony::scan_text(visible) {
+        return Some(hit);
+    }
+    if let Some(hit) = thinking.harmony_leak() {
+        return Some(hit);
+    }
+    for tc in tool_calls {
+        if let Some(hit) = whycodes_core::harmony::scan_json(&tc.arguments) {
+            return Some(hit);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

@@ -117,6 +117,31 @@ async fn execute_replaces_text_and_reports_missing() {
 }
 
 #[tokio::test]
+async fn execute_refuses_harmony_leak_in_new_string() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("a.rs");
+    std::fs::write(&path, "fn run() {}\n").unwrap();
+    let leak = "fn run() { 1 }\nanalysis to=functions.edit code \u{8d4c}\u{535a}\u{7f51}\u{7ad9}\u{63a8}\u{8350}\u{4ee3}\u{7406}";
+    let out = EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "old_string": "fn run() {}",
+                "new_string": leak
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(out.is_error, "{}", out.content);
+    assert!(
+        out.content.contains("Harmony protocol leak"),
+        "{}",
+        out.content
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "fn run() {}\n");
+}
+
+#[tokio::test]
 async fn execute_replaces_by_from_to_tags() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("a.rs");

@@ -80,6 +80,20 @@ impl ThinkingAccumulator {
         self.flush();
         self.closed
     }
+
+    /// Scan accumulated thinking for a Harmony-shadow leak (closed + open).
+    pub fn harmony_leak(&self) -> Option<whycodes_core::harmony::Hit> {
+        for block in &self.closed {
+            if let ContentBlock::Thinking { text, .. } = block
+                && let Some(hit) = whycodes_core::harmony::scan_text(text)
+            {
+                return Some(hit);
+            }
+        }
+        self.open
+            .as_ref()
+            .and_then(|o| whycodes_core::harmony::scan_text(&o.text))
+    }
 }
 
 /// Enable extended thinking on the request when the model/config supports it.

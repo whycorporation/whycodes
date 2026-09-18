@@ -1,5 +1,6 @@
 pub mod error;
 pub mod file_claims;
+pub mod harmony;
 pub mod logging;
 pub mod network;
 pub mod panel;

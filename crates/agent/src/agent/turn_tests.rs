@@ -241,6 +241,75 @@ async fn non_overflow_stream_error_fails() {
 }
 
 #[tokio::test]
+async fn harmony_leak_retries_then_errors() {
+    let leak = "analysis to=functions.edit code leftover";
+    let agent = batched([
+        vec![ScriptedStep::Text(leak.into())],
+        vec![ScriptedStep::Text(leak.into())],
+        vec![ScriptedStep::Text(leak.into())],
+    ]);
+    let mut session = session_user("please refactor the parser in src/main.rs");
+    let err = agent
+        .run_turn(&mut session, "script", "gpt-5", "k", Some(8))
+        .await
+        .expect_err("harmony leak");
+    let msg = err.to_string();
+    assert!(msg.contains("Harmony protocol leak"), "{msg}");
+    assert!(
+        !session.messages.iter().any(|m| {
+            m.content
+                .as_text()
+                .is_some_and(|t| t.contains("to=functions.edit"))
+        }),
+        "leaked draft must not persist"
+    );
+}
+
+#[tokio::test]
+async fn harmony_leak_retries_then_succeeds() {
+    let leak = "analysis to=functions.edit code leftover";
+    let agent = batched([
+        vec![ScriptedStep::Text(leak.into())],
+        vec![ScriptedStep::Text("clean rewrite".into())],
+    ]);
+    let mut session = session_user("please refactor the parser in src/main.rs");
+    let out = agent
+        .run_turn(&mut session, "script", "gpt-5", "k", Some(8))
+        .await
+        .expect("retry");
+    assert!(out.contains("clean rewrite"), "{out}");
+}
+
+#[tokio::test]
+async fn harmony_leak_in_tool_args_does_not_execute() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "keep").unwrap();
+    let leak = "keep\nanalysis to=functions.edit code leftover";
+    let agent = batched([
+        vec![ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "edit".into(),
+            input: json!({
+                "path": "note.txt",
+                "old_string": "keep",
+                "new_string": leak
+            }),
+        }],
+        vec![ScriptedStep::Text("stopped the write".into())],
+    ]);
+    let mut session = session_at(dir.path(), "please edit note.txt carefully now");
+    let out = agent
+        .run_turn(&mut session, "script", "gpt-5", "k", Some(8))
+        .await
+        .expect("retry");
+    assert!(out.contains("stopped the write"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+        "keep"
+    );
+}
+
+#[tokio::test]
 async fn extended_stream_events_and_usage() {
     let agent = scripted([
         ScriptedStep::MessageStart,
