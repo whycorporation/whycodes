@@ -8,12 +8,7 @@ use whycodes_agent::agent::Agent;
 use whycodes_core::types::{ModelConfig, ProviderConfig};
 use whycodes_protocol::{CiEvent, ResultMeta};
 
-/// Serializes tests that mutate process-global env (`WHYCODES_HOME`, …).
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn lock_env() -> std::sync::MutexGuard<'static, ()> {
-    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-}
+use crate::cmd::helpers::lock_env;
 
 /// Tiny HTTP/1.1 stub: read headers, write `body` with `status`, close.
 async fn serve_http1_loop(

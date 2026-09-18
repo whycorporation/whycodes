@@ -35,6 +35,39 @@ pub(crate) fn encode_toml(cfg: &Config) -> Result<String> {
     map_toml_ser(toml::to_string_pretty(cfg))
 }
 
+/// Sibling tempfile + rename so a crash never leaves a half-written `config.toml`.
+pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = parent.join(format!(
+        ".{}.tmp-{}-{n}",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("config.toml"),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, contents)?;
+    let persist = || {
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        std::fs::rename(&tmp, path)
+    };
+    match persist() {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if let Err(cleanup) = std::fs::remove_file(&tmp) {
+                tracing::debug!(error = %cleanup, "config tmp cleanup failed");
+            }
+            Err(e.into())
+        }
+    }
+}
+
 fn warn_project_config(kind: &str, path: &Path, e: impl std::fmt::Display) {
     let msg = format!("Failed to {kind} project config at {}: {e}", path.display());
     tracing::warn!("{msg}");
@@ -86,7 +119,7 @@ impl Config {
         let path = Self::default_path()?;
         ensure_parent_dir(&path)?;
         let content = encode_toml(self)?;
-        std::fs::write(&path, content)?;
+        write_atomic(&path, content.as_bytes())?;
         Ok(())
     }
 

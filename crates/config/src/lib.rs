@@ -23,7 +23,7 @@ pub use types::{
 
 #[cfg(test)]
 pub(crate) use load::{
-    encode_toml, ensure_parent_dir, map_toml_ser, parse_command_markdown, toml_err,
+    encode_toml, ensure_parent_dir, map_toml_ser, parse_command_markdown, toml_err, write_atomic,
 };
 
 /// `.whycodes/slop.toml` next to project config.

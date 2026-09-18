@@ -272,6 +272,12 @@ fn cancel_aborts_scan_and_loop() {
 }
 
 #[test]
+fn log_unwatch_spawn_ok_and_err() {
+    log_unwatch_spawn(std::thread::Builder::new().spawn(|| {}));
+    log_unwatch_spawn(Err(std::io::Error::other("no thread")));
+}
+
+#[test]
 fn query_now_same_pattern_after_blocking_still_hits() {
     let dir = fixture();
     let idx = WorkspaceIndex::start_with(

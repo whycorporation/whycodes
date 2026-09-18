@@ -12,6 +12,55 @@ use whycodes_config::Config;
 use whycodes_core::types::{AgentInfo, AgentMode, ModelConfig, PermissionSet};
 use whycodes_protocol::{CiEvent, OutputFormat, ResultMeta};
 
+/// Serializes tests that mutate process-global env (`WHYCODES_HOME`, …).
+/// Shared across `tests.rs`, `slop_tests`, and `mod_tests` so two IsolatedHome
+/// guards cannot race on the same `config.toml`.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Point `WHYCODES_HOME` at a temp dir until dropped.
+///
+/// Clippy `await_holding_lock` does not fire on a field of this type, so
+/// `#[tokio::test]` bodies can keep the env isolation for the whole await.
+#[cfg(test)]
+pub(crate) struct IsolatedHome {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    _dir: tempfile::TempDir,
+    prev: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl IsolatedHome {
+    pub(crate) fn new() -> Self {
+        let guard = lock_env();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        Self {
+            _guard: guard,
+            _dir: dir,
+            prev,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for IsolatedHome {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.prev {
+                Some(v) => std::env::set_var("WHYCODES_HOME", v),
+                None => std::env::remove_var("WHYCODES_HOME"),
+            }
+        }
+    }
+}
+
 pub(crate) fn cmd_completions(shell: clap_complete::Shell) -> anyhow::Result<()> {
     use clap::CommandFactory;
     let mut cmd = Cli::command();

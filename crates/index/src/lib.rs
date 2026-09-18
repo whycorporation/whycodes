@@ -572,13 +572,23 @@ fn scanner_main(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
     // Drop the watcher off this thread: Windows ReadDirectoryChangesW
     // teardown can block, and Drop of WorkspaceIndex joins us.
     if let Some(watcher) = watcher {
-        match std::thread::Builder::new()
+        detach_watcher(watcher);
+    }
+}
+
+/// Spawn a thread whose only job is `drop(watcher)`. Failure to spawn is
+/// logged; the watcher then drops on this thread (join may stall on Windows).
+fn detach_watcher(watcher: notify::RecommendedWatcher) {
+    log_unwatch_spawn(
+        std::thread::Builder::new()
             .name("whycodes-index-unwatch".into())
-            .spawn(move || drop(watcher))
-        {
-            Ok(_) => {}
-            Err(e) => tracing::debug!(error = %e, "index unwatch thread spawn failed"),
-        }
+            .spawn(move || drop(watcher)),
+    );
+}
+
+pub(crate) fn log_unwatch_spawn(result: std::io::Result<std::thread::JoinHandle<()>>) {
+    if let Err(e) = result {
+        tracing::debug!(error = %e, "index unwatch thread spawn failed");
     }
 }
 

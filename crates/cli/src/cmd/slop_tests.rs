@@ -1,39 +1,7 @@
 use super::*;
+use crate::cmd::helpers::IsolatedHome;
 use crate::{Cli, Commands};
 use clap::Parser;
-
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-struct IsolatedHome {
-    _guard: std::sync::MutexGuard<'static, ()>,
-    _dir: tempfile::TempDir,
-    prev: Option<std::ffi::OsString>,
-}
-
-impl IsolatedHome {
-    fn new() -> Self {
-        let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().unwrap();
-        let prev = std::env::var_os("WHYCODES_HOME");
-        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
-        Self {
-            _guard: guard,
-            _dir: dir,
-            prev,
-        }
-    }
-}
-
-impl Drop for IsolatedHome {
-    fn drop(&mut self) {
-        unsafe {
-            match &self.prev {
-                Some(v) => std::env::set_var("WHYCODES_HOME", v),
-                None => std::env::remove_var("WHYCODES_HOME"),
-            }
-        }
-    }
-}
 
 #[tokio::test]
 async fn slop_json_on_temp_non_git() {
