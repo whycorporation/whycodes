@@ -156,3 +156,67 @@ fn cyrillic_run_is_non_latin() {
     let text = "to=functions.edit \u{0410}\u{0411}\u{0412}\u{0413}\u{0414}\u{0415}\u{0416}\u{0417}";
     assert_eq!(scan_text(text).unwrap().co_signal, CoSignal::NonLatinJunk);
 }
+
+#[test]
+fn channel_word_at_start_and_glued_identifier() {
+    let hit = scan_text("analysis to=functions.edit code leftover").unwrap();
+    assert_eq!(hit.co_signal, CoSignal::ChannelAdjacency);
+    assert!(scan_text("xanalysis to=functions.edit").is_none());
+}
+
+#[test]
+fn pua_glitch_and_thai_georgian_hangul() {
+    let hit = scan_text("\u{e000} to=functions.edit code").unwrap();
+    assert_eq!(hit.co_signal, CoSignal::GlitchToken);
+    let thai = "to=functions.edit \u{0e01}\u{0e02}\u{0e03}\u{0e04}\u{0e05}\u{0e06}\u{0e07}\u{0e08}";
+    assert_eq!(scan_text(thai).unwrap().co_signal, CoSignal::NonLatinJunk);
+    let georgian =
+        "to=functions.edit \u{10a0}\u{10a1}\u{10a2}\u{10a3}\u{10a4}\u{10a5}\u{10a6}\u{10a7}";
+    assert_eq!(
+        scan_text(georgian).unwrap().co_signal,
+        CoSignal::NonLatinJunk
+    );
+    let hangul =
+        "to=functions.edit \u{ac00}\u{ac01}\u{ac02}\u{ac03}\u{ac04}\u{ac05}\u{ac06}\u{ac07}";
+    assert_eq!(scan_text(hangul).unwrap().co_signal, CoSignal::NonLatinJunk);
+}
+
+#[test]
+fn non_latin_run_survives_spaces_and_resets_on_ascii() {
+    let spaced =
+        "to=functions.edit \u{8d4c} \u{535a} \u{7f51} \u{7ad9} \u{63a8} \u{8350} \u{4ee3} \u{7406}";
+    assert_eq!(scan_text(spaced).unwrap().co_signal, CoSignal::NonLatinJunk);
+    assert!(scan_text("to=functions.edit \u{8d4c}\u{535a} abcdefgh").is_none());
+}
+
+#[test]
+fn escaped_quotes_and_trailing_backslash() {
+    assert!(scan_text("foo \\\" analysis to=functions.edit code").is_some());
+    assert!(scan_text("x\\to=functions.read").is_none());
+}
+
+#[test]
+fn truncate_first_line_and_compat_ideograph() {
+    let text = "analysis to=functions.edit code leftover";
+    let at = text.find(MARKER).unwrap();
+    assert_eq!(truncate_at_line(text, at), "");
+    let cjk_compat =
+        "to=functions.edit \u{f900}\u{f901}\u{f902}\u{f903}\u{f904}\u{f905}\u{f906}\u{f907}";
+    assert_eq!(
+        scan_text(cjk_compat).unwrap().co_signal,
+        CoSignal::NonLatinJunk
+    );
+}
+
+#[test]
+fn leak_between_hunks_is_not_after_last() {
+    let patch = "@@ -1 +1 @@\n a\nanalysis to=functions.edit\n@@ -2 +2 @@\n b\n";
+    let at = patch.find(MARKER).unwrap();
+    assert!(!leak_is_after_last_hunk(patch, at));
+}
+
+#[test]
+fn escaped_backslash_at_eof_and_odd_backticks() {
+    assert!(scan_text("to=functions.read\\").is_none());
+    assert!(scan_text("see \\` analysis to=functions.edit code").is_some());
+}

@@ -310,6 +310,30 @@ async fn harmony_leak_in_tool_args_does_not_execute() {
 }
 
 #[tokio::test]
+async fn harmony_leak_in_thinking_retries() {
+    let leak = "analysis to=functions.edit code leftover";
+    let agent = batched([
+        vec![
+            ScriptedStep::Thinking(leak.into()),
+            ScriptedStep::Text("also visible".into()),
+        ],
+        vec![ScriptedStep::Text("clean after thinking leak".into())],
+    ]);
+    let mut session = session_user("please refactor the parser in src/main.rs");
+    let out = agent
+        .run_turn(&mut session, "script", "gpt-5", "k", Some(8))
+        .await
+        .expect("retry");
+    assert!(out.contains("clean after thinking leak"), "{out}");
+}
+
+#[test]
+fn harmony_leak_helper_none_on_clean() {
+    let acc = crate::thinking_acc::ThinkingAccumulator::new();
+    assert!(harmony_leak("hello", &acc, &[]).is_none());
+}
+
+#[tokio::test]
 async fn extended_stream_events_and_usage() {
     let agent = scripted([
         ScriptedStep::MessageStart,

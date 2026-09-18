@@ -79,6 +79,21 @@ fn unknown_provider_keeps_model() {
 }
 
 #[test]
+fn antigravity_maps_to_flash_low() {
+    let (p, m) = resolve_title_model("google-antigravity", "lyria-002", None);
+    assert_eq!(p, "google-antigravity");
+    assert_eq!(m, "gemini-3.5-flash-low");
+}
+
+#[test]
+fn google_pro_without_mini_marker_maps_to_flash() {
+    // `gemini` contains `mini`, so use a non-mini google id to hit the arm.
+    let (p, m) = resolve_title_model("google", "lyria-002", None);
+    assert_eq!(p, "google");
+    assert_eq!(m, "gemini-2.0-flash");
+}
+
+#[test]
 fn small_markers_detected() {
     assert!(is_already_small("claude-haiku-4-5-20251001"));
     assert!(is_already_small("gpt-4o-mini"));

@@ -96,6 +96,16 @@ fn harmony_leak_scans_open_and_closed_thinking() {
 }
 
 #[test]
+fn harmony_leak_hits_closed_thinking_block() {
+    let mut acc = ThinkingAccumulator::new();
+    acc.push_redacted("secret");
+    acc.push_text("analysis to=functions.edit code leftover");
+    acc.flush();
+    acc.push_text("later thought");
+    assert!(acc.harmony_leak().is_some());
+}
+
+#[test]
 fn attach_skips_when_already_set_or_unsupported() {
     let mut req = whycodes_core::types::LlmRequest {
         system: String::new(),

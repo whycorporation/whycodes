@@ -196,7 +196,7 @@ fn fake_result_after(text: &str, at: usize) -> bool {
 }
 
 fn non_latin_after(text: &str, at: usize) -> bool {
-    let rest = text.get(at..).unwrap_or("");
+    let rest = &text[at..];
     let mut run = 0usize;
     for ch in rest.chars().take(160) {
         if is_non_latin_junk(ch) {
@@ -256,7 +256,7 @@ fn odd_unescaped(s: &str, quote: u8) -> bool {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'\\' {
-            i += 2;
+            i = i.saturating_add(2);
             continue;
         }
         if bytes[i] == quote {
@@ -297,14 +297,7 @@ pub fn leak_is_after_last_hunk(patch: &str, at: usize) -> bool {
     if at < hunk {
         return false;
     }
-    let after = &patch[hunk..at];
-    if after.len() > 1 && after[1..].contains("\n@@") {
-        return false;
-    }
     let line_start = patch[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    if line_start < hunk {
-        return false;
-    }
     !matches!(patch[line_start..at].chars().next(), Some('+' | '-' | ' '))
 }
 
