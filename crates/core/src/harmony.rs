@@ -170,17 +170,16 @@ fn classify_marker(
 
 fn channel_adjacent(text: &str, at: usize) -> bool {
     let prefix = text[..at].trim_end();
-    CHANNEL_WORDS
-        .iter()
-        .any(|w| prefix.ends_with(w) && word_boundary_before(prefix, w.len()))
-}
-
-fn word_boundary_before(prefix: &str, word_len: usize) -> bool {
-    if prefix.len() == word_len {
-        return true;
-    }
-    let before = prefix.as_bytes()[prefix.len() - word_len - 1];
-    !before.is_ascii_alphanumeric() && before != b'_'
+    CHANNEL_WORDS.iter().any(|w| {
+        let Some(rest) = prefix.strip_suffix(w) else {
+            return false;
+        };
+        rest.is_empty()
+            || rest
+                .chars()
+                .next_back()
+                .is_some_and(|c| !c.is_ascii_alphanumeric() && c != '_')
+    })
 }
 
 fn glitch_near(text: &str, at: usize) -> bool {
@@ -196,17 +195,14 @@ fn fake_result_after(text: &str, at: usize) -> bool {
 }
 
 fn non_latin_after(text: &str, at: usize) -> bool {
-    let rest = &text[at..];
     let mut run = 0usize;
-    for ch in rest.chars().take(160) {
+    for ch in text[at..].chars().take(160) {
         if is_non_latin_junk(ch) {
             run += 1;
             if run >= 8 {
                 return true;
             }
-        } else if ch.is_ascii_whitespace() {
-            // keep the run across spaces inside a junk blob
-        } else {
+        } else if !ch.is_ascii_whitespace() {
             run = 0;
         }
     }
@@ -232,37 +228,28 @@ fn in_fence_or_quote(text: &str, at: usize) -> bool {
 }
 
 fn fenced(before: &str) -> bool {
-    let mut open = false;
-    let bytes = before.as_bytes();
-    let mut i = 0;
-    while i + 2 < bytes.len() {
-        if bytes[i] == b'`' && bytes[i + 1] == b'`' && bytes[i + 2] == b'`' {
-            open = !open;
-            i += 3;
-            continue;
-        }
-        i += 1;
-    }
-    open
+    before.matches("```").count() % 2 == 1
 }
 
 fn quoted(before: &str) -> bool {
-    odd_unescaped(before, b'"') || odd_unescaped(before, b'`')
+    odd_unescaped(before, '"') || odd_unescaped(before, '`')
 }
 
-fn odd_unescaped(s: &str, quote: u8) -> bool {
+fn odd_unescaped(s: &str, quote: char) -> bool {
     let mut n = 0usize;
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' {
-            i = i.saturating_add(2);
+    let mut escaped = false;
+    for ch in s.chars() {
+        if escaped {
+            escaped = false;
             continue;
         }
-        if bytes[i] == quote {
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
             n += 1;
         }
-        i += 1;
     }
     n % 2 == 1
 }
@@ -271,15 +258,9 @@ fn odd_unescaped(s: &str, quote: u8) -> bool {
 pub fn last_hunk_start(patch: &str) -> Option<usize> {
     patch
         .rmatch_indices("\n@@")
-        .map(|(i, _)| i + 1)
         .next()
-        .or_else(|| {
-            if patch.starts_with("@@") {
-                Some(0)
-            } else {
-                None
-            }
-        })
+        .map(|(i, _)| i + 1)
+        .or_else(|| patch.starts_with("@@").then_some(0))
 }
 
 /// Drop the contaminated line and everything after it.
