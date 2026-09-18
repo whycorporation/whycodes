@@ -342,6 +342,58 @@ diff --git a/two.rs b/two.rs
 }
 
 #[tokio::test]
+async fn execute_refuses_mid_hunk_harmony_leak() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("x.txt"), "alpha\nbeta\n").unwrap();
+    let patch = "\
+@@ -1,2 +1,2 @@
+ alpha
+-beta
++BETA analysis to=functions.apply_patch code \u{8d4c}\u{535a}\u{7f51}\u{7ad9}\u{63a8}\u{8350}\u{4ee3}\u{7406}
+";
+    let out = ApplyPatchTool::new()
+        .execute(
+            serde_json::json!({ "path": "x.txt", "patch_content": patch }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(out.is_error, "{}", out.content);
+    assert!(
+        out.content.contains("Harmony protocol leak"),
+        "{}",
+        out.content
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("x.txt")).unwrap(),
+        "alpha\nbeta\n"
+    );
+}
+
+#[tokio::test]
+async fn execute_truncates_leak_after_last_hunk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("x.txt"), "alpha\nbeta\n").unwrap();
+    let patch = "\
+@@ -1,2 +1,2 @@
+ alpha
+-beta
++BETA
+analysis to=functions.apply_patch code leftover
+";
+    let out = ApplyPatchTool::new()
+        .execute(
+            serde_json::json!({ "path": "x.txt", "patch_content": patch }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("x.txt")).unwrap(),
+        "alpha\nBETA\n"
+    );
+}
+
+#[tokio::test]
 async fn claim_conflict_and_context_eof() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join("x.txt"), "alpha\n").unwrap();

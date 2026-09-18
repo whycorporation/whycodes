@@ -39,6 +39,22 @@ fn thinking_blocks_replay_as_reasoning_content() {
 }
 
 #[test]
+fn untrusted_replay_escapes_harmony_tokens() {
+    let req = req_with(vec![Message {
+        role: Role::Tool,
+        content: MessageContent::Text("see <|channel|> then <|call|>".into()),
+        tool_call_id: Some("c1".into()),
+        name: Some("read".into()),
+        created_at: None,
+    }]);
+    let msgs = convert_messages(&req);
+    let body = msgs[1]["content"].as_str().unwrap();
+    assert!(!body.contains("<|channel|>"), "{body}");
+    assert!(!body.contains("<|call|>"), "{body}");
+    assert!(body.contains("< channel >"), "{body}");
+}
+
+#[test]
 fn empty_system_is_omitted_from_converted_messages() {
     let mut req = req_with(vec![Message {
         role: Role::User,

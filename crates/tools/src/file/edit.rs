@@ -73,6 +73,16 @@ impl Tool for EditTool {
         ctx: &'a ToolContext,
     ) -> whycodes_core::ToolFuture<'a> {
         Box::pin(async move {
+            if let Some(hit) = whycodes_core::harmony::scan_json(&args) {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!(
+                        "Error: {} — refusing to write leaked Harmony protocol text",
+                        hit.summary()
+                    ),
+                    is_error: true,
+                };
+            }
             let path_str = args["path"].as_str().unwrap_or("").to_string();
             let old_string = args["old_string"].as_str().unwrap_or("").to_string();
             let new_string = args["new_string"].as_str().unwrap_or("").to_string();

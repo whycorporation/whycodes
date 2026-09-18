@@ -244,7 +244,8 @@ fn convert_one_message(msg: &Message, args_format: ToolArgumentsFormat) -> Optio
             if msg.role == Role::Assistant && text.is_empty() {
                 return None;
             }
-            obj([("role", jstr(role)), ("content", jstr(text))])
+            let text = replay_text(&msg.role, text);
+            obj([("role", jstr(role)), ("content", jstr(&text))])
         }
         MessageContent::Blocks(blocks) => {
             convert_blocks_message(role, &msg.role, blocks, args_format)?
@@ -262,6 +263,13 @@ fn convert_one_message(msg: &Message, args_format: ToolArgumentsFormat) -> Optio
     }
 
     Some(obj)
+}
+
+fn replay_text(role: &Role, text: &str) -> String {
+    match role {
+        Role::Assistant => text.to_string(),
+        _ => whycodes_core::harmony::escape_replay(text),
+    }
 }
 
 fn convert_blocks_message(
@@ -282,7 +290,7 @@ fn convert_blocks_message(
         match block {
             ContentBlock::Text { text } => {
                 if !text.is_empty() {
-                    text_parts.push(text.clone());
+                    text_parts.push(replay_text(role, text));
                 }
             }
             ContentBlock::Image { source } => {
@@ -311,13 +319,16 @@ fn convert_blocks_message(
                 content,
                 ..
             } => {
-                extra_text.push(format!("[tool_result {tool_use_id}] {content}"));
+                extra_text.push(format!(
+                    "[tool_result {tool_use_id}] {}",
+                    whycodes_core::harmony::escape_replay(content)
+                ));
             }
             // Replay as `reasoning_content` (DeepSeek / Grok). Never dump
             // thoughts into visible `content`.
             ContentBlock::Thinking { text, .. } => {
                 if !text.is_empty() {
-                    thinking_parts.push(text.clone());
+                    thinking_parts.push(whycodes_core::harmony::escape_replay(text));
                 }
             }
             ContentBlock::RedactedThinking { .. } => {}

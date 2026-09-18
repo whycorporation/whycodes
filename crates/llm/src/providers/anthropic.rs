@@ -179,9 +179,16 @@ fn events_for_data(data: &str) -> Vec<whycodes_core::Result<StreamEvent>> {
     out
 }
 
-fn content_block_to_anthropic(b: &ContentBlock) -> Value {
+fn content_block_to_anthropic_role(b: &ContentBlock, untrusted: bool) -> Value {
     match b {
-        ContentBlock::Text { text } => obj([("type", jstr("text")), ("text", jstr(text))]),
+        ContentBlock::Text { text } => {
+            let text = if untrusted {
+                whycodes_core::harmony::escape_replay(text)
+            } else {
+                text.to_string()
+            };
+            obj([("type", jstr("text")), ("text", jstr(&text))])
+        }
         ContentBlock::Image { source } => match source {
             whycodes_core::types::ImageSource::Base64 { media_type, data } => obj([
                 ("type", jstr("image")),
@@ -209,7 +216,10 @@ fn content_block_to_anthropic(b: &ContentBlock) -> Value {
         } => obj([
             ("type", jstr("tool_result")),
             ("tool_use_id", jstr(tool_use_id)),
-            ("content", jstr(content)),
+            (
+                "content",
+                jstr(whycodes_core::harmony::escape_replay(content)),
+            ),
             ("is_error", Value::Bool(is_error.unwrap_or(false))),
         ]),
         ContentBlock::Thinking { text, signature } => {
@@ -314,9 +324,15 @@ impl AnthropicProvider {
                     whycodes_core::types::Role::Tool => "user",
                 };
 
+                let untrusted = m.role != whycodes_core::types::Role::Assistant;
                 let content: Vec<Value> = match &m.content {
                     whycodes_core::types::MessageContent::Text(text) => {
-                        vec![obj([("type", jstr("text")), ("text", jstr(text))])]
+                        let text = if untrusted {
+                            whycodes_core::harmony::escape_replay(text)
+                        } else {
+                            text.clone()
+                        };
+                        vec![obj([("type", jstr("text")), ("text", jstr(&text))])]
                     }
                     whycodes_core::types::MessageContent::Blocks(blocks) => {
                         let wire = if m.role == whycodes_core::types::Role::Assistant {
@@ -324,7 +340,9 @@ impl AnthropicProvider {
                         } else {
                             blocks.clone()
                         };
-                        wire.iter().map(content_block_to_anthropic).collect()
+                        wire.iter()
+                            .map(|b| content_block_to_anthropic_role(b, untrusted))
+                            .collect()
                     }
                 };
                 if content.is_empty() {

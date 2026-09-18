@@ -94,14 +94,16 @@ fn convert_input(messages: &[Message]) -> Vec<Value> {
         match &m.content {
             MessageContent::Text(text) => {
                 if !text.trim().is_empty() {
-                    items.push(message_item(role, text));
+                    items.push(message_item(role, &replay_codex_text(role, text)));
                 }
             }
             MessageContent::Blocks(blocks) => {
-                let mut texts: Vec<&str> = Vec::new();
+                let mut texts: Vec<String> = Vec::new();
                 for b in blocks {
                     match b {
-                        ContentBlock::Text { text } => texts.push(text),
+                        ContentBlock::Text { text } => {
+                            texts.push(replay_codex_text(role, text));
+                        }
                         ContentBlock::Image { source } => {
                             flush_message(&mut items, role, &mut texts);
                             if let Some(part) = image_part(role, source) {
@@ -130,7 +132,12 @@ fn convert_input(messages: &[Message]) -> Vec<Value> {
                             items.push(crate::json_value::obj([
                                 ("type", crate::json_value::str("function_call_output")),
                                 ("call_id", crate::json_value::str(tool_use_id)),
-                                ("output", crate::json_value::str(content)),
+                                (
+                                    "output",
+                                    crate::json_value::str(whycodes_core::harmony::escape_replay(
+                                        content,
+                                    )),
+                                ),
                             ]));
                         }
                         ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {}
@@ -143,13 +150,21 @@ fn convert_input(messages: &[Message]) -> Vec<Value> {
     items
 }
 
-fn flush_message(items: &mut Vec<Value>, role: &str, texts: &mut Vec<&str>) {
+fn flush_message(items: &mut Vec<Value>, role: &str, texts: &mut Vec<String>) {
     if texts.is_empty() {
         return;
     }
     let joined = texts.join("\n");
     items.push(message_item(role, &joined));
     texts.clear();
+}
+
+fn replay_codex_text(role: &str, text: &str) -> String {
+    if role == "assistant" {
+        text.to_string()
+    } else {
+        whycodes_core::harmony::escape_replay(text)
+    }
 }
 
 fn message_item(role: &str, text: &str) -> Value {

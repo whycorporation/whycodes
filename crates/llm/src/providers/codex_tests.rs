@@ -97,6 +97,22 @@ fn body_matches_backend_contract() {
 }
 
 #[test]
+fn function_call_output_escapes_harmony_tokens() {
+    let mut req = request_with_tools();
+    let messages = std::sync::Arc::make_mut(&mut req.messages);
+    let MessageContent::Blocks(blocks) = &mut messages[2].content else {
+        panic!("expected blocks");
+    };
+    let ContentBlock::ToolResult { content, .. } = &mut blocks[0] else {
+        panic!("expected tool result");
+    };
+    *content = "see <|channel|>".into();
+    let body = build_body(&req, "gpt-5.1-codex");
+    let out = body["input"][3]["output"].as_str().unwrap();
+    assert!(!out.contains("<|channel|>"), "{out}");
+}
+
+#[test]
 fn text_delta_maps_to_stream_event() {
     let events = events_for_payload(r#"{"type":"response.output_text.delta","delta":"hel"}"#);
     assert_eq!(events.len(), 1);

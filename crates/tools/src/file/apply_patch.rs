@@ -53,7 +53,23 @@ impl Tool for ApplyPatchTool {
     ) -> whycodes_core::ToolFuture<'a> {
         Box::pin(async move {
             let path_str = args["path"].as_str().unwrap_or("").to_string();
-            let patch_content = args["patch_content"].as_str().unwrap_or("").to_string();
+            let mut patch_content = args["patch_content"].as_str().unwrap_or("").to_string();
+
+            if let Some(hit) = whycodes_core::harmony::scan_text(&patch_content) {
+                if whycodes_core::harmony::leak_is_after_last_hunk(&patch_content, hit.at) {
+                    patch_content =
+                        whycodes_core::harmony::truncate_at_line(&patch_content, hit.at);
+                } else {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: format!(
+                            "Error: {} — refusing to apply leaked Harmony protocol text",
+                            hit.summary()
+                        ),
+                        is_error: true,
+                    };
+                }
+            }
 
             if patch_content.is_empty() {
                 return ToolResult {
