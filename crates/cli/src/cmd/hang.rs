@@ -1,8 +1,9 @@
-//! Hang warning after a short CLI command returns but the process stays up.
+//! Hang warning after a command returns but the process stays up.
 //!
-//! MCP children, the workspace index watcher, and leftover HTTP clients can
-//! keep Tokio alive after `debug` / `config` / `session list` / `generate` have printed.
-//! Long-running commands (`serve`, TUI `run`) skip this.
+//! MCP children, the workspace index watcher, leftover HTTP clients, and an
+//! in-flight LLM stream can keep Tokio alive after the TUI has already printed
+//! the session summary. Short commands (`debug` / `config` / `session list`)
+//! and interactive TUI `run` both need a bounded drop. `serve` skips this.
 
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,7 @@ const SHUTDOWN_WAIT: Duration = Duration::from_millis(80);
 pub(crate) fn is_short_command(cli: &crate::Cli) -> bool {
     use crate::Commands;
     match &cli.command {
-        None => false,
+        None => true, // interactive TUI (`whycodes` / extra flags)
         Some(cmd) => match cmd {
             Commands::Provider { .. }
             | Commands::Model { .. }
@@ -28,9 +29,9 @@ pub(crate) fn is_short_command(cli: &crate::Cli) -> bool {
             | Commands::Debug { .. }
             | Commands::Slop { .. }
             | Commands::Completions { .. }
-            | Commands::Generate { .. } => true,
-            Commands::Run { .. }
-            | Commands::Acp
+            | Commands::Generate { .. }
+            | Commands::Run { .. } => true,
+            Commands::Acp
             | Commands::Pr { .. }
             | Commands::Github { .. }
             | Commands::Web

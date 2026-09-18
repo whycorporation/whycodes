@@ -19,6 +19,8 @@ pub enum KeymapContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Quit,
+    /// Ctrl+Q — skip the quit confirm and leave immediately.
+    ForceQuit,
     EscapeMode,
     SubmitInput,
     ScrollUp,
@@ -174,7 +176,7 @@ impl Keymap {
                 // Global chords first (both focus panes)
                 match (ctrl, key.code) {
                     (true, KeyCode::Char('c')) => return Some(Action::Quit),
-                    (true, KeyCode::Char('q')) => return Some(Action::Quit),
+                    (true, KeyCode::Char('q')) => return Some(Action::ForceQuit),
                     (true, KeyCode::Char('v')) => return Some(Action::PasteClipboard),
                     (false, KeyCode::Esc) => return Some(Action::EscapeMode),
                     (true, KeyCode::Char('b')) => return Some(Action::ToggleSidebar),
@@ -347,7 +349,9 @@ impl Keymap {
                 (false, KeyCode::Char('d')) => Some(Action::DialogCancel),  // deny
                 (false, KeyCode::Backspace) => Some(Action::InputBackspace),
                 (true, KeyCode::Char('s')) => Some(Action::DialogConfirm),
-                (true, KeyCode::Char('c')) => Some(Action::DialogCancel),
+                // Second Ctrl+C on the quit confirm means "yes, leave".
+                (true, KeyCode::Char('c')) => Some(Action::Quit),
+                (true, KeyCode::Char('q')) => Some(Action::ForceQuit),
                 _ => None,
             },
             KeymapContext::Command => match (ctrl, key.code) {

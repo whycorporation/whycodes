@@ -23,7 +23,7 @@ fn quit_works_from_both_focuses_and_question_mark_is_not_help() {
         );
         assert_eq!(
             k.resolve(KeymapContext::Normal, focus, &ctrl(KeyCode::Char('q'))),
-            Some(Action::Quit)
+            Some(Action::ForceQuit)
         );
         assert_eq!(
             k.resolve(KeymapContext::Normal, focus, &ctrl(KeyCode::Char('v'))),
@@ -621,7 +621,15 @@ fn dialog_context() {
             FocusPane::Prompt,
             &ctrl(KeyCode::Char('c'))
         ),
-        Some(Action::DialogCancel)
+        Some(Action::Quit)
+    );
+    assert_eq!(
+        k.resolve(
+            KeymapContext::Dialog,
+            FocusPane::Prompt,
+            &ctrl(KeyCode::Char('q'))
+        ),
+        Some(Action::ForceQuit)
     );
     // typing characters in a dialog field → no action
     assert_eq!(

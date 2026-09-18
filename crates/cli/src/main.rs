@@ -77,10 +77,10 @@ fn main() -> anyhow::Result<()> {
         return cmd_completions(*shell);
     }
 
-    let short = crate::cmd::hang::is_short_command(&cli);
+    let bounded_shutdown = crate::cmd::hang::is_short_command(&cli);
     let rt = runtime_for(&cli)?;
     let result = rt.block_on(async_main(cli));
-    if short {
+    if bounded_shutdown {
         crate::cmd::hang::shutdown_runtime(rt);
     }
     result
