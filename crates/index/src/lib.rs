@@ -451,6 +451,8 @@ impl Drop for WorkspaceIndex {
         self.shared.cancel.store(true, Ordering::Relaxed);
         let _ = self.shared.cmd_tx.send(Command::Shutdown);
         if let Some(h) = self.scanner.take() {
+            // Windows ReadDirectoryChangesW watcher Drop can block; never
+            // stall process exit on the scanner thread.
             let _ = h.join();
         }
     }
@@ -539,7 +541,7 @@ fn scanner_main(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
     // Arm notify *before* flipping Ready. `wait_ready` is the test/TUI
     // signal that creates will be seen — if Ready precedes `watch()`, a
     // write in that window is lost (CI: `watcher_picks_up_changes`).
-    let _watcher = if shared.watch {
+    let watcher = if shared.watch {
         watch::spawn(&shared.roots, shared.cmd_tx.clone())
     } else {
         None
@@ -566,6 +568,27 @@ fn scanner_main(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
         if !pending.is_empty() {
             apply_changes(&shared, std::mem::take(&mut pending));
         }
+    }
+    // Drop the watcher off this thread: Windows ReadDirectoryChangesW
+    // teardown can block, and Drop of WorkspaceIndex joins us.
+    if let Some(watcher) = watcher {
+        detach_watcher(watcher);
+    }
+}
+
+/// Spawn a thread whose only job is `drop(watcher)`. Failure to spawn is
+/// logged; the watcher then drops on this thread (join may stall on Windows).
+fn detach_watcher(watcher: notify::RecommendedWatcher) {
+    log_unwatch_spawn(
+        std::thread::Builder::new()
+            .name("whycodes-index-unwatch".into())
+            .spawn(move || drop(watcher)),
+    );
+}
+
+pub(crate) fn log_unwatch_spawn(result: std::io::Result<std::thread::JoinHandle<()>>) {
+    if let Err(e) = result {
+        tracing::debug!(error = %e, "index unwatch thread spawn failed");
     }
 }
 

@@ -433,6 +433,9 @@ fn poll_matches_adopts_fuzzy_hits_and_browse_is_not_pending() {
         },
     );
     assert!(idx.wait_ready(std::time::Duration::from_secs(10)));
+    // Blocking rematch so poll_matches is not racing a cold nucleo under
+    // a loaded CI runner (Test linux flake: empty matches after 5s).
+    let _ = idx.query("mai", 10);
 
     let mut st = FileSuggestState::default();
     st.set_index(idx);
@@ -446,13 +449,13 @@ fn poll_matches_adopts_fuzzy_hits_and_browse_is_not_pending() {
     );
     assert!(st.awaiting_matches());
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while std::time::Instant::now() < deadline {
         let _ = st.poll_matches();
         if st.matches.iter().any(|m| m.rel.contains("main")) {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
     assert!(
         st.matches.iter().any(|m| m.rel.contains("main")),

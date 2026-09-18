@@ -168,6 +168,28 @@ fn test_config_serialize_deserialize_roundtrip() {
 }
 
 #[test]
+fn write_atomic_replaces_existing_and_creates() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    write_atomic(&path, b"one").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "one");
+    write_atomic(&path, b"two").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "two");
+}
+
+#[test]
+fn write_atomic_empty_parent_uses_dot() {
+    let dir = tempfile::tempdir().unwrap();
+    let prev = std::env::current_dir().unwrap();
+    std::env::set_current_dir(dir.path()).unwrap();
+    let result = write_atomic(Path::new("rel.toml"), b"x");
+    let body = std::fs::read_to_string("rel.toml");
+    std::env::set_current_dir(prev).unwrap();
+    result.unwrap();
+    assert_eq!(body.unwrap(), "x");
+}
+
+#[test]
 fn test_config_load_save_tempfile() {
     let mut cfg = Config::default();
     cfg.providers

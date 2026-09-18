@@ -7,7 +7,7 @@ pub(crate) mod config;
 pub(crate) mod debug;
 mod github;
 pub(crate) mod hang;
-mod helpers;
+pub(crate) mod helpers;
 mod import;
 pub(crate) mod lockfile;
 mod mcp;

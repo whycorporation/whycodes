@@ -502,6 +502,10 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
             }
             true
         }
+        Some(Action::ForceQuit) => {
+            app.running = false;
+            false
+        }
         Some(Action::EscapeMode) => {
             handle_escape(app);
             true
@@ -2290,6 +2294,24 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
     }
 
     match action {
+        Some(Action::ForceQuit) => {
+            app.running = false;
+            return false;
+        }
+        Some(Action::Quit) => {
+            if matches!(
+                active,
+                DialogKind::Confirm {
+                    on_confirm: ConfirmAction::Quit,
+                    ..
+                }
+            ) {
+                app.running = false;
+                return false;
+            }
+            dismiss_dialog(app);
+            return true;
+        }
         Some(Action::DialogCancel) => {
             if matches!(active, DialogKind::Model) && app.model_selection.is_searching() {
                 app.model_selection.query.clear();

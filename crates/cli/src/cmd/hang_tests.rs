@@ -48,8 +48,8 @@ fn short_commands_are_debug_config_session() {
         base: None,
         json: false,
     }))));
-    assert!(!is_short_command(&cli(None)));
-    assert!(!is_short_command(&cli(Some(Commands::Run {
+    assert!(is_short_command(&cli(None)));
+    assert!(is_short_command(&cli(Some(Commands::Run {
         prompt: None,
         max_turns: None,
         format: whycodes_protocol::OutputFormat::Text,

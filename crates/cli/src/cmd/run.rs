@@ -441,6 +441,9 @@ pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
             .await
         })
         .map_err(map_tui_run_error)?;
+    // TUI already printed the session summary; do not wait forever on MCP /
+    // HTTP / index tasks still attached to this runtime.
+    super::hang::shutdown_runtime(rt);
     match exit {
         whycodes_tui::TuiExit::Quit => Ok(()),
         whycodes_tui::TuiExit::Upgrade => {

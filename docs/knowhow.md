@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-17 — Ctrl+C prints Session Summary then the process never exits
+
+**Symptom:** Interactive `whycodes` on Windows PowerShell: Ctrl+C restores the
+terminal and prints the Cline-style Session Summary, but the process stays
+alive. A second Ctrl+C does nothing. Task Manager is needed.
+
+**Root cause:** (1) Loop teardown aborted parked sessions' turns but left the
+*active* `rt.turn_join` running, so an in-flight LLM/MCP task kept Tokio
+alive. (2) Fast-path `cmd_run_fast_tui` and clap `Run` dropped the runtime
+with `Runtime::drop`, which waits forever; hang's `shutdown_timeout` only
+covered short commands. (3) Ctrl+C on the quit confirm mapped to
+`DialogCancel` (dismiss), so a second Ctrl+C never left. (4) Help advertised
+Ctrl+Q as force-quit but both chords opened the same confirm.
+
+**Fix:** Abort the active turn in `shutdown_runtime_queues`. Bounded
+`shutdown_runtime` after TUI `block_on` (fast path) and for clap `Run`.
+Second Ctrl+C on the quit confirm actually quits; Ctrl+Q is `ForceQuit`.
+Index watcher Drop is moved off the scanner thread (Windows RDCW teardown).
+
+**Prevention:** After `tui.stopped` / Session Summary the process must exit
+within hang's budget. Do not drop a TUI runtime without `shutdown_timeout`.
+Ctrl+C on a Quit confirm must not dismiss it.
+
 ### 2026-09-17 — Home-screen update modal never appeared (fast path)
 
 **Symptom:** A newer GitHub release used to open an "Update available" confirm

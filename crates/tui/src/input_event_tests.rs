@@ -360,6 +360,16 @@ fn quit_help_command_and_escape_modes() {
     assert!(handle_event(&mut a, key(KeyCode::Esc)));
     assert_eq!(a.mode, AppMode::Normal);
 
+    let mut confirm = app();
+    assert!(handle_event(&mut confirm, ctrl('c')));
+    assert_eq!(confirm.mode, AppMode::Dialog);
+    assert!(!handle_event(&mut confirm, ctrl('c')));
+    assert!(!confirm.running);
+
+    let mut force = app();
+    assert!(!handle_event(&mut force, ctrl('q')));
+    assert!(!force.running);
+
     a.mode = AppMode::Help;
     a.key_context = KeymapContext::Help;
     assert!(handle_event(&mut a, key(KeyCode::Char('?'))));

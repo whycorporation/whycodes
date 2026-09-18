@@ -4238,6 +4238,7 @@ fn warn_suggestion_catalog_and_shutdown() {
     shutdown_runtime_queues(&mut rt);
     assert!(rx.blocking_recv().ok() == Some(false));
     assert!(rt.pending_perm_queue.is_empty());
+    assert!(rt.turn_join.is_none());
 }
 
 #[tokio::test]

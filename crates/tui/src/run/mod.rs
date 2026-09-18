@@ -2187,15 +2187,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     }
     .await;
 
-    // Deny any hanging permissions / questionnaires so rt.agent tasks can finish
+    // Deny waiters, abort in-flight turns (including the active session),
+    // and kill background jobs so Tokio drop is not blocked on HTTP/MCP.
     shutdown_runtime_queues(&mut rt);
-
-    // Parked sessions: deny their waiters, abort their turns, persist.
     for mut bg in runtimes.drain(..) {
         shutdown_runtime_queues(&mut bg);
-        if let Some(h) = bg.turn_join.take() {
-            h.abort();
-        }
         bg.persist("shutdown");
     }
 
@@ -4002,6 +3998,12 @@ fn shutdown_runtime_queues(rt: &mut SessionRuntime) {
     }
     while let Some(req) = rt.pending_question_queue.pop_front() {
         let _ = req.reply.send(Err(QuestionError::Cancelled));
+    }
+    if let Some(flag) = rt.cancel_flag.as_ref() {
+        request_cancel(flag);
+    }
+    if let Some(h) = rt.turn_join.take() {
+        h.abort();
     }
     rt.agent.background_registry().kill_all();
 }
