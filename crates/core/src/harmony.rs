@@ -206,7 +206,7 @@ fn non_latin_after(text: &str, at: usize) -> bool {
             }
         } else if ch.is_ascii_whitespace() {
             // keep the run across spaces inside a junk blob
-        } else if ch.is_ascii() {
+        } else {
             run = 0;
         }
     }

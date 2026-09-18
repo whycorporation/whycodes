@@ -220,3 +220,33 @@ fn escaped_backslash_at_eof_and_odd_backticks() {
     assert!(scan_text("to=functions.read\\").is_none());
     assert!(scan_text("see \\` analysis to=functions.edit code").is_some());
 }
+
+#[test]
+fn underscore_glue_is_not_channel_adjacent() {
+    assert!(scan_text("x_analysis to=functions.edit").is_none());
+}
+
+#[test]
+fn latin1_supplement_resets_non_latin_run() {
+    // é is ASCII-adjacent Latin-1, not junk — run must reset.
+    assert!(scan_text("to=functions.edit \u{8d4c}\u{535a}\u{00e9}").is_none());
+}
+
+#[test]
+fn closed_then_open_fence_is_a_hit() {
+    let text = "```\nignore\n```\nanalysis to=functions.edit code leftover";
+    assert!(scan_text(text).is_some());
+}
+
+#[test]
+fn backslash_at_very_end_of_prefix() {
+    // Trailing `\` in the quoted-prefix walk (`i += 2` past EOF).
+    assert!(scan_text("\\to=functions.read next").is_none());
+}
+
+#[test]
+fn hunk_line_starting_with_plus_is_mid_hunk() {
+    let patch = "@@ -1 +1 @@\n+analysis to=functions.edit code\n";
+    let at = patch.find(MARKER).unwrap();
+    assert!(!leak_is_after_last_hunk(patch, at));
+}
