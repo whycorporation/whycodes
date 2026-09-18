@@ -113,6 +113,12 @@ fn hit_summary_names_cosignal() {
         co_signal: CoSignal::Cascade,
     };
     assert!(hit.summary().contains("cascade"));
+    assert_eq!(CoSignal::ChannelAdjacency.as_str(), "channel-adjacency");
+    assert_eq!(CoSignal::GlitchToken.as_str(), "glitch-token");
+    assert_eq!(CoSignal::NonLatinJunk.as_str(), "non-latin-junk");
+    assert_eq!(CoSignal::Cascade.as_str(), "cascade");
+    assert_eq!(CoSignal::FakeResultFraming.as_str(), "fake-result-framing");
+    assert_eq!(CoSignal::TrustedBoundary.as_str(), "trusted-boundary");
 }
 
 #[test]
