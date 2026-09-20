@@ -196,6 +196,7 @@ impl Config {
         }
         // Higher layer can only turn the sidebar on (default is off).
         merged.tui.show_sidebar |= other.tui.show_sidebar;
+        merged.tui.skip_openrouter_key_prompt |= other.tui.skip_openrouter_key_prompt;
         for (name, spec) in &other.tui.agent_colors {
             merged.tui.agent_colors.insert(name.clone(), spec.clone());
         }

@@ -518,7 +518,7 @@ fn apply_deferred_config(
     model: &mut String,
 ) {
     let mut loaded = Config::load_layered(&opts.project_dir)
-        .or_else(|_| Config::load())
+        .or_else(|_| Config::load_or_create())
         .unwrap_or_default();
     loaded.general.project_path = Some(opts.project_dir.clone());
     if !opts.provider_from_cli
@@ -1681,6 +1681,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             }
             maybe_offer_import(&mut app);
             maybe_offer_update(&mut app);
+            maybe_offer_openrouter_key(&mut app, &config, &provider, &api_key);
 
             // Expire toasts before drawing, so one never lingers a frame past
             // its time.
@@ -3870,6 +3871,84 @@ async fn apply_pending_picker_choices(
             catalog_tx,
         );
     }
+    apply_pending_openrouter_key(app, config, provider, model, api_key);
+}
+
+fn apply_pending_openrouter_key(
+    app: &mut TuiApp,
+    config: &mut Config,
+    provider: &mut String,
+    model: &mut String,
+    api_key: &mut String,
+) {
+    let Some(key) = app.pending_openrouter_key.take() else {
+        return;
+    };
+    if key.is_empty() {
+        if let Err(e) = config.mark_openrouter_key_prompt_skipped() {
+            tracing::warn!("could not persist OpenRouter skip flag: {e}");
+            config.tui.skip_openrouter_key_prompt = true;
+        }
+        app.openrouter_key_prompted = true;
+        app.status_message = "skipped OpenRouter key · /connect".into();
+        return;
+    }
+    match config.set_openrouter_api_key(&key) {
+        Ok(()) => {
+            *api_key = key;
+            *provider = whycodes_config::DEFAULT_PROVIDER.to_string();
+            if model.is_empty() || *model == "claude-sonnet-4-20250514" || *model == "default" {
+                *model = whycodes_config::DEFAULT_MODEL_ID.to_string();
+            }
+            app.provider_name = provider.clone();
+            app.model_name = model.clone();
+            app.status_message = format!(
+                "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
+                app.agent_name, provider, model
+            );
+            app.toasts
+                .push(crate::toast::ToastKind::Success, "OpenRouter API key saved");
+        }
+        Err(e) => {
+            app.toasts.push(
+                crate::toast::ToastKind::Error,
+                format!("Could not save API key: {e}"),
+            );
+        }
+    }
+    app.openrouter_key_prompted = true;
+}
+
+/// First-launch OpenRouter paste modal. After first paint, and only when the
+/// active provider is OpenRouter with no key (env / config / OAuth).
+fn maybe_offer_openrouter_key(app: &mut TuiApp, config: &Config, provider: &str, api_key: &str) {
+    if app.openrouter_key_prompted || app.dialogs.is_open() {
+        return;
+    }
+    if config.tui.skip_openrouter_key_prompt {
+        app.openrouter_key_prompted = true;
+        return;
+    }
+    if !api_key.is_empty() {
+        app.openrouter_key_prompted = true;
+        return;
+    }
+    if !provider.is_empty() && provider != whycodes_config::DEFAULT_PROVIDER {
+        app.openrouter_key_prompted = true;
+        return;
+    }
+    if std::env::var("OPENROUTER_API_KEY")
+        .ok()
+        .is_some_and(|v| !v.is_empty())
+    {
+        app.openrouter_key_prompted = true;
+        return;
+    }
+    app.openrouter_key_prompted = true;
+    app.openrouter_key_input.clear();
+    app.mode = crate::app::AppMode::Dialog;
+    app.key_context = crate::keymap::KeymapContext::Dialog;
+    app.dialogs.push(DialogKind::OpenRouterKey);
 }
 
 fn apply_idle_suggestion(app: &mut TuiApp, suggestion: String, agent_busy: bool) {

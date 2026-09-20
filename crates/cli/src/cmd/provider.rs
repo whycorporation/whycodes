@@ -152,7 +152,7 @@ pub(crate) fn no_agents_configured_line() -> &'static str {
 }
 
 pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
-    let mut config = Config::load()?;
+    let mut config = Config::load_or_create()?;
 
     match cmd {
         ProviderCmd::List => {
@@ -246,7 +246,7 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
 
 /// `model` — Model management
 pub(crate) async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
-    let config = Config::load()?;
+    let config = Config::load_or_create()?;
 
     match cmd {
         ModelCmd::List => {
@@ -316,7 +316,7 @@ pub(crate) async fn cmd_plugins(cli: &Cli, cmd: Option<&PluginsCmd>) -> anyhow::
 }
 
 pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
-    let config = Config::load()?;
+    let config = Config::load_or_create()?;
 
     match name {
         Some(name) => {

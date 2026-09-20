@@ -10,13 +10,13 @@ When you fix a non-obvious bug: **append an entry** (newest first under [Log](#l
 
 | Symptom | First check |
 |--------|-------------|
-| TUI opens and dies immediately | `tail -40 ~/.local/share/whycodes/logs/unified.jsonl` |
-| Panic? | `ls ~/.local/share/whycodes/crash/` (empty ⇒ usually not a panic) |
+| TUI opens and dies immediately | `tail -40 ~/.whycodes/logs/unified.jsonl` |
+| Panic? | `ls ~/.whycodes/crash/` (empty ⇒ usually not a panic) |
 | Silent clean exit | Look for `tui.exit` / `tui.loop_error` / `main.exit_error` in JSONL |
 | No TUI, plain mode | `stdin_tty` / `stdout_tty` / controlling console in `tui.starting` |
 | CI `Budgets` / `Check & Lint` red | Rule 8 — run the three `scripts/check_*.py` + `clippy -D warnings` locally |
 
-Lifecycle events written to **`~/.local/share/whycodes/logs/unified.jsonl`** (always-on):
+Lifecycle events written to **`~/.whycodes/logs/unified.jsonl`** (always-on):
 
 | `msg` | Meaning |
 |-------|---------|
@@ -35,7 +35,7 @@ Lifecycle events written to **`~/.local/share/whycodes/logs/unified.jsonl`** (al
 
 ```bash
 # After a bad run:
-tail -40 ~/.local/share/whycodes/logs/unified.jsonl
+tail -40 ~/.whycodes/logs/unified.jsonl
 ```
 
 ---
@@ -143,6 +143,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 ---
 
 ## Log
+
+### 2026-09-20 — Default instance is `~/.whycodes`, not ProjectDirs
+
+**Symptom:** Fresh install used reverse-DNS / XDG paths
+(`com.whycorporation.whycodes`, `~/.config/…`, macOS Application Support).
+No `config.toml` was written; TUI only printed `no API key · /connect`.
+
+**JSONL / crash:** none.
+
+**Root cause:** `directories::ProjectDirs::from("com", "whycorporation", "whycodes")`
+split config and data. `Config::load` returned in-memory defaults without
+creating the file. CLI/server fallbacks were hard-coded Anthropic.
+
+**Fix:** `~/.whycodes/` on every OS (`WHYCODES_HOME` still relocates). First
+load seeds `[providers.openrouter]` and writes `config.toml`. TUI first-open
+modal pastes an OpenRouter key. Old ProjectDirs files copy into the new root
+when it is empty.
+
+**Prevention:** Do not reintroduce `ProjectDirs` as the default. Keep
+first-run write off the TTFF path (`Config::load` after first paint).
 
 ### 2026-09-17 — Ctrl+C prints Session Summary then the process never exits
 

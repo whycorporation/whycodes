@@ -349,6 +349,7 @@ impl Keymap {
                 (false, KeyCode::Char('d')) => Some(Action::DialogCancel),  // deny
                 (false, KeyCode::Backspace) => Some(Action::InputBackspace),
                 (true, KeyCode::Char('s')) => Some(Action::DialogConfirm),
+                (true, KeyCode::Char('v')) => Some(Action::PasteClipboard),
                 // Second Ctrl+C on the quit confirm means "yes, leave".
                 (true, KeyCode::Char('c')) => Some(Action::Quit),
                 (true, KeyCode::Char('q')) => Some(Action::ForceQuit),
@@ -454,6 +455,7 @@ fn dialog_bindings() -> Vec<KeyBinding> {
             KeymapContext::Dialog,
         ),
         KeyBinding::new("Ctrl+S", "Save (provider form)", KeymapContext::Dialog),
+        KeyBinding::new("Ctrl+V", "Paste (API key)", KeymapContext::Dialog),
         KeyBinding::new("Ctrl+C", "Cancel", KeymapContext::Dialog),
     ]
 }

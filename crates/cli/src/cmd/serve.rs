@@ -51,7 +51,7 @@ pub(crate) async fn cmd_connect(
 
     let project_dir = resolve_dir(cli);
     let mut config = Config::load_layered(&project_dir)
-        .or_else(|_| Config::load())
+        .or_else(|_| Config::load_or_create())
         .unwrap_or_default();
     config.load_command_files(&project_dir);
     let provider = resolve_provider(cli, &config);
@@ -105,7 +105,7 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
     println!("{}", serve_start_line(port));
     println!("  project: {}", project_dir.display());
 
-    let mut config = Config::load()?;
+    let mut config = Config::load_or_create()?;
     config.load_command_files(&project_dir);
     let agent_info = config
         .default_agent()

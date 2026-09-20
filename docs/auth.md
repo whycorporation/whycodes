@@ -16,8 +16,8 @@ An explicit key therefore never loses to a stored subscription login.
 ## Auth plugins
 
 OAuth specs come from `plugin.json` with `"kind": "auth"`. Drop a plugin
-directory into `~/.config/com.whycorporation.whycodes/plugins/` or
-`<project>/.whycodes/plugins/`. The CLI loads those dirs at startup;
+directory into `~/.whycodes/plugins/` or `<project>/.whycodes/plugins/`.
+The CLI loads those dirs at startup;
 `kind: "auth"` plugins never become shell tools.
 
 WhyCodes does **not** ship subscription-login plugins. Install a local
@@ -56,8 +56,10 @@ suggested models (`whycodes_auth::suggested_models`).
 | `<data_dir>/auth.json` | OAuth access/refresh tokens per provider | `0600` (owner-only; a looser file is refused) |
 | `<data_dir>/auth-consent.json` | Per-path approve/deny decisions for credential import | `0600` |
 
-`<data_dir>` is the platform data dir (`~/.local/share/whycodes` on Linux,
-`~/Library/Application Support/com.whycorporation.whycodes` on macOS).
+`<data_dir>` is `~/.whycodes` on every OS (`%USERPROFILE%\.whycodes` on
+Windows), or `$WHYCODES_HOME` when set. Pre-0.7 installs under
+`com.whycorporation.whycodes` / XDG are copied into `~/.whycodes` on first
+load when the new path is empty.
 Writes are atomic (temp file + rename). Tokens never appear in logs or
 `Debug` output at any level.
 

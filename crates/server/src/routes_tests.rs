@@ -63,7 +63,10 @@ fn hardcoded_fallback_when_nothing_is_configured() {
     let (p, m) = default_provider_model(&c);
     assert_eq!(
         (p.as_str(), m.as_str()),
-        ("anthropic", "claude-sonnet-4-20250514")
+        (
+            whycodes_config::DEFAULT_PROVIDER,
+            whycodes_config::DEFAULT_MODEL_ID
+        )
     );
 }
 

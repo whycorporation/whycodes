@@ -25,6 +25,69 @@ pub fn render_provider_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &The
     }
 }
 
+/// First-launch OpenRouter API-key paste box.
+pub fn render_openrouter_key_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
+    let chrome = dialog_frame(
+        frame,
+        "OpenRouter API key",
+        &["Enter save", "Esc skip", "Ctrl+V paste"],
+        palette,
+        app.mouse_pos,
+    );
+    app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
+    let area = chrome.content;
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let masked = if app.openrouter_key_input.is_empty() {
+        String::new()
+    } else {
+        "*".repeat(app.openrouter_key_input.chars().count().min(40))
+    };
+    let lines = vec![
+        Line::from(Span::styled(
+            "Add an OpenRouter API key to start chatting?",
+            Style::default().fg(palette.fg),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Get a key at https://openrouter.ai/keys",
+            Style::default().fg(palette.dim),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "▸ API Key  ",
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                if masked.is_empty() {
+                    "(paste here)".to_string()
+                } else {
+                    masked
+                },
+                Style::default().fg(if app.openrouter_key_input.is_empty() {
+                    palette.dim
+                } else {
+                    palette.fg
+                }),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Esc skips. /connect and Ctrl+P stay available later.",
+            Style::default().fg(palette.dim),
+        )),
+    ];
+    let p = Paragraph::new(Text::from(lines))
+        .wrap(Wrap { trim: true })
+        .style(Style::default().bg(palette.bg));
+    frame.render_widget(p, area);
+}
+
 fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     let chrome = dialog_frame(
         frame,

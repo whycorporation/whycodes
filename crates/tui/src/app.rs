@@ -67,6 +67,8 @@ pub enum DialogKind {
     ApprovalMode,
     /// Checkbox picker: which MCP / permission / hook rows to copy.
     Import,
+    /// First-launch OpenRouter API-key paste box.
+    OpenRouterKey,
 }
 
 /// One row in the `/login` provider picker.
@@ -1472,6 +1474,12 @@ pub struct TuiApp {
     pub(crate) pending_import: bool,
     /// Checkbox picker for which MCP / permission / hook rows to copy.
     pub(crate) import_picker: ImportPickerState,
+    /// Draft in the first-launch OpenRouter API-key modal.
+    pub(crate) openrouter_key_input: String,
+    /// True after the first-launch OpenRouter key modal has been shown or skipped.
+    pub(crate) openrouter_key_prompted: bool,
+    /// Confirmed OpenRouter key waiting for the run loop to persist + `/connect`.
+    pub(crate) pending_openrouter_key: Option<String>,
 
     /// Primary agent names for Ctrl+T cycling (build/plan).
     pub(crate) primary_agents: Vec<String>,
@@ -2192,6 +2200,9 @@ impl TuiApp {
             import_prompted: false,
             pending_import: false,
             import_picker: ImportPickerState::default(),
+            openrouter_key_input: String::new(),
+            openrouter_key_prompted: false,
+            pending_openrouter_key: None,
             primary_agents: vec!["build".into(), "plan".into(), "ask".into()],
             agent_cycle_idx: 0,
             provider_name: String::new(),

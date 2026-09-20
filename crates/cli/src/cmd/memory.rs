@@ -8,7 +8,7 @@ use whycodes_config::Config;
 pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
     let project_dir = resolve_dir(cli);
     let mut config = Config::load_layered(&project_dir)
-        .or_else(|_| Config::load())
+        .or_else(|_| Config::load_or_create())
         .unwrap_or_default();
     if cli.no_memory {
         config.memory.enabled = false;

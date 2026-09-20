@@ -132,7 +132,10 @@ pub fn default_provider_model(config: &whycodes_config::Config) -> (String, Stri
     if let Some((name, _)) = config.providers.iter().next() {
         return (name.clone(), "default".into());
     }
-    ("anthropic".into(), "claude-sonnet-4-20250514".into())
+    (
+        whycodes_config::DEFAULT_PROVIDER.into(),
+        whycodes_config::DEFAULT_MODEL_ID.into(),
+    )
 }
 
 pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {

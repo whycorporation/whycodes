@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use whycodes_config::Config;
 
 pub(crate) async fn cmd_config(cmd: &ConfigCmd) -> anyhow::Result<()> {
-    let config = Config::load()?;
+    let config = Config::load_or_create()?;
 
     match cmd {
         ConfigCmd::Show => {

@@ -619,6 +619,14 @@ fn dialog_context() {
         k.resolve(
             KeymapContext::Dialog,
             FocusPane::Prompt,
+            &ctrl(KeyCode::Char('v'))
+        ),
+        Some(Action::PasteClipboard)
+    );
+    assert_eq!(
+        k.resolve(
+            KeymapContext::Dialog,
+            FocusPane::Prompt,
             &ctrl(KeyCode::Char('c'))
         ),
         Some(Action::Quit)

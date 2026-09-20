@@ -83,7 +83,7 @@ pub(crate) fn resolve_provider(cli: &Cli, config: &Config) -> String {
                 .filter(|id| !id.is_empty())
         })
         .or_else(|| config.providers.keys().next().cloned())
-        .unwrap_or_else(|| "anthropic".to_string())
+        .unwrap_or_else(|| whycodes_config::DEFAULT_PROVIDER.to_string())
 }
 
 pub(crate) fn resolve_model(cli: &Cli, config: &Config) -> String {
@@ -92,7 +92,7 @@ pub(crate) fn resolve_model(cli: &Cli, config: &Config) -> String {
             .default_model
             .as_ref()
             .map(|m| m.model_id.clone())
-            .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string())
+            .unwrap_or_else(|| whycodes_config::DEFAULT_MODEL_ID.to_string())
     })
 }
 
