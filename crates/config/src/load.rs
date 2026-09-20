@@ -94,10 +94,7 @@ pub(crate) fn migrate_legacy_into(dest: &Path, sources: &[PathBuf]) {
         return;
     };
     if let Err(e) = std::fs::create_dir_all(dest) {
-        tracing::warn!(
-            "legacy config migrate: could not create {}: {e}",
-            dest.display()
-        );
+        tracing::warn!("legacy config migrate: mkdir {}: {e}", dest.display());
         return;
     }
     for name in ["config.toml", "auth.json", "whycodes.db"] {
@@ -117,11 +114,7 @@ pub(crate) fn copy_if_missing(src: &Path, dest: &Path) {
     }
     match std::fs::copy(src, dest) {
         Ok(_) => tracing::info!("migrated {} → {}", src.display(), dest.display()),
-        Err(e) => tracing::warn!(
-            "legacy config migrate: copy {} → {} failed: {e}",
-            src.display(),
-            dest.display()
-        ),
+        Err(e) => tracing::warn!("legacy config migrate: copy {} failed: {e}", dest.display()),
     }
 }
 

@@ -1714,6 +1714,8 @@ fn load_missing_file_seeds_openrouter() {
         std::fs::write(home.join("config.toml"), "default_agent = \"plan\"\n").unwrap();
         let again = Config::load_or_create().unwrap();
         assert_eq!(again.default_agent, "plan");
+        let third = Config::load_or_create().unwrap();
+        assert_eq!(third.default_agent, "plan");
     });
 }
 
@@ -1810,6 +1812,14 @@ fn write_atomic_cleanup_when_persist_fails() {
     let dest = blocker.join("config.toml");
     let err = crate::load::write_atomic(&dest, b"hi").unwrap_err();
     assert!(!err.to_string().is_empty());
+
+    let dest = dir.path().join("config.toml");
+    std::fs::write(&dest, "old").unwrap();
+    let pid = std::process::id();
+    let leftover = dir.path().join(format!(".config.toml.tmp-{pid}-0"));
+    std::fs::write(&leftover, "stale").unwrap();
+    crate::load::write_atomic(&dest, b"new").unwrap();
+    assert_eq!(std::fs::read_to_string(&dest).unwrap(), "new");
 }
 
 #[test]
@@ -1827,6 +1837,18 @@ fn migrate_legacy_into_skips_when_dest_is_a_file() {
     std::fs::write(src.path().join("config.toml"), "x = 1\n").unwrap();
     crate::load::migrate_legacy_into(dest_file.path(), &[src.path().to_path_buf()]);
     assert!(dest_file.path().is_file());
+}
+
+#[test]
+fn migrate_legacy_into_mkdir_fails_when_parent_is_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("not-a-dir");
+    std::fs::write(&blocker, "x").unwrap();
+    let src = tempfile::tempdir().unwrap();
+    std::fs::write(src.path().join("config.toml"), "x = 1\n").unwrap();
+    let dest = blocker.join("whycodes");
+    crate::load::migrate_legacy_into(&dest, &[src.path().to_path_buf()]);
+    assert!(!dest.join("config.toml").exists());
 }
 
 #[test]
@@ -1865,6 +1887,21 @@ fn set_openrouter_api_key_and_skip_flag() {
             existing.providers["openrouter"].api_key.as_deref(),
             Some("sk-or-v1-named")
         );
+
+        let mut empty = Config::default();
+        empty.set_openrouter_api_key("sk-or-v1-insert").unwrap();
+        assert_eq!(
+            empty.providers["openrouter"].api_key.as_deref(),
+            Some("sk-or-v1-insert")
+        );
+        assert!(empty.default_model.is_some());
+
+        std::fs::remove_file(home.join("config.toml")).ok();
+        std::fs::create_dir(home.join("config.toml")).unwrap();
+        let err = empty.mark_openrouter_key_prompt_skipped().unwrap_err();
+        assert!(!err.to_string().is_empty());
+        let err = empty.set_openrouter_api_key("sk-or-v1-fail").unwrap_err();
+        assert!(!err.to_string().is_empty());
     });
 }
 
