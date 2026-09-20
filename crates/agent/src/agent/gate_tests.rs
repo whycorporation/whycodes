@@ -142,6 +142,14 @@ fn retryable_skips_policy_and_question() {
         "bash",
         &err("Refused: catastrophic")
     ));
+    assert!(!tool_error_is_retryable(
+        "bash",
+        &err("denied:headless — tool 'bash' requires confirmation")
+    ));
+    assert!(!tool_error_is_retryable(
+        "write",
+        &err("Refused: filesystem is read_only")
+    ));
     assert_eq!(AUTO_TOOL_RETRY_LIMIT, 2);
 }
 
@@ -1266,4 +1274,338 @@ async fn intent_refuse_does_not_prompt() {
         result.content
     );
     assert_eq!(asks.asks.load(Ordering::SeqCst), 0, "{result:?}");
+}
+
+fn sentinel_bash(dir: &std::path::Path, name: &str) -> (std::path::PathBuf, ToolCall) {
+    let path = dir.join(name);
+    // Relative path: tool_context cwd is `dir`, so Git Bash and cmd.exe both
+    // write next to the fixture without Windows-backslash quoting issues.
+    (
+        path,
+        tc("bash", json!({ "command": format!("echo pwned > {name}") })),
+    )
+}
+
+#[tokio::test]
+async fn headless_fail_closed_ask_does_not_execute_sentinel_bash() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sentinel, call) = sentinel_bash(dir.path(), "headless-deny.txt");
+    let mut info = info("build");
+    info.permission
+        .rules
+        .insert("bash".into(), PermissionAction::Ask);
+    let a = Agent::new(info)
+        .with_headless_ask(whycodes_core::HeadlessAskPolicy::Deny)
+        .with_permission_prompter(Arc::new(crate::permission::AutoDenyPrompter));
+    assert_eq!(a.headless_ask(), whycodes_core::HeadlessAskPolicy::Deny);
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let result = a
+        .execute_with_permission(&call, &session, &ctx, "script", "m", "k", None, None)
+        .await;
+    assert!(result.is_error, "{result:?}");
+    assert!(
+        result.content.contains("denied:headless"),
+        "{}",
+        result.content
+    );
+    assert!(
+        !sentinel.exists(),
+        "sentinel must not be created: {sentinel:?}"
+    );
+}
+
+#[tokio::test]
+async fn headless_ask_fail_stamps_denied_headless() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sentinel, call) = sentinel_bash(dir.path(), "headless-ask-fail.txt");
+    let mut info = info("build");
+    info.permission
+        .rules
+        .insert("bash".into(), PermissionAction::Ask);
+    let a = Agent::new(info)
+        .with_headless_ask(whycodes_core::HeadlessAskPolicy::AskFail)
+        .with_permission_prompter(Arc::new(crate::permission::AutoDenyPrompter));
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let result = a
+        .execute_with_permission(&call, &session, &ctx, "script", "m", "k", None, None)
+        .await;
+    assert!(result.is_error, "{result:?}");
+    assert!(
+        result.content.contains("denied:headless"),
+        "{}",
+        result.content
+    );
+    assert!(!sentinel.exists(), "{sentinel:?}");
+}
+
+#[tokio::test]
+async fn headless_permission_allow_runs_ask_gated_bash() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sentinel, call) = sentinel_bash(dir.path(), "headless-allow-rule.txt");
+    let mut info = info("build");
+    info.permission
+        .rules
+        .insert("bash".into(), PermissionAction::Allow);
+    let a = Agent::new(info)
+        .with_headless_ask(whycodes_core::HeadlessAskPolicy::Deny)
+        .with_permission_prompter(Arc::new(crate::permission::AutoDenyPrompter));
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let result = a
+        .execute_with_permission(&call, &session, &ctx, "script", "m", "k", None, None)
+        .await;
+    assert!(!result.is_error, "{result:?}");
+    assert!(
+        !result.content.contains("denied:headless"),
+        "{}",
+        result.content
+    );
+    assert!(
+        sentinel.exists(),
+        "allow rule must run the command: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn headless_approve_tools_policy_runs_ask_gated_bash() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sentinel, call) = sentinel_bash(dir.path(), "headless-approve-tools.txt");
+    let mut info = info("build");
+    info.permission
+        .rules
+        .insert("bash".into(), PermissionAction::Ask);
+    let a = Agent::new(info)
+        .with_headless_ask(whycodes_core::HeadlessAskPolicy::Allow)
+        .with_permission_prompter(Arc::new(crate::permission::AutoApprovePrompter));
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let result = a
+        .execute_with_permission(&call, &session, &ctx, "script", "m", "k", None, None)
+        .await;
+    assert!(!result.is_error, "{result:?}");
+    assert!(
+        !result.content.contains("denied:headless"),
+        "{}",
+        result.content
+    );
+    assert!(
+        sentinel.exists(),
+        "allow policy must run the command: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn headless_fail_closed_still_auto_picks_question() {
+    let mut info = info("build");
+    info.permission
+        .rules
+        .insert("question".into(), PermissionAction::Ask);
+    let a = Agent::new(info)
+        .with_headless_ask(whycodes_core::HeadlessAskPolicy::Deny)
+        .with_permission_prompter(Arc::new(crate::permission::AutoDenyPrompter));
+    let (session, ctx) = session_ctx(&a);
+    let result = a
+        .execute_with_permission(
+            &tc(
+                "question",
+                json!({"question": "Pick", "choices": ["A", "B"]}),
+            ),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(!result.is_error, "{result:?}");
+    assert!(
+        !result.content.contains("denied:headless"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains('A') || result.content.to_ascii_lowercase().contains("auto"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn delete_guard_denies_rm_under_headless_but_not_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    let tracked = dir.path().join("notes.txt");
+    std::fs::write(&tracked, "keep").unwrap();
+    let mut a = Agent::new(info("build"))
+        .with_headless_ask(whycodes_core::HeadlessAskPolicy::Deny)
+        .with_permission_prompter(Arc::new(crate::permission::AutoDenyPrompter));
+    a.sandbox.filesystem = whycodes_core::FilesystemMode::DeleteGuard;
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+
+    let rm = a
+        .execute_with_permission(
+            &tc("bash", json!({"command": "rm notes.txt"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(rm.is_error, "{rm:?}");
+    assert!(rm.content.contains("denied:headless"), "{}", rm.content);
+    assert!(
+        tracked.exists(),
+        "rm must not run under delete_guard+headless"
+    );
+
+    let compile = a
+        .execute_with_permission(
+            &tc("bash", json!({"command": "echo compiled"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(!compile.is_error, "{compile:?}");
+    assert!(
+        !compile.content.contains("denied:headless"),
+        "{}",
+        compile.content
+    );
+}
+
+#[tokio::test]
+async fn delete_guard_prompts_when_human_prompter_present() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "keep").unwrap();
+    let asks = Arc::new(CountingDenyPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut a = Agent::new(info("build")).with_permission_prompter(asks.clone());
+    a.set_approval_mode(ApprovalMode::Manual);
+    a.sandbox.filesystem = whycodes_core::FilesystemMode::DeleteGuard;
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let result = a
+        .execute_with_permission(
+            &tc("bash", json!({"command": "rm notes.txt"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(asks.asks.load(Ordering::SeqCst), 1, "{result:?}");
+    assert!(result.is_error, "{result:?}");
+    assert!(
+        result.content.contains("User denied permission"),
+        "{}",
+        result.content
+    );
+    assert!(dir.path().join("notes.txt").exists());
+}
+
+#[tokio::test]
+async fn default_filesystem_does_not_force_ask_on_project_rm() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "keep").unwrap();
+    let asks = Arc::new(CountingDenyPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut a = Agent::new(info("build")).with_permission_prompter(asks.clone());
+    a.set_approval_mode(ApprovalMode::Manual);
+    assert_eq!(
+        a.sandbox.filesystem,
+        whycodes_core::FilesystemMode::WorkspaceWrite
+    );
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let result = a
+        .execute_with_permission(
+            &tc("bash", json!({"command": "rm notes.txt"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(asks.asks.load(Ordering::SeqCst), 0, "{result:?}");
+    assert!(!result.content.contains("denied:headless"), "{result:?}");
+}
+
+#[tokio::test]
+async fn read_only_filesystem_refuses_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nope.txt");
+    let mut a = Agent::new(info("build"));
+    a.sandbox.filesystem = whycodes_core::FilesystemMode::ReadOnly;
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let result = a
+        .execute_with_permission(
+            &tc("write", json!({"path": "nope.txt", "content": "x"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(result.is_error, "{result:?}");
+    assert!(result.content.contains("read_only"), "{}", result.content);
+    assert!(!path.exists(), "{path:?}");
+}
+
+#[tokio::test]
+async fn verifier_agent_cannot_write_fixture_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fixture.txt");
+    let cfg = whycodes_config::Config::default();
+    let info = cfg.get_agent("verifier").expect("verifier").clone();
+    assert!(!info.permission.allow_file_writes);
+    let a = Agent::new(info);
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let result = a
+        .execute_with_permission(
+            &tc("write", json!({"path": "fixture.txt", "content": "nope"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(result.is_error, "{result:?}");
+    assert!(
+        result
+            .content
+            .to_ascii_lowercase()
+            .contains("permission denied")
+            || result.content.contains("denied"),
+        "{}",
+        result.content
+    );
+    assert!(!path.exists(), "verifier must not create {path:?}");
 }

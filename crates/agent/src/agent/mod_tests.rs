@@ -180,11 +180,26 @@ fn tool_signatures_and_doom_loop() {
 
 #[test]
 fn system_prompt_for_known_and_unknown_agents() {
-    for name in ["build", "plan", "ask", "explore", "general", "scout"] {
+    for name in [
+        "build", "plan", "ask", "explore", "general", "scout", "verifier",
+    ] {
         let p = Agent::system_prompt_for(name);
         assert!(!p.is_empty(), "{name}");
         assert!(!p.contains("Today's date:"), "{name}");
     }
+    let verifier = Agent::system_prompt_for("verifier");
+    assert!(
+        verifier.contains("ok: true") || verifier.contains("issues"),
+        "verifier prompt must describe the structured verdict"
+    );
+    assert!(
+        verifier.to_ascii_lowercase().contains("read-only") || verifier.contains("READ-ONLY"),
+        "verifier prompt must be read-only"
+    );
+    assert_eq!(
+        Agent::system_prompt_for("review"),
+        Agent::system_prompt_for("verifier")
+    );
     assert!(
         Agent::system_prompt_for("build").contains("todowrite"),
         "build prompt must instruct todo use"

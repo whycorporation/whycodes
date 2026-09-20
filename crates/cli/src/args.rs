@@ -96,6 +96,13 @@ pub struct Cli {
     /// Skip the home-screen "update available?" prompt for this process
     #[arg(long = "no-auto-update", global = true)]
     pub no_auto_update: bool,
+
+    /// Auto-approve permission `ask` on structured / headless runs
+    /// (`--format json` / `stream-json`). Default is fail-closed
+    /// (`session.headless_ask = "deny"`). TUI `auto` / `important` /
+    /// `manual` are unchanged. `question` stays auto-picked either way.
+    #[arg(long = "approve-tools", global = true)]
+    pub approve_tools: bool,
 }
 
 #[derive(Subcommand, Debug)]

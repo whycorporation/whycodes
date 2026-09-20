@@ -532,6 +532,57 @@ impl std::fmt::Display for ApprovalMode {
     }
 }
 
+/// What to do with permission `ask` on structured / headless runs
+/// (`--format json` / `stream-json`). TUI `auto` / `important` / `manual`
+/// are unchanged; this policy is applied only when the host opts in
+/// (generate / `run --format json`).
+///
+/// Default is fail-closed: `ask` becomes deny with `denied:headless` on
+/// the tool result. `[permission]` `allow` still runs the tool.
+/// `--approve-tools` / `session.headless_ask = "allow"` restore the old
+/// auto-approve. `question` is not this policy — it stays auto-picked.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum HeadlessAskPolicy {
+    /// Fail the tool; stamp `denied:headless`. Default for json/stream-json.
+    #[default]
+    Deny,
+    /// Auto-approve `ask` (pre-#122 structured behaviour).
+    Allow,
+    /// Same fail-closed outcome as [`Deny`] when no human is on the pipe.
+    AskFail,
+}
+
+impl HeadlessAskPolicy {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "deny" | "fail" => Some(Self::Deny),
+            "allow" | "approve" | "auto" => Some(Self::Allow),
+            "ask-fail" | "ask_fail" | "askfail" => Some(Self::AskFail),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Deny => "deny",
+            Self::Allow => "allow",
+            Self::AskFail => "ask-fail",
+        }
+    }
+
+    /// True when an `ask` must not run (json/headless default).
+    pub fn fails_closed(self) -> bool {
+        matches!(self, Self::Deny | Self::AskFail)
+    }
+}
+
+impl std::fmt::Display for HeadlessAskPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// OpenCode-style permission action for a tool or pattern.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]

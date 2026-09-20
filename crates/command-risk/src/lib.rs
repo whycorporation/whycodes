@@ -41,7 +41,9 @@ mod assess;
 mod paths;
 mod tokenize;
 
-pub use assess::{Assessment, RiskLevel, assess, assess_with_home};
+pub use assess::{
+    Assessment, RiskLevel, assess, assess_with_home, delete_guard_reason, is_delete_guard_command,
+};
 pub use paths::PathScope;
 
 /// The level at which whycodes starts asking for confirmation.

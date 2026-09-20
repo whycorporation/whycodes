@@ -5,7 +5,7 @@ use crate::cmd::auth::auth_expiry_label;
 use crate::cmd::config::{get_config_value, set_config_value};
 use crate::cmd::debug::should_auto_update_with_env;
 use whycodes_agent::agent::Agent;
-use whycodes_core::types::{ModelConfig, ProviderConfig};
+use whycodes_core::types::{HeadlessAskPolicy, ModelConfig, ProviderConfig};
 use whycodes_protocol::{CiEvent, ResultMeta};
 
 use crate::cmd::helpers::lock_env;
@@ -224,6 +224,7 @@ fn cli(command: Option<Commands>) -> Cli {
         debug: false,
         no_auto_update: false,
         no_memory: false,
+        approve_tools: false,
     }
 }
 
@@ -396,6 +397,35 @@ fn runtime_choice_per_command() {
         base: None,
         json: false,
     }))));
+}
+
+#[test]
+fn structured_headless_ask_honours_flag_and_config() {
+    let cfg = Config::default();
+    assert_eq!(
+        structured_headless_ask(false, &cfg),
+        HeadlessAskPolicy::Deny
+    );
+    assert_eq!(
+        structured_headless_ask(true, &cfg),
+        HeadlessAskPolicy::Allow
+    );
+    let mut allow = Config::default();
+    allow.session.headless_ask = "allow".into();
+    assert_eq!(
+        structured_headless_ask(false, &allow),
+        HeadlessAskPolicy::Allow
+    );
+    let mut fail = Config::default();
+    fail.session.headless_ask = "ask-fail".into();
+    assert_eq!(
+        structured_headless_ask(false, &fail),
+        HeadlessAskPolicy::AskFail
+    );
+    assert_eq!(
+        structured_headless_ask(true, &fail),
+        HeadlessAskPolicy::Allow
+    );
 }
 
 #[test]
@@ -1594,6 +1624,7 @@ async fn run_one_parallel_turn_unknown_provider_fails() {
         Some(1),
         OutputFormat::Text,
         dir.path(),
+        false,
         false,
     )
     .await;

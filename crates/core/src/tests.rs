@@ -1352,20 +1352,56 @@ mod sandbox_tests {
     fn settings_off_default_and_from_raw() {
         let d = SandboxSettings::default();
         assert_eq!(d.mode, SandboxMode::Workspace);
+        assert_eq!(d.filesystem, FilesystemMode::WorkspaceWrite);
         assert!(d.network);
         assert_eq!(d.fallback, SandboxFallback::Allow);
 
         let off = SandboxSettings::off();
         assert_eq!(off.mode, SandboxMode::Off);
+        assert_eq!(off.filesystem, FilesystemMode::FullAccess);
 
         let ok = SandboxSettings::from_raw("off", false, "deny");
         assert_eq!(ok.mode, SandboxMode::Off);
         assert!(!ok.network);
         assert_eq!(ok.fallback, SandboxFallback::Deny);
+        assert_eq!(ok.filesystem, FilesystemMode::WorkspaceWrite);
 
         let bad = SandboxSettings::from_raw("??? ", true, "???");
         assert_eq!(bad.mode, SandboxMode::Workspace);
         assert_eq!(bad.fallback, SandboxFallback::Allow);
+
+        let fs = SandboxSettings::from_raw_fs("workspace", true, "allow", "delete_guard");
+        assert_eq!(fs.filesystem, FilesystemMode::DeleteGuard);
+        let fs_bad = SandboxSettings::from_raw_fs("workspace", true, "allow", "nope");
+        assert_eq!(fs_bad.filesystem, FilesystemMode::WorkspaceWrite);
+    }
+
+    #[test]
+    fn filesystem_mode_parses_and_displays() {
+        assert_eq!(
+            "full_access".parse::<FilesystemMode>().unwrap(),
+            FilesystemMode::FullAccess
+        );
+        assert_eq!(
+            "workspace_write".parse::<FilesystemMode>().unwrap(),
+            FilesystemMode::WorkspaceWrite
+        );
+        assert_eq!(
+            "delete_guard".parse::<FilesystemMode>().unwrap(),
+            FilesystemMode::DeleteGuard
+        );
+        assert_eq!(
+            "read_only".parse::<FilesystemMode>().unwrap(),
+            FilesystemMode::ReadOnly
+        );
+        assert!("maybe".parse::<FilesystemMode>().is_err());
+        assert_eq!(FilesystemMode::DeleteGuard.as_str(), "delete_guard");
+        assert_eq!(FilesystemMode::default(), FilesystemMode::WorkspaceWrite);
+        assert!(FilesystemMode::DeleteGuard.guards_deletes());
+        assert!(FilesystemMode::ReadOnly.guards_deletes());
+        assert!(!FilesystemMode::WorkspaceWrite.guards_deletes());
+        assert!(FilesystemMode::DeleteGuard.allows_writes());
+        assert!(!FilesystemMode::ReadOnly.allows_writes());
     }
 }
 
@@ -2001,6 +2037,40 @@ mod types_tests {
             "Prompt on every question and permission ask"
         );
         assert_eq!(ApprovalMode::ALL.len(), 3);
+
+        assert_eq!(
+            HeadlessAskPolicy::parse("deny"),
+            Some(HeadlessAskPolicy::Deny)
+        );
+        assert_eq!(
+            HeadlessAskPolicy::parse("fail"),
+            Some(HeadlessAskPolicy::Deny)
+        );
+        assert_eq!(
+            HeadlessAskPolicy::parse("allow"),
+            Some(HeadlessAskPolicy::Allow)
+        );
+        assert_eq!(
+            HeadlessAskPolicy::parse("approve"),
+            Some(HeadlessAskPolicy::Allow)
+        );
+        assert_eq!(
+            HeadlessAskPolicy::parse("ask-fail"),
+            Some(HeadlessAskPolicy::AskFail)
+        );
+        assert_eq!(
+            HeadlessAskPolicy::parse("ask_fail"),
+            Some(HeadlessAskPolicy::AskFail)
+        );
+        assert_eq!(HeadlessAskPolicy::parse("???"), None);
+        assert_eq!(HeadlessAskPolicy::default(), HeadlessAskPolicy::Deny);
+        assert!(HeadlessAskPolicy::Deny.fails_closed());
+        assert!(HeadlessAskPolicy::AskFail.fails_closed());
+        assert!(!HeadlessAskPolicy::Allow.fails_closed());
+        assert_eq!(HeadlessAskPolicy::Deny.as_str(), "deny");
+        assert_eq!(HeadlessAskPolicy::Allow.as_str(), "allow");
+        assert_eq!(HeadlessAskPolicy::AskFail.as_str(), "ask-fail");
+        assert_eq!(HeadlessAskPolicy::Deny.to_string(), "deny");
 
         let mut p = PermissionSet {
             allow_file_writes: false,

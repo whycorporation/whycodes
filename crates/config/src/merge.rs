@@ -4,11 +4,12 @@ use crate::types::{
     Config, MagicKeywordsConfig, QuestionToolConfig, SlopConfig, ToolsConfig, default_agent,
     default_auto_index_chunks, default_auto_index_files, default_code_min_score,
     default_code_top_k, default_compaction_llm, default_compaction_threshold,
-    default_consolidate_max, default_intent_guidance, default_max_background_jobs,
-    default_max_tokens, default_memory_backend, default_memory_embed_dim,
-    default_memory_index_bytes, default_memory_index_lines, default_memory_min_score,
-    default_memory_scope, default_memory_token_budget, default_memory_top_k, default_model_race,
-    default_prompt_cache, default_race_after_ms, default_response_cache, default_retain_every_n,
+    default_consolidate_max, default_filesystem_mode, default_headless_ask,
+    default_intent_guidance, default_max_background_jobs, default_max_tokens,
+    default_memory_backend, default_memory_embed_dim, default_memory_index_bytes,
+    default_memory_index_lines, default_memory_min_score, default_memory_scope,
+    default_memory_token_budget, default_memory_top_k, default_model_race, default_prompt_cache,
+    default_race_after_ms, default_response_cache, default_retain_every_n,
     default_retain_max_facts, default_risk_threshold, default_sandbox_fallback,
     default_sandbox_mode, default_session_min_score, default_session_top_k,
     default_swarm_max_agents, default_tool_profile,
@@ -186,6 +187,9 @@ impl Config {
         if other.session.magic_keywords != MagicKeywordsConfig::default() {
             merged.session.magic_keywords = other.session.magic_keywords.clone();
         }
+        if other.session.headless_ask != default_headless_ask() {
+            merged.session.headless_ask = other.session.headless_ask.clone();
+        }
 
         // TUI
         if other.tui.theme.is_some() {
@@ -248,6 +252,9 @@ impl Config {
         }
         if other.security.sandbox != default_sandbox_mode() {
             merged.security.sandbox = other.security.sandbox.clone();
+        }
+        if other.security.filesystem != default_filesystem_mode() {
+            merged.security.filesystem = other.security.filesystem.clone();
         }
         if !other.security.sandbox_network {
             merged.security.sandbox_network = false;

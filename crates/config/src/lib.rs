@@ -10,7 +10,7 @@ mod validate;
 
 // Re-export leaf sandbox types so callers that already import `whycodes_config`
 // can resolve sandbox policy without a second crate path.
-pub use whycodes_core::sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
+pub use whycodes_core::sandbox::{FilesystemMode, SandboxFallback, SandboxMode, SandboxSettings};
 
 pub use types::{
     AutomationConfig, CONFIG_SCHEMA_VERSION, CommandConfig, Config, CustomCommandConfig,

@@ -14,6 +14,32 @@ fn clap_parses_run_and_generate() {
         parsed.command,
         Some(Commands::Generate { ref prompt, jobs, .. }) if prompt.as_slice() == ["a", "b"] && jobs == 2
     ));
+    let approved = Cli::try_parse_from([
+        "whycodes",
+        "generate",
+        "--approve-tools",
+        "x",
+        "--format",
+        "json",
+    ])
+    .unwrap();
+    assert!(approved.approve_tools);
+    match approved.command {
+        Some(Commands::Generate { format, .. }) => {
+            assert_eq!(format, whycodes_protocol::OutputFormat::Json);
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    let run_approved = Cli::try_parse_from([
+        "whycodes",
+        "--approve-tools",
+        "run",
+        "hi",
+        "--format",
+        "json",
+    ])
+    .unwrap();
+    assert!(run_approved.approve_tools);
     let slop = Cli::try_parse_from(["whycodes", "slop", "--json", "--base", "main"]).unwrap();
     assert!(matches!(
         slop.command,

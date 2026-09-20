@@ -73,7 +73,7 @@ fn make_model(provider: &str, model: &str) -> ModelConfig {
 #[test]
 fn test_default_config() {
     let cfg = Config::default();
-    assert_eq!(cfg.agents.len(), 6, "default config should have 6 agents");
+    assert_eq!(cfg.agents.len(), 7, "default config should have 7 agents");
     assert_eq!(cfg.default_agent, "build");
     assert!(cfg.default_model.is_none());
     assert!(cfg.providers.is_empty());
@@ -86,7 +86,7 @@ fn test_default_config() {
     assert!(cfg.session.magic_keywords.ultrathink);
     assert!(cfg.session.magic_keywords.orchestrate);
 
-    // Primary: build / plan / ask; subagents: general / explore / scout
+    // Primary: build / plan / ask / verifier; subagents: general / explore / scout
     let names: Vec<&str> = cfg.agents.iter().map(|a| a.name.as_str()).collect();
     assert!(names.contains(&"build"));
     assert!(names.contains(&"plan"));
@@ -94,6 +94,13 @@ fn test_default_config() {
     assert!(names.contains(&"explore"));
     assert!(names.contains(&"general"));
     assert!(names.contains(&"scout"));
+    assert!(names.contains(&"verifier"));
+    assert_eq!(cfg.session.headless_ask, "deny");
+    assert_eq!(
+        cfg.session.headless_ask_policy(),
+        whycodes_core::types::HeadlessAskPolicy::Deny
+    );
+    assert_eq!(cfg.security.filesystem, "workspace_write");
 
     let ask = cfg.get_agent("ask").expect("ask agent");
     assert!(!ask.permission.allow_file_writes);
@@ -140,6 +147,34 @@ fn test_default_config() {
             .is_some_and(|t| t.iter().any(|n| n == "question")),
         "scout must not advertise question"
     );
+    let verifier = cfg.get_agent("verifier").expect("verifier agent");
+    assert!(!verifier.permission.allow_file_writes);
+    assert!(!verifier.permission.allow_shell);
+    for denied in ["write", "edit", "apply_patch", "bash"] {
+        assert!(
+            verifier
+                .permission
+                .denied_tools
+                .as_ref()
+                .is_some_and(|t| t.iter().any(|n| n == denied)),
+            "verifier must deny {denied}"
+        );
+        assert_eq!(
+            verifier.permission.action_for(denied),
+            PermissionAction::Deny,
+            "verifier action_for({denied}) must be Deny"
+        );
+    }
+    for allowed in ["read", "grep", "git_diff", "git_log"] {
+        assert!(
+            verifier
+                .permission
+                .allowed_tools
+                .as_ref()
+                .is_some_and(|t| t.iter().any(|n| n == allowed)),
+            "verifier should include {allowed}"
+        );
+    }
 }
 
 // ── test_config_load_save ───────────────────────────────────────────
@@ -208,7 +243,7 @@ fn test_config_load_save_tempfile() {
     let loaded: Config = toml::from_str(&content).expect("deserialize");
     let _ = std::fs::remove_file(&path);
 
-    assert_eq!(loaded.agents.len(), 6);
+    assert_eq!(loaded.agents.len(), 7);
     assert_eq!(loaded.providers.len(), 1);
     assert_eq!(loaded.providers["openai"].name, "openai");
 }
@@ -798,6 +833,7 @@ fn merge_with_general_security_memory_swarm() {
     overlay.schema_version = CONFIG_SCHEMA_VERSION + 1;
     overlay.security.bash_risk_threshold = "caution".into();
     overlay.security.sandbox = "off".into();
+    overlay.security.filesystem = "delete_guard".into();
     overlay.security.sandbox_network = false;
     overlay.security.sandbox_fallback = "deny".into();
     overlay.security.network_allowlist = vec!["example.com".into()];
@@ -836,6 +872,7 @@ fn merge_with_general_security_memory_swarm() {
     );
     assert_eq!(merged.security.bash_risk_threshold, "caution");
     assert_eq!(merged.security.sandbox, "off");
+    assert_eq!(merged.security.filesystem, "delete_guard");
     assert!(!merged.security.sandbox_network);
     assert_eq!(merged.security.sandbox_fallback, "deny");
     assert_eq!(merged.security.network_allowlist, vec!["example.com"]);
@@ -1162,6 +1199,7 @@ fn security_network_policy_and_sandbox_settings() {
 
     let ss = sec.sandbox_settings();
     assert_eq!(ss.mode, SandboxMode::Workspace);
+    assert_eq!(ss.filesystem, FilesystemMode::WorkspaceWrite);
     assert!(ss.network);
     assert_eq!(ss.fallback, SandboxFallback::Allow);
 
@@ -1342,6 +1380,8 @@ fn apply_env_overrides_sandbox_and_memory() {
     let _guard = lock_env();
     let names = [
         "WHYCODES_SANDBOX",
+        "WHYCODES_FILESYSTEM",
+        "WHYCODES_HEADLESS_ASK",
         "WHYCODES_SANDBOX_NETWORK",
         "WHYCODES_SANDBOX_FALLBACK",
         "WHYCODES_NETWORK_ALLOWLIST",
@@ -1358,6 +1398,8 @@ fn apply_env_overrides_sandbox_and_memory() {
     let prev = clear_env(&names);
     unsafe {
         std::env::set_var("WHYCODES_SANDBOX", "off");
+        std::env::set_var("WHYCODES_FILESYSTEM", "delete_guard");
+        std::env::set_var("WHYCODES_HEADLESS_ASK", "allow");
         std::env::set_var("WHYCODES_SANDBOX_NETWORK", "0");
         std::env::set_var("WHYCODES_SANDBOX_FALLBACK", "deny");
         std::env::set_var("WHYCODES_NETWORK_ALLOWLIST", "a.com, b.com");
@@ -1372,6 +1414,8 @@ fn apply_env_overrides_sandbox_and_memory() {
     restore_env(&names, prev);
 
     assert_eq!(cfg.security.sandbox, "off");
+    assert_eq!(cfg.security.filesystem, "delete_guard");
+    assert_eq!(cfg.session.headless_ask, "allow");
     assert!(!cfg.security.sandbox_network);
     assert_eq!(cfg.security.sandbox_fallback, "deny");
     assert_eq!(cfg.security.network_allowlist, vec!["a.com", "b.com"]);
@@ -1807,6 +1851,8 @@ fn apply_env_overrides_cover_every_knob() {
         "WHYCODES_LOG_LEVEL",
         "WHYCODES_PROJECT_DIR",
         "WHYCODES_SANDBOX",
+        "WHYCODES_FILESYSTEM",
+        "WHYCODES_HEADLESS_ASK",
         "WHYCODES_SANDBOX_NETWORK",
         "WHYCODES_SANDBOX_FALLBACK",
         "WHYCODES_NETWORK_ALLOWLIST",

@@ -1,6 +1,6 @@
 //! Tool-call scheduling and permission / risk / hook / sandbox gates.
 
-use whycodes_command_risk::{Decision, assess, decide};
+use whycodes_command_risk::{Decision, assess, decide, delete_guard_reason};
 use whycodes_core::todo::{has_open, load_todos};
 use whycodes_core::tool::ToolContext;
 use whycodes_core::types::{ApprovalMode, PermissionAction, ToolCall, ToolResult};
@@ -46,10 +46,12 @@ fn tool_error_is_retryable(name: &str, result: &ToolResult) -> bool {
             let c = result.content.to_ascii_lowercase();
             !(c.contains("permission denied")
                 || c.contains("user denied")
+                || c.contains("denied:headless")
                 || c.contains("refused")
                 || c.contains("doom loop")
                 || c.contains("cannot be approved")
-                || c.contains("catastrophic"))
+                || c.contains("catastrophic")
+                || c.contains("read_only"))
         }
     }
 }
@@ -303,11 +305,37 @@ impl Agent {
 
     /// Overlay: `auto` skips every ask; `important` skips low-risk asks;
     /// `manual` never skips. Deny / catastrophic still refuse above this.
+    ///
+    /// Headless fail-closed (`HeadlessAskPolicy::Deny` / `AskFail`) never
+    /// skips: structured json must not auto-approve `ask` via `ApprovalMode::Auto`.
     fn approval_skips_ask(&self, tc: &ToolCall, working_dir: &str) -> bool {
+        if self.headless_ask.fails_closed() {
+            return false;
+        }
         match self.approval_mode {
             ApprovalMode::Auto => true,
             ApprovalMode::Manual => false,
             ApprovalMode::Important => !self.approval_ask_is_high_risk(tc, working_dir),
+        }
+    }
+
+    /// Stamp for a refused permission prompt. Headless fail-closed uses the
+    /// stable `denied:headless` token so CI can match without parsing prose.
+    fn denied_ask(&self, tc: &ToolCall, interactive_why: String) -> ToolResult {
+        let content = if self.headless_ask.fails_closed() {
+            format!(
+                "denied:headless — tool '{}' requires confirmation; \
+                 structured / headless runs do not auto-approve ask. \
+                 Pass --approve-tools or set session.headless_ask = \"allow\".",
+                tc.name
+            )
+        } else {
+            interactive_why
+        };
+        ToolResult {
+            tool_call_id: tc.id.clone(),
+            content,
+            is_error: true,
         }
     }
 
@@ -416,6 +444,21 @@ impl Agent {
             return run_question_tool(prompter, &tc.arguments, &tc.id).await;
         }
 
+        // Filesystem ladder (`read_only`): refuse mutating file tools even when
+        // the permission map would allow them. Independent of OS sandbox mode.
+        if !self.sandbox.filesystem.allows_writes()
+            && matches!(tc.name.as_str(), "write" | "edit" | "apply_patch")
+        {
+            return ToolResult {
+                tool_call_id: tc.id.clone(),
+                content: format!(
+                    "Refused: filesystem is read_only; tool '{}' cannot write.",
+                    tc.name
+                ),
+                is_error: true,
+            };
+        }
+
         // Shell commands (and `schedule` with a delayed shell payload) are gated
         // on what the command would destroy. The permission map below only sees
         // the tool name, so on its own `allow` would run anything the model emits.
@@ -459,14 +502,33 @@ impl Agent {
                         .ask_permission(tc, &tool_ctx.working_dir, &detail)
                         .await
                     {
-                        return ToolResult {
-                            tool_call_id: tc.id.clone(),
-                            content: format!("User denied permission for tool '{}'.", tc.name),
-                            is_error: true,
-                        };
+                        return self.denied_ask(
+                            tc,
+                            format!("User denied permission for tool '{}'.", tc.name),
+                        );
                     }
                     risk_confirmed = true;
                 }
+            }
+
+            // `delete_guard` / `read_only`: unlink, rmdir, `git clean -f` of
+            // project files need Confirm even when command-risk says Safe
+            // (in-project `rm notes.txt` is Safe at the default threshold).
+            if !risk_confirmed
+                && self.sandbox.filesystem.guards_deletes()
+                && let Some(reason) = delete_guard_reason(command)
+            {
+                let detail = format_shell_risk_detail(command, &reason);
+                if !self
+                    .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                    .await
+                {
+                    return self.denied_ask(
+                        tc,
+                        format!("User denied permission for tool '{}'.", tc.name),
+                    );
+                }
+                risk_confirmed = true;
             }
 
             // Shell-scoped permission rules (Claude Code `Bash(git *)` spirit).
@@ -495,11 +557,10 @@ impl Agent {
                             .ask_permission(tc, &tool_ctx.working_dir, &detail)
                             .await
                         {
-                            return ToolResult {
-                                tool_call_id: tc.id.clone(),
-                                content: format!("User denied permission for tool '{}'.", tc.name),
-                                is_error: true,
-                            };
+                            return self.denied_ask(
+                                tc,
+                                format!("User denied permission for tool '{}'.", tc.name),
+                            );
                         }
                         risk_confirmed = true;
                     }
@@ -538,14 +599,13 @@ impl Agent {
                         let detail = format_permission_detail(&tc.arguments);
                         let body = format!("{detail}\n\nIntent check:\n{reason}");
                         if !self.ask_permission(tc, &tool_ctx.working_dir, &body).await {
-                            return ToolResult {
-                                tool_call_id: tc.id.clone(),
-                                content: format!(
+                            return self.denied_ask(
+                                tc,
+                                format!(
                                     "User denied permission for tool '{}' (intent gate).",
                                     tc.name
                                 ),
-                                is_error: true,
-                            };
+                            );
                         }
                         risk_confirmed = true;
                     }
@@ -580,11 +640,10 @@ impl Agent {
                         .ask_permission(tc, &tool_ctx.working_dir, &detail)
                         .await
                     {
-                        return ToolResult {
-                            tool_call_id: tc.id.clone(),
-                            content: format!("User denied permission for tool '{}'.", tc.name),
-                            is_error: true,
-                        };
+                        return self.denied_ask(
+                            tc,
+                            format!("User denied permission for tool '{}'.", tc.name),
+                        );
                     }
                     risk_confirmed = true;
                 }
@@ -611,11 +670,10 @@ impl Agent {
                     .ask_permission(tc, &tool_ctx.working_dir, &detail)
                     .await;
                 if !allowed {
-                    return ToolResult {
-                        tool_call_id: tc.id.clone(),
-                        content: format!("User denied permission for tool '{}'.", tc.name),
-                        is_error: true,
-                    };
+                    return self.denied_ask(
+                        tc,
+                        format!("User denied permission for tool '{}'.", tc.name),
+                    );
                 }
             }
             PermissionAction::Allow => {}

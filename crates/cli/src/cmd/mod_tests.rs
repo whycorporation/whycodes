@@ -12,6 +12,7 @@ async fn dispatch_web_stub() {
         debug: false,
         no_auto_update: true,
         no_memory: true,
+        approve_tools: false,
     };
     super::dispatch_command(&crate::Commands::Web, &cli)
         .await
@@ -37,6 +38,7 @@ async fn dispatch_slop_json_non_git() {
         debug: false,
         no_auto_update: true,
         no_memory: true,
+        approve_tools: false,
     };
     let result = super::dispatch_command(cli.command.as_ref().unwrap(), &cli).await;
     assert!(result.is_err());

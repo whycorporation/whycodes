@@ -5,7 +5,7 @@
 use super::*;
 use std::path::PathBuf;
 use std::time::Duration;
-use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
+use whycodes_core::{FilesystemMode, SandboxFallback, SandboxMode, SandboxSettings};
 
 #[test]
 fn off_mode_prepares_host_bash() {
@@ -14,6 +14,7 @@ fn off_mode_prepares_host_bash() {
         working_dir: PathBuf::from("/tmp"),
         settings: SandboxSettings {
             mode: SandboxMode::Off,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: true,
             fallback: SandboxFallback::Allow,
         },
@@ -214,18 +215,22 @@ fn prepare_bwrap_bin_unshare_net_when_network_off() {
 fn describe_backend_covers_every_mode() {
     let off = SandboxSettings {
         mode: SandboxMode::Off,
+        filesystem: FilesystemMode::WorkspaceWrite,
         network: true,
         fallback: SandboxFallback::Allow,
     };
     assert!(describe_backend(&off).contains("off"));
+    assert!(describe_backend(&off).contains("filesystem"));
 
     let ws_net = SandboxSettings {
         mode: SandboxMode::Workspace,
+        filesystem: FilesystemMode::WorkspaceWrite,
         network: true,
         fallback: SandboxFallback::Allow,
     };
     let ws_nonet = SandboxSettings {
         mode: SandboxMode::Workspace,
+        filesystem: FilesystemMode::WorkspaceWrite,
         network: false,
         fallback: SandboxFallback::Deny,
     };
@@ -245,6 +250,7 @@ fn workspace_without_bwrap_respects_fallback() {
         working_dir: PathBuf::from("/tmp"),
         settings: SandboxSettings {
             mode: SandboxMode::Workspace,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: false,
             fallback: SandboxFallback::Deny,
         },
@@ -259,6 +265,7 @@ fn workspace_without_bwrap_respects_fallback() {
         working_dir: PathBuf::from("/tmp"),
         settings: SandboxSettings {
             mode: SandboxMode::Workspace,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: false,
             fallback: SandboxFallback::Allow,
         },
@@ -346,6 +353,7 @@ fn run_off_mode_captures_stdout() {
         working_dir: dir.path().to_path_buf(),
         settings: SandboxSettings {
             mode: SandboxMode::Off,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: true,
             fallback: SandboxFallback::Allow,
         },
@@ -364,6 +372,7 @@ fn missing_working_dir_still_prepares() {
         working_dir: missing.clone(),
         settings: SandboxSettings {
             mode: SandboxMode::Off,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: true,
             fallback: SandboxFallback::Allow,
         },
@@ -434,6 +443,7 @@ fn prepare_delegates_to_prepare_with_real_availability() {
         working_dir: PathBuf::from("/tmp"),
         settings: SandboxSettings {
             mode: SandboxMode::Workspace,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: true,
             fallback: SandboxFallback::Allow,
         },
@@ -456,6 +466,7 @@ fn prepare_with_forced_bwrap_hits_prepare_bwrap() {
         working_dir: PathBuf::from("/tmp"),
         settings: SandboxSettings {
             mode: SandboxMode::Workspace,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: true,
             fallback: SandboxFallback::Allow,
         },
@@ -481,6 +492,7 @@ fn canonicalize_existing_working_dir() {
         working_dir: dir.path().to_path_buf(),
         settings: SandboxSettings {
             mode: SandboxMode::Off,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: true,
             fallback: SandboxFallback::Allow,
         },
@@ -585,6 +597,7 @@ fn run_with_unavailable_bwrap_denies() {
         working_dir: PathBuf::from("/tmp"),
         settings: SandboxSettings {
             mode: SandboxMode::Workspace,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: false,
             fallback: SandboxFallback::Deny,
         },
@@ -659,6 +672,7 @@ fn run_timeout_kills_sleep() {
         working_dir: PathBuf::from("/tmp"),
         settings: SandboxSettings {
             mode: SandboxMode::Off,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: true,
             fallback: SandboxFallback::Allow,
         },
@@ -681,6 +695,7 @@ fn host_req(command: &str) -> SandboxRequest {
         working_dir: PathBuf::from("/tmp"),
         settings: SandboxSettings {
             mode: SandboxMode::Off,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: true,
             fallback: SandboxFallback::Allow,
         },

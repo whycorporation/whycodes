@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-20 — Structured json auto-approved `ask` via `ApprovalMode::Auto`
+
+**Symptom:** `--format json` / `stream-json` silently ran `ask`-gated `bash`
+(and write / `apply_patch`). Pipelines that looked fail-closed still executed.
+
+**JSONL / crash:** none.
+
+**Root cause:** Structured generate installed `AutoApprovePrompter` *and*
+`Agent::new` defaults to `ApprovalMode::Auto`, which returned true from
+`ask_permission` before the prompter ran. Swapping only the prompter was
+not enough.
+
+**Fix:** `HeadlessAskPolicy` on the agent (`deny` / `allow` / `ask-fail`).
+When `fails_closed()`, `approval_skips_ask` is false and the result is
+stamped `denied:headless`. `--approve-tools` / `session.headless_ask =
+"allow"` restore auto-approve. `question` stays auto-picked.
+
+**Prevention:** Headless fail-closed tests must drive `execute_with_permission`
+with a sentinel file, not a reimplemented prompter. Do not skip asks via
+`ApprovalMode::Auto` on the json path.
+
+---
+
 ### 2026-09-17 — Ctrl+C prints Session Summary then the process never exits
 
 **Symptom:** Interactive `whycodes` on Windows PowerShell: Ctrl+C restores the

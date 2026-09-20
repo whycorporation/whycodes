@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use whycodes_core::network::{self, NetworkPolicy};
 use whycodes_core::sandbox::SandboxSettings;
 use whycodes_core::types::{
-    AgentInfo, ApprovalMode, ModelConfig, PermissionAction, ProviderConfig,
+    AgentInfo, ApprovalMode, HeadlessAskPolicy, ModelConfig, PermissionAction, ProviderConfig,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -391,6 +391,13 @@ pub struct SecurityConfig {
     #[serde(default = "default_sandbox_mode")]
     pub sandbox: String,
 
+    /// Permission-layer filesystem ladder: `full_access` | `workspace_write`
+    /// (default) | `delete_guard` | `read_only`. Independent of OS `sandbox`.
+    /// Default matches today's workspace-on writes so existing configs do not
+    /// tighten overnight.
+    #[serde(default = "default_filesystem_mode")]
+    pub filesystem: String,
+
     /// When `sandbox = "workspace"`, whether the sandboxed shell may use the
     /// network. Default `true` so `cargo` / `npm` / `git` keep working.
     #[serde(default = "default_true_bool")]
@@ -420,6 +427,10 @@ pub(crate) fn default_sandbox_mode() -> String {
     "workspace".to_string()
 }
 
+pub(crate) fn default_filesystem_mode() -> String {
+    "workspace_write".to_string()
+}
+
 pub(crate) fn default_sandbox_fallback() -> String {
     "allow".to_string()
 }
@@ -433,6 +444,7 @@ impl Default for SecurityConfig {
         Self {
             bash_risk_threshold: default_risk_threshold(),
             sandbox: default_sandbox_mode(),
+            filesystem: default_filesystem_mode(),
             sandbox_network: true,
             sandbox_fallback: default_sandbox_fallback(),
             network_allowlist: Vec::new(),
@@ -452,7 +464,12 @@ impl SecurityConfig {
 
     /// Resolved OS sandbox policy for shell tools.
     pub fn sandbox_settings(&self) -> SandboxSettings {
-        SandboxSettings::from_raw(&self.sandbox, self.sandbox_network, &self.sandbox_fallback)
+        SandboxSettings::from_raw_fs(
+            &self.sandbox,
+            self.sandbox_network,
+            &self.sandbox_fallback,
+            &self.filesystem,
+        )
     }
 }
 
@@ -846,6 +863,50 @@ impl Default for Config {
             top_p: None,
         };
 
+        // Verifier: primary + spawnable subagent. Read-only post-hoc check
+        // of the current diff against the user goal. Do not reuse `plan`.
+        let verifier_agent = AgentInfo {
+            name: "verifier".to_string(),
+            description: "Read-only verifier — independently checks the current diff against the user goal and returns a structured verdict. Does not write or fix.".to_string(),
+            mode: AgentMode::Primary,
+            permission: PermissionSet {
+                allowed_tools: Some(vec![
+                    "read".to_string(),
+                    "grep".to_string(),
+                    "glob".to_string(),
+                    "list".to_string(),
+                    "repomap".to_string(),
+                    "git_status".to_string(),
+                    "git_diff".to_string(),
+                    "git_log".to_string(),
+                    "git_blame".to_string(),
+                    "lsp".to_string(),
+                ]),
+                denied_tools: Some(vec![
+                    "write".to_string(),
+                    "edit".to_string(),
+                    "apply_patch".to_string(),
+                    "bash".to_string(),
+                    "shell".to_string(),
+                    "todowrite".to_string(),
+                    "todo".to_string(),
+                    "git_commit".to_string(),
+                    "task".to_string(),
+                    "swarm".to_string(),
+                    "question".to_string(),
+                ]),
+                allow_file_writes: false,
+                allow_network: false,
+                allow_shell: false,
+                allowed_paths: None,
+                rules: Default::default(),
+            },
+            model: None,
+            system_prompt: None, // prompts/verifier.txt
+            temperature: None,
+            top_p: None,
+        };
+
         Config {
             providers: HashMap::new(),
             models: HashMap::new(),
@@ -856,6 +917,7 @@ impl Default for Config {
                 explore_agent,
                 general_agent,
                 scout_agent,
+                verifier_agent,
             ],
             default_agent: "build".to_string(),
             default_model: None,
@@ -1279,6 +1341,17 @@ pub struct SessionConfig {
     /// current LLM request and injects `hint` before the next step.
     #[serde(default)]
     pub stream_rules: Vec<StreamRuleConfig>,
+    /// Structured / headless (`--format json` / `stream-json`) policy for
+    /// permission `ask`. Default `deny` (fail-closed). `allow` restores
+    /// auto-approve. `ask-fail` is the same fail-closed outcome as `deny`.
+    /// TUI `auto` / `important` / `manual` are unchanged. `--approve-tools`
+    /// on the CLI overrides this to `allow` for that process.
+    #[serde(default = "default_headless_ask")]
+    pub headless_ask: String,
+}
+
+pub(crate) fn default_headless_ask() -> String {
+    "deny".to_string()
 }
 
 /// One time-traveling stream rule (abort + inject).
@@ -1337,7 +1410,15 @@ impl Default for SessionConfig {
             reasoning_effort: None,
             magic_keywords: MagicKeywordsConfig::default(),
             stream_rules: Vec::new(),
+            headless_ask: default_headless_ask(),
         }
+    }
+}
+
+impl SessionConfig {
+    /// Resolved headless `ask` policy. Unknown strings fall back to deny.
+    pub fn headless_ask_policy(&self) -> HeadlessAskPolicy {
+        HeadlessAskPolicy::parse(&self.headless_ask).unwrap_or(HeadlessAskPolicy::Deny)
     }
 }
 

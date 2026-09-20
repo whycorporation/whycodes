@@ -285,6 +285,12 @@ impl Config {
         if let Ok(val) = std::env::var("WHYCODES_SANDBOX") {
             self.security.sandbox = val;
         }
+        if let Ok(val) = std::env::var("WHYCODES_FILESYSTEM") {
+            self.security.filesystem = val;
+        }
+        if let Ok(val) = std::env::var("WHYCODES_HEADLESS_ASK") {
+            self.session.headless_ask = val;
+        }
         if let Ok(val) = std::env::var("WHYCODES_SANDBOX_NETWORK") {
             self.security.sandbox_network = matches!(
                 val.to_ascii_lowercase().as_str(),

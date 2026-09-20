@@ -728,6 +728,16 @@ fn test_agent_system_prompt_for_unknown_falls_back() {
 }
 
 #[test]
+fn test_agent_system_prompt_for_verifier() {
+    let prompt = Agent::system_prompt_for("verifier");
+    assert!(!prompt.is_empty());
+    assert!(
+        prompt.contains("issues") && prompt.to_ascii_lowercase().contains("read-only"),
+        "verifier prompt should be a read-only structured verdict"
+    );
+}
+
+#[test]
 fn test_with_runtime_context_injects_date() {
     let prompt = Agent::with_runtime_context("You are a test agent.");
     assert!(prompt.contains("You are a test agent."));

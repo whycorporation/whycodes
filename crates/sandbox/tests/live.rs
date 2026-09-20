@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
+use whycodes_core::{FilesystemMode, SandboxFallback, SandboxMode, SandboxSettings};
 use whycodes_sandbox::{Backend, SandboxRequest, backend_available, prepare, run};
 
 fn skip_without_bwrap() -> bool {
@@ -28,6 +28,7 @@ fn workspace_prefers_bwrap_when_present() {
         working_dir: dir.path().to_path_buf(),
         settings: SandboxSettings {
             mode: SandboxMode::Workspace,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: false,
             fallback: SandboxFallback::Deny,
         },
@@ -49,6 +50,7 @@ fn workspace_rw_project_and_blocks_home_write() {
     let dir = tempfile::tempdir().unwrap();
     let settings = SandboxSettings {
         mode: SandboxMode::Workspace,
+        filesystem: FilesystemMode::WorkspaceWrite,
         network: true,
         fallback: SandboxFallback::Deny,
     };
@@ -93,6 +95,7 @@ fn network_off_blocks_tcp() {
         working_dir: dir.path().to_path_buf(),
         settings: SandboxSettings {
             mode: SandboxMode::Workspace,
+            filesystem: FilesystemMode::WorkspaceWrite,
             network: false,
             fallback: SandboxFallback::Deny,
         },

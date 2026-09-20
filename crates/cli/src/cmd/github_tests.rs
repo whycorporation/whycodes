@@ -14,6 +14,7 @@ async fn acp_stub_runs() {
         debug: false,
         no_auto_update: true,
         no_memory: true,
+        approve_tools: false,
     };
     super::cmd_acp(&cli).await.unwrap();
     super::cmd_pr(&cli, Some("t"), Some("dev")).await.unwrap();

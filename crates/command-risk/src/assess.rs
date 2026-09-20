@@ -86,6 +86,38 @@ pub fn assess(command: &str, working_dir: &Path) -> Assessment {
     assess_with_home(command, working_dir, paths::home_dir().as_deref())
 }
 
+/// `true` when `command` would unlink, rmdir, or `git clean -f` (issue #122
+/// `delete_guard`). Independent of [`RiskLevel`]: a project-file `rm` is
+/// [`RiskLevel::Safe`] at the default threshold, but still a delete.
+pub fn is_delete_guard_command(command: &str) -> bool {
+    delete_guard_reason(command).is_some()
+}
+
+/// Why `delete_guard` would confirm this command, if it would.
+pub fn delete_guard_reason(command: &str) -> Option<String> {
+    let tokens = tokenize::tokenize(command);
+    for segment in &tokens.segments {
+        let Some(cmd) = segment.command() else {
+            continue;
+        };
+        match cmd {
+            "rm" | "rmdir" | "unlink" => {
+                return Some(format!("`{cmd}` removes files or directories"));
+            }
+            "git" => {
+                let args: Vec<&str> = segment.args().map(|w| w.text.as_str()).collect();
+                if args.first().copied() == Some("clean")
+                    && args.iter().any(|w| w.starts_with('-') && w.contains('f'))
+                {
+                    return Some("`git clean -f` deletes untracked files".into());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// [`assess`] with the home directory supplied explicitly, so tests do not
 /// depend on the environment they run in.
 pub fn assess_with_home(command: &str, working_dir: &Path, home: Option<&Path>) -> Assessment {
@@ -698,6 +730,10 @@ mod tests {
         assert_eq!(level("git reset --hard"), RiskLevel::Caution);
         assert_eq!(level("git reset --hard HEAD~3"), RiskLevel::Caution);
         assert_eq!(level("git clean -fdx"), RiskLevel::Caution);
+        assert!(is_delete_guard_command("git clean -fdx"));
+        assert!(is_delete_guard_command("git clean -fd"));
+        assert!(!is_delete_guard_command("git clean -n"));
+        assert!(!is_delete_guard_command("git status"));
         assert_eq!(level("git checkout ."), RiskLevel::Caution);
     }
 
@@ -1021,6 +1057,16 @@ mod tests {
         assert_eq!(level("format C:"), RiskLevel::Catastrophic);
         assert_eq!(level("shred notes.txt"), RiskLevel::Caution);
         assert_eq!(level("rmdir notes.txt"), RiskLevel::Safe);
+        assert!(is_delete_guard_command("rmdir notes.txt"));
+        assert!(is_delete_guard_command("rm notes.txt"));
+        assert!(is_delete_guard_command("unlink notes.txt"));
+        assert!(!is_delete_guard_command("cargo build"));
+        assert!(!is_delete_guard_command("ls -la"));
+        assert_eq!(
+            delete_guard_reason("rm notes.txt").as_deref(),
+            Some("`rm` removes files or directories")
+        );
+        assert!(delete_guard_reason("echo hi").is_none());
         assert_eq!(level("sudo rm -rf /tmp/x"), RiskLevel::Catastrophic);
     }
 

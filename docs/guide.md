@@ -134,12 +134,14 @@ include a `slop` field (`delta_loc`, `verbosity`, `erosion`, `verdict`,
 `hotspots`, `unparsed_files`). See [Code slop](#code-slop).
 The last event is always `result` (with `is_error` and optional `error`).
 
-Structured formats auto-approve tool permission prompts so pipelines do not
-hang on stdin. The `question` tool is likewise auto-answered (first option,
-stamped `auto-picked` in the tool result) — `--format json` / `stream-json`
-is not interactive and has no reply path. Catastrophic shell risk is still
-hard-blocked. Prefer explicit permission allow rules in config when you want
-tighter control.
+Structured formats **do not** auto-approve permission `ask`. An `ask`-gated
+tool is treated as **deny**: the call fails with `denied:headless` and the
+command is not executed. Override with `--approve-tools` or
+`session.headless_ask = "allow"` (also `"deny"` / `"ask-fail"`). A
+`[permission]` `allow` rule still runs the tool. The `question` tool stays
+auto-answered (first option, stamped `auto-picked`) — `--format json` /
+`stream-json` is not interactive and has no reply path. Catastrophic shell
+risk is still hard-blocked.
 
 ## Code slop
 
@@ -346,6 +348,7 @@ overwrite the same path.
 | `general` | subagent | Multi-step tasks |
 | `explore` | subagent | Fast read-only codebase search |
 | `scout` | subagent | External docs and dependency research |
+| `verifier` | primary | Read-only post-hoc check of the current diff vs the user goal (`ok` / `issues[]`); cannot write or "just fix it" |
 
 In **build**, high-confidence questions get an ephemeral intent hint so the
 model answers instead of over-eager edits. Set
@@ -659,6 +662,21 @@ Default `security.sandbox = "workspace"`. On Linux this uses
 | `workspace` (default) | Project is read-write; the rest of the host is read-only; `/tmp` is a private tmpfs. Common toolchain caches (`~/.cargo`, `~/.npm`, …) stay writable. |
 | `off` | Host shell with no namespace isolation (`bash -c` on Unix; Git Bash or `cmd.exe /C` on Windows — never WSL). |
 
+A separate **filesystem** ladder (permission layer, independent of bubblewrap)
+defaults to today's workspace-on writes so existing configs do not tighten
+overnight:
+
+| Filesystem | Behaviour |
+|---|---|
+| `workspace_write` (default) | Writes confined to the project; deletes follow `command-risk` only. |
+| `full_access` | No extra write/delete gate (today's "sandbox off" for files). |
+| `delete_guard` | Workspace writes allowed; `unlink` / `rmdir` / `git clean -fd` of project files require `ask` (TUI) or deny (`denied:headless` on json). |
+| `read_only` | No writes, no deletes (`plan` / `ask` / `verifier` posture). |
+
+`delete_guard` composes with `command-risk` (deterministic; no LLM). A
+project-file `rm` that command-risk classifies `safe` still asks (or denies
+headless) when filesystem is `delete_guard`.
+
 Network is allowed inside the sandbox by default. Set
 `sandbox_network = false` to cut TCP/UDP (`--unshare-net`). Dedicated
 tools (`webfetch`, `websearch`) are unchanged by this flag.
@@ -667,15 +685,21 @@ tools (`webfetch`, `websearch`) are unchanged by this flag.
 [security]
 bash_risk_threshold = "destructive"
 sandbox = "workspace"                 # off | workspace
+filesystem = "workspace_write"        # full_access | workspace_write | delete_guard | read_only
 sandbox_network = true
 sandbox_fallback = "allow"            # allow | deny (when bwrap is missing)
 # network_allowlist = ["github.com", "crates.io", "*.npmjs.org"]
 # network_denylist = ["tracking.example.com"]
+
+[session]
+headless_ask = "deny"                 # deny | allow | ask-fail
 ```
 
 | Env | Effect |
 |---|---|
 | `WHYCODES_SANDBOX` | `off` or `workspace` |
+| `WHYCODES_FILESYSTEM` | `full_access` / `workspace_write` / `delete_guard` / `read_only` |
+| `WHYCODES_HEADLESS_ASK` | `deny` / `allow` / `ask-fail` |
 | `WHYCODES_SANDBOX_NETWORK` | `0`/`1` |
 | `WHYCODES_SANDBOX_FALLBACK` | `allow` or `deny` |
 | `WHYCODES_SHELL` | Windows only: explicit host interpreter (Git Bash path, `cmd.exe`, `pwsh.exe`). WSL stubs are ignored. |

@@ -15,7 +15,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use whycodes_core::SandboxSettings;
 use whycodes_core::network::NetworkPolicy;
 use whycodes_core::tool::ToolContext;
-use whycodes_core::types::{AgentInfo, ApprovalMode, ContentBlock, ToolCall, ToolResult};
+use whycodes_core::types::{
+    AgentInfo, ApprovalMode, ContentBlock, HeadlessAskPolicy, ToolCall, ToolResult,
+};
 use whycodes_llm::provider::{LlmProvider, ProviderRegistry};
 use whycodes_session::session::Session;
 use whycodes_tools::executor::ToolExecutor;
@@ -69,6 +71,11 @@ pub struct Agent {
     reasoning_effort: Option<String>,
     /// Session overlay for when to interrupt (`auto` / `important` / `manual`).
     approval_mode: ApprovalMode,
+    /// Structured / headless `ask` policy. Default [`HeadlessAskPolicy::Allow`]
+    /// so TUI and unit tests keep [`ApprovalMode`] behaviour. Generate /
+    /// `run --format json` set [`HeadlessAskPolicy::Deny`] unless
+    /// `--approve-tools` / `session.headless_ask = "allow"`.
+    headless_ask: HeadlessAskPolicy,
     /// `/fresh`: skip provider prompt cache (and local response cache) once.
     skip_prompt_cache_once: std::sync::atomic::AtomicBool,
     /// Cheap model for task/swarm (`provider/model` or bare id).
@@ -333,6 +340,9 @@ impl Agent {
             magic_keywords: whycodes_config::MagicKeywordsConfig::default(),
             reasoning_effort: None,
             approval_mode: ApprovalMode::Auto,
+            // Hosts that want fail-closed (json/stream-json) call
+            // [`Self::with_headless_ask`]. TUI / tests stay ApprovalMode-only.
+            headless_ask: HeadlessAskPolicy::Allow,
             skip_prompt_cache_once: std::sync::atomic::AtomicBool::new(false),
             model_smol: None,
             model_plan: None,
@@ -431,6 +441,21 @@ impl Agent {
     /// Session-level approval overlay (`auto` / `important` / `manual`).
     pub fn set_approval_mode(&mut self, mode: ApprovalMode) {
         self.approval_mode = mode;
+    }
+
+    /// Structured / headless policy for permission `ask` (issue #122).
+    ///
+    /// Does **not** change TUI `auto` / `important` / `manual`. Generate and
+    /// `run --format json` set this from `session.headless_ask` /
+    /// `--approve-tools`.
+    pub fn with_headless_ask(mut self, policy: HeadlessAskPolicy) -> Self {
+        self.headless_ask = policy;
+        self
+    }
+
+    /// Current structured / headless `ask` policy.
+    pub fn headless_ask(&self) -> HeadlessAskPolicy {
+        self.headless_ask
     }
 
     /// Bind the active provider/model so [`Self::system_prompt`] can append
@@ -810,6 +835,7 @@ impl Agent {
             "explore" => include_str!("../../prompts/explore.txt").to_string(),
             "general" => include_str!("../../prompts/general.txt").to_string(),
             "scout" => include_str!("../../prompts/explore.txt").to_string(),
+            "verifier" | "review" => include_str!("../../prompts/verifier.txt").to_string(),
             _ => DEFAULT_SYSTEM_PROMPT.to_string(),
         }
     }

@@ -1,5 +1,5 @@
 use super::*;
-use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
+use whycodes_core::{FilesystemMode, SandboxFallback, SandboxMode, SandboxSettings};
 use whycodes_sandbox::SandboxError;
 
 #[tokio::test]
@@ -289,6 +289,7 @@ async fn start_shell_workspace_fallback_warning() {
     let reg = BackgroundRegistry::new(4);
     let settings = SandboxSettings {
         mode: whycodes_core::SandboxMode::Workspace,
+        filesystem: FilesystemMode::WorkspaceWrite,
         network: true,
         fallback: whycodes_core::SandboxFallback::Allow,
     };
@@ -547,6 +548,7 @@ fn lock_recovers_from_poison_and_helpers_cover_fallbacks() {
     assert!(err.contains("no bwrap"), "{err}");
     let deny = SandboxSettings {
         mode: SandboxMode::Workspace,
+        filesystem: FilesystemMode::WorkspaceWrite,
         network: true,
         fallback: SandboxFallback::Deny,
     };

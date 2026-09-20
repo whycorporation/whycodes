@@ -28,22 +28,25 @@ pub fn describe_backend(settings: &SandboxSettings) -> String {
 }
 
 fn describe_backend_with(settings: &SandboxSettings, bwrap_available: bool) -> String {
+    let fs = settings.filesystem.as_str();
     match settings.mode {
-        SandboxMode::Off => "off (host shell)".to_string(),
+        SandboxMode::Off => format!("off (host shell, filesystem {fs})"),
         SandboxMode::Workspace => {
             if bwrap_available {
                 if settings.network {
-                    "workspace (bwrap, network on)".to_string()
+                    format!("workspace (bwrap, network on, filesystem {fs})")
                 } else {
-                    "workspace (bwrap, network off)".to_string()
+                    format!("workspace (bwrap, network off, filesystem {fs})")
                 }
             } else {
                 match settings.fallback {
                     SandboxFallback::Allow => {
-                        "workspace requested, bwrap missing → host (fallback allow)".to_string()
+                        format!(
+                            "workspace requested, bwrap missing → host (fallback allow, filesystem {fs})"
+                        )
                     }
                     SandboxFallback::Deny => {
-                        "workspace requested, bwrap missing → deny".to_string()
+                        format!("workspace requested, bwrap missing → deny (filesystem {fs})")
                     }
                 }
             }

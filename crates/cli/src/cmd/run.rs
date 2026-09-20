@@ -7,10 +7,34 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use whycodes_agent::agent::Agent;
 use whycodes_agent::events::{TurnEvent, TurnOpts, new_cancel_flag};
-use whycodes_agent::permission::AutoApprovePrompter;
+use whycodes_agent::permission::{AutoApprovePrompter, AutoDenyPrompter};
 use whycodes_config::Config;
-use whycodes_core::types::AgentInfo;
+use whycodes_core::types::{AgentInfo, HeadlessAskPolicy};
 use whycodes_protocol::{CiEvent, OutputFormat, ResultMeta};
+
+/// Structured `--format json` / `stream-json` policy for permission `ask`.
+/// `--approve-tools` wins over `session.headless_ask`. Default is fail-closed.
+pub(crate) fn structured_headless_ask(approve_tools: bool, config: &Config) -> HeadlessAskPolicy {
+    if approve_tools {
+        HeadlessAskPolicy::Allow
+    } else {
+        config.session.headless_ask_policy()
+    }
+}
+
+/// Install the structured-run prompters. `question` is always auto-picked.
+/// Fail-closed `ask` uses [`AutoDenyPrompter`] so stdin is never consulted;
+/// [`HeadlessAskPolicy::fails_closed`] is what stamps `denied:headless`.
+fn apply_structured_headless(agent: Agent, policy: HeadlessAskPolicy) -> Agent {
+    let agent = agent
+        .with_headless_ask(policy)
+        .with_question_prompter(Arc::new(whycodes_agent::AutoAnswerPrompter));
+    if policy.fails_closed() {
+        agent.with_permission_prompter(Arc::new(AutoDenyPrompter))
+    } else {
+        agent.with_permission_prompter(Arc::new(AutoApprovePrompter))
+    }
+}
 
 pub(crate) fn force_plain_mode(cli_plain: bool) -> bool {
     cli_plain || std::env::var_os("WHYCODES_PLAIN").is_some()
@@ -1530,6 +1554,7 @@ pub(crate) async fn cmd_generate(
             jobs.max(1),
             format,
             &project_dir,
+            cli.approve_tools,
         )
         .await;
     }
@@ -1540,8 +1565,10 @@ pub(crate) async fn cmd_generate(
     agent_info.permission = config.effective_permission(&agent_info.permission);
     let expanded = expand_user_input(prompt, &project_dir);
 
-    // Structured CI formats cannot prompt on stdin; auto-approve tool asks.
-    // Catastrophic shell risk still hard-blocks regardless of this.
+    // Structured CI formats cannot prompt on stdin. Default is fail-closed
+    // (`ask` → deny, stamp `denied:headless`). `--approve-tools` /
+    // `session.headless_ask = "allow"` restores auto-approve. `question`
+    // stays auto-picked. Catastrophic shell risk still hard-blocks.
     let file_index = whycodes_index::WorkspaceIndex::start(
         whycodes_index::WorkspaceIndex::project_roots(&project_dir),
     );
@@ -1562,9 +1589,8 @@ pub(crate) async fn cmd_generate(
         Some(&expanded),
     );
     if format.is_structured() {
-        agent = agent
-            .with_permission_prompter(Arc::new(AutoApprovePrompter))
-            .with_question_prompter(Arc::new(whycodes_agent::AutoAnswerPrompter));
+        agent =
+            apply_structured_headless(agent, structured_headless_ask(cli.approve_tools, &config));
     }
 
     let mut session = whycodes_session::session::Session::new(project_dir.clone(), system_prompt);
@@ -1620,6 +1646,7 @@ pub(crate) async fn run_generate_parallel(
     jobs: usize,
     format: OutputFormat,
     project_dir: &std::path::Path,
+    approve_tools: bool,
 ) -> anyhow::Result<()> {
     let sem = Arc::new(tokio::sync::Semaphore::new(jobs));
     let structured = format.is_structured();
@@ -1655,6 +1682,7 @@ pub(crate) async fn run_generate_parallel(
                 format,
                 &project_dir,
                 structured,
+                approve_tools,
             )
             .await
         }));
@@ -1711,6 +1739,7 @@ pub(crate) async fn run_one_parallel_turn(
     format: OutputFormat,
     project_dir: &std::path::Path,
     structured: bool,
+    approve_tools: bool,
 ) -> bool {
     let started = std::time::Instant::now();
 
@@ -1733,9 +1762,7 @@ pub(crate) async fn run_one_parallel_turn(
         Some(&expanded),
     );
     if structured {
-        agent = agent
-            .with_permission_prompter(Arc::new(AutoApprovePrompter))
-            .with_question_prompter(Arc::new(whycodes_agent::AutoAnswerPrompter));
+        agent = apply_structured_headless(agent, structured_headless_ask(approve_tools, config));
     }
 
     let mut session =
