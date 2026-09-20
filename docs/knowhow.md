@@ -144,6 +144,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-21 — Selected caret shifted the thinking ┃ rail
+
+**Symptom:** Tab into scrollback on a live/expanded thought: header became
+`▌┃ Thinking…` while the body stayed `┃ …`. The accent column looked broken
+for one row.
+
+**JSONL / crash:** none.
+
+**Root cause:** `paint_chat_row` inserted a 1-col `▌` *into* the selected
+line (`x += 1`) before painting spans. Only the first content row shifted.
+Thinking `accent_line` starts every row with U+2503, so the rail split.
+
+**Fix:** Paint the caret in the gutter (`x - 1`) and leave the row unshifted.
+Thinking wrap uses `width - 2` (rail + space), not `max(8)`.
+
+**Prevention:** `selected_caret_sits_in_gutter_and_does_not_shift_thinking_rail`
+and `thinking_body_wraps_to_the_pane_not_a_floor_of_eight` in
+`crates/tui/src/ui/chat_tests.rs`. Do not insert selection chrome into
+content columns.
+
 ### 2026-09-20 — Default instance is `~/.whycodes`, not ProjectDirs
 
 **Symptom:** Fresh install used reverse-DNS / XDG paths

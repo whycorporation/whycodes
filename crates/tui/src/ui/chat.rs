@@ -573,17 +573,19 @@ fn paint_chat_row(
     let mut band_bg: Option<Color> = None;
 
     if caret {
-        let remaining = end.saturating_sub(x);
-        if remaining > 0 {
-            let mut caret = row.caret_style;
-            if caret.bg.is_none() || caret.bg == Some(Color::Reset) {
-                caret = caret.bg(row.bg);
-            }
-            if caret.fg.is_none() || caret.fg == Some(Color::Reset) {
-                caret = caret.fg(row.fg);
-            }
-            buf.set_stringn(x, y, "▌", remaining as usize, caret);
-            x = x.saturating_add(1);
+        let mut caret = row.caret_style;
+        if caret.bg.is_none() || caret.bg == Some(Color::Reset) {
+            caret = caret.bg(row.bg);
+        }
+        if caret.fg.is_none() || caret.fg == Some(Color::Reset) {
+            caret = caret.fg(row.fg);
+        }
+        // Gutter only — never insert into the row. A 1-col `▌` used to
+        // shift the selected line, so a thinking ┃ rail broke:
+        // `▌┃ Thinking…` on the header vs `┃ body` on the next row.
+        let gutter = x.saturating_sub(1);
+        if gutter < x && gutter >= area.x {
+            buf.set_stringn(gutter, y, "▌", 1, caret);
         }
     }
 
@@ -1018,7 +1020,10 @@ fn thinking_lines(
     let rail_at = |row: usize| rail.style(row);
     // Header always has the accent; body only while open (live tail / expand).
     let show_body = t.show_body();
-    let content_w = width.saturating_sub(2);
+    // Rail + space is 2 cols (`accent_line`). Wrap to the remainder so a
+    // long thought cannot overflow and clip (`max(8)` used to do that on
+    // panes narrower than 10).
+    let content_w = width.saturating_sub(2).max(1);
 
     // Grok: live is `Thinking…` (U+2026) with the timer on the right (`1.4s`).
     // Finished is `Thought for 1.4s` with no chevron on the right.
@@ -1051,7 +1056,9 @@ fn thinking_lines(
             width,
         ));
     } else {
-        lines.push(header_line);
+        let mut spans = header_line.spans;
+        truncate_spans_to(&mut spans, width as usize);
+        lines.push(Line::from(spans));
     }
 
     if !show_body {
@@ -1068,7 +1075,7 @@ fn thinking_lines(
         ));
         rail_row += 1;
     }
-    let wrap_w = content_w.max(8);
+    let wrap_w = content_w;
     for line in body {
         // Soft-wrap reasoning so long thoughts don't blow the pane (Grok).
         for row in wrap_text(line, wrap_w) {
