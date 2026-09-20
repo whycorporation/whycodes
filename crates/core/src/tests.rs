@@ -1222,8 +1222,42 @@ mod paths_tests {
         assert!(!data.as_os_str().is_empty());
         assert!(!cfg.as_os_str().is_empty());
         assert_eq!(file, cfg.join("config.toml"));
+        assert_eq!(data, cfg);
         assert_eq!(or_dot(None), PathBuf::from("."));
         assert_eq!(or_dot(Some(PathBuf::from("/x"))), PathBuf::from("/x"));
+        let _ = user_home();
+        let _ = instance_root();
+        let _ = legacy_instance_roots();
+    }
+
+    #[test]
+    fn user_home_prefers_home_then_userprofile() {
+        let _g = recover_paths_lock();
+        let prev_home = std::env::var_os("HOME");
+        let prev_up = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::set_var("HOME", "");
+            std::env::set_var("USERPROFILE", "/tmp/whycodes-userprofile");
+        }
+        let from_up = user_home();
+        unsafe { std::env::set_var("HOME", "/tmp/whycodes-home") };
+        let from_home = user_home();
+        unsafe {
+            std::env::set_var("HOME", "");
+            std::env::set_var("USERPROFILE", "");
+        }
+        let none = user_home();
+        match prev_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        match prev_up {
+            Some(v) => unsafe { std::env::set_var("USERPROFILE", v) },
+            None => unsafe { std::env::remove_var("USERPROFILE") },
+        }
+        assert_eq!(from_up, Some(PathBuf::from("/tmp/whycodes-userprofile")));
+        assert_eq!(from_home, Some(PathBuf::from("/tmp/whycodes-home")));
+        assert!(none.is_none());
     }
 
     #[test]
@@ -1233,6 +1267,27 @@ mod paths_tests {
         assert_eq!(project_dir(root), root.join(".whycodes"));
         std::fs::create_dir(root.join(".whycodes")).unwrap();
         assert_eq!(project_dir(root), root.join(".whycodes"));
+    }
+
+    #[test]
+    fn default_instance_is_home_dot_whycodes() {
+        let _g = recover_paths_lock();
+        let prev_home = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::remove_var("WHYCODES_HOME") };
+        let data = data_dir();
+        let cfg = config_dir();
+        let file = config_file();
+        match prev_home {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+        assert_eq!(data, cfg);
+        assert_eq!(file, cfg.join("config.toml"));
+        assert!(
+            cfg.ends_with(".whycodes") || cfg.as_os_str() == ".",
+            "default instance is ~/.whycodes, got {}",
+            cfg.display()
+        );
     }
 
     #[test]

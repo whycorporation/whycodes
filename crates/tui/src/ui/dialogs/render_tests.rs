@@ -859,6 +859,20 @@ fn render_dispatches_all_dialog_kinds() {
     assert!(text.contains("Active"), "{text}");
     assert!(text.contains("running"), "{text}");
 
+    // First-launch OpenRouter API-key modal
+    app.dialogs.clear();
+    app.openrouter_key_input = "sk-secret".into();
+    app.dialogs.push(DialogKind::OpenRouterKey);
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    assert!(app.dialog_modal_hit.is_some());
+    assert!(text.contains("OpenRouter"), "{text}");
+    assert!(text.contains("API"), "{text}");
+    assert!(!text.contains("sk-secret"), "key must be masked: {text}");
+
+    app.openrouter_key_input.clear();
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    assert!(text.contains("paste") || text.contains("API"), "{text}");
+
     // Catch-all kinds (Status / Workspace) are no-ops.
     app.dialogs.clear();
     app.dialogs.push(DialogKind::Status);

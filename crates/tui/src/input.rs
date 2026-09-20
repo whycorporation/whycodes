@@ -85,7 +85,31 @@ fn attach_image_paths(app: &mut TuiApp, paths: impl IntoIterator<Item = std::pat
 
 /// Bracketed paste / drag-drop: image paths become attachments; other text
 /// inserts at the cursor. Dragging a file onto most terminals pastes its path.
+fn paste_openrouter_from_os(app: &mut TuiApp) {
+    match crate::clipboard_image::read_for_prompt() {
+        Ok(crate::clipboard_image::PromptClipboard::Empty) => {}
+        #[cfg(test)]
+        Ok(crate::clipboard_image::PromptClipboard::Text(text)) => {
+            handle_paste(app, &text);
+        }
+        Ok(crate::clipboard_image::PromptClipboard::ImagePaths(_)) => {}
+        Err(err) => {
+            app.toasts.push(crate::toast::ToastKind::Warning, err);
+        }
+    }
+    app.mark_dirty();
+}
+
 fn handle_paste(app: &mut TuiApp, data: &str) {
+    if matches!(app.dialogs.active(), Some(DialogKind::OpenRouterKey)) {
+        let text = crate::mouse_csi::strip_leaked_mouse_csi(data);
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            app.openrouter_key_input = trimmed.to_string();
+            app.mark_dirty();
+        }
+        return;
+    }
     // Only while the prompt can accept input.
     if app.mode != AppMode::Normal && app.mode != AppMode::Session {
         return;
@@ -117,10 +141,11 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
 /// events. Fold that flood into one `Event::Paste` so the prompt inserts
 /// the original text (and collapses long pastes to a chip).
 pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
-    if app.modal_is_open() {
+    let openrouter_key = matches!(app.dialogs.active(), Some(DialogKind::OpenRouterKey));
+    if app.modal_is_open() && !openrouter_key {
         return;
     }
-    if app.mode != AppMode::Normal && app.mode != AppMode::Session {
+    if !openrouter_key && app.mode != AppMode::Normal && app.mode != AppMode::Session {
         return;
     }
     if events.iter().any(|e| matches!(e, Event::Paste(_))) {
@@ -186,7 +211,8 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
     // still fold so Tab does not steal focus. A lone Tab (printable == 1,
     // recovered_i) is a real Tab: leave it.
     let fold = crate::paste::should_collapse(collapse_src)
-        || ((saw_windows_paste_noise || recovered_i) && printable >= 2);
+        || ((saw_windows_paste_noise || recovered_i) && printable >= 2)
+        || (openrouter_key && printable >= 2);
     if !fold {
         return;
     }
@@ -2134,6 +2160,11 @@ fn dismiss_dialog(app: &mut TuiApp) {
     ) {
         crate::run::mark_import_declined();
     }
+    if matches!(app.dialogs.active(), Some(DialogKind::OpenRouterKey))
+        && app.pending_openrouter_key.is_none()
+    {
+        app.pending_openrouter_key = Some(String::new());
+    }
     app.dialogs.pop();
     app.mouse_sel = None;
     app.dialog_scrollbar_grab = None;
@@ -2266,6 +2297,19 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
             _ => {}
         }
     }
+    // OpenRouter first-launch form: letters (y/n/q/a/d) must type, not
+    // confirm/cancel the dialog. Enter / Esc / Backspace stay on the keymap.
+    if matches!(active, DialogKind::OpenRouterKey)
+        && !key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+        && let KeyCode::Char(c) = key.code
+    {
+        app.openrouter_key_input.push(c);
+        app.mark_dirty();
+        return true;
+    }
+
     // Checkbox picker: Space toggles the row. `a`/`n` would otherwise map to
     // dialog confirm/cancel (permission allow/deny), so steal them here.
     if matches!(active, DialogKind::Import)
@@ -2320,6 +2364,9 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
                 app.mark_dirty();
                 return true;
             }
+            if matches!(active, DialogKind::OpenRouterKey) {
+                app.pending_openrouter_key = Some(String::new());
+            }
             dismiss_dialog(app);
         }
         Some(Action::DialogConfirm) => {
@@ -2327,6 +2374,16 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
                 app.toasts.push(
                     crate::toast::ToastKind::Info,
                     "Select at least one item (Space), or Esc to skip",
+                );
+                app.mark_dirty();
+                return true;
+            }
+            if matches!(active, DialogKind::OpenRouterKey)
+                && app.openrouter_key_input.trim().is_empty()
+            {
+                app.toasts.push(
+                    crate::toast::ToastKind::Info,
+                    "Paste an OpenRouter API key, or Esc to skip",
                 );
                 app.mark_dirty();
                 return true;
@@ -2346,8 +2403,16 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
             move_in_dialog(app, &active, -1);
             app.mark_dirty();
         }
+        Some(Action::PasteClipboard) => {
+            if matches!(active, DialogKind::OpenRouterKey) {
+                paste_openrouter_from_os(app);
+            }
+        }
         Some(Action::InputBackspace) => {
-            if matches!(active, DialogKind::Provider) {
+            if matches!(active, DialogKind::OpenRouterKey) {
+                app.openrouter_key_input.pop();
+                app.mark_dirty();
+            } else if matches!(active, DialogKind::Provider) {
                 let field_val = match app.provider_dialog.active_field {
                     0 => &mut app.provider_dialog.form_name,
                     1 => &mut app.provider_dialog.form_api_key,
@@ -2551,6 +2616,19 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
             // loop. If Enter still lands here, do not dismiss (that would
             // cancel the questionnaire instead of answering it).
             return;
+        }
+        DialogKind::OpenRouterKey => {
+            let key = app.openrouter_key_input.trim().to_string();
+            if key.is_empty() {
+                app.toasts.push(
+                    crate::toast::ToastKind::Info,
+                    "Paste an OpenRouter API key, or Esc to skip",
+                );
+                app.mark_dirty();
+                return;
+            }
+            app.pending_openrouter_key = Some(key);
+            app.openrouter_key_input.clear();
         }
         _ => {}
     }

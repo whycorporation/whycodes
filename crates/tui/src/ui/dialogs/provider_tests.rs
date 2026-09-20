@@ -45,6 +45,36 @@ fn render_provider_select_and_add_custom() {
 }
 
 #[test]
+fn render_openrouter_key_dialog_masks_and_tiny() {
+    let palette = ThemeName::DefaultDark.palette();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.openrouter_key_input = "sk-or-secret-key".into();
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| render_openrouter_key_dialog(f, &mut app, &palette))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol().to_string())
+        .collect();
+    assert!(
+        text.contains("OpenRouter") || text.contains("API"),
+        "{text}"
+    );
+    assert!(!text.contains("sk-or-secret-key"), "{text}");
+    app.openrouter_key_input.clear();
+    let tiny = TestBackend::new(8, 3);
+    let mut tiny_term = Terminal::new(tiny).unwrap();
+    tiny_term
+        .draw(|f| render_openrouter_key_dialog(f, &mut app, &palette))
+        .unwrap();
+}
+
+#[test]
 fn render_provider_select_scrollbar_and_tiny() {
     let palette = ThemeName::DefaultDark.palette();
     let mut app = TuiApp::from_config(TuiAppConfig::default());

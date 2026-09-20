@@ -800,6 +800,76 @@ fn provider_form_types_and_backspaces() {
 }
 
 #[test]
+fn openrouter_key_modal_types_pastes_and_confirms() {
+    let mut a = app();
+    a.mode = AppMode::Dialog;
+    a.key_context = KeymapContext::Dialog;
+    a.dialogs.push(DialogKind::OpenRouterKey);
+    handle_event(&mut a, key(KeyCode::Char('s')));
+    handle_event(&mut a, key(KeyCode::Char('k')));
+    assert_eq!(a.openrouter_key_input, "sk");
+    handle_event(&mut a, key(KeyCode::Backspace));
+    assert_eq!(a.openrouter_key_input, "s");
+    handle_event(&mut a, Event::Paste(" sk-or-paste \n".into()));
+    assert_eq!(a.openrouter_key_input, "sk-or-paste");
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert_eq!(a.pending_openrouter_key.as_deref(), Some("sk-or-paste"));
+    assert!(!a.dialogs.is_open());
+}
+
+#[test]
+fn openrouter_key_modal_ctrl_v_and_coalesce() {
+    let mut a = app();
+    a.mode = AppMode::Dialog;
+    a.key_context = KeymapContext::Dialog;
+    a.dialogs.push(DialogKind::OpenRouterKey);
+    crate::clipboard_image::with_stub(
+        Ok(crate::clipboard_image::PromptClipboard::Text(
+            " sk-or-clip ".into(),
+        )),
+        || {
+            handle_event(&mut a, ctrl('v'));
+        },
+    );
+    assert_eq!(a.openrouter_key_input, "sk-or-clip");
+    crate::clipboard_image::with_stub(Ok(crate::clipboard_image::PromptClipboard::Empty), || {
+        handle_event(&mut a, ctrl('v'));
+    });
+    crate::clipboard_image::with_stub(
+        Ok(crate::clipboard_image::PromptClipboard::ImagePaths(vec![])),
+        || {
+            handle_event(&mut a, ctrl('v'));
+        },
+    );
+    crate::clipboard_image::with_stub(Err("clip fail".into()), || {
+        handle_event(&mut a, ctrl('v'));
+    });
+    handle_event(&mut a, Event::Paste("   ".into()));
+    assert_eq!(a.openrouter_key_input, "sk-or-clip");
+
+    let mut events: Vec<Event> = "sk-flood".chars().map(|c| key(KeyCode::Char(c))).collect();
+    coalesce_unbracketed_paste(&a, &mut events);
+    assert!(
+        events.iter().any(|e| matches!(e, Event::Paste(_))),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn openrouter_key_modal_esc_skips_and_empty_enter_stays() {
+    let mut a = app();
+    a.mode = AppMode::Dialog;
+    a.key_context = KeymapContext::Dialog;
+    a.dialogs.push(DialogKind::OpenRouterKey);
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert!(a.dialogs.is_open());
+    assert!(a.pending_openrouter_key.is_none());
+    handle_event(&mut a, key(KeyCode::Esc));
+    assert!(!a.dialogs.is_open());
+    assert_eq!(a.pending_openrouter_key.as_deref(), Some(""));
+}
+
+#[test]
 fn paste_ignored_outside_normal_and_auth_esc_cancels() {
     let mut a = app();
     a.mode = AppMode::Help;

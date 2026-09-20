@@ -13,6 +13,11 @@ use whycodes_core::types::{
     AgentInfo, ApprovalMode, ModelConfig, PermissionAction, ProviderConfig,
 };
 
+/// First-run / CLI fallback provider when nothing is configured.
+pub const DEFAULT_PROVIDER: &str = "openrouter";
+/// OpenRouter model id used as the first-run default.
+pub const DEFAULT_MODEL_ID: &str = "anthropic/claude-sonnet-4.5";
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CommandConfig {
     /// Override the model for this command
@@ -1573,6 +1578,10 @@ pub struct TuiConfig {
     /// ```
     #[serde(default)]
     pub agent_colors: HashMap<String, String>,
+    /// First-launch TUI asked for an OpenRouter API key and the user skipped.
+    /// Do not re-prompt on later launches (`/connect` and Ctrl+P stay available).
+    #[serde(default)]
+    pub skip_openrouter_key_prompt: bool,
 }
 
 impl Default for TuiConfig {
@@ -1583,6 +1592,7 @@ impl Default for TuiConfig {
             prompt_suggestions: default_prompt_suggestions(),
             show_sidebar: false,
             agent_colors: HashMap::new(),
+            skip_openrouter_key_prompt: false,
         }
     }
 }

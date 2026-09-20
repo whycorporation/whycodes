@@ -73,17 +73,94 @@ fn warn_project_config(kind: &str, path: &Path, e: impl std::fmt::Display) {
     tracing::warn!("{msg}");
 }
 
+/// Copy `config.toml` / `auth.json` / `whycodes.db` from a pre-0.7 ProjectDirs
+/// location into `~/.whycodes` when the new root is empty. Best-effort: a
+/// read-only dest or missing source is a no-op. `WHYCODES_HOME` skips this
+/// (tests and isolated instances own their own tree).
+pub(crate) fn migrate_legacy_instance() {
+    if whycodes_core::paths::whycodes_home().is_some() {
+        return;
+    }
+    let dest = whycodes_core::paths::instance_root();
+    let sources = whycodes_core::paths::legacy_instance_roots();
+    migrate_legacy_into(&dest, &sources);
+}
+
+pub(crate) fn migrate_legacy_into(dest: &Path, sources: &[PathBuf]) {
+    if dest_has_instance_files(dest) {
+        return;
+    }
+    let Some(src) = sources.iter().find(|root| dest_has_instance_files(root)) else {
+        return;
+    };
+    if let Err(e) = std::fs::create_dir_all(dest) {
+        tracing::warn!(
+            "legacy config migrate: could not create {}: {e}",
+            dest.display()
+        );
+        return;
+    }
+    for name in ["config.toml", "auth.json", "whycodes.db"] {
+        copy_if_missing(&src.join(name), &dest.join(name));
+    }
+}
+
+pub(crate) fn dest_has_instance_files(dest: &Path) -> bool {
+    dest.join("config.toml").is_file()
+        || dest.join("auth.json").is_file()
+        || dest.join("whycodes.db").is_file()
+}
+
+pub(crate) fn copy_if_missing(src: &Path, dest: &Path) {
+    if !src.is_file() || dest.exists() {
+        return;
+    }
+    match std::fs::copy(src, dest) {
+        Ok(_) => tracing::info!("migrated {} → {}", src.display(), dest.display()),
+        Err(e) => tracing::warn!(
+            "legacy config migrate: copy {} → {} failed: {e}",
+            src.display(),
+            dest.display()
+        ),
+    }
+}
+
 impl Config {
     // ── Loading / Saving ────────────────────────────────────────────────
 
-    /// Load config from the default location
+    /// Load config from the default location.
+    ///
+    /// A missing file returns the OpenRouter seed **without** writing. Call
+    /// [`Self::load_or_create`] (or [`Self::load_layered`]) to persist it.
+    /// Tests and TUI dialogs that only peek at disk must not create
+    /// `~/.whycodes/config.toml` as a side effect.
     pub fn load() -> Result<Self> {
+        migrate_legacy_instance();
+        Self::read_or_seed(&Self::default_path()?)
+    }
+
+    /// Load, and on first run write the OpenRouter seed to `config.toml`.
+    pub fn load_or_create() -> Result<Self> {
+        migrate_legacy_instance();
         let path = Self::default_path()?;
         if !path.exists() {
-            let cfg = Self::default();
-            return Ok(cfg);
+            let cfg = Self::seeded_openrouter();
+            match cfg.save() {
+                Ok(()) => return Ok(cfg),
+                Err(e) => {
+                    tracing::warn!("first-run config.toml could not be written: {e}");
+                    return Ok(cfg);
+                }
+            }
         }
-        let content = std::fs::read_to_string(&path)?;
+        Self::read_or_seed(&path)
+    }
+
+    fn read_or_seed(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            return Ok(Self::seeded_openrouter());
+        }
+        let content = std::fs::read_to_string(path)?;
         let mut cfg: Config = toml::from_str(&content).map_err(|e| toml_err(e.to_string()))?;
         // When a table is keyed `[providers.foo]` but omits `name`, use the key.
         for (key, provider) in &mut cfg.providers {
@@ -137,7 +214,7 @@ impl Config {
 
     /// Load config using priority-based layering:
     /// 1. Built-in defaults
-    /// 2. Global config (~/.config/whycodes/config.toml)
+    /// 2. Global config (`~/.whycodes/config.toml`, or `$WHYCODES_HOME/config.toml`)
     /// 3. Project config (`<project>/.whycodes/config.toml`)
     /// 4. Environment variables (WHYCODES_*)
     ///
@@ -145,8 +222,8 @@ impl Config {
     pub fn load_layered(project_dir: &Path) -> Result<Self> {
         let mut config = Self::default();
 
-        // Layer 2: global config
-        match Self::load() {
+        // Layer 2: global config (creates the OpenRouter seed on first run)
+        match Self::load_or_create() {
             Ok(global) => {
                 config = config.merge_with(&global);
             }
@@ -181,6 +258,83 @@ impl Config {
         config.apply_slop_file(project_dir);
 
         Ok(config)
+    }
+
+    /// Persist an OpenRouter API key into the global `config.toml`.
+    pub fn set_openrouter_api_key(&mut self, key: &str) -> Result<()> {
+        use crate::types::{DEFAULT_MODEL_ID, DEFAULT_PROVIDER};
+        let trimmed = key.trim();
+        if trimmed.is_empty() {
+            return Err(toml_err("OpenRouter API key is empty".into()));
+        }
+        let entry = self
+            .providers
+            .entry(DEFAULT_PROVIDER.to_string())
+            .or_insert_with(|| ProviderConfig {
+                name: DEFAULT_PROVIDER.to_string(),
+                api_key: None,
+                api_base: None,
+                base_url: None,
+                headers: None,
+                models: Vec::new(),
+                tool_arguments: None,
+                extra: HashMap::new(),
+            });
+        if entry.name.is_empty() {
+            entry.name = DEFAULT_PROVIDER.to_string();
+        }
+        entry.api_key = Some(trimmed.to_string());
+        if self.default_model.is_none() {
+            self.default_model = Some(ModelConfig {
+                model_id: DEFAULT_MODEL_ID.to_string(),
+                provider_id: DEFAULT_PROVIDER.to_string(),
+                max_tokens: None,
+                context_window: None,
+                temperature: None,
+                top_p: None,
+                thinking: None,
+                supports_tools: None,
+                supports_images: None,
+            });
+        }
+        self.save()
+    }
+
+    /// Remember that the first-launch OpenRouter key modal was skipped.
+    pub fn mark_openrouter_key_prompt_skipped(&mut self) -> Result<()> {
+        self.tui.skip_openrouter_key_prompt = true;
+        self.save()
+    }
+
+    /// First-run `config.toml`: OpenRouter provider, no API key yet.
+    pub fn seeded_openrouter() -> Self {
+        use crate::types::{DEFAULT_MODEL_ID, DEFAULT_PROVIDER};
+        let mut cfg = Self::default();
+        cfg.providers.insert(
+            DEFAULT_PROVIDER.to_string(),
+            ProviderConfig {
+                name: DEFAULT_PROVIDER.to_string(),
+                api_key: None,
+                api_base: None,
+                base_url: None,
+                headers: None,
+                models: Vec::new(),
+                tool_arguments: None,
+                extra: HashMap::new(),
+            },
+        );
+        cfg.default_model = Some(ModelConfig {
+            model_id: DEFAULT_MODEL_ID.to_string(),
+            provider_id: DEFAULT_PROVIDER.to_string(),
+            max_tokens: None,
+            context_window: None,
+            temperature: None,
+            top_p: None,
+            thinking: None,
+            supports_tools: None,
+            supports_images: None,
+        });
+        cfg
     }
 
     /// Overlay `.whycodes/slop.toml` when present (project-local tripwires).

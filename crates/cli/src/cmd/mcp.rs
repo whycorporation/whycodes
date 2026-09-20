@@ -95,7 +95,7 @@ pub(crate) fn mcp_configured_header() -> String {
 }
 
 pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
-    let mut config = Config::load()?;
+    let mut config = Config::load_or_create()?;
 
     match cmd {
         McpCmd::Serve { tools, cwd } => {

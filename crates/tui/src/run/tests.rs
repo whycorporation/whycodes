@@ -1814,6 +1814,117 @@ fn expand_at_files_multiple_and_directory() {
 }
 
 #[test]
+fn maybe_offer_openrouter_key_opens_once() {
+    let _lock = isolate_home_lock();
+    let prev = std::env::var_os("OPENROUTER_API_KEY");
+    unsafe { std::env::remove_var("OPENROUTER_API_KEY") };
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let config = Config::seeded_openrouter();
+    maybe_offer_openrouter_key(&mut app, &config, "openrouter", "");
+    assert!(app.openrouter_key_prompted);
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::OpenRouterKey)
+    ));
+    maybe_offer_openrouter_key(&mut app, &config, "openrouter", "");
+    assert_eq!(app.dialogs.stack.len(), 1);
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_offer_openrouter_key(&mut app, &config, "openrouter", "sk-already");
+    assert!(app.openrouter_key_prompted);
+    assert!(!app.dialogs.is_open());
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_offer_openrouter_key(&mut app, &config, "anthropic", "");
+    assert!(app.openrouter_key_prompted);
+    assert!(!app.dialogs.is_open());
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut skipped = Config::seeded_openrouter();
+    skipped.tui.skip_openrouter_key_prompt = true;
+    maybe_offer_openrouter_key(&mut app, &skipped, "openrouter", "");
+    assert!(app.openrouter_key_prompted);
+    assert!(!app.dialogs.is_open());
+
+    unsafe { std::env::set_var("OPENROUTER_API_KEY", "sk-from-env") };
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_offer_openrouter_key(&mut app, &config, "openrouter", "");
+    assert!(app.openrouter_key_prompted);
+    assert!(!app.dialogs.is_open());
+    match prev {
+        Some(v) => unsafe { std::env::set_var("OPENROUTER_API_KEY", v) },
+        None => unsafe { std::env::remove_var("OPENROUTER_API_KEY") },
+    }
+}
+
+#[test]
+fn apply_pending_openrouter_key_saves_and_skips() {
+    let (_lock, home) = isolate_home_fresh();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut config = Config::seeded_openrouter();
+    let mut provider = "openrouter".to_string();
+    let mut model = String::new();
+    let mut api_key = String::new();
+    app.pending_openrouter_key = Some("sk-or-live".into());
+    apply_pending_openrouter_key(
+        &mut app,
+        &mut config,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+    );
+    assert_eq!(api_key, "sk-or-live");
+    assert_eq!(provider, "openrouter");
+    assert_eq!(model, whycodes_config::DEFAULT_MODEL_ID);
+    assert!(home.path().join("config.toml").exists());
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.pending_openrouter_key = Some(String::new());
+    apply_pending_openrouter_key(
+        &mut app,
+        &mut config,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+    );
+    assert!(config.tui.skip_openrouter_key_prompt);
+    assert!(app.status_message.contains("skipped"));
+
+    apply_pending_openrouter_key(
+        &mut app,
+        &mut config,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+    );
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.pending_openrouter_key = Some("sk-or-keep-model".into());
+    let mut model = "keep-me".to_string();
+    apply_pending_openrouter_key(
+        &mut app,
+        &mut config,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+    );
+    assert_eq!(model, "keep-me");
+
+    std::fs::remove_file(home.path().join("config.toml")).ok();
+    std::fs::create_dir(home.path().join("config.toml")).unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.pending_openrouter_key = Some("sk-or-fail".into());
+    apply_pending_openrouter_key(
+        &mut app,
+        &mut config,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+    );
+    assert!(app.openrouter_key_prompted);
+}
+
+#[test]
 fn maybe_offer_update_confirms_on_empty_home() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.available_update = Some(UpdateOffer::SelfInstall("9.9.9".into()));

@@ -2,7 +2,7 @@
 //! cannot sink the crate's 100% production floor.
 
 use super::*;
-use crate::SlopConfig;
+use crate::{DEFAULT_MODEL_ID, SlopConfig};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -77,6 +77,7 @@ fn test_default_config() {
     assert_eq!(cfg.default_agent, "build");
     assert!(cfg.default_model.is_none());
     assert!(cfg.providers.is_empty());
+    assert!(!cfg.tui.skip_openrouter_key_prompt);
     assert!(cfg.models.is_empty());
     assert_eq!(cfg.session.intent_guidance, "auto");
     assert_eq!(cfg.session.model_race, "off");
@@ -828,8 +829,10 @@ fn merge_with_general_security_memory_swarm() {
     assert_eq!(merged.schema_version, CONFIG_SCHEMA_VERSION + 1);
     overlay.general.auto_update = false;
     overlay.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+    overlay.tui.skip_openrouter_key_prompt = true;
     let merged = base.merge_with(&overlay);
     assert!(!merged.general.auto_update);
+    assert!(merged.tui.skip_openrouter_key_prompt);
     assert_eq!(
         merged.general.approval_mode,
         Some(whycodes_core::types::ApprovalMode::Manual)
@@ -1683,11 +1686,207 @@ fn tui_agent_colors_table_parses() {
 }
 
 #[test]
-fn load_missing_file_returns_default() {
+fn load_missing_file_seeds_openrouter() {
     with_isolated_home(|home| {
-        let cfg = Config::load().unwrap();
-        assert_eq!(cfg.default_agent, "build");
+        let peek = Config::load().unwrap();
+        assert_eq!(peek.default_agent, "build");
+        assert!(
+            peek.providers.contains_key("openrouter"),
+            "peek returns the seed without writing"
+        );
         assert!(!home.join("config.toml").exists());
+
+        let cfg = Config::load_or_create().unwrap();
+        assert!(home.join("config.toml").exists());
+        assert!(cfg.providers.contains_key("openrouter"));
+        assert_eq!(
+            cfg.default_model.as_ref().map(|m| m.provider_id.as_str()),
+            Some("openrouter")
+        );
+        assert_eq!(
+            cfg.default_model.as_ref().map(|m| m.model_id.as_str()),
+            Some(DEFAULT_MODEL_ID)
+        );
+        let on_disk = std::fs::read_to_string(home.join("config.toml")).unwrap();
+        assert!(on_disk.contains("[providers.openrouter]"), "{on_disk}");
+        assert!(!on_disk.contains("api_key"), "{on_disk}");
+        // Second load must not overwrite a user-edited file.
+        std::fs::write(home.join("config.toml"), "default_agent = \"plan\"\n").unwrap();
+        let again = Config::load_or_create().unwrap();
+        assert_eq!(again.default_agent, "plan");
+    });
+}
+
+#[test]
+fn seeded_openrouter_has_no_key() {
+    let cfg = Config::seeded_openrouter();
+    let p = cfg.providers.get("openrouter").expect("openrouter");
+    assert_eq!(p.name, "openrouter");
+    assert!(p.api_key.is_none());
+}
+
+#[test]
+fn migrate_legacy_into_copies_when_dest_empty() {
+    let src = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    std::fs::write(src.path().join("config.toml"), "default_agent = \"plan\"\n").unwrap();
+    std::fs::write(src.path().join("auth.json"), "{}\n").unwrap();
+    std::fs::write(src.path().join("whycodes.db"), "db").unwrap();
+    crate::load::migrate_legacy_into(dest.path(), &[src.path().to_path_buf()]);
+    assert_eq!(
+        std::fs::read_to_string(dest.path().join("config.toml")).unwrap(),
+        "default_agent = \"plan\"\n"
+    );
+    assert!(dest.path().join("auth.json").is_file());
+    assert!(dest.path().join("whycodes.db").is_file());
+    // Dest already populated — do not overwrite.
+    std::fs::write(src.path().join("config.toml"), "default_agent = \"ask\"\n").unwrap();
+    crate::load::migrate_legacy_into(dest.path(), &[src.path().to_path_buf()]);
+    assert_eq!(
+        std::fs::read_to_string(dest.path().join("config.toml")).unwrap(),
+        "default_agent = \"plan\"\n"
+    );
+    assert!(crate::load::dest_has_instance_files(dest.path()));
+    assert!(!crate::load::dest_has_instance_files(
+        tempfile::tempdir().unwrap().path()
+    ));
+    crate::load::migrate_legacy_into(dest.path(), &[]);
+    crate::load::migrate_legacy_into(dest.path(), &[dest.path().to_path_buf()]);
+}
+
+#[test]
+fn migrate_legacy_instance_skips_when_home_set() {
+    with_isolated_home(|_| {
+        crate::load::migrate_legacy_instance();
+    });
+}
+
+#[test]
+fn migrate_legacy_instance_without_whycodes_home() {
+    let _guard = lock_env();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_why = std::env::var_os("WHYCODES_HOME");
+    let prev_home = std::env::var_os("HOME");
+    let prev_up = std::env::var_os("USERPROFILE");
+    unsafe {
+        std::env::remove_var("WHYCODES_HOME");
+        std::env::set_var("HOME", dir.path());
+        std::env::set_var("USERPROFILE", dir.path());
+    }
+    crate::load::migrate_legacy_instance();
+    match prev_why {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+    }
+    match prev_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+    match prev_up {
+        Some(v) => unsafe { std::env::set_var("USERPROFILE", v) },
+        None => unsafe { std::env::remove_var("USERPROFILE") },
+    }
+}
+
+#[test]
+fn copy_if_missing_skips_and_warns() {
+    let src = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(src.path(), "hi").unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let dest_file = dest.path().join("out");
+    crate::load::copy_if_missing(src.path(), &dest_file);
+    assert_eq!(std::fs::read_to_string(&dest_file).unwrap(), "hi");
+    crate::load::copy_if_missing(src.path(), &dest_file);
+    crate::load::copy_if_missing(dest.path(), &dest.path().join("nope"));
+    let parent_file = tempfile::NamedTempFile::new().unwrap();
+    crate::load::copy_if_missing(src.path(), &parent_file.path().join("child"));
+}
+
+#[test]
+fn write_atomic_cleanup_when_persist_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, "x").unwrap();
+    let dest = blocker.join("config.toml");
+    let err = crate::load::write_atomic(&dest, b"hi").unwrap_err();
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn migrate_legacy_into_skips_missing_source() {
+    let dest = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+    crate::load::migrate_legacy_into(dest.path(), &[empty.path().to_path_buf()]);
+    assert!(!dest.path().join("config.toml").exists());
+}
+
+#[test]
+fn migrate_legacy_into_skips_when_dest_is_a_file() {
+    let dest_file = tempfile::NamedTempFile::new().unwrap();
+    let src = tempfile::tempdir().unwrap();
+    std::fs::write(src.path().join("config.toml"), "x = 1\n").unwrap();
+    crate::load::migrate_legacy_into(dest_file.path(), &[src.path().to_path_buf()]);
+    assert!(dest_file.path().is_file());
+}
+
+#[test]
+fn set_openrouter_api_key_and_skip_flag() {
+    with_isolated_home(|home| {
+        let mut cfg = Config::default();
+        assert!(cfg.set_openrouter_api_key("  ").is_err());
+        cfg.set_openrouter_api_key(" sk-or-v1-test ").unwrap();
+        assert_eq!(
+            cfg.providers["openrouter"].api_key.as_deref(),
+            Some("sk-or-v1-test")
+        );
+        assert_eq!(
+            cfg.default_model.as_ref().map(|m| m.model_id.as_str()),
+            Some(DEFAULT_MODEL_ID)
+        );
+        let on_disk = std::fs::read_to_string(home.join("config.toml")).unwrap();
+        assert!(on_disk.contains("sk-or-v1-test"), "{on_disk}");
+        cfg.mark_openrouter_key_prompt_skipped().unwrap();
+        assert!(cfg.tui.skip_openrouter_key_prompt);
+        let reloaded = Config::load().unwrap();
+        assert!(reloaded.tui.skip_openrouter_key_prompt);
+        assert_eq!(
+            reloaded.providers["openrouter"].api_key.as_deref(),
+            Some("sk-or-v1-test")
+        );
+        // Existing default_model is kept when setting a key.
+        cfg.default_model = Some(make_model("openrouter", "keep-me"));
+        cfg.set_openrouter_api_key("sk-or-v1-next").unwrap();
+        assert_eq!(cfg.default_model.as_ref().unwrap().model_id, "keep-me");
+        cfg.providers.get_mut("openrouter").unwrap().name.clear();
+        cfg.set_openrouter_api_key("sk-or-v1-named").unwrap();
+        assert_eq!(cfg.providers["openrouter"].name, "openrouter");
+        let existing = Config::load_or_create().unwrap();
+        assert_eq!(
+            existing.providers["openrouter"].api_key.as_deref(),
+            Some("sk-or-v1-named")
+        );
+    });
+}
+
+#[test]
+fn load_seed_save_failure_still_returns_seed() {
+    with_isolated_home(|home| {
+        // `save()` writes `$WHYCODES_HOME/config.toml`; a directory there
+        // makes the first-run rewrite fail so the warn/Ok path is used.
+        // Wait — if the path exists as a dir, load reads it. Point the
+        // parent at a file instead via a nested missing child: create a
+        // file named so ensure_parent_dir cannot mkdir.
+        let blocker = home.join("blocker");
+        std::fs::write(&blocker, "not-a-dir").unwrap();
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", &blocker) };
+        let cfg = Config::load_or_create().unwrap();
+        match prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+        assert!(cfg.providers.contains_key("openrouter"));
+        assert!(!blocker.join("config.toml").is_file());
     });
 }
 

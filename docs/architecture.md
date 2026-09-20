@@ -10,14 +10,14 @@ and verified in CI.
 Two rules keep the graph acyclic:
 
 - `core` holds leaf types, the `Tool` trait, errors, logging and
-  `paths` (`WHYCODES_HOME`). It depends on **`index` only** among workspace
+  `paths` (`~/.whycodes`, or `WHYCODES_HOME`). It depends on **`index` only** among workspace
   crates (file-index types). It never depends on `config`.
 - `config` (user-config loading and policy) depends only on `core`. `core`
   never re-exports `config`.
 
 | Layer | Crate | Responsibility |
 |---|---|---|
-| Foundations | `core` | Leaf types, `Tool` trait, sandbox settings, errors, logging, `paths` (`WHYCODES_HOME`) |
+| Foundations | `core` | Leaf types, `Tool` trait, sandbox settings, errors, logging, `paths` (`~/.whycodes`) |
 | | `command-risk` | Shell command risk classification (pure, no I/O) |
 | | `slop` | Deterministic ΔLOC / verbosity / erosion on a git diff |
 | | `auth` | OAuth engine + token store; specs from auth plugins |

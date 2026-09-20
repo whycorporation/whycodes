@@ -435,10 +435,17 @@ entries.
 
 ## Configuration
 
-`config.toml` in the platform config directory. `whycodes debug` prints the
-exact path.
+`~/.whycodes/config.toml` on every OS (`%USERPROFILE%\.whycodes\config.toml`
+on Windows). First launch writes that file with `[providers.openrouter]`.
+The TUI asks for an OpenRouter API key (paste into the modal, or skip —
+`/connect` and Ctrl+P stay available). `WHYCODES_HOME` relocates the whole
+instance. `whycodes debug` / `whycodes config path` print the resolved path.
 
 ```toml
+[providers.openrouter]
+name = "openrouter"
+api_key = "sk-or-..."
+
 [providers.anthropic]
 name = "anthropic"
 api_key = "sk-ant-..."
@@ -480,7 +487,7 @@ mode = "primary"
 Layers, each overriding the one above:
 
 1. Built-in defaults
-2. Global `config.toml` (platform config dir, or `$WHYCODES_HOME/config.toml`)
+2. Global `config.toml` (`~/.whycodes/config.toml`, or `$WHYCODES_HOME/config.toml`)
 3. Project `.whycodes/config.toml`
 4. `WHYCODES_*` environment variables
 5. Project `.whycodes/slop.toml` (slop thresholds only)
@@ -780,8 +787,7 @@ Focus on $ARGUMENTS.
 External commands register as `plugin_<name>` (full profile or
 `tool_search`). Two layouts, merged last-wins by tool name:
 
-**TOML** — `~/.config/com.whycorporation.whycodes/plugins.toml` or
-`.whycodes/plugins.toml`:
+**TOML** — `~/.whycodes/plugins.toml` or `.whycodes/plugins.toml`:
 
 ```toml
 [[plugins]]

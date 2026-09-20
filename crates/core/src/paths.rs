@@ -2,9 +2,15 @@
 //!
 //! `WHYCODES_HOME` (if set and non-empty) is the instance root: config is
 //! `$WHYCODES_HOME/config.toml` and session/auth/memory/browser data live
-//! under `$WHYCODES_HOME`. Otherwise the XDG/platform project dirs are used.
+//! under `$WHYCODES_HOME`. Otherwise the default is `$HOME/.whycodes`
+//! (`%USERPROFILE%\.whycodes` on Windows) — the same short shape as Claude
+//! (`~/.claude`), Grok (`~/.grok`), and Codex (`~/.codex`).
 //!
-//! Project-local state lives under `.whycodes/`.
+//! Pre-0.7 installs used `directories::ProjectDirs` (`com.whycorporation.whycodes`
+//! / XDG). [`legacy_instance_roots`] lists those paths so config load can
+//! copy `config.toml` / `auth.json` / `whycodes.db` into `~/.whycodes`.
+//!
+//! Project-local state lives under `.whycodes/` next to a repo.
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -13,6 +19,7 @@ const QUALIFIER: &str = "com";
 const ORG: &str = "whycorporation";
 const APP: &str = "whycodes";
 const PROJECT_DIR: &str = ".whycodes";
+const INSTANCE_DIR: &str = ".whycodes";
 
 /// Isolated instance root from the environment.
 pub fn whycodes_home() -> Option<PathBuf> {
@@ -24,30 +31,55 @@ pub fn whycodes_home() -> Option<PathBuf> {
     }
 }
 
-/// Sessions, auth store, memory banks, browser profile.
-pub fn data_dir() -> PathBuf {
+/// User home (`$HOME`, then `%USERPROFILE%`).
+pub fn user_home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()))
+        .map(PathBuf::from)
+}
+
+/// Config + data live together under this directory.
+pub fn instance_root() -> PathBuf {
     if let Some(home) = whycodes_home() {
         return home;
     }
-    or_dot(
-        directories::ProjectDirs::from(QUALIFIER, ORG, APP)
-            .map(|d| d.data_local_dir().to_path_buf()),
-    )
+    or_dot(user_home().map(|h| h.join(INSTANCE_DIR)))
+}
+
+/// Sessions, auth store, memory banks, browser profile.
+pub fn data_dir() -> PathBuf {
+    instance_root()
 }
 
 /// `config.toml`, `skills/`, `plugins.toml`.
 pub fn config_dir() -> PathBuf {
-    if let Some(home) = whycodes_home() {
-        return home;
-    }
-    or_dot(
-        directories::ProjectDirs::from(QUALIFIER, ORG, APP).map(|d| d.config_dir().to_path_buf()),
-    )
+    instance_root()
 }
 
 /// `$config_dir/config.toml`.
 pub fn config_file() -> PathBuf {
     config_dir().join("config.toml")
+}
+
+/// Former ProjectDirs locations (config and/or data). Used only to migrate
+/// an existing install into [`instance_root`].
+pub fn legacy_instance_roots() -> Vec<PathBuf> {
+    let Some(dirs) = directories::ProjectDirs::from(QUALIFIER, ORG, APP) else {
+        return Vec::new();
+    };
+    unique_legacy_roots(
+        dirs.config_dir().to_path_buf(),
+        dirs.data_local_dir().to_path_buf(),
+    )
+}
+
+pub(crate) fn unique_legacy_roots(config: PathBuf, data: PathBuf) -> Vec<PathBuf> {
+    if config == data {
+        vec![config]
+    } else {
+        vec![config, data]
+    }
 }
 
 pub(crate) fn or_dot(p: Option<PathBuf>) -> PathBuf {
@@ -115,5 +147,18 @@ mod tests {
         assert_eq!(or_dot(None), PathBuf::from("."));
         assert_eq!(or_dot(Some(PathBuf::from("/x"))), PathBuf::from("/x"));
         assert_eq!(config_file().file_name().unwrap(), "config.toml");
+        let roots = legacy_instance_roots();
+        assert!(
+            roots.len() <= 2,
+            "legacy roots are config and/or data: {roots:?}"
+        );
+        assert_eq!(
+            unique_legacy_roots(PathBuf::from("/a"), PathBuf::from("/a")),
+            vec![PathBuf::from("/a")]
+        );
+        assert_eq!(
+            unique_legacy_roots(PathBuf::from("/a"), PathBuf::from("/b")),
+            vec![PathBuf::from("/a"), PathBuf::from("/b")]
+        );
     }
 }

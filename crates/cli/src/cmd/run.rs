@@ -422,8 +422,8 @@ pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
                 super::debug::spawn_update_check_if(super::debug::should_auto_update_fast_path());
             whycodes_tui::run(whycodes_tui::TuiRunOptions {
                 project_dir,
-                provider: "anthropic".into(),
-                model: "claude-sonnet-4-20250514".into(),
+                provider: whycodes_config::DEFAULT_PROVIDER.into(),
+                model: whycodes_config::DEFAULT_MODEL_ID.into(),
                 api_key: String::new(),
                 agent_name: "build".into(),
                 max_turns: None,
@@ -504,7 +504,7 @@ pub(crate) async fn cmd_run(
         agent_name = resolve_agent(cli, &config);
     } else {
         config = Config::load_layered(&project_dir_early)
-            .or_else(|_| Config::load())
+            .or_else(|_| Config::load_or_create())
             .unwrap_or_default();
         if cli.no_memory {
             config.memory.enabled = false;
@@ -1487,7 +1487,7 @@ pub(crate) async fn cmd_generate(
 ) -> anyhow::Result<()> {
     let project_dir = resolve_dir(cli);
     let mut config = Config::load_layered(&project_dir)
-        .or_else(|_| Config::load())
+        .or_else(|_| Config::load_or_create())
         .unwrap_or_default();
     if cli.no_memory {
         config.memory.enabled = false;

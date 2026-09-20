@@ -279,7 +279,7 @@ fn missing_database_detection() {
 fn resolves_provider_from_flag_then_default_model() {
     let config = Config::default();
     let c = cli(None);
-    assert_eq!(resolve_provider(&c, &config), "anthropic");
+    assert_eq!(resolve_provider(&c, &config), "openrouter");
 
     let mut flagged = cli(None);
     flagged.provider = Some("openai".into());
@@ -304,7 +304,10 @@ fn resolves_provider_from_flag_then_default_model() {
 fn resolves_model_from_flag_or_default() {
     let config = Config::default();
     let c = cli(None);
-    assert_eq!(resolve_model(&c, &config), "claude-sonnet-4-20250514");
+    assert_eq!(
+        resolve_model(&c, &config),
+        whycodes_config::DEFAULT_MODEL_ID
+    );
 
     let mut flagged = cli(None);
     flagged.model = Some("gpt-4o".into());

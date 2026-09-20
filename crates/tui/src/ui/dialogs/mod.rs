@@ -310,6 +310,7 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 info.modal,
             );
         }
+        crate::app::DialogKind::OpenRouterKey => render_openrouter_key_dialog(frame, app, palette),
         crate::app::DialogKind::Import => {
             let n = app.import_picker.items.len();
             let checked = app.import_picker.checked_count();
