@@ -1,7 +1,7 @@
 use super::{
     ToolOutHint, ToolPaint, ToolRef, ellipsize_bytes, hard_truncate_line, message_row_layout_mut,
-    paint_tool_run, parse_grep_hit, prettify_tool_result, split_read_line, tool_block,
-    tool_display_name, tool_out_hint, tool_result, tool_summary, visible_message_range,
+    paint_tool_run, parse_grep_hit, prettify_tool_result, split_read_line, todo_list_summary,
+    tool_block, tool_display_name, tool_out_hint, tool_result, tool_summary, visible_message_range,
 };
 use crate::app::{ChatRole, TuiApp};
 use crate::config::TuiAppConfig;
@@ -1977,6 +1977,37 @@ fn tool_summary_covers_named_and_fallback_fields() {
     let long = "y".repeat(80);
     let s = tool_summary("custom", &json!({"command": long}));
     assert!(s.ends_with('…'), "{s}");
+}
+
+#[test]
+fn tool_summary_todo_counts_items_instead_of_dumping_json() {
+    let input = json!({
+        "merge": true,
+        "todos": [
+            {"content": "Repo durumu: sticky panel daha iyi gözüksün", "status": "in_progress"},
+            {"content": "İkinci madde", "status": "pending"}
+        ]
+    });
+    for name in ["todowrite", "todo_write", "todo"] {
+        let summary = tool_summary(name, &input);
+        assert_eq!(summary, "todos · 2", "{name}: {summary}");
+        assert!(
+            !summary.contains('{') && !summary.contains("sticky"),
+            "{name} leaked the payload: {summary}"
+        );
+        assert_eq!(super::tool_header_verb(name, true), "Updating");
+        assert_eq!(super::tool_header_verb(name, false), "Updated");
+        assert_eq!(tool_display_name(name), "todo");
+    }
+    assert_eq!(todo_list_summary(&json!({"merge": true})), "todos");
+    assert_eq!(tool_summary("todowrite", &json!({"todos": []})), "todos");
+    assert_eq!(
+        tool_summary(
+            "todowrite",
+            &json!({"todos": [{"content": "only", "status": "pending"}]})
+        ),
+        "todos · 1"
+    );
 }
 
 #[test]

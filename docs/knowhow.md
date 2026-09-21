@@ -144,6 +144,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-21 — Todo tool row painted truncated JSON
+
+**Symptom:** While `todowrite` ran, the chat tool row showed
+`Calling todowrite {"merge":true,"todos":[{"content":"Repo durumu: sticky-p…`.
+The live list was already in the sticky panel; the row repeated a clipped
+payload.
+
+**JSONL / crash:** none.
+
+**Root cause:** `tool_summary` only knows path/command/pattern fields. A todo
+update has none of those, so it fell through to `input.to_string()` and the
+56-byte ellipsis. Unknown tools still use `Calling`.
+
+**Fix:** `todowrite` / `todo_write` / `todo` summarize as `todos · N`. The
+header verb is `Updating` while the call is open and `Updated` after.
+
+**Prevention:** `tool_summary_todo_counts_items_instead_of_dumping_json` in
+`crates/tui/src/ui/chat_tests.rs`. Do not put the serialized todo array on
+the tool header.
+
 ### 2026-09-21 — Selected caret shifted the thinking ┃ rail
 
 **Symptom:** Tab into scrollback on a live/expanded thought: header became
