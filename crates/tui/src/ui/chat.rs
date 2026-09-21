@@ -1770,6 +1770,7 @@ fn tool_display_name(name: &str) -> &str {
         // Runtime names are `websearch` / `mcp_websearch` (no underscore);
         // `web_search` only survives in old snapshots/imports.
         "websearch" | "web_search" | "mcp_websearch" => "websearch",
+        "todowrite" | "todo_write" | "todo" => "todo",
         other => other,
     }
 }
@@ -1790,6 +1791,8 @@ fn tool_header_verb(name: &str, running: bool) -> String {
         ("web_fetch" | "webfetch" | "fetch", true) => "Fetching".into(),
         ("web_fetch" | "webfetch" | "fetch", false) => "Fetched".into(),
         ("websearch", _) => "Search".into(),
+        ("todo", true) => "Updating".into(),
+        ("todo", false) => "Updated".into(),
         (_, true) => "Calling".into(),
         (other, false) => {
             let mut chars = other.chars();
@@ -3142,6 +3145,9 @@ fn tool_summary(name: &str, input: &serde_json::Value) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
+        // The payload is the whole list. Dumping it paints
+        // `{"merge":true,"todos":[{"content":"…` on the live tool row.
+        "todowrite" | "todo_write" | "todo" => todo_list_summary(input),
         _ => input
             .get("command")
             .or_else(|| input.get("path"))
@@ -3170,6 +3176,19 @@ fn tool_summary(name: &str, input: &serde_json::Value) -> String {
         format!("{}…", s.chars().take(63).collect::<String>())
     } else {
         s
+    }
+}
+
+/// `Updated todos · 3` — never the serialized todo array.
+fn todo_list_summary(input: &serde_json::Value) -> String {
+    let n = input
+        .get("todos")
+        .and_then(|v| v.as_array())
+        .map(|items| items.len());
+    match n {
+        Some(0) | None => "todos".into(),
+        Some(1) => "todos · 1".into(),
+        Some(n) => format!("todos · {n}"),
     }
 }
 
