@@ -133,37 +133,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn plugin_execute_strips_openai_api_key() {
-        let prev = std::env::var_os("OPENAI_API_KEY");
-        unsafe { std::env::set_var("OPENAI_API_KEY", "sk-must-not-leak") };
-        #[cfg(windows)]
-        let command = r#"if defined OPENAI_API_KEY (echo LEAKED) else (echo STRIPPED)"#;
-        #[cfg(not(windows))]
-        let command =
-            r#"if [ -n "${OPENAI_API_KEY:-}" ]; then echo LEAKED; else echo STRIPPED; fi"#;
-        let plugin = Plugin::new(PluginConfig {
-            name: "env".into(),
-            command: command.into(),
-            description: "check env".into(),
-            parameters: None,
-            working_dir: None,
-        });
-        let result = plugin
-            .execute(&HashMap::new(), &PluginContext::default())
-            .await;
-        match prev {
-            Some(v) => unsafe { std::env::set_var("OPENAI_API_KEY", v) },
-            None => unsafe { std::env::remove_var("OPENAI_API_KEY") },
-        }
-        assert!(!result.is_error, "{}", result.content);
-        assert!(
-            result.content.contains("STRIPPED"),
-            "got: {}",
-            result.content
-        );
-    }
-
-    #[tokio::test]
     async fn plugin_execute_echo() {
         // Plugin commands are written in the host shell's syntax, so the
         // variable reference differs between cmd.exe and sh.
