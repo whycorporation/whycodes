@@ -2964,3 +2964,17 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 **Fix:** `crates/storage` enables `rusqlite/bundled` under `cfg(windows)` (feature unification). Unix still needs `--features whycodes-storage/bundled` when there is no system sqlite.
 
 **Prevention:** Do not tell Windows users to install system sqlite for a default `cargo build -p whycodes-cli`. The first Windows compile still pays the amalgamation (~43s cold, then cached).
+
+## Headless JSON must not auto-approve permission `ask`
+
+**Date:** 2026-09-21 · **Area:** `crates/cli` generate / `crates/agent` gate
+
+**Symptom:** `whycodes generate --format json` (and `run --format json` / `stream-json`) ran tools the TUI would have asked about. CI silently executed `bash` / `write` / `apply_patch`.
+
+**JSONL / crash:** none.
+
+**Root cause:** Structured formats attached `AutoApprovePrompter` so pipes would not hang. `ApprovalMode::Auto` (the default) also skipped the prompter entirely, so swapping the prompter alone was not enough.
+
+**Fix:** Default fail-closed: `AutoDenyPrompter` + `Agent::set_fail_closed_ask(true)` so `auto` cannot skip the ask. Denied results stamp `denied:headless` and are not retried. Escape hatches: `--approve-tools`, `[session] headless_ask = "allow"`, `WHYCODES_HEADLESS_ASK=allow`. `question` stays auto-picked. Child `bash` / plugin / MCP stdio also strip known secret env names (`*_API_KEY`, `GITHUB_TOKEN`, …).
+
+**Prevention:** A fixture `write` with `[permission] write = "ask"` under `--format json` must return `is_error` and must not create the file. Do not re-attach `AutoApprovePrompter` on the structured path without an explicit allow flag.

@@ -429,6 +429,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 prompt: None,
                 max_turns: None,
                 format: OutputFormat::Text,
+                approve_tools: false,
             };
             dispatch_command(&run_cmd, &cli).await
         }

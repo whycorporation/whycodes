@@ -191,6 +191,7 @@ pub(crate) fn spawn_capture_timeout(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    whycodes_core::secret_env::strip_std_command_secrets(&mut cmd);
     configure_new_process_group(&mut cmd);
     let child = cmd.spawn()?;
     let Some(limit) = timeout.filter(|d| !d.is_zero()) else {

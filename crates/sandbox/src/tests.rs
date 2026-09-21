@@ -688,6 +688,26 @@ fn host_req(command: &str) -> SandboxRequest {
 }
 
 #[test]
+fn host_spawn_strips_openai_api_key() {
+    let prev = std::env::var_os("OPENAI_API_KEY");
+    unsafe { std::env::set_var("OPENAI_API_KEY", "sk-must-not-leak") };
+    // Host shell is Git Bash on Windows CI (`printf` tests), so use POSIX.
+    let cmd = r#"if [ -n "${OPENAI_API_KEY:-}" ]; then echo LEAKED; else echo STRIPPED; fi"#;
+    let out = crate::run(&host_req(cmd)).expect("run");
+    match prev {
+        Some(v) => unsafe { std::env::set_var("OPENAI_API_KEY", v) },
+        None => unsafe { std::env::remove_var("OPENAI_API_KEY") },
+    }
+    assert!(out.status.success(), "stderr={}", out.stderr_lossy());
+    assert!(
+        out.stdout_lossy().contains("STRIPPED"),
+        "stdout={} stderr={}",
+        out.stdout_lossy(),
+        out.stderr_lossy()
+    );
+}
+
+#[test]
 fn run_timeout_fast_command_collects_output() {
     let out = crate::policy::run_timeout(&host_req("echo covered"), Some(Duration::from_secs(5)))
         .expect("echo should finish before the timeout");

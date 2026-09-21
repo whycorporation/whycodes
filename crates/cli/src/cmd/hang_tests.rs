@@ -53,12 +53,14 @@ fn short_commands_are_debug_config_session() {
         prompt: None,
         max_turns: None,
         format: whycodes_protocol::OutputFormat::Text,
+        approve_tools: false,
     }))));
     assert!(is_short_command(&cli(Some(Commands::Generate {
         prompt: vec!["x".into()],
         max_turns: None,
         jobs: 1,
         format: whycodes_protocol::OutputFormat::Text,
+        approve_tools: false,
     }))));
     assert!(!is_short_command(&cli(Some(Commands::Acp))));
     assert!(!is_short_command(&cli(Some(Commands::Pr {

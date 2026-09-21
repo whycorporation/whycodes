@@ -477,6 +477,11 @@ impl Config {
         {
             self.general.approval_mode = Some(mode);
         }
+        if let Ok(val) = std::env::var("WHYCODES_HEADLESS_ASK")
+            && let Some(mode) = crate::HeadlessAskMode::parse(&val)
+        {
+            self.session.headless_ask = Some(mode);
+        }
         if let Ok(val) = std::env::var("WHYCODES_MEMORY") {
             match val.to_ascii_lowercase().as_str() {
                 "0" | "false" | "no" | "off" => self.memory.enabled = false,

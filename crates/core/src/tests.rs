@@ -2284,3 +2284,59 @@ mod types_usage_tests {
         assert_eq!(step.cache_creation_input_tokens, Some(8));
     }
 }
+
+mod secret_env_tests {
+    use crate::secret_env::{
+        is_secret_env_name, secret_env_names_present, strip_secret_env_vars,
+        strip_std_command_secrets,
+    };
+
+    #[test]
+    fn classifies_provider_keys_and_whycodes_tokens() {
+        assert!(is_secret_env_name("OPENAI_API_KEY"));
+        assert!(is_secret_env_name("anthropic_api_key"));
+        assert!(is_secret_env_name("OPENROUTER_API_KEY"));
+        assert!(is_secret_env_name("GITHUB_TOKEN"));
+        assert!(is_secret_env_name("GH_TOKEN"));
+        assert!(is_secret_env_name("AWS_SECRET_ACCESS_KEY"));
+        assert!(is_secret_env_name("AWS_SESSION_TOKEN"));
+        assert!(is_secret_env_name("WHYCODES_GITHUB_TOKEN"));
+        assert!(is_secret_env_name("WHYCODES_AUTH_SECRET"));
+        assert!(is_secret_env_name("WHYCODES_FOO_KEY"));
+        assert!(!is_secret_env_name("PATH"));
+        assert!(!is_secret_env_name("HOME"));
+        assert!(!is_secret_env_name("WHYCODES_HOME"));
+        assert!(!is_secret_env_name("WHYCODES_LOG_LEVEL"));
+        assert!(!is_secret_env_name("WHYCODES_PROVIDER"));
+    }
+
+    #[test]
+    fn strip_callback_visits_present_secrets() {
+        let prev = std::env::var_os("OPENAI_API_KEY");
+        unsafe { std::env::set_var("OPENAI_API_KEY", "sk-test-strip") };
+        let names = secret_env_names_present();
+        assert!(
+            names
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case("OPENAI_API_KEY")),
+            "{names:?}"
+        );
+        let mut seen = Vec::new();
+        strip_secret_env_vars(|name| seen.push(name.to_string()));
+        assert!(
+            seen.iter()
+                .any(|n| n.eq_ignore_ascii_case("OPENAI_API_KEY")),
+            "{seen:?}"
+        );
+        match prev {
+            Some(v) => unsafe { std::env::set_var("OPENAI_API_KEY", v) },
+            None => unsafe { std::env::remove_var("OPENAI_API_KEY") },
+        }
+    }
+
+    #[test]
+    fn strip_std_command_does_not_panic() {
+        let mut cmd = std::process::Command::new("true");
+        strip_std_command_secrets(&mut cmd);
+    }
+}

@@ -62,6 +62,12 @@ impl Plugin {
         cmd
     }
 
+    fn strip_inherited_secrets(cmd: &mut tokio::process::Command) {
+        whycodes_core::secret_env::strip_secret_env_vars(|name| {
+            cmd.env_remove(name);
+        });
+    }
+
     /// Execute the plugin command.
     ///
     /// `args` are passed as environment variables to the child process (keys
@@ -73,6 +79,7 @@ impl Plugin {
         _ctx: &PluginContext,
     ) -> ToolResult {
         let mut cmd = Self::shell_command(&self.config.command);
+        Self::strip_inherited_secrets(&mut cmd);
         if let Some(ref dir) = self.config.working_dir {
             cmd.current_dir(dir);
         }
@@ -128,6 +135,37 @@ pub struct PluginContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn plugin_execute_strips_openai_api_key() {
+        let prev = std::env::var_os("OPENAI_API_KEY");
+        unsafe { std::env::set_var("OPENAI_API_KEY", "sk-must-not-leak") };
+        #[cfg(windows)]
+        let command = r#"if defined OPENAI_API_KEY (echo LEAKED) else (echo STRIPPED)"#;
+        #[cfg(not(windows))]
+        let command =
+            r#"if [ -n "${OPENAI_API_KEY:-}" ]; then echo LEAKED; else echo STRIPPED; fi"#;
+        let plugin = Plugin::new(PluginConfig {
+            name: "env".into(),
+            command: command.into(),
+            description: "check env".into(),
+            parameters: None,
+            working_dir: None,
+        });
+        let result = plugin
+            .execute(&HashMap::new(), &PluginContext::default())
+            .await;
+        match prev {
+            Some(v) => unsafe { std::env::set_var("OPENAI_API_KEY", v) },
+            None => unsafe { std::env::remove_var("OPENAI_API_KEY") },
+        }
+        assert!(!result.is_error, "{}", result.content);
+        assert!(
+            result.content.contains("STRIPPED"),
+            "got: {}",
+            result.content
+        );
+    }
 
     #[tokio::test]
     async fn plugin_execute_echo() {

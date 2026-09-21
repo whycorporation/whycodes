@@ -384,6 +384,9 @@ async fn run_background_job(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    whycodes_core::secret_env::strip_secret_env_vars(|name| {
+        cmd.env_remove(name);
+    });
     #[cfg(unix)]
     {
         // Own process group so `bg` kill / drop reaps grandchildren.

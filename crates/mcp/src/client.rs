@@ -53,6 +53,9 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
+        whycodes_core::secret_env::strip_secret_env_vars(|name| {
+            cmd.env_remove(name);
+        });
         if let Some(env) = env {
             for (k, v) in env {
                 cmd.env(k, v);
