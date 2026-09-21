@@ -279,7 +279,7 @@ fn test_tui_app_new() {
     assert!(app.messages.is_empty());
     assert_eq!(app.agent_name, "build");
     assert_eq!(app.agent_cycle_idx, 0);
-    assert!(app.pending_prompt.is_none());
+    assert!(app.pending_prompt().is_none());
 }
 
 #[test]
@@ -902,8 +902,8 @@ fn test_submit_input() {
     let mut app = TuiApp::new(test_config());
     app.input_buffer = "hello world".to_string();
     app.submit_input();
-    assert!(app.pending_prompt.is_some());
-    assert_eq!(app.pending_prompt.unwrap(), "hello world");
+    assert!(app.pending_prompt().is_some());
+    assert_eq!(app.pending_prompt().unwrap(), "hello world");
     assert!(app.input_buffer.is_empty());
     assert_eq!(app.messages.len(), 1);
     assert_eq!(app.messages[0].role, ChatRole::User);
@@ -914,7 +914,7 @@ fn test_submit_input_skips_slash_commands() {
     let mut app = TuiApp::new(test_config());
     app.input_buffer = "/help".to_string();
     app.submit_input();
-    assert!(app.pending_prompt.is_none());
+    assert!(app.pending_prompt().is_none());
     assert!(app.messages.is_empty());
 }
 
@@ -923,7 +923,7 @@ fn test_submit_input_skips_empty() {
     let mut app = TuiApp::new(test_config());
     app.input_buffer = "   ".to_string();
     app.submit_input();
-    assert!(app.pending_prompt.is_none());
+    assert!(app.pending_prompt().is_none());
 }
 
 #[test]
@@ -936,9 +936,9 @@ fn test_submit_input_with_images_only() {
     app.attach_image(&path).unwrap();
     assert_eq!(app.pending_images.len(), 1);
     app.submit_input();
-    assert_eq!(app.pending_prompt.as_deref(), Some(""));
+    assert_eq!(app.pending_prompt(), Some(""));
     assert!(app.pending_images.is_empty());
-    assert_eq!(app.pending_submit_images.len(), 1);
+    assert_eq!(app.pending_turns.front().map(|t| t.images.len()), Some(1));
     assert_eq!(app.messages.len(), 1);
     assert_eq!(app.messages[0].image_labels, vec!["shot.png".to_string()]);
 }
@@ -1004,7 +1004,7 @@ fn test_submit_expands_collapsed_paste() {
     app.insert_paste_text(body);
     assert!(app.input_buffer.contains("[pasted #"));
     app.submit_input();
-    assert_eq!(app.pending_prompt.as_deref(), Some(body));
+    assert_eq!(app.pending_prompt(), Some(body));
     // Chat bubble keeps the compact form.
     assert!(
         app.messages

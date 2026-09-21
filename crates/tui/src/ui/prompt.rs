@@ -607,6 +607,17 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
         spans.push(Span::styled(" · ", sep_style));
         spans.push(Span::styled(mode_shown.clone(), mode_style));
     }
+    let queued_n = app.queued_turn_count();
+    let queued_shown = if queued_n > 0 {
+        format!("queued · {queued_n}")
+    } else {
+        String::new()
+    };
+    let show_queued = !queued_shown.is_empty();
+    if show_queued {
+        spans.push(Span::styled(" · ", sep_style));
+        spans.push(Span::styled(queued_shown.clone(), sep_style));
+    }
     spans.push(Span::styled(" ", sep_style));
 
     let span_width = |spans: &[Span<'_>]| -> usize {
@@ -617,7 +628,12 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
     };
     let mut label_w = span_width(&spans);
     // Narrow terminals drop chips before collapsing to the agent name:
-    // approval first, then effort (issue #45).
+    // queued count, then approval, then effort (issue #45).
+    if label_w > max_w && show_queued {
+        spans.truncate(spans.len() - 3); // trailing space + ` · ` + queued
+        spans.push(Span::styled(" ", sep_style));
+        label_w = span_width(&spans);
+    }
     if label_w > max_w && show_mode {
         spans.truncate(spans.len() - 3); // trailing space + ` · ` + mode
         spans.push(Span::styled(" ", sep_style));

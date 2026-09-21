@@ -3,14 +3,31 @@
 // the focused mode, dialog stack, session messages, input buffer,
 // sidebar visibility, theme, and keybinding context.
 
+use crate::images::PromptImage;
 use crate::keymap::KeymapContext;
 use crate::theme::ThemeName;
 use ratatui::layout::Rect;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::Instant;
 use whycodes_core::types::ApprovalMode;
 use whycodes_tools::question::{QuestionAnswer, QuestionSpec};
+
+/// One admitted user turn waiting for the agent. FIFO; images travel with the text.
+#[derive(Debug, Clone)]
+pub struct PendingTurn {
+    pub text: String,
+    pub images: Vec<PromptImage>,
+}
+
+impl PendingTurn {
+    pub fn text_only(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            images: Vec::new(),
+        }
+    }
+}
 
 // ── Application Modes ──────────────────────────────────────────────────
 /// Top-level application mode.  Mutually exclusive — only one active.
@@ -1327,9 +1344,7 @@ pub struct TuiApp {
     pub(crate) leaked_mouse_csi: String,
     pub(crate) last_mouse_csi_at: Option<std::time::Instant>,
     /// Images staged on the prompt (drag-drop / path paste). Sent with the next turn.
-    pub(crate) pending_images: Vec<crate::images::PromptImage>,
-    /// Images consumed with `pending_prompt` by the run loop (taken on submit).
-    pub(crate) pending_submit_images: Vec<crate::images::PromptImage>,
+    pub(crate) pending_images: Vec<PromptImage>,
     /// Large pastes collapsed to `[pasted #N ~ L lines]` tokens in `input_buffer`.
     /// Expanded on submit so the agent receives the full text.
     pub(crate) pending_pastes: Vec<crate::paste::PastedBlock>,
@@ -1414,9 +1429,9 @@ pub struct TuiApp {
     // ── config ──
     pub(crate) config: crate::config::TuiAppConfig,
 
-    /// Prompt waiting to be sent to the agent (set by submit / slash commands).
-    /// Images for this turn live in `pending_submit_images` until the run loop takes them.
-    pub(crate) pending_prompt: Option<String>,
+    /// FIFO of admitted user turns waiting for the agent (submit / slash / boot).
+    /// Busy Enter appends; the run loop pops one when idle. Cancel does not drain this.
+    pub(crate) pending_turns: VecDeque<PendingTurn>,
     /// Queued prompts from `/loop` or `schedule` (drained when idle).
     pub(crate) pending_auto_prompts: std::collections::VecDeque<String>,
     /// Idle follow-up suggestion (`tui.prompt_suggestions = "idle"`). Tab accepts when input empty.
@@ -2128,7 +2143,6 @@ impl TuiApp {
             leaked_mouse_csi: String::new(),
             last_mouse_csi_at: None,
             pending_images: vec![],
-            pending_submit_images: vec![],
             pending_pastes: vec![],
             scroll_offset: 0,
             auto_scroll: true,
@@ -2173,8 +2187,8 @@ impl TuiApp {
                 .position(|t| *t == config.theme)
                 .unwrap_or(0),
             config,
-            pending_prompt: None,
-            pending_auto_prompts: std::collections::VecDeque::new(),
+            pending_turns: VecDeque::new(),
+            pending_auto_prompts: VecDeque::new(),
             pending_suggestion: None,
             auth_code_sink: None,
             bg_running_count: 0,
@@ -2671,6 +2685,34 @@ impl TuiApp {
                 | AgentState::WaitingForPermission
                 | AgentState::WaitingForQuestion
         )
+    }
+
+    /// Waiting user turns (not `/loop` auto-prompts).
+    pub fn queued_turn_count(&self) -> usize {
+        self.pending_turns.len()
+    }
+
+    pub fn has_pending_turn(&self) -> bool {
+        !self.pending_turns.is_empty()
+    }
+
+    /// Peek the next admitted prompt text (tests / catalog idle gate).
+    pub fn pending_prompt(&self) -> Option<&str> {
+        self.pending_turns.front().map(|t| t.text.as_str())
+    }
+
+    pub fn enqueue_turn(&mut self, turn: PendingTurn) {
+        self.pending_turns.push_back(turn);
+        self.mark_dirty();
+    }
+
+    pub fn enqueue_prompt_text(&mut self, text: impl Into<String>) {
+        self.enqueue_turn(PendingTurn::text_only(text));
+    }
+
+    /// Pop the next turn for the run loop. Empty queue → None.
+    pub fn take_pending_turn(&mut self) -> Option<PendingTurn> {
+        self.pending_turns.pop_front()
     }
 
     /// Reset modal mouse targets (call at the start of each dialog paint).
@@ -3431,6 +3473,7 @@ impl TuiApp {
         view.turn_usage = self.turn_usage.clone();
         view.context_used = self.context_used;
         view.pending_suggestion = self.pending_suggestion.clone();
+        view.pending_turns = self.pending_turns.clone();
         view.session_id = self.session_id.clone();
         view.todos = self.todos.clone();
         view.todos_collapsed = self.todos_collapsed;
@@ -3454,6 +3497,7 @@ impl TuiApp {
         self.turn_usage = view.turn_usage.clone();
         self.context_used = view.context_used;
         self.pending_suggestion = view.pending_suggestion.clone();
+        self.pending_turns = view.pending_turns.clone();
         self.session_id = view.session_id.clone();
         self.todos = view.todos.clone();
         self.todos_collapsed = view.todos_collapsed;
@@ -3482,6 +3526,7 @@ impl TuiApp {
         self.turn_usage = view.turn_usage.take();
         self.context_used = view.context_used;
         self.pending_suggestion = view.pending_suggestion.take();
+        self.pending_turns = std::mem::take(&mut view.pending_turns);
         self.session_id = std::mem::take(&mut view.session_id);
         self.todos = std::mem::take(&mut view.todos);
         self.todos_collapsed = view.todos_collapsed;
@@ -3506,6 +3551,7 @@ impl TuiApp {
         view.turn_usage = self.turn_usage.take();
         view.context_used = self.context_used;
         view.pending_suggestion = self.pending_suggestion.take();
+        view.pending_turns = std::mem::take(&mut self.pending_turns);
         view.session_id = std::mem::take(&mut self.session_id);
         view.todos = std::mem::take(&mut self.todos);
         view.todos_collapsed = self.todos_collapsed;
@@ -3750,8 +3796,11 @@ impl TuiApp {
             display_text
         };
         self.add_user_message_with_images(display, labels);
-        self.pending_submit_images = std::mem::take(&mut self.pending_images);
-        self.pending_prompt = Some(expanded);
+        let images = std::mem::take(&mut self.pending_images);
+        self.enqueue_turn(PendingTurn {
+            text: expanded,
+            images,
+        });
         self.input_buffer.clear();
         self.input_lines.clear();
         self.input_cursor = 0;

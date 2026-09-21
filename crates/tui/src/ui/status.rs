@@ -140,6 +140,9 @@ fn shortcuts_spans(app: &TuiApp, palette: &ThemePalette) -> Vec<Span<'static>> {
         }
         AppMode::Normal | AppMode::Session => {
             if app.is_busy() {
+                if app.queued_turn_count() > 0 {
+                    parts.push(("enter", "queue"));
+                }
                 parts.push(("esc", "cancel"));
                 parts.push(("tab", "focus"));
             } else {

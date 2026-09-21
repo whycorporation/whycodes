@@ -527,7 +527,7 @@ fn submit_slash_tab_and_focus_actions() {
     let mut a = app();
     a.input_buffer = "hello".into();
     handle_event(&mut a, key(KeyCode::Enter));
-    assert_eq!(a.pending_prompt.as_deref(), Some("hello"));
+    assert_eq!(a.pending_prompt(), Some("hello"));
     assert!(a.input_buffer.is_empty());
 
     a.input_buffer = "/".into();
@@ -6250,9 +6250,9 @@ fn paste_flood_enter_becomes_newline_not_submit() {
     a.input_batch_seq = 2; // Enter lands in the next poll batch
     assert!(handle_event(&mut a, key(KeyCode::Enter)));
     assert!(
-        a.pending_prompt.is_none(),
+        a.pending_prompt().is_none(),
         "mid-paste Enter must not submit: {:?}",
-        a.pending_prompt
+        a.pending_prompt()
     );
     assert_eq!(a.input_buffer, "yarim kalan satir\n");
 
@@ -6273,7 +6273,7 @@ fn same_batch_enter_still_submits_and_stale_enter_submits() {
         handle_event(&mut a, key(KeyCode::Char(c)));
     }
     assert!(handle_event(&mut a, key(KeyCode::Enter)));
-    assert_eq!(a.pending_prompt.as_deref(), Some("selam"));
+    assert_eq!(a.pending_prompt(), Some("selam"));
 
     // Typed then a human pause before Enter (stale insert) → submit.
     let mut b = app();
@@ -6286,7 +6286,7 @@ fn same_batch_enter_still_submits_and_stale_enter_submits() {
     b.last_prompt_insert_at =
         Some(std::time::Instant::now() - std::time::Duration::from_millis(500));
     assert!(handle_event(&mut b, key(KeyCode::Enter)));
-    assert_eq!(b.pending_prompt.as_deref(), Some("merhaba"));
+    assert_eq!(b.pending_prompt(), Some("merhaba"));
 }
 
 #[test]
@@ -6301,7 +6301,7 @@ fn paste_enter_guard_off_keeps_cross_batch_submit() {
     }
     a.input_batch_seq = 2;
     assert!(handle_event(&mut a, key(KeyCode::Enter)));
-    assert_eq!(a.pending_prompt.as_deref(), Some("script"));
+    assert_eq!(a.pending_prompt(), Some("script"));
 }
 
 #[test]
@@ -6316,14 +6316,14 @@ fn repeated_enter_ages_out_of_the_flood_window_and_submits() {
     }
     a.input_batch_seq = 2;
     assert!(handle_event(&mut a, key(KeyCode::Enter)));
-    assert!(a.pending_prompt.is_none());
+    assert!(a.pending_prompt().is_none());
     // Age the last real insert past the window: the next Enter submits the
     // whole draft (trailing newline trimmed by submit_input).
     a.last_prompt_insert_at =
         Some(std::time::Instant::now() - std::time::Duration::from_millis(200));
     a.input_batch_seq = 3;
     assert!(handle_event(&mut a, key(KeyCode::Enter)));
-    assert_eq!(a.pending_prompt.as_deref(), Some("son satir"));
+    assert_eq!(a.pending_prompt(), Some("son satir"));
 }
 
 /// AltGr on Windows arrives as Ctrl+Alt with the produced char.
@@ -6616,7 +6616,7 @@ fn paste_flood_enter_and_tab_in_file_popup_stay_text() {
     assert!(a.file_suggest.active);
     a.input_batch_seq = 2;
     assert!(handle_event(&mut a, key(KeyCode::Enter)));
-    assert!(a.pending_prompt.is_none(), "{:?}", a.pending_prompt);
+    assert!(a.pending_prompt().is_none(), "{:?}", a.pending_prompt());
     assert_eq!(a.input_buffer, "bak @sr\n");
     assert!(
         !a.file_suggest.active,
