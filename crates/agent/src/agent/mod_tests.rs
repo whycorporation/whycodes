@@ -377,7 +377,9 @@ fn set_provider_registry_replaces_lookup() {
     registry.register(Box::new(whycodes_llm::ScriptedProvider::text("hi")));
     a.set_provider_registry(registry);
     assert!(a.provider_registry.get("script").is_some());
+    assert!(a.has_provider("script"));
     assert!(a.provider_registry.get("anthropic").is_none());
+    assert!(!a.has_provider("anthropic"));
 }
 
 #[test]

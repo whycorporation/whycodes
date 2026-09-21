@@ -485,6 +485,13 @@ pub(crate) fn maybe_inject_test_llm(_agent: &mut Agent, _provider: &str) {
         if text.is_empty() {
             return;
         }
+        // Do not invent a provider. A leaked `WHYCODES_TEST_LLM` from a
+        // parallel llvm-cov / `--bin whycodes` test used to register
+        // `script` as a working backend, so unknown-provider turns
+        // returned success and Coverage aborted on `assert!(failed)`.
+        if !_agent.has_provider(_provider) {
+            return;
+        }
         let step = if text == "FAIL" {
             whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())
         } else {
