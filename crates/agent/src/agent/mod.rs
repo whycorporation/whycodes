@@ -368,6 +368,11 @@ impl Agent {
         self.provider_registry = Arc::new(registry);
     }
 
+    /// Whether `name` is in the current registry (built-in, config, or test).
+    pub fn has_provider(&self, name: &str) -> bool {
+        self.provider_registry.get(name).is_some()
+    }
+
     pub fn with_tool_executor(mut self, executor: ToolExecutor) -> Self {
         self.tool_executor = Arc::new(executor);
         self

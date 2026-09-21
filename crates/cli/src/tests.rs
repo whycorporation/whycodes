@@ -1557,7 +1557,8 @@ fn generate_prompt_helpers() {
 async fn cmd_generate_single_and_parallel_unknown_provider() {
     let home = IsolatedHome::new();
     let _llm = TestLlmEnv;
-    unsafe { std::env::remove_var("WHYCODES_TEST_LLM") };
+    // Same leak Coverage sees: a sibling test left WHYCODES_TEST_LLM set.
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "ok") };
     let prev_key = std::env::var_os("SCRIPT_API_KEY");
     unsafe { std::env::set_var("SCRIPT_API_KEY", "k") };
     let mut c = cli(None);
@@ -1583,6 +1584,14 @@ async fn cmd_generate_single_and_parallel_unknown_provider() {
 
 #[tokio::test]
 async fn run_one_parallel_turn_unknown_provider_fails() {
+    // Isolate home + env like the sibling generate test. Coverage runs
+    // `--bin whycodes` in parallel; without ENV_LOCK a leaked
+    // WHYCODES_TEST_LLM used to inject a working `script` provider.
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    // Coverage llvm-cov runs this next to tests that leak WHYCODES_TEST_LLM.
+    // The helper must still fail, not succeed via a scripted `script` backend.
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "ok") };
     let dir = tempfile::tempdir().unwrap();
     let config = Config::default();
     let info = agent_info_for(&cli(None), &config);
@@ -1600,7 +1609,47 @@ async fn run_one_parallel_turn_unknown_provider_fails() {
         false,
     )
     .await;
-    assert!(failed);
+    assert!(
+        failed,
+        "unknown/unusable provider must return failed=true, not succeed or abort"
+    );
+    let crash_dir = home.path().join("crash");
+    if crash_dir.is_dir() {
+        let n = std::fs::read_dir(&crash_dir)
+            .map(|rd| rd.filter_map(Result::ok).count())
+            .unwrap_or(0);
+        assert_eq!(
+            n, 0,
+            "run_one_parallel_turn must not write a crash report under IsolatedHome"
+        );
+    }
+}
+
+#[test]
+fn maybe_inject_test_llm_skips_unknown_provider() {
+    let _home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "ok") };
+    let config = Config::default();
+    let mut agent = Agent::new(agent_info_for(&cli(None), &config)).with_config(&config);
+    assert!(
+        !agent.has_provider("script"),
+        "default registry must not include `script`"
+    );
+    maybe_inject_test_llm(&mut agent, "script");
+    assert!(
+        !agent.has_provider("script"),
+        "leaked WHYCODES_TEST_LLM must not invent an unknown provider"
+    );
+    maybe_inject_test_llm(&mut agent, "anthropic");
+    assert!(
+        agent.has_provider("anthropic"),
+        "known providers still receive the scripted test backend"
+    );
+    assert!(
+        !agent.has_provider("openai"),
+        "inject replaces the registry for a known provider, it does not merge"
+    );
 }
 
 #[test]
