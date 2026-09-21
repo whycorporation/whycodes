@@ -2312,8 +2312,14 @@ mod secret_env_tests {
 
     #[test]
     fn strip_callback_visits_present_secrets() {
-        let prev = std::env::var_os("OPENAI_API_KEY");
-        unsafe { std::env::set_var("OPENAI_API_KEY", "sk-test-strip") };
+        let prev_openai = std::env::var_os("OPENAI_API_KEY");
+        let prev_extra = std::env::var_os("OPENROUTER_API_KEY");
+        let prev_token = std::env::var_os("WHYCODES_GITHUB_TOKEN");
+        unsafe {
+            std::env::set_var("OPENAI_API_KEY", "sk-test-strip");
+            std::env::set_var("OPENROUTER_API_KEY", "or-test-strip");
+            std::env::set_var("WHYCODES_GITHUB_TOKEN", "gh-test-strip");
+        }
         let names = secret_env_names_present();
         assert!(
             names
@@ -2321,16 +2327,34 @@ mod secret_env_tests {
                 .any(|n| n.eq_ignore_ascii_case("OPENAI_API_KEY")),
             "{names:?}"
         );
+        assert!(
+            names
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case("OPENROUTER_API_KEY")),
+            "{names:?}"
+        );
         let mut seen = Vec::new();
         strip_secret_env_vars(|name| seen.push(name.to_string()));
+        assert!(seen.iter().any(|n| n == "OPENAI_API_KEY"), "{seen:?}");
         assert!(
             seen.iter()
-                .any(|n| n.eq_ignore_ascii_case("OPENAI_API_KEY")),
+                .any(|n| n.eq_ignore_ascii_case("OPENROUTER_API_KEY")),
             "{seen:?}"
         );
+        assert!(
+            seen.iter()
+                .any(|n| n.eq_ignore_ascii_case("WHYCODES_GITHUB_TOKEN")),
+            "{seen:?}"
+        );
+        restore_os("OPENAI_API_KEY", prev_openai);
+        restore_os("OPENROUTER_API_KEY", prev_extra);
+        restore_os("WHYCODES_GITHUB_TOKEN", prev_token);
+    }
+
+    fn restore_os(key: &str, prev: Option<std::ffi::OsString>) {
         match prev {
-            Some(v) => unsafe { std::env::set_var("OPENAI_API_KEY", v) },
-            None => unsafe { std::env::remove_var("OPENAI_API_KEY") },
+            Some(v) => unsafe { std::env::set_var(key, v) },
+            None => unsafe { std::env::remove_var(key) },
         }
     }
 

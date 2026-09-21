@@ -31,27 +31,24 @@ pub fn is_secret_env_name(name: &str) -> bool {
 
 /// Names currently set in this process that [`is_secret_env_name`] matches.
 pub fn secret_env_names_present() -> Vec<String> {
-    std::env::vars_os()
-        .filter_map(|(k, _)| {
-            let name = k.to_str()?.to_string();
-            is_secret_env_name(&name).then_some(name)
-        })
-        .collect()
+    let mut out = Vec::new();
+    for (k, _) in std::env::vars_os() {
+        let name = k.to_string_lossy();
+        if is_secret_env_name(&name) {
+            out.push(name.into_owned());
+        }
+    }
+    out
 }
 
 /// Call `remove` for every known exact name, then any extra matching names
 /// currently set in this process (`*_API_KEY`, `WHYCODES_*_TOKEN`, …).
+/// Duplicate names are passed twice; `env_remove` is idempotent.
 pub fn strip_secret_env_vars(mut remove: impl FnMut(&str)) {
     for name in SECRET_ENV_EXACT {
         remove(name);
     }
     for name in secret_env_names_present() {
-        if SECRET_ENV_EXACT
-            .iter()
-            .any(|exact| name.eq_ignore_ascii_case(exact))
-        {
-            continue;
-        }
         remove(&name);
     }
 }

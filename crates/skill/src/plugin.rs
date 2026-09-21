@@ -62,12 +62,6 @@ impl Plugin {
         cmd
     }
 
-    fn strip_inherited_secrets(cmd: &mut tokio::process::Command) {
-        whycodes_core::secret_env::strip_secret_env_vars(|name| {
-            cmd.env_remove(name);
-        });
-    }
-
     /// Execute the plugin command.
     ///
     /// `args` are passed as environment variables to the child process (keys
@@ -79,7 +73,9 @@ impl Plugin {
         _ctx: &PluginContext,
     ) -> ToolResult {
         let mut cmd = Self::shell_command(&self.config.command);
-        Self::strip_inherited_secrets(&mut cmd);
+        whycodes_core::secret_env::strip_secret_env_vars(|name| {
+            cmd.env_remove(name);
+        });
         if let Some(ref dir) = self.config.working_dir {
             cmd.current_dir(dir);
         }
