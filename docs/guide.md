@@ -450,6 +450,20 @@ The TUI asks for an OpenRouter API key (paste into the modal, or skip —
 `/connect` and Ctrl+P stay available). `WHYCODES_HOME` relocates the whole
 instance. `whycodes debug` / `whycodes config path` print the resolved path.
 
+**0.6.5 moved the instance root.** 0.6.4 and earlier kept config and data
+in the platform directory (`directories::ProjectDirs`):
+
+| OS | 0.6.4 and earlier |
+|----|-------------------|
+| Linux | `~/.config/whycodes` or `~/.config/com.whycorporation.whycodes` |
+| macOS | `~/Library/Application Support/com.whycorporation.whycodes` |
+| Windows | `%APPDATA%\whycorporation\whycodes` |
+
+On first load of 0.6.5, if `~/.whycodes` does not already contain
+`config.toml`, `auth.json`, or `whycodes.db`, those three files are copied
+from the old directory. Nothing is deleted there. A set `WHYCODES_HOME`
+skips the copy (that tree is yours). Project `.whycodes/` is unchanged.
+
 ```toml
 [providers.openrouter]
 name = "openrouter"

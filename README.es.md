@@ -100,6 +100,16 @@ versión contra el `SHA256SUMS` publicado. Binarios descargables e
 instrucciones de desinstalación:
 [docs/packaging.md](docs/packaging.md).
 
+La configuración y las sesiones viven en `~/.whycodes`
+(`%USERPROFILE%\.whycodes` en Windows), o en `$WHYCODES_HOME` si está
+definida. **0.6.5** las sacó del directorio de plataforma que usaban 0.6.4
+y anteriores (`~/.config/whycodes` o
+`~/.config/com.whycorporation.whycodes` en Linux,
+`~/Library/Application Support/com.whycorporation.whycodes` en macOS,
+`%APPDATA%\whycorporation\whycodes` en Windows). El primer arranque copia
+`config.toml`, `auth.json` y `whycodes.db` cuando el directorio nuevo está
+vacío, y deja los archivos antiguos en su sitio.
+
 <details>
 <summary>Completados de shell</summary>
 

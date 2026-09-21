@@ -87,6 +87,14 @@ whycodes`（Homebrew）。交互式 TUI 会话会检查 GitHub 上的新版本�
 的 `SHA256SUMS` 校验发行产物。可下载二进制与卸载说明见
 [docs/packaging.md](docs/packaging.md)。
 
+配置和会话位于 `~/.whycodes`（Windows 上为 `%USERPROFILE%\.whycodes`），
+若设置了 `$WHYCODES_HOME` 则位于该目录。**0.6.5** 将其从 0.6.4 及更早版本
+使用的平台目录移出（Linux 为 `~/.config/whycodes` 或
+`~/.config/com.whycorporation.whycodes`，macOS 为
+`~/Library/Application Support/com.whycorporation.whycodes`，Windows 为
+`%APPDATA%\whycorporation\whycodes`）。新目录为空时，首次启动会复制
+`config.toml`、`auth.json` 和 `whycodes.db`，并保留旧文件。
+
 <details>
 <summary>Shell 补全</summary>
 

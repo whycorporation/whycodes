@@ -95,6 +95,15 @@ whycodes` (Homebrew). Интерактивные сессии TUI проверя
 инструкции по удалению:
 [docs/packaging.md](docs/packaging.md).
 
+Конфиг и сессии лежат в `~/.whycodes` (`%USERPROFILE%\.whycodes` в Windows)
+или в `$WHYCODES_HOME`, если переменная задана. **0.6.5** перенесла их из
+платформенного каталога, который использовали 0.6.4 и раньше
+(`~/.config/whycodes` или `~/.config/com.whycorporation.whycodes` в Linux,
+`~/Library/Application Support/com.whycorporation.whycodes` в macOS,
+`%APPDATA%\whycorporation\whycodes` в Windows). Первый запуск копирует
+`config.toml`, `auth.json` и `whycodes.db`, если новый каталог пуст, и
+оставляет старые файлы на месте.
+
 <details>
 <summary>Дополнения оболочки</summary>
 
