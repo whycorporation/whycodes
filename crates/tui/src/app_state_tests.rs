@@ -254,6 +254,25 @@ fn submit_input_requests_full_clear_for_layout_jump() {
 }
 
 #[test]
+fn submit_while_busy_appends_fifo_instead_of_replacing() {
+    let mut app = app();
+    app.current_agent_state = crate::app::AgentState::Generating;
+    app.input_buffer = "first".into();
+    app.input_cursor = 5;
+    app.submit_input();
+    app.input_buffer = "second".into();
+    app.input_cursor = 6;
+    app.submit_input();
+    assert_eq!(app.queued_turn_count(), 2);
+    assert_eq!(app.pending_prompt(), Some("first"));
+    let texts: Vec<String> = app.pending_turns.iter().map(|t| t.text.clone()).collect();
+    assert_eq!(texts, vec!["first".to_string(), "second".to_string()]);
+    let popped = app.take_pending_turn().expect("first");
+    assert_eq!(popped.text, "first");
+    assert_eq!(app.pending_prompt(), Some("second"));
+}
+
+#[test]
 fn import_picker_toggle_and_select_all() {
     let mut plan = whycodes_import::ImportPlan::default();
     plan.mcp_add.push((
@@ -1253,6 +1272,7 @@ fn save_view_copies_transcript_and_draft() {
     app.scroll_offset = 2;
     app.auto_scroll = false;
     app.selected_msg = Some(0);
+    app.enqueue_prompt_text("queued later");
     let mut snap = crate::session_runtime::ViewSnapshot::default();
     app.save_view(&mut snap);
     assert_eq!(snap.messages.len(), 1);
@@ -1263,6 +1283,8 @@ fn save_view_copies_transcript_and_draft() {
     assert_eq!(snap.scroll_offset, 2);
     assert!(!snap.auto_scroll);
     assert_eq!(snap.selected_msg, Some(0));
+    assert_eq!(snap.pending_turns.len(), 1);
+    assert_eq!(snap.pending_turns[0].text, "queued later");
 }
 
 #[test]

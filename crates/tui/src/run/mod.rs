@@ -1851,7 +1851,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             if should_spawn_idle_catalog(
                 catalog_fetch_pending,
                 rt.agent_busy,
-                app.pending_prompt.is_some(),
+                app.has_pending_turn(),
                 missing_key,
             ) {
                 catalog_fetch_pending = false;
@@ -1922,9 +1922,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
             // ── Start turn if needed ──────────────────────────────────
             if !rt.agent_busy
-                && let Some(prompt) = app.pending_prompt.take()
+                && let Some(turn) = app.take_pending_turn()
             {
-                let submit_images = std::mem::take(&mut app.pending_submit_images);
+                let prompt = turn.text;
+                let submit_images = turn.images;
 
                 if let Some(ref rem) = remote {
                     drop(submit_images);
@@ -2630,7 +2631,11 @@ fn apply_busy_key(
             ),
         },
         BusyKey::WaitEnter => {
-            toast_wait_for_turn(app);
+            if app.prompt_has_content() {
+                app.submit_input();
+            } else {
+                toast_wait_for_turn(app);
+            }
         }
         BusyKey::PassThrough => {
             // Typing, scroll, focus toggle — all allowed mid-turn.
@@ -4715,7 +4720,7 @@ fn apply_boot_prompt(app: &mut TuiApp, missing_key: bool, initial_prompt: Option
         && !p.is_empty()
     {
         app.add_message(ChatRole::User, &p);
-        app.pending_prompt = Some(p);
+        app.enqueue_prompt_text(p);
     }
 }
 
@@ -4829,11 +4834,11 @@ fn take_turn_owner(rt: &mut SessionRuntime, project_dir: &std::path::Path) -> (A
 }
 
 fn queue_auto_prompt_if_idle(app: &mut TuiApp, agent_busy: bool) {
-    if agent_busy || app.pending_prompt.is_some() {
+    if agent_busy || app.has_pending_turn() {
         return;
     }
     if let Some(next) = app.pending_auto_prompts.pop_front() {
-        app.pending_prompt = Some(next);
+        app.enqueue_prompt_text(next);
     }
 }
 

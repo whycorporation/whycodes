@@ -38,6 +38,20 @@ fn command_mode_renders_command_buffer_with_colon_prefix() {
 }
 
 #[test]
+fn bottom_meta_shows_queued_count() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.provider_name = "openrouter".into();
+    app.model_name = "test".into();
+    app.enqueue_prompt_text("first");
+    app.enqueue_prompt_text("second");
+    let rows = rendered_rows(&mut app, 80, 8);
+    assert!(
+        rows.iter().any(|r| r.contains("queued · 2")),
+        "prompt chrome must show queued count, got {rows:?}"
+    );
+}
+
+#[test]
 fn trailing_newline_paints_a_blank_continuation_row() {
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.input_buffer = "hello\n".into();

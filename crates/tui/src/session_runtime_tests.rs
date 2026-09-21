@@ -51,6 +51,7 @@ fn view_snapshot_default_is_sane() {
     assert!(v.selected_msg.is_none());
     assert!(v.input_buffer.is_empty());
     assert_eq!(v.context_used, 0);
+    assert!(v.pending_turns.is_empty());
 }
 
 #[test]

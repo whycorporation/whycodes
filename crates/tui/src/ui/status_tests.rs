@@ -164,6 +164,20 @@ fn shortcuts_busy_shows_cancel_and_focus() {
 }
 
 #[test]
+fn shortcuts_busy_with_queue_shows_enter_queue() {
+    let mut app = app_ready();
+    app.current_agent_state = AgentState::Generating;
+    app.enqueue_prompt_text("later");
+    let palette = app.config.palette();
+    let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+        render(f, f.area(), &app, &palette)
+    });
+    assert!(text.contains("enter queue"), "{text}");
+    assert!(text.contains("esc cancel"), "{text}");
+    assert!(!text.contains("enter send"), "{text}");
+}
+
+#[test]
 fn truncate_start_keeps_short_and_ellipsizes_long() {
     assert_eq!(truncate_start("short", 20), "short");
     assert_eq!(truncate_start("", 5), "");

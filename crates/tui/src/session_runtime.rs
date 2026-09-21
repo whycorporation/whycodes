@@ -21,7 +21,7 @@ use whycodes_session::SessionHistory;
 use whycodes_session::session::Session;
 use whycodes_storage::db::Database;
 
-use crate::app::{AgentState, ChatMessage, ChatRole};
+use crate::app::{AgentState, ChatMessage, ChatRole, PendingTurn};
 use crate::run::TurnOutcome;
 
 /// Open a dedicated connection for one runtime (same db file as the rest
@@ -98,6 +98,7 @@ pub struct ViewSnapshot {
     pub turn_usage: Option<whycodes_core::types::Usage>,
     pub context_used: u64,
     pub pending_suggestion: Option<String>,
+    pub pending_turns: VecDeque<PendingTurn>,
     pub session_id: String,
     pub todos: Vec<whycodes_core::TodoItem>,
     pub todos_collapsed: bool,
@@ -122,6 +123,7 @@ impl Default for ViewSnapshot {
             turn_usage: None,
             context_used: 0,
             pending_suggestion: None,
+            pending_turns: VecDeque::new(),
             session_id: String::new(),
             todos: Vec::new(),
             todos_collapsed: false,

@@ -2165,10 +2165,12 @@ async fn handle_slash_covers_local_commands() {
     h.run("/loop").await;
     assert!(h.app.status_message.contains("Usage"));
     h.run("/loop 2 do the thing").await;
-    assert_eq!(h.app.pending_prompt.as_deref(), Some("do the thing"));
+    assert_eq!(h.app.pending_prompt(), Some("do the thing"));
     assert_eq!(h.app.pending_auto_prompts.len(), 1);
     h.run("/loop stop").await;
     assert!(h.app.pending_auto_prompts.is_empty());
+    // Stop clears the loop remainder, not the first admitted turn.
+    let _ = h.app.take_pending_turn();
 
     h.run("/remember").await;
     assert!(h.app.status_message.contains("Usage"));
@@ -2348,7 +2350,8 @@ async fn handle_slash_covers_local_commands() {
     h.run("/cost").await;
     h.run("/slop").await;
     h.run("/init").await;
-    assert!(h.app.pending_prompt.is_some());
+    assert!(h.app.pending_prompt().is_some());
+    let _ = h.app.take_pending_turn();
 
     // CI runners set `CI=true`, which makes `/import` a no-op skip toast.
     let prev_ci = std::env::var_os("CI");
@@ -2457,7 +2460,7 @@ async fn handle_slash_covers_local_commands() {
         },
     );
     h.run("/hello world").await;
-    assert_eq!(h.app.pending_prompt.as_deref(), Some("hello world"));
+    assert_eq!(h.app.pending_prompt(), Some("hello world"));
 }
 
 #[test]
@@ -3687,7 +3690,7 @@ async fn handle_slash_more_aliases_and_connect_with_key() {
     h.app.mode = AppMode::Normal;
 
     h.run("/loop keep going").await;
-    assert_eq!(h.app.pending_prompt.as_deref(), Some("keep going"));
+    assert_eq!(h.app.pending_prompt(), Some("keep going"));
     assert_eq!(
         h.app.pending_auto_prompts.len(),
         2,
@@ -5020,13 +5023,13 @@ fn spinner_session_keys_slash_and_busy_ctrl_c() {
     );
 
     queue_auto_prompt_if_idle(&mut app, true);
-    assert!(app.pending_prompt.is_none());
+    assert!(app.pending_prompt().is_none());
     app.pending_auto_prompts.push_back("next".into());
     queue_auto_prompt_if_idle(&mut app, false);
-    assert_eq!(app.pending_prompt.as_deref(), Some("next"));
+    assert_eq!(app.pending_prompt(), Some("next"));
     app.pending_auto_prompts.push_back("held".into());
     queue_auto_prompt_if_idle(&mut app, false);
-    assert_eq!(app.pending_prompt.as_deref(), Some("next"));
+    assert_eq!(app.pending_prompt(), Some("next"));
 
     app.input_buffer = "/".into();
     app.slash_suggest.refresh(&app.input_buffer);
@@ -5036,8 +5039,9 @@ fn spinner_session_keys_slash_and_busy_ctrl_c() {
     apply_boot_prompt(&mut app, true, None);
     assert_eq!(app.status_message, "no API key · /connect");
     apply_boot_prompt(&mut app, false, Some(String::new()));
+    let _ = app.take_pending_turn();
     apply_boot_prompt(&mut app, false, Some("do it".into()));
-    assert_eq!(app.pending_prompt.as_deref(), Some("do it"));
+    assert_eq!(app.pending_prompt(), Some("do it"));
 
     let mut rt = test_runtime();
     let name = rt.agent.info.name.clone();
@@ -5467,18 +5471,18 @@ fn auto_prompts_are_fifo_and_do_not_replace_pending_work() {
         .extend(["first".into(), "second".into()]);
 
     queue_auto_prompt_if_idle(&mut app, true);
-    assert!(app.pending_prompt.is_none());
+    assert!(app.pending_prompt().is_none());
     assert_eq!(app.pending_auto_prompts.len(), 2);
 
     queue_auto_prompt_if_idle(&mut app, false);
-    assert_eq!(app.pending_prompt.as_deref(), Some("first"));
+    assert_eq!(app.pending_prompt(), Some("first"));
     assert_eq!(
         app.pending_auto_prompts.front().map(String::as_str),
         Some("second")
     );
 
     queue_auto_prompt_if_idle(&mut app, false);
-    assert_eq!(app.pending_prompt.as_deref(), Some("first"));
+    assert_eq!(app.pending_prompt(), Some("first"));
     assert_eq!(app.pending_auto_prompts.len(), 1);
 }
 
@@ -9824,6 +9828,19 @@ fn apply_busy_key_covers_cancel_quit_ctrl_c_wait_and_passthrough() {
             .map(|t| t.message.as_str())
             .collect::<Vec<_>>()
     );
+    app.input_buffer = "follow up".into();
+    apply_busy_key(
+        BusyKey::WaitEnter,
+        &press(KeyCode::Enter),
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &config,
+        dir.path(),
+        &idx,
+    );
+    assert_eq!(app.pending_prompt(), Some("follow up"));
+    assert!(app.input_buffer.is_empty());
 
     apply_busy_key(
         BusyKey::PassThrough,
@@ -10199,7 +10216,7 @@ async fn handle_slash_custom_command_queues_rendered_template() {
     );
     h.run("/review src/lib.rs extra").await;
     assert_eq!(
-        h.app.pending_prompt.as_deref(),
+        h.app.pending_prompt(),
         Some("Review src/lib.rs with note: src/lib.rs extra")
     );
     assert!(

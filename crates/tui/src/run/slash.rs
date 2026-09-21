@@ -143,7 +143,7 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
     {
         let rendered = custom.render(rest);
         ctx.app.add_message(ChatRole::User, &rendered);
-        ctx.app.pending_prompt = Some(rendered);
+        ctx.app.enqueue_prompt_text(rendered);
         return;
     }
 
@@ -269,7 +269,7 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             }
             LoopSlash::Queue { n, prompt } => {
                 ctx.app.add_message(ChatRole::User, &prompt);
-                ctx.app.pending_prompt = Some(prompt.clone());
+                ctx.app.enqueue_prompt_text(prompt.clone());
                 for _ in 1..n {
                     ctx.app.pending_auto_prompts.push_back(prompt.clone());
                 }
@@ -620,8 +620,8 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ChatRole::User,
                 "Create or update AGENTS.md for this project with build/test conventions and architecture notes. Write the file.",
             );
-            ctx.app.pending_prompt = Some(
-                "Analyze this project and write a complete AGENTS.md at the project root with build/test commands, conventions, and architecture. Use the write tool.".into(),
+            ctx.app.enqueue_prompt_text(
+                "Analyze this project and write a complete AGENTS.md at the project root with build/test commands, conventions, and architecture. Use the write tool.",
             );
         }
         "/import" => {
