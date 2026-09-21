@@ -46,6 +46,7 @@ fn tool_error_is_retryable(name: &str, result: &ToolResult) -> bool {
             let c = result.content.to_ascii_lowercase();
             !(c.contains("permission denied")
                 || c.contains("user denied")
+                || c.contains("denied:headless")
                 || c.contains("refused")
                 || c.contains("doom loop")
                 || c.contains("cannot be approved")
@@ -303,7 +304,13 @@ impl Agent {
 
     /// Overlay: `auto` skips every ask; `important` skips low-risk asks;
     /// `manual` never skips. Deny / catastrophic still refuse above this.
+    ///
+    /// Headless JSON / stream-json sets `fail_closed_ask` so `auto` cannot
+    /// silently run a tool the TUI would have asked about.
     fn approval_skips_ask(&self, tc: &ToolCall, working_dir: &str) -> bool {
+        if self.fail_closed_ask {
+            return false;
+        }
         match self.approval_mode {
             ApprovalMode::Auto => true,
             ApprovalMode::Manual => false,
@@ -327,6 +334,24 @@ impl Agent {
             return true;
         }
         self.permission_prompter.ask(&tc.name, detail).await
+    }
+
+    fn denied_permission_result(&self, tc: &ToolCall, extra: &str) -> ToolResult {
+        let stamp = if self.fail_closed_ask {
+            "denied:headless"
+        } else {
+            "User denied permission"
+        };
+        let content = if extra.is_empty() {
+            format!("{stamp} for tool '{}'.", tc.name)
+        } else {
+            format!("{stamp} for tool '{}' {extra}", tc.name)
+        };
+        ToolResult {
+            tool_call_id: tc.id.clone(),
+            content,
+            is_error: true,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -459,11 +484,7 @@ impl Agent {
                         .ask_permission(tc, &tool_ctx.working_dir, &detail)
                         .await
                     {
-                        return ToolResult {
-                            tool_call_id: tc.id.clone(),
-                            content: format!("User denied permission for tool '{}'.", tc.name),
-                            is_error: true,
-                        };
+                        return self.denied_permission_result(tc, "");
                     }
                     risk_confirmed = true;
                 }
@@ -495,11 +516,7 @@ impl Agent {
                             .ask_permission(tc, &tool_ctx.working_dir, &detail)
                             .await
                         {
-                            return ToolResult {
-                                tool_call_id: tc.id.clone(),
-                                content: format!("User denied permission for tool '{}'.", tc.name),
-                                is_error: true,
-                            };
+                            return self.denied_permission_result(tc, "");
                         }
                         risk_confirmed = true;
                     }
@@ -538,14 +555,7 @@ impl Agent {
                         let detail = format_permission_detail(&tc.arguments);
                         let body = format!("{detail}\n\nIntent check:\n{reason}");
                         if !self.ask_permission(tc, &tool_ctx.working_dir, &body).await {
-                            return ToolResult {
-                                tool_call_id: tc.id.clone(),
-                                content: format!(
-                                    "User denied permission for tool '{}' (intent gate).",
-                                    tc.name
-                                ),
-                                is_error: true,
-                            };
+                            return self.denied_permission_result(tc, "(intent gate).");
                         }
                         risk_confirmed = true;
                     }
@@ -580,11 +590,7 @@ impl Agent {
                         .ask_permission(tc, &tool_ctx.working_dir, &detail)
                         .await
                     {
-                        return ToolResult {
-                            tool_call_id: tc.id.clone(),
-                            content: format!("User denied permission for tool '{}'.", tc.name),
-                            is_error: true,
-                        };
+                        return self.denied_permission_result(tc, "");
                     }
                     risk_confirmed = true;
                 }
@@ -611,11 +617,7 @@ impl Agent {
                     .ask_permission(tc, &tool_ctx.working_dir, &detail)
                     .await;
                 if !allowed {
-                    return ToolResult {
-                        tool_call_id: tc.id.clone(),
-                        content: format!("User denied permission for tool '{}'.", tc.name),
-                        is_error: true,
-                    };
+                    return self.denied_permission_result(tc, "");
                 }
             }
             PermissionAction::Allow => {}

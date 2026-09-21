@@ -186,6 +186,9 @@ impl Config {
         if other.session.magic_keywords != MagicKeywordsConfig::default() {
             merged.session.magic_keywords = other.session.magic_keywords.clone();
         }
+        if other.session.headless_ask.is_some() {
+            merged.session.headless_ask = other.session.headless_ask;
+        }
 
         // TUI
         if other.tui.theme.is_some() {

@@ -377,11 +377,13 @@ fn runtime_choice_per_command() {
         prompt: None,
         max_turns: None,
         format: OutputFormat::Text,
+        approve_tools: false,
     }))));
     assert!(!command_needs_full_worker_pool(&cli(Some(Commands::Run {
         prompt: None,
         max_turns: None,
         format: OutputFormat::Text,
+        approve_tools: false,
     }))));
     assert!(command_needs_multi_thread(&cli(Some(Commands::Mcp {
         cmd: McpCmd::List
@@ -417,6 +419,7 @@ fn auto_update_only_interactive_text_sessions() {
             prompt: None,
             max_turns: None,
             format: OutputFormat::Text,
+            approve_tools: false,
         })),
         true,
         false,
@@ -428,6 +431,7 @@ fn auto_update_only_interactive_text_sessions() {
             prompt: Some("hi".into()),
             max_turns: None,
             format: OutputFormat::Json,
+            approve_tools: false,
         })),
         true,
         false,
@@ -440,6 +444,7 @@ fn auto_update_only_interactive_text_sessions() {
             max_turns: None,
             jobs: 1,
             format: OutputFormat::Text,
+            approve_tools: false,
         })),
         true,
         false,
@@ -521,11 +526,13 @@ fn cli_parser_maps_global_flags_and_nested_commands() {
             max_turns,
             jobs,
             format,
+            approve_tools,
         }) => {
             assert_eq!(prompt, ["fix it"]);
             assert_eq!(max_turns, Some(7));
             assert_eq!(jobs, 2);
             assert_eq!(format, OutputFormat::StreamJson);
+            assert!(!approve_tools);
         }
         other => panic!("unexpected parsed command: {other:?}"),
     }
@@ -1017,6 +1024,7 @@ fn version_only_argv_and_tui_invoke() {
         prompt: None,
         max_turns: None,
         format: OutputFormat::Text,
+        approve_tools: false,
     }))));
     assert!(is_tui_invoke(&cli(Some(Commands::Connect {
         addr: "127.0.0.1:3030".into(),
@@ -1042,6 +1050,7 @@ fn runtime_choice_covers_remaining_commands() {
         max_turns: Some(1),
         jobs: 1,
         format: OutputFormat::Text,
+        approve_tools: false,
     }))));
     assert!(command_needs_full_worker_pool(&cli(Some(
         Commands::Generate {
@@ -1049,6 +1058,7 @@ fn runtime_choice_covers_remaining_commands() {
             max_turns: Some(1),
             jobs: 1,
             format: OutputFormat::Text,
+            approve_tools: false,
         }
     ))));
     assert!(command_needs_multi_thread(&cli(Some(Commands::Acp))));
@@ -1565,13 +1575,14 @@ async fn cmd_generate_single_and_parallel_unknown_provider() {
     c.provider = Some("script".into());
     c.dir = Some(home.path().display().to_string());
     c.no_memory = true;
-    let single = cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::Text).await;
+    let single = cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::Text, false).await;
     let parallel = cmd_generate(
         &c,
         &["a".into(), "b".into(), "".into()],
         Some(1),
         2,
         OutputFormat::Json,
+        false,
     )
     .await;
     match prev_key {
@@ -1607,6 +1618,7 @@ async fn run_one_parallel_turn_unknown_provider_fails() {
         OutputFormat::Text,
         dir.path(),
         false,
+        false,
     )
     .await;
     assert!(
@@ -1623,6 +1635,18 @@ async fn run_one_parallel_turn_unknown_provider_fails() {
             "run_one_parallel_turn must not write a crash report under IsolatedHome"
         );
     }
+}
+
+#[test]
+fn structured_ask_fail_closed_unless_flag_or_config() {
+    let mut cfg = Config::default();
+    assert!(structured_ask_is_fail_closed(&cfg, false));
+    assert!(!structured_ask_is_fail_closed(&cfg, true));
+    cfg.session.headless_ask = Some(whycodes_config::HeadlessAskMode::Allow);
+    assert!(!structured_ask_is_fail_closed(&cfg, false));
+    cfg.session.headless_ask = Some(whycodes_config::HeadlessAskMode::Deny);
+    assert!(structured_ask_is_fail_closed(&cfg, false));
+    assert!(!structured_ask_is_fail_closed(&cfg, true));
 }
 
 #[test]
@@ -2355,13 +2379,13 @@ async fn cmd_run_empty_prompt_and_missing_key() {
     c.plain = true;
     c.no_auto_update = true;
     c.no_memory = true;
-    cmd_run(&c, Some(""), None, OutputFormat::Text)
+    cmd_run(&c, Some(""), None, OutputFormat::Text, false)
         .await
         .unwrap();
-    cmd_run(&c, Some("hello"), Some(1), OutputFormat::Text)
+    cmd_run(&c, Some("hello"), Some(1), OutputFormat::Text, false)
         .await
         .unwrap();
-    let err = cmd_run(&c, None, None, OutputFormat::Json).await;
+    let err = cmd_run(&c, None, None, OutputFormat::Json, false).await;
     assert!(err.is_err(), "{err:?}");
 }
 
@@ -2378,7 +2402,7 @@ async fn cmd_generate_empty_prompt_errors() {
     let mut c = cli(None);
     c.plain = true;
     c.no_memory = true;
-    let err = cmd_generate(&c, &[String::new()], Some(1), 1, OutputFormat::Text).await;
+    let err = cmd_generate(&c, &[String::new()], Some(1), 1, OutputFormat::Text, false).await;
     assert!(err.is_err(), "{err:?}");
 }
 
@@ -2634,6 +2658,7 @@ async fn dispatch_generate_empty_prompt() {
             max_turns: Some(1),
             jobs: 1,
             format: OutputFormat::Text,
+            approve_tools: false,
         },
         &c,
     )
@@ -2650,7 +2675,15 @@ async fn cmd_generate_ollama_reaches_llm_and_fails() {
     c.plain = true;
     c.no_memory = true;
     c.no_auto_update = true;
-    let err = cmd_generate(&c, &["say hi".into()], Some(1), 1, OutputFormat::Json).await;
+    let err = cmd_generate(
+        &c,
+        &["say hi".into()],
+        Some(1),
+        1,
+        OutputFormat::Json,
+        false,
+    )
+    .await;
     assert!(err.is_err(), "{err:?}");
     let err = cmd_generate(
         &c,
@@ -2658,10 +2691,11 @@ async fn cmd_generate_ollama_reaches_llm_and_fails() {
         Some(1),
         2,
         OutputFormat::Text,
+        false,
     )
     .await;
     assert!(err.is_err(), "{err:?}");
-    let err = cmd_run(&c, Some("say hi"), Some(1), OutputFormat::Json).await;
+    let err = cmd_run(&c, Some("say hi"), Some(1), OutputFormat::Json, false).await;
     assert!(err.is_err(), "{err:?}");
 }
 
@@ -2845,7 +2879,7 @@ async fn cmd_run_tui_stub_quit() {
     c.plain = false;
     c.no_memory = true;
     c.no_auto_update = true;
-    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    let result = cmd_run(&c, None, None, OutputFormat::Text, false).await;
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
     result.unwrap();
 }
@@ -2978,7 +3012,7 @@ async fn cmd_run_force_plain_fallback_message() {
     c.plain = false;
     c.no_memory = true;
     // Without WHYCODES_TEST_TUI and without a TTY this hits the fallback eprintln.
-    let err = cmd_run(&c, Some("hello"), Some(1), OutputFormat::Text).await;
+    let err = cmd_run(&c, Some("hello"), Some(1), OutputFormat::Text, false).await;
     let _ = err;
 }
 
@@ -3129,7 +3163,7 @@ async fn cmd_run_plain_repl_slash_commands() {
     c.provider = Some("anthropic".into());
     c.model = Some("claude-test".into());
     c.resume = Some("missing-session".into());
-    let result = cmd_run(&c, None, Some(3), OutputFormat::Text).await;
+    let result = cmd_run(&c, None, Some(3), OutputFormat::Text, false).await;
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -3153,7 +3187,7 @@ async fn cmd_run_plain_repl_eof_without_exit() {
     c.no_memory = true;
     c.no_auto_update = true;
     c.provider = Some("anthropic".into());
-    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    let result = cmd_run(&c, None, None, OutputFormat::Text, false).await;
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -3176,7 +3210,7 @@ async fn cmd_run_one_shot_with_scripted_llm() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    let result = cmd_run(&c, Some("hello world"), Some(2), OutputFormat::Text).await;
+    let result = cmd_run(&c, Some("hello world"), Some(2), OutputFormat::Text, false).await;
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
         std::env::remove_var("ANTHROPIC_API_KEY");
@@ -3198,7 +3232,7 @@ async fn cmd_generate_with_scripted_llm() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_generate(&c, &["one".into()], Some(1), 1, OutputFormat::Text)
+    cmd_generate(&c, &["one".into()], Some(1), 1, OutputFormat::Text, false)
         .await
         .unwrap();
     cmd_generate(
@@ -3207,6 +3241,7 @@ async fn cmd_generate_with_scripted_llm() {
         Some(1),
         2,
         OutputFormat::Json,
+        false,
     )
     .await
     .unwrap();
@@ -3235,7 +3270,7 @@ async fn cmd_run_plain_continue_empty_and_init_login() {
     c.continue_session = true;
     c.dir = Some(proj.to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    let result = cmd_run(&c, None, None, OutputFormat::Text, false).await;
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -3290,7 +3325,9 @@ async fn cmd_run_tui_path_hits_whycodes_tui_run() {
     c.plain = false;
     c.no_memory = true;
     c.no_auto_update = true;
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
@@ -3428,15 +3465,23 @@ async fn cmd_generate_stream_json_and_run_init_agents_md() {
     c.provider = Some("anthropic".into());
     c.model = Some("claude-test".into());
 
-    cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::StreamJson)
-        .await
-        .unwrap();
+    cmd_generate(
+        &c,
+        &["hello".into()],
+        Some(1),
+        1,
+        OutputFormat::StreamJson,
+        false,
+    )
+    .await
+    .unwrap();
     cmd_generate(
         &c,
         &["a".into(), "b".into(), "".into()],
         Some(1),
         2,
         OutputFormat::StreamJson,
+        false,
     )
     .await
     .unwrap();
@@ -3497,7 +3542,7 @@ async fn cmd_run_plain_resume_existing_session() {
     c.no_auto_update = true;
     c.dir = Some(proj.to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    let result = cmd_run(&c, None, None, OutputFormat::Text, false).await;
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -3521,7 +3566,7 @@ async fn cmd_run_plain_repl_failed_turn_and_info_usage() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    let result = cmd_run(&c, None, Some(2), OutputFormat::Text).await;
+    let result = cmd_run(&c, None, Some(2), OutputFormat::Text, false).await;
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -3544,7 +3589,7 @@ async fn cmd_run_one_shot_scripted_fail() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    let err = cmd_run(&c, Some("hello fail"), Some(1), OutputFormat::Text).await;
+    let err = cmd_run(&c, Some("hello fail"), Some(1), OutputFormat::Text, false).await;
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
         std::env::remove_var("ANTHROPIC_API_KEY");
@@ -3566,7 +3611,7 @@ async fn cmd_run_structured_format_delegates_to_generate() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, Some("hello json"), Some(1), OutputFormat::Json)
+    cmd_run(&c, Some("hello json"), Some(1), OutputFormat::Json, false)
         .await
         .unwrap();
     unsafe {
@@ -3729,7 +3774,7 @@ async fn cmd_run_plain_env_and_first_run_import() {
     c.no_memory = true;
     c.no_auto_update = true;
     c.provider = Some("anthropic".into());
-    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    let result = cmd_run(&c, None, None, OutputFormat::Text, false).await;
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_PLAIN");
@@ -3793,7 +3838,7 @@ async fn cmd_run_plain_remaining_slash_and_git_diff() {
     c.no_auto_update = true;
     c.dir = Some(proj.to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    let result = cmd_run(&c, None, Some(3), OutputFormat::Text).await;
+    let result = cmd_run(&c, None, Some(3), OutputFormat::Text, false).await;
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -3820,7 +3865,9 @@ async fn cmd_run_custom_command_without_key_skips() {
     c.no_auto_update = true;
     c.dir = Some(proj.to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
 }
 
@@ -4394,6 +4441,7 @@ fn runtime_full_pool_for_generate_and_serve() {
             max_turns: None,
             jobs: 2,
             format: OutputFormat::Text,
+            approve_tools: false,
         }
     ))));
     #[cfg(feature = "server")]
@@ -4408,6 +4456,7 @@ fn runtime_full_pool_for_generate_and_serve() {
         max_turns: None,
         jobs: 2,
         format: OutputFormat::Text,
+        approve_tools: false,
     })))
     .unwrap();
     drop(rt);
@@ -4442,6 +4491,7 @@ async fn cmd_generate_fail_scripted_and_no_memory() {
         Some(1),
         1,
         OutputFormat::Text,
+        false,
     )
     .await;
     let err2 = cmd_generate(
@@ -4453,6 +4503,7 @@ async fn cmd_generate_fail_scripted_and_no_memory() {
         Some(1),
         2,
         OutputFormat::Json,
+        false,
     )
     .await;
     unsafe {
@@ -4573,7 +4624,9 @@ async fn cmd_run_init_fail_and_effort_none_for_claude() {
     c.dir = Some(proj.to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
     c.model = Some("claude-sonnet-4-20250514".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -4603,6 +4656,7 @@ async fn cmd_run_one_shot_auto_title_and_empty_response() {
         Some("title this session please"),
         Some(1),
         OutputFormat::Text,
+        false,
     )
     .await
     .unwrap();
@@ -4660,7 +4714,7 @@ async fn cmd_generate_no_memory_flag_and_text_empty_ok() {
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
     unsafe { std::env::set_var("WHYCODES_TEST_LLM", "ok") };
-    cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::Text)
+    cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::Text, false)
         .await
         .unwrap();
     unsafe {
@@ -4749,6 +4803,7 @@ async fn dispatch_run_and_memory_and_upgrade() {
             prompt: Some("hi".into()),
             max_turns: Some(1),
             format: OutputFormat::Text,
+            approve_tools: false,
         },
         &c,
     )
@@ -4814,7 +4869,9 @@ async fn cmd_run_repl_custom_command_with_key() {
     c.no_auto_update = true;
     c.dir = Some(proj.to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -4833,7 +4890,9 @@ async fn cmd_run_tui_upgrade_exit() {
     c.plain = false;
     c.no_memory = true;
     c.no_auto_update = true;
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
@@ -4899,7 +4958,9 @@ async fn cmd_run_resume_then_undo_without_history() {
     c.no_auto_update = true;
     c.resume = Some(id);
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -4938,7 +4999,9 @@ async fn cmd_run_doctor_missing_key_and_shell_fail() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
 }
 
@@ -4966,7 +5029,9 @@ async fn cmd_run_connect_oauth_hint_and_login_list() {
     c.no_memory = true;
     c.no_auto_update = true;
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
 }
 
@@ -4998,6 +5063,7 @@ async fn cmd_generate_jobs_zero_clamped() {
         Some(1),
         0,
         OutputFormat::Text,
+        false,
     )
     .await
     .unwrap();
@@ -5051,7 +5117,9 @@ async fn cmd_run_info_with_cache_usage() {
     c.no_auto_update = true;
     c.resume = Some(id);
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -5149,7 +5217,9 @@ async fn cmd_run_plain_empty_prompt_then_quit() {
     c.no_memory = true;
     c.no_auto_update = true;
     c.provider = Some("ollama".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
 }
 
@@ -5174,7 +5244,7 @@ async fn cmd_run_compact_empty_then_turn_persist() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, Some(2), OutputFormat::Text)
+    cmd_run(&c, None, Some(2), OutputFormat::Text, false)
         .await
         .unwrap();
     clear_test_repl_lines();
@@ -5199,7 +5269,7 @@ async fn cmd_run_share_export_and_sessions_error_path() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, Some(1), OutputFormat::Text)
+    cmd_run(&c, None, Some(1), OutputFormat::Text, false)
         .await
         .unwrap();
     clear_test_repl_lines();
@@ -5224,7 +5294,9 @@ async fn cmd_run_models_list_only_and_agent_switch() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_LLM");
@@ -5244,7 +5316,7 @@ async fn cmd_run_ollama_one_shot_without_key() {
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("ollama".into());
     c.model = Some("tiny".into());
-    let _ = cmd_run(&c, Some("hello ollama"), Some(1), OutputFormat::Text).await;
+    let _ = cmd_run(&c, Some("hello ollama"), Some(1), OutputFormat::Text, false).await;
     unsafe { std::env::remove_var("WHYCODES_TEST_LLM") };
 }
 
@@ -5493,7 +5565,9 @@ async fn cmd_run_custom_command_scripted_fail() {
     c.no_auto_update = true;
     c.dir = Some(proj.to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
 }
 
@@ -5530,7 +5604,9 @@ async fn cmd_run_effort_persist_fails_when_config_is_dir() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
     let _ = std::fs::remove_dir_all(&path);
 }
@@ -5545,7 +5621,9 @@ async fn cmd_run_rename_without_saved_session() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("ollama".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
 }
 
@@ -5562,7 +5640,7 @@ async fn cmd_run_diff_without_git_on_path() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("ollama".into());
-    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    let result = cmd_run(&c, None, None, OutputFormat::Text, false).await;
     clear_test_repl_lines();
     match prev {
         Some(v) => unsafe { std::env::set_var("PATH", v) },
@@ -5813,7 +5891,7 @@ async fn cmd_run_repl_turn_persist_and_remember_errors() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, Some(2), OutputFormat::Text)
+    cmd_run(&c, None, Some(2), OutputFormat::Text, false)
         .await
         .unwrap();
     clear_test_repl_lines();
@@ -5841,6 +5919,7 @@ async fn cmd_generate_stream_json_fail_and_text_parallel() {
         Some(1),
         1,
         OutputFormat::StreamJson,
+        false,
     )
     .await;
     assert!(err.is_err());
@@ -5853,6 +5932,7 @@ async fn cmd_generate_stream_json_fail_and_text_parallel() {
         Some(1),
         2,
         OutputFormat::StreamJson,
+        false,
     )
     .await;
     assert!(err.is_err());
@@ -5869,7 +5949,7 @@ async fn cmd_run_tui_stub_with_prompt() {
     c.plain = false;
     c.no_memory = true;
     c.no_auto_update = true;
-    cmd_run(&c, Some("hello tui"), None, OutputFormat::Text)
+    cmd_run(&c, Some("hello tui"), None, OutputFormat::Text, false)
         .await
         .unwrap();
     unsafe {
@@ -5884,6 +5964,7 @@ fn runtime_for_run_caps_workers() {
         prompt: None,
         max_turns: None,
         format: OutputFormat::Text,
+        approve_tools: false,
     })))
     .unwrap();
     assert_eq!(
@@ -5920,7 +6001,9 @@ async fn cmd_run_first_run_import_reload() {
     c.no_auto_update = true;
     c.provider = Some("anthropic".into());
     c.dir = Some(home.path().to_string_lossy().into_owned());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
 }
 
@@ -6119,7 +6202,7 @@ async fn cmd_run_share_export_error_when_project_is_file() {
     c.no_auto_update = true;
     c.dir = Some(file_proj.to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    let _ = cmd_run(&c, None, None, OutputFormat::Text).await;
+    let _ = cmd_run(&c, None, None, OutputFormat::Text, false).await;
     clear_test_repl_lines();
 }
 
@@ -6136,7 +6219,7 @@ async fn cmd_run_resume_error_path_when_db_is_dir() {
     c.resume = Some("abc".into());
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("ollama".into());
-    let _ = cmd_run(&c, None, None, OutputFormat::Text).await;
+    let _ = cmd_run(&c, None, None, OutputFormat::Text, false).await;
     clear_test_repl_lines();
 }
 
@@ -6179,7 +6262,7 @@ async fn cmd_generate_no_memory_and_structured_json() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::Json)
+    cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::Json, false)
         .await
         .unwrap();
     cmd_generate(
@@ -6188,6 +6271,7 @@ async fn cmd_generate_no_memory_and_structured_json() {
         Some(1),
         2,
         OutputFormat::Text,
+        false,
     )
     .await
     .unwrap();
@@ -6224,7 +6308,9 @@ async fn cmd_run_tui_upgrade_without_skip() {
     c.plain = false;
     c.no_memory = true;
     c.no_auto_update = true;
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     unsafe {
         std::env::remove_var("WHYCODES_TEST_TUI");
         std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL");
@@ -6261,7 +6347,9 @@ async fn cmd_run_login_oauth_with_auth_stub() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
 }
 
@@ -6275,7 +6363,9 @@ async fn cmd_run_connect_oauth_hint_without_key() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
 }
 
@@ -6289,7 +6379,9 @@ async fn cmd_run_sessions_and_resume_list() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("ollama".into());
-    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    cmd_run(&c, None, None, OutputFormat::Text, false)
+        .await
+        .unwrap();
     clear_test_repl_lines();
 }
 
@@ -6324,10 +6416,10 @@ async fn cmd_run_empty_one_shot_then_missing_key() {
     c.no_auto_update = true;
     c.dir = Some(home.path().to_string_lossy().into_owned());
     c.provider = Some("anthropic".into());
-    cmd_run(&c, Some(""), None, OutputFormat::Text)
+    cmd_run(&c, Some(""), None, OutputFormat::Text, false)
         .await
         .unwrap();
-    cmd_run(&c, Some("needs key"), Some(1), OutputFormat::Text)
+    cmd_run(&c, Some("needs key"), Some(1), OutputFormat::Text, false)
         .await
         .unwrap();
 }

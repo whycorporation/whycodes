@@ -135,6 +135,10 @@ fn retryable_skips_policy_and_question() {
         &err("Permission denied for tool 'read'.")
     ));
     assert!(!tool_error_is_retryable("bash", &err("user denied")));
+    assert!(!tool_error_is_retryable(
+        "bash",
+        &err("denied:headless for tool 'bash'.")
+    ));
     assert!(!tool_error_is_retryable("bash", &err("doom loop")));
     assert!(!tool_error_is_retryable("bash", &err("cannot be approved")));
     assert!(!tool_error_is_retryable("bash", &err("catastrophic")));
@@ -256,6 +260,45 @@ async fn dispatch_tool_special_names_via_permission() {
         bg_shell.content.to_lowercase().contains("command"),
         "{bg_shell:?}"
     );
+}
+
+#[tokio::test]
+async fn fail_closed_ask_denies_without_executing_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("must-not-exist.txt");
+    let mut write_info = info("build");
+    write_info
+        .permission
+        .rules
+        .insert("write".into(), PermissionAction::Ask);
+    let mut a = Agent::new(write_info);
+    a.set_fail_closed_ask(true);
+    a.set_approval_mode(ApprovalMode::Auto);
+    let _ = Agent::new(info("build")).with_fail_closed_ask(true);
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let result = a
+        .execute_with_permission(
+            &tc(
+                "write",
+                json!({"path": "must-not-exist.txt", "content": "nope"}),
+            ),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(result.is_error, "{result:?}");
+    assert!(
+        result.content.contains("denied:headless"),
+        "{}",
+        result.content
+    );
+    assert!(!target.exists(), "ask-gated write must not run");
 }
 
 #[tokio::test]

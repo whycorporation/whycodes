@@ -134,12 +134,21 @@ include a `slop` field (`delta_loc`, `verbosity`, `erosion`, `verdict`,
 `hotspots`, `unparsed_files`). See [Code slop](#code-slop).
 The last event is always `result` (with `is_error` and optional `error`).
 
-Structured formats auto-approve tool permission prompts so pipelines do not
-hang on stdin. The `question` tool is likewise auto-answered (first option,
-stamped `auto-picked` in the tool result) — `--format json` / `stream-json`
-is not interactive and has no reply path. Catastrophic shell risk is still
-hard-blocked. Prefer explicit permission allow rules in config when you want
-tighter control.
+Structured formats cannot prompt on stdin. Permission `ask` is **denied**
+(the tool result is `is_error` and stamped `denied:headless`) unless the
+project `[permission]` already `allow`s that tool, or you pass
+`--approve-tools`, or set:
+
+```toml
+[session]
+headless_ask = "allow"   # deny (default) | allow
+```
+
+`WHYCODES_HEADLESS_ASK=allow` is the same overlay. The `question` tool is
+still auto-answered (first option, stamped `auto-picked`) — `--format json`
+/ `stream-json` has no reply path. Catastrophic shell risk is still
+hard-blocked. Prefer explicit permission allow rules in config when a
+pipeline must run mutating tools.
 
 ## Code slop
 
@@ -626,7 +635,8 @@ the TUI, a stdin prompt in `--plain` — unless overridden:
 |---|---|
 | `WHYCODES_AUTO_APPROVE=1` | auto-allow |
 | `WHYCODES_AUTO_DENY=1` | auto-deny |
-| stdin is not a terminal | auto-deny |
+| stdin is not a terminal (`--plain`) | auto-deny |
+| `--format json` / `stream-json` | deny (`denied:headless`) unless `--approve-tools` or `session.headless_ask = "allow"` |
 
 ### Shell command risk
 

@@ -69,6 +69,8 @@ pub struct Agent {
     reasoning_effort: Option<String>,
     /// Session overlay for when to interrupt (`auto` / `important` / `manual`).
     approval_mode: ApprovalMode,
+    /// Structured (`--format json`) runs: deny permission `ask` unless allow.
+    fail_closed_ask: bool,
     /// `/fresh`: skip provider prompt cache (and local response cache) once.
     skip_prompt_cache_once: std::sync::atomic::AtomicBool,
     /// Cheap model for task/swarm (`provider/model` or bare id).
@@ -333,6 +335,7 @@ impl Agent {
             magic_keywords: whycodes_config::MagicKeywordsConfig::default(),
             reasoning_effort: None,
             approval_mode: ApprovalMode::Auto,
+            fail_closed_ask: false,
             skip_prompt_cache_once: std::sync::atomic::AtomicBool::new(false),
             model_smol: None,
             model_plan: None,
@@ -436,6 +439,16 @@ impl Agent {
     /// Session-level approval overlay (`auto` / `important` / `manual`).
     pub fn set_approval_mode(&mut self, mode: ApprovalMode) {
         self.approval_mode = mode;
+    }
+
+    /// Structured / CI runs: permission `ask` is denied instead of auto-allowed.
+    pub fn set_fail_closed_ask(&mut self, fail_closed: bool) {
+        self.fail_closed_ask = fail_closed;
+    }
+
+    pub fn with_fail_closed_ask(mut self, fail_closed: bool) -> Self {
+        self.fail_closed_ask = fail_closed;
+        self
     }
 
     /// Bind the active provider/model so [`Self::system_prompt`] can append

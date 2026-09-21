@@ -55,13 +55,15 @@ pub(crate) async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Resul
             prompt,
             max_turns,
             format,
-        } => run::cmd_run(cli, prompt.as_deref(), *max_turns, *format).await,
+            approve_tools,
+        } => run::cmd_run(cli, prompt.as_deref(), *max_turns, *format, *approve_tools).await,
         Commands::Generate {
             prompt,
             max_turns,
             jobs,
             format,
-        } => run::cmd_generate(cli, prompt, *max_turns, *jobs, *format).await,
+            approve_tools,
+        } => run::cmd_generate(cli, prompt, *max_turns, *jobs, *format, *approve_tools).await,
         Commands::Acp => github::cmd_acp(cli).await,
         Commands::Pr { title, base } => {
             github::cmd_pr(cli, title.as_deref(), base.as_deref()).await

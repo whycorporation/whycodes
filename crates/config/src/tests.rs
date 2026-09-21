@@ -86,6 +86,7 @@ fn test_default_config() {
     assert!(cfg.session.magic_keywords.enabled);
     assert!(cfg.session.magic_keywords.ultrathink);
     assert!(cfg.session.magic_keywords.orchestrate);
+    assert!(cfg.session.headless_ask.is_none());
 
     // Primary: build / plan / ask; subagents: general / explore / scout
     let names: Vec<&str> = cfg.agents.iter().map(|a| a.name.as_str()).collect();
@@ -787,6 +788,33 @@ hint = "Don't use Box::leak"
     let empty: Config = toml::from_str("[session]\n").unwrap();
     assert!(empty.session.stream_rules.is_empty());
     assert!(empty.session.model_smol.is_none());
+    let deny: Config = toml::from_str("[session]\nheadless_ask = \"deny\"\n").unwrap();
+    assert_eq!(
+        deny.session.headless_ask,
+        Some(crate::HeadlessAskMode::Deny)
+    );
+    let allow: Config = toml::from_str("[session]\nheadless_ask = \"allow\"\n").unwrap();
+    assert_eq!(
+        allow.session.headless_ask,
+        Some(crate::HeadlessAskMode::Allow)
+    );
+    assert_eq!(crate::HeadlessAskMode::Deny.as_str(), "deny");
+    assert_eq!(crate::HeadlessAskMode::Allow.as_str(), "allow");
+    for deny in ["deny", "ask-fail", "fail", "fail-closed"] {
+        assert_eq!(
+            crate::HeadlessAskMode::parse(deny),
+            Some(crate::HeadlessAskMode::Deny),
+            "{deny}"
+        );
+    }
+    for allow in ["allow", "auto", "approve"] {
+        assert_eq!(
+            crate::HeadlessAskMode::parse(allow),
+            Some(crate::HeadlessAskMode::Allow),
+            "{allow}"
+        );
+    }
+    assert!(crate::HeadlessAskMode::parse("nope").is_none());
 }
 
 #[test]
@@ -829,6 +857,7 @@ fn merge_with_general_security_memory_swarm() {
     assert_eq!(merged.schema_version, CONFIG_SCHEMA_VERSION + 1);
     overlay.general.auto_update = false;
     overlay.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+    overlay.session.headless_ask = Some(crate::HeadlessAskMode::Allow);
     overlay.tui.skip_openrouter_key_prompt = true;
     let merged = base.merge_with(&overlay);
     assert!(!merged.general.auto_update);
@@ -836,6 +865,10 @@ fn merge_with_general_security_memory_swarm() {
     assert_eq!(
         merged.general.approval_mode,
         Some(whycodes_core::types::ApprovalMode::Manual)
+    );
+    assert_eq!(
+        merged.session.headless_ask,
+        Some(crate::HeadlessAskMode::Allow)
     );
     assert_eq!(merged.security.bash_risk_threshold, "caution");
     assert_eq!(merged.security.sandbox, "off");
@@ -1353,6 +1386,7 @@ fn apply_env_overrides_sandbox_and_memory() {
         "WHYCODES_NO_AUTO_UPDATE",
         "WHYCODES_AUTO_UPDATE",
         "WHYCODES_APPROVAL_MODE",
+        "WHYCODES_HEADLESS_ASK",
         "WHYCODES_MEMORY",
         "WHYCODES_SWARM",
         "WHYCODES_SWARM_MAX_AGENTS",
@@ -2051,6 +2085,7 @@ fn apply_env_overrides_cover_every_knob() {
         "WHYCODES_NO_AUTO_UPDATE",
         "WHYCODES_AUTO_UPDATE",
         "WHYCODES_APPROVAL_MODE",
+        "WHYCODES_HEADLESS_ASK",
         "WHYCODES_MEMORY",
         "WHYCODES_SWARM",
         "WHYCODES_SWARM_MAX_AGENTS",
@@ -2151,6 +2186,19 @@ fn apply_env_overrides_cover_every_knob() {
         cfg.general.approval_mode,
         Some(whycodes_core::types::ApprovalMode::Important)
     );
+    assert!(cfg.session.headless_ask.is_none());
+    unsafe { std::env::set_var("WHYCODES_HEADLESS_ASK", "allow") };
+    cfg.apply_env_overrides();
+    assert_eq!(
+        cfg.session.headless_ask,
+        Some(crate::HeadlessAskMode::Allow)
+    );
+    unsafe { std::env::set_var("WHYCODES_HEADLESS_ASK", "deny") };
+    cfg.apply_env_overrides();
+    assert_eq!(cfg.session.headless_ask, Some(crate::HeadlessAskMode::Deny));
+    unsafe { std::env::set_var("WHYCODES_HEADLESS_ASK", "nope") };
+    cfg.apply_env_overrides();
+    assert_eq!(cfg.session.headless_ask, Some(crate::HeadlessAskMode::Deny));
     unsafe { std::env::set_var("WHYCODES_MEMORY", "maybe") };
     cfg.apply_env_overrides();
 

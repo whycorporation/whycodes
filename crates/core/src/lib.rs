@@ -6,6 +6,7 @@ pub mod network;
 pub mod panel;
 pub mod paths;
 pub mod sandbox;
+pub mod secret_env;
 pub mod swarm_hub;
 pub mod todo;
 pub mod tokens;

@@ -73,6 +73,9 @@ impl Plugin {
         _ctx: &PluginContext,
     ) -> ToolResult {
         let mut cmd = Self::shell_command(&self.config.command);
+        whycodes_core::secret_env::strip_secret_env_vars(|name| {
+            cmd.env_remove(name);
+        });
         if let Some(ref dir) = self.config.working_dir {
             cmd.current_dir(dir);
         }

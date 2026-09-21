@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use whycodes_agent::agent::Agent;
 use whycodes_agent::events::{TurnEvent, TurnOpts, new_cancel_flag};
-use whycodes_agent::permission::AutoApprovePrompter;
-use whycodes_config::Config;
+use whycodes_agent::permission::{AutoApprovePrompter, AutoDenyPrompter};
+use whycodes_config::{Config, HeadlessAskMode};
 use whycodes_core::types::AgentInfo;
 use whycodes_protocol::{CiEvent, OutputFormat, ResultMeta};
 
@@ -460,6 +460,7 @@ pub(crate) async fn cmd_run(
     prompt: Option<&str>,
     max_turns: Option<usize>,
     format: OutputFormat,
+    approve_tools: bool,
 ) -> anyhow::Result<()> {
     // Structured output is headless-only; needs a prompt.
     if format.is_structured() {
@@ -476,6 +477,7 @@ pub(crate) async fn cmd_run(
             max_turns,
             1,
             format,
+            approve_tools,
         )
         .await;
     }
@@ -1484,6 +1486,7 @@ pub(crate) async fn cmd_generate(
     max_turns: Option<usize>,
     jobs: usize,
     format: OutputFormat,
+    approve_tools: bool,
 ) -> anyhow::Result<()> {
     let project_dir = resolve_dir(cli);
     let mut config = Config::load_layered(&project_dir)
@@ -1530,6 +1533,7 @@ pub(crate) async fn cmd_generate(
             jobs.max(1),
             format,
             &project_dir,
+            approve_tools,
         )
         .await;
     }
@@ -1540,8 +1544,10 @@ pub(crate) async fn cmd_generate(
     agent_info.permission = config.effective_permission(&agent_info.permission);
     let expanded = expand_user_input(prompt, &project_dir);
 
-    // Structured CI formats cannot prompt on stdin; auto-approve tool asks.
-    // Catastrophic shell risk still hard-blocks regardless of this.
+    // Structured CI formats cannot prompt on stdin. Default is fail-closed
+    // (`ask` → deny, stamp `denied:headless`). `--approve-tools` or
+    // `session.headless_ask = "allow"` restores auto-approve. Catastrophic
+    // shell risk still hard-blocks regardless.
     let file_index = whycodes_index::WorkspaceIndex::start(
         whycodes_index::WorkspaceIndex::project_roots(&project_dir),
     );
@@ -1562,9 +1568,7 @@ pub(crate) async fn cmd_generate(
         Some(&expanded),
     );
     if format.is_structured() {
-        agent = agent
-            .with_permission_prompter(Arc::new(AutoApprovePrompter))
-            .with_question_prompter(Arc::new(whycodes_agent::AutoAnswerPrompter));
+        agent = apply_structured_permission_policy(agent, &config, approve_tools);
     }
 
     let mut session = whycodes_session::session::Session::new(project_dir.clone(), system_prompt);
@@ -1601,6 +1605,31 @@ pub(crate) fn should_fan_out(prompts: &[String]) -> bool {
     prompts.len() > 1
 }
 
+/// Structured json / stream-json: fail-closed on permission `ask` unless
+/// `--approve-tools` or `session.headless_ask = "allow"`.
+pub(crate) fn structured_ask_is_fail_closed(config: &Config, approve_tools: bool) -> bool {
+    if approve_tools {
+        return false;
+    }
+    !matches!(config.session.headless_ask, Some(HeadlessAskMode::Allow))
+}
+
+pub(crate) fn apply_structured_permission_policy(
+    agent: Agent,
+    config: &Config,
+    approve_tools: bool,
+) -> Agent {
+    let fail_closed = structured_ask_is_fail_closed(config, approve_tools);
+    let agent = if fail_closed {
+        agent.with_permission_prompter(Arc::new(AutoDenyPrompter))
+    } else {
+        agent.with_permission_prompter(Arc::new(AutoApprovePrompter))
+    };
+    let mut agent = agent.with_question_prompter(Arc::new(whycodes_agent::AutoAnswerPrompter));
+    agent.set_fail_closed_ask(fail_closed);
+    agent
+}
+
 /// S5: run N prompts concurrently, each with its own Agent + Session.
 ///
 /// A semaphore caps in-flight turns at `jobs`. Every prompt always gets a
@@ -1620,6 +1649,7 @@ pub(crate) async fn run_generate_parallel(
     jobs: usize,
     format: OutputFormat,
     project_dir: &std::path::Path,
+    approve_tools: bool,
 ) -> anyhow::Result<()> {
     let sem = Arc::new(tokio::sync::Semaphore::new(jobs));
     let structured = format.is_structured();
@@ -1655,6 +1685,7 @@ pub(crate) async fn run_generate_parallel(
                 format,
                 &project_dir,
                 structured,
+                approve_tools,
             )
             .await
         }));
@@ -1711,6 +1742,7 @@ pub(crate) async fn run_one_parallel_turn(
     format: OutputFormat,
     project_dir: &std::path::Path,
     structured: bool,
+    approve_tools: bool,
 ) -> bool {
     let started = std::time::Instant::now();
 
@@ -1733,9 +1765,7 @@ pub(crate) async fn run_one_parallel_turn(
         Some(&expanded),
     );
     if structured {
-        agent = agent
-            .with_permission_prompter(Arc::new(AutoApprovePrompter))
-            .with_question_prompter(Arc::new(whycodes_agent::AutoAnswerPrompter));
+        agent = apply_structured_permission_policy(agent, config, approve_tools);
     }
 
     let mut session =

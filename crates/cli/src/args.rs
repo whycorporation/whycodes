@@ -119,6 +119,11 @@ pub enum Commands {
             default_value = "text"
         )]
         format: OutputFormat,
+
+        /// Auto-allow permission `ask` in `--format json` / `stream-json`
+        /// (default is fail-closed: deny and stamp `denied:headless`)
+        #[arg(long = "approve-tools")]
+        approve_tools: bool,
     },
 
     /// Generate code from a prompt (non-interactive)
@@ -143,6 +148,11 @@ pub enum Commands {
             default_value = "text"
         )]
         format: OutputFormat,
+
+        /// Auto-allow permission `ask` in `--format json` / `stream-json`
+        /// (default is fail-closed: deny and stamp `denied:headless`)
+        #[arg(long = "approve-tools")]
+        approve_tools: bool,
     },
 
     /// Agent Client Protocol (not yet implemented)

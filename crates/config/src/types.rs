@@ -1284,6 +1284,40 @@ pub struct SessionConfig {
     /// current LLM request and injects `hint` before the next step.
     #[serde(default)]
     pub stream_rules: Vec<StreamRuleConfig>,
+    /// How `--format json` / `stream-json` treat permission `ask`.
+    ///
+    /// Unset = deny (fail-closed). `allow` restores the old auto-approve
+    /// behaviour; `--approve-tools` on the CLI also forces allow. TUI and
+    /// `--plain` ignore this — they still prompt (or follow `WHYCODES_AUTO_*`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headless_ask: Option<HeadlessAskMode>,
+}
+
+/// Structured-run policy for permission `ask` (issue #122).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum HeadlessAskMode {
+    /// Deny the tool, stamp `denied:headless`, do not execute.
+    Deny,
+    /// Auto-allow (legacy CI behaviour). Same as `--approve-tools`.
+    Allow,
+}
+
+impl HeadlessAskMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "deny" | "ask-fail" | "fail" | "fail-closed" => Some(Self::Deny),
+            "allow" | "auto" | "approve" => Some(Self::Allow),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Deny => "deny",
+            Self::Allow => "allow",
+        }
+    }
 }
 
 /// One time-traveling stream rule (abort + inject).
@@ -1342,6 +1376,7 @@ impl Default for SessionConfig {
             reasoning_effort: None,
             magic_keywords: MagicKeywordsConfig::default(),
             stream_rules: Vec::new(),
+            headless_ask: None,
         }
     }
 }
