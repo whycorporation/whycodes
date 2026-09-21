@@ -93,6 +93,15 @@ release artifacts against the published `SHA256SUMS`. Downloadable binaries
 and uninstall instructions:
 [docs/packaging.md](docs/packaging.md).
 
+Config and sessions live in `~/.whycodes` (`%USERPROFILE%\.whycodes` on
+Windows), or `$WHYCODES_HOME` when set. **0.6.5** moved them out of the
+platform directory used by 0.6.4 and earlier
+(`~/.config/whycodes` or `~/.config/com.whycorporation.whycodes` on Linux,
+`~/Library/Application Support/com.whycorporation.whycodes` on macOS,
+`%APPDATA%\whycorporation\whycodes` on Windows). The first launch copies
+`config.toml`, `auth.json`, and `whycodes.db` across when the new directory
+is empty, and leaves the old files in place.
+
 <details>
 <summary>Shell completions</summary>
 

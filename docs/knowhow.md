@@ -203,6 +203,13 @@ when it is empty.
 
 **Prevention:** Do not reintroduce `ProjectDirs` as the default. Keep
 first-run write off the TTFF path (`Config::load` after first paint).
+User-facing release notes must name the old directories (Linux
+`~/.config/whycodes` or `~/.config/com.whycorporation.whycodes`, macOS
+`~/Library/Application Support/com.whycorporation.whycodes`, Windows
+`%APPDATA%\whycorporation\whycodes`) and say the copy is
+`config.toml` / `auth.json` / `whycodes.db` only, only when `~/.whycodes`
+is empty, and that the old files stay. Shipped in the 0.6.5 notes
+(`README`, `docs/guide.md`, `docs/auth.md`).
 
 ### 2026-09-17 — Ctrl+C prints Session Summary then the process never exits
 

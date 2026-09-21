@@ -57,9 +57,14 @@ suggested models (`whycodes_auth::suggested_models`).
 | `<data_dir>/auth-consent.json` | Per-path approve/deny decisions for credential import | `0600` |
 
 `<data_dir>` is `~/.whycodes` on every OS (`%USERPROFILE%\.whycodes` on
-Windows), or `$WHYCODES_HOME` when set. Pre-0.7 installs under
-`com.whycorporation.whycodes` / XDG are copied into `~/.whycodes` on first
-load when the new path is empty.
+Windows), or `$WHYCODES_HOME` when set. **0.6.5** moved this off
+`directories::ProjectDirs`. Earlier installs lived at
+`~/.config/whycodes` or `~/.config/com.whycorporation.whycodes` (Linux),
+`~/Library/Application Support/com.whycorporation.whycodes` (macOS), or
+`%APPDATA%\whycorporation\whycodes` (Windows). On first load, if
+`~/.whycodes` has none of `config.toml`, `auth.json`, or `whycodes.db`,
+those files are copied from the old directory and the old copies are left
+in place. `WHYCODES_HOME` skips the copy.
 Writes are atomic (temp file + rename). Tokens never appear in logs or
 `Debug` output at any level.
 
