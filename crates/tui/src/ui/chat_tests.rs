@@ -822,8 +822,9 @@ fn selected_concat_slice_marks_first_content_across_halves() {
     let next = super::paint_concat_slices(&mut buf, 0, &row, &prefix, &body, 1..3, true);
 
     assert_eq!(next, 2);
-    assert_eq!(buf.cell((0, 0)).map(|c| c.symbol()), Some("▌"));
-    assert_eq!(buf.cell((1, 0)).map(|c| c.symbol()), Some("p"));
+    // Caret sits in the gutter (x-1). With row.x == 0 there is no gutter,
+    // so the row must stay unshifted — otherwise a thinking ┃ rail breaks.
+    assert_eq!(buf.cell((0, 0)).map(|c| c.symbol()), Some("p"));
     assert_eq!(buf.cell((0, 1)).map(|c| c.symbol()), Some("b"));
     assert_eq!(
         super::paint_concat_slices(&mut buf, next, &row, &prefix, &body, 3..3, true),
@@ -2853,7 +2854,84 @@ fn paint_chat_row_fills_and_skips_empty() {
         ])),
         true,
     );
-    assert_eq!(buf[(0, 0)].symbol(), "▌");
+    // Caret is gutter-only. row.x == 0 → no cell to the left, content unshifted.
+    assert_eq!(buf[(0, 0)].symbol(), "h");
+}
+
+#[test]
+fn selected_caret_sits_in_gutter_and_does_not_shift_thinking_rail() {
+    use crate::app::ThinkingBlock;
+
+    let palette = ThemeName::DefaultDark.palette();
+    let mut t = ThinkingBlock::new("one\ntwo");
+    t.collapsed = false;
+    let lines = super::thinking_lines(&t, &palette, 24, 0);
+    assert!(lines.len() >= 2, "header + body, got {}", lines.len());
+
+    let area = Rect::new(0, 0, 28, 4);
+    let mut buf = Buffer::empty(area);
+    let row = super::ChatRowPaint {
+        x: 1,
+        width: 26,
+        fg: Color::White,
+        bg: Color::Black,
+        caret_style: Style::default().fg(Color::Yellow),
+    };
+    super::paint_concat_slices(&mut buf, 0, &row, &lines, &[], 0..lines.len(), true);
+
+    assert_eq!(
+        buf.cell((0, 0)).map(|c| c.symbol()),
+        Some("▌"),
+        "caret occupies the gutter, not a content column"
+    );
+    let header_rail = buf.cell((1, 0)).map(|c| c.symbol());
+    let body_rail = buf.cell((1, 1)).map(|c| c.symbol());
+    assert_eq!(
+        header_rail,
+        Some("┃"),
+        "header rail at content x, got {header_rail:?}"
+    );
+    assert_eq!(
+        body_rail,
+        Some("┃"),
+        "body rail must share the header column; a shifted caret used to paint ▌┃ / ┃"
+    );
+}
+
+#[test]
+fn thinking_body_wraps_to_the_pane_not_a_floor_of_eight() {
+    use crate::app::ThinkingBlock;
+    let palette = ThemeName::DefaultDark.palette();
+    let mut t = ThinkingBlock::new("abcdefghijklmnop");
+    t.collapsed = false;
+    // width 6 → rail+space = 2, wrap budget 4. The old `max(8)` wrapped to 8
+    // and overflowed the pane.
+    let lines = super::thinking_lines(&t, &palette, 6, 0);
+    for (i, line) in lines.iter().enumerate() {
+        let w: usize = line
+            .spans
+            .iter()
+            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+            .sum();
+        assert!(
+            w <= 6,
+            "thinking row {i} display width {w} overflows pane 6: {:?}",
+            line.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        );
+    }
+    let body: String = lines
+        .iter()
+        .skip(1)
+        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+        .collect();
+    assert!(
+        body.contains("abcd") && (body.contains("efgh") || lines.len() > 2),
+        "long thought must wrap across rows, got {body:?} ({} rows)",
+        lines.len()
+    );
 }
 
 #[test]
