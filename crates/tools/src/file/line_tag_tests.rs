@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 #[test]
 fn encode_is_stable_and_ascii() {
@@ -51,6 +52,36 @@ fn window_lengthens_when_short_prefixes_collide() {
     assert_ne!(tags[0], tags[1]);
     assert!(tags[0].len() > MIN_LEN, "{} vs short {short}", tags[0]);
     assert!(tags[0].starts_with(&short) || tags[1].starts_with(&tag_of(&b, MIN_LEN)));
+}
+
+/// Six base36 digits still collide: the window falls through to the MAX_LEN tags.
+#[test]
+fn window_uses_max_len_when_every_prefix_collides() {
+    let mut buckets: HashMap<String, Vec<String>> = HashMap::new();
+    for i in 0..200_000 {
+        let s = format!("collide-{i}");
+        let tag = tag_of(&s, MAX_LEN);
+        let bucket = buckets.entry(tag).or_default();
+        bucket.push(s);
+        if bucket.len() == 2 {
+            let tags = tags_for_window(&[&bucket[0], &bucket[1]]);
+            assert_eq!(tags[0].len(), MAX_LEN);
+            assert_eq!(tags[0], tags[1]);
+            return;
+        }
+    }
+    panic!("expected two distinct lines sharing a MAX_LEN tag");
+}
+
+/// A lone `\r` is a terminator; the next character must not be consumed as `\n`.
+#[test]
+fn line_offsets_stops_on_bare_cr() {
+    let s = "ab\rc";
+    let offs = line_offsets(s);
+    assert_eq!(offs.len(), 2);
+    assert_eq!(line_text(s, offs[0]), "ab");
+    assert_eq!(line_text(s, offs[1]), "c");
+    assert_eq!(offs[0].line_end, 3);
 }
 
 #[test]

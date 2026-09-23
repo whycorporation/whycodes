@@ -118,7 +118,7 @@ impl WhyCodesClient {
         // the port; an explicit `opts.port` must fail on collision.
         let attempts = ephemeral_launch_attempts(opts.port.is_some());
         let mut last_err = None;
-        for attempt in 0..attempts {
+        'attempts: for attempt in 0..attempts {
             let prepared = prepare_launch(&opts)?;
             let mut cmd = launch_command(&prepared, &opts);
             let child = cmd.spawn().map_err(|e| {
@@ -160,6 +160,13 @@ impl WhyCodesClient {
                         if should_retry_ephemeral_port(attempt, attempts, &stderr) {
                             last_err = Some(err);
                             break;
+                        }
+                        // Last ephemeral retry still lost the port: surface that
+                        // error through the exhausted path instead of returning
+                        // inside the attempt loop.
+                        if port_in_use_stderr(&stderr) {
+                            last_err = Some(err);
+                            break 'attempts;
                         }
                         return Err(err);
                     }

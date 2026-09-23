@@ -107,9 +107,6 @@ pub fn line_offsets(s: &str) -> Vec<LineOffsets> {
             content_end,
             line_end: i,
         });
-        if start == i {
-            break;
-        }
     }
     out
 }
