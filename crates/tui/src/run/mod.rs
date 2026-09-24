@@ -804,9 +804,6 @@ impl LoopIo {
         // event ends it (drag-select must not lag), LINGER_MAX_BATCH caps
         // memory, and the 400 ms deadline caps paint starvation. Skip on
         // injected/scripted queues so tests do not sleep.
-        const PASTE_LINGER: Duration = Duration::from_millis(12);
-        const PASTE_LINGER_TOTAL: Duration = Duration::from_millis(400);
-        const LINGER_MAX_BATCH: usize = 4096;
         let mut batch = Vec::with_capacity(8);
         batch.push(self.read_crossterm()?);
         while batch.len() < MAX_BATCH {
@@ -816,33 +813,77 @@ impl LoopIo {
                 Err(e) => return Err(e),
             }
         }
-        if !cfg!(windows)
-            || self.force_zero_poll
-            || !batch.iter().all(|e| matches!(e, Event::Key(_)))
-        {
-            return Ok(batch);
-        }
-        let deadline = std::time::Instant::now() + PASTE_LINGER_TOTAL;
-        'linger: while batch.len() < LINGER_MAX_BATCH && std::time::Instant::now() < deadline {
-            if !self.poll_crossterm(PASTE_LINGER)? {
-                break;
-            }
-            loop {
-                let ev = self.read_crossterm()?;
-                let is_key = matches!(ev, Event::Key(_));
-                batch.push(ev);
-                if !is_key || batch.len() >= LINGER_MAX_BATCH {
-                    break 'linger;
-                }
-                match self.poll_crossterm(Duration::ZERO) {
-                    Ok(true) => {}
-                    Ok(false) => break,
-                    Err(e) => return Err(e),
-                }
-            }
-        }
-        Ok(batch)
+        maybe_linger_windows_paste(cfg!(windows), self.force_zero_poll, self, batch)
     }
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+trait CrosstermIo {
+    fn poll_crossterm(&mut self, timeout: Duration) -> io::Result<bool>;
+    fn read_crossterm(&mut self) -> io::Result<Event>;
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+impl CrosstermIo for LoopIo {
+    fn poll_crossterm(&mut self, timeout: Duration) -> io::Result<bool> {
+        LoopIo::poll_crossterm(self, timeout)
+    }
+
+    fn read_crossterm(&mut self) -> io::Result<Event> {
+        LoopIo::read_crossterm(self)
+    }
+}
+
+/// Windows ConPTY paste linger: keep polling while keys arrive with ≤12 ms
+/// gaps. Extracted so Linux CI can drive the loop without a live TTY.
+fn should_linger_windows_paste(is_windows: bool, force_zero_poll: bool, batch: &[Event]) -> bool {
+    is_windows && !force_zero_poll && batch.iter().all(|e| matches!(e, Event::Key(_)))
+}
+
+fn maybe_linger_windows_paste(
+    is_windows: bool,
+    force_zero_poll: bool,
+    io: &mut impl CrosstermIo,
+    batch: Vec<Event>,
+) -> io::Result<Vec<Event>> {
+    if !should_linger_windows_paste(is_windows, force_zero_poll, &batch) {
+        return Ok(batch);
+    }
+    linger_windows_paste_batch(io, batch)
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn linger_windows_paste_batch(
+    io: &mut impl CrosstermIo,
+    mut batch: Vec<Event>,
+) -> io::Result<Vec<Event>> {
+    const PASTE_LINGER: Duration = Duration::from_millis(12);
+    const PASTE_LINGER_TOTAL: Duration = Duration::from_millis(400);
+    const LINGER_MAX_BATCH: usize = 4096;
+    let deadline = std::time::Instant::now() + PASTE_LINGER_TOTAL;
+    'linger: while batch.len() < LINGER_MAX_BATCH && std::time::Instant::now() < deadline {
+        if !io.poll_crossterm(PASTE_LINGER)? {
+            break;
+        }
+        loop {
+            let ev = io.read_crossterm()?;
+            let is_key = matches!(ev, Event::Key(_));
+            batch.push(ev);
+            if !is_key || batch.len() >= LINGER_MAX_BATCH {
+                break 'linger;
+            }
+            match io.poll_crossterm(Duration::ZERO) {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    Ok(batch)
+}
+
+fn paste_enter_guard_for(is_windows: bool, headless: bool) -> bool {
+    is_windows && !headless
 }
 
 enum LoopTerm {
@@ -1634,7 +1675,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // unbracketed key flood, so a mid-paste Enter must not submit half the
     // clipboard. Scripted/headless queues deliver one event per batch and
     // must keep same-turn Enter submits.
-    app.paste_enter_guard = cfg!(windows) && !headless;
+    app.paste_enter_guard = paste_enter_guard_for(cfg!(windows), headless);
 
     if !bench_clock {
         whycodes_core::logging::emit(

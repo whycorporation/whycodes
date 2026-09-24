@@ -43,7 +43,15 @@ fn permission_detail_and_parallel_policy() {
     assert!(path_outside_workspace("../secret", &cwd_s));
     assert!(path_outside_workspace("~/.ssh", &cwd_s));
     assert!(!path_outside_workspace("src/lib.rs", &cwd_s));
-    assert!(path_outside_workspace("/tmp/outside", &cwd_s));
+    // `/tmp/outside` is not absolute on Windows (`Path::is_absolute` needs a
+    // drive or UNC prefix), so pick a host-absolute path that cannot live
+    // under the workspace even after canonicalize fails.
+    let outside = if cfg!(windows) {
+        r"C:\Windows\Temp\whycodes-outside"
+    } else {
+        "/tmp/outside"
+    };
+    assert!(path_outside_workspace(outside, &cwd_s));
 
     assert_eq!(
         file_tool_path(&call("read", json!({"path": "a.rs"}))).as_deref(),
