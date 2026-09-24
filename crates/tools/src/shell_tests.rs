@@ -46,6 +46,12 @@ fn bash_and_shell_aliases_and_schema() {
     assert_eq!(shell.name(), "shell");
     assert_eq!(via_default.name(), "bash");
     assert!(bash.description().contains("shell") || bash.description().contains("command"));
+    assert!(
+        bash.description().contains("agent://tools/bash"),
+        "{}",
+        bash.description()
+    );
+    assert!(!bash.description().contains("bubblewrap"));
     let params = bash.parameters();
     assert_eq!(params["required"][0], "command");
 }

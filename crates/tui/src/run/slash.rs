@@ -235,6 +235,32 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 "Next turn skips the provider prompt cache",
             );
         }
+        "/btw" => {
+            let q = rest.trim();
+            if q.is_empty() {
+                ctx.app.status_message = "Usage: /btw <question>".into();
+            } else if ctx.api_key.is_empty() {
+                ctx.app.status_message = "No API key — /connect first".into();
+            } else {
+                let before = ctx.session.messages.len();
+                let tokens_before = ctx.session.token_count();
+                match ctx
+                    .agent
+                    .run_side_turn(ctx.session, ctx.provider, ctx.model, ctx.api_key, q)
+                    .await
+                {
+                    Ok(answer) => {
+                        ctx.app
+                            .add_message(ChatRole::System, format!("/btw\n{answer}"));
+                    }
+                    Err(e) => {
+                        ctx.app.status_message = format!("/btw failed: {e}");
+                    }
+                }
+                debug_assert_eq!(ctx.session.messages.len(), before);
+                debug_assert_eq!(ctx.session.token_count(), tokens_before);
+            }
+        }
         "/bg" => {
             let rest = rest.trim();
             if rest.is_empty() || rest == "list" {
@@ -575,8 +601,14 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             );
         }
         "/cost" | "/usage" => {
-            ctx.app
-                .add_message(ChatRole::System, cost_report(ctx.session, ctx.app));
+            ctx.app.add_message(
+                ChatRole::System,
+                cost_report(
+                    ctx.session,
+                    ctx.app,
+                    ctx.agent.sticky_credential().as_deref(),
+                ),
+            );
         }
         "/slop" => {
             ctx.app.add_message(

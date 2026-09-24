@@ -90,6 +90,14 @@ pub struct Agent {
     event_sink: Option<EventSink>,
     /// Max concurrent background jobs.
     max_background_jobs: usize,
+    /// Detach a still-running foreground `bash` after idle (issue #140).
+    bash_auto_background: bool,
+    bash_auto_background_after: std::time::Duration,
+    /// Named credential this session stuck to after the first successful call.
+    sticky_credential: Arc<std::sync::Mutex<Option<String>>>,
+    /// Per-provider named credential env mapping (secrets stay in env).
+    provider_credentials:
+        std::collections::HashMap<String, whycodes_core::types::ProviderCredentials>,
     /// Deferred tools activated via `tool_search` for this agent session.
     activated_tools: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Optional tool cwd override (`worktree enter`).
@@ -346,6 +354,10 @@ impl Agent {
             background: crate::background::BackgroundRegistry::default(),
             event_sink: None,
             max_background_jobs: crate::background::DEFAULT_MAX_BACKGROUND_JOBS,
+            bash_auto_background: true,
+            bash_auto_background_after: std::time::Duration::from_secs(20),
+            sticky_credential: Arc::new(std::sync::Mutex::new(None)),
+            provider_credentials: std::collections::HashMap::new(),
             activated_tools: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             cwd_override: Arc::new(std::sync::Mutex::new(None)),
             subagent_usage_pending: Arc::new(std::sync::Mutex::new(
@@ -374,6 +386,28 @@ impl Agent {
     /// Whether `name` is in the current registry (built-in, config, or test).
     pub fn has_provider(&self, name: &str) -> bool {
         self.provider_registry.get(name).is_some()
+    }
+
+    pub(crate) fn provider_registry_get(&self, name: &str) -> Option<&dyn LlmProvider> {
+        self.provider_registry.get(name)
+    }
+
+    pub(crate) fn tool_executor_defs_readonly(&self) -> Vec<whycodes_core::types::ToolDefinition> {
+        self.tool_executor
+            .get_definitions(&self.info.permission)
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) async fn execute_readonly_tool(
+        &self,
+        call: &ToolCall,
+        ctx: &ToolContext,
+    ) -> ToolResult {
+        self.tool_executor
+            .execute(call, ctx, &self.info.permission)
+            .await
     }
 
     pub fn with_tool_executor(mut self, executor: ToolExecutor) -> Self {
@@ -552,6 +586,14 @@ impl Agent {
         // Resize ceiling only — keep the same registry so in-flight jobs survive
         // agent switches / re-config.
         self.background.set_max_jobs(self.max_background_jobs);
+        self.bash_auto_background = config.tools.bash.auto_background;
+        self.bash_auto_background_after =
+            std::time::Duration::from_secs(config.tools.bash.auto_background_after_secs.max(1));
+        self.provider_credentials = config
+            .providers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.credentials.clone()))
+            .collect();
         self.lsp_overlay = lsp_overlay_from_config(&config.lsp);
         self.system_prompt_overlays = config.system_prompt_overlays.clone();
         let sandbox_desc = whycodes_sandbox::describe_backend(&self.sandbox);
@@ -569,6 +611,7 @@ impl Agent {
         let swarm_max_agents = self.swarm_max_agents;
         let swarm_worktrees = self.swarm_worktrees;
         let max_background_jobs = self.max_background_jobs;
+        let bash_auto_background = self.bash_auto_background;
         tracing::debug!(
             sandbox = %sandbox_desc,
             network_allow,
@@ -585,6 +628,7 @@ impl Agent {
             swarm_max_agents,
             swarm_worktrees,
             max_background_jobs,
+            bash_auto_background,
             "shell sandbox, network policy, and hooks"
         );
     }
@@ -634,6 +678,67 @@ impl Agent {
     pub fn with_background_registry(mut self, reg: crate::background::BackgroundRegistry) -> Self {
         self.background = reg;
         self
+    }
+
+    pub fn sticky_credential(&self) -> Option<String> {
+        recover_lock(&self.sticky_credential).clone()
+    }
+
+    pub fn set_sticky_credential(&self, name: Option<String>) {
+        *recover_lock(&self.sticky_credential) = name;
+    }
+
+    pub(crate) fn failover_api_key(
+        &self,
+        provider: &str,
+        current: &str,
+    ) -> Option<(String, String)> {
+        let creds = self.provider_credentials.get(provider)?;
+        let names = creds.names();
+        let mut secrets: Vec<(String, String)> = Vec::new();
+        for name in names {
+            let var = creds.env_var_for(&name, provider);
+            if let Ok(secret) = std::env::var(&var)
+                && !secret.is_empty()
+            {
+                secrets.push((name, secret));
+            }
+        }
+        let idx = secrets.iter().position(|(_, s)| s == current)?;
+        secrets.into_iter().nth(idx + 1)
+    }
+
+    /// History-free side turn (`/btw`): read-only tools, 2k-token cap, no session write.
+    pub async fn run_side_turn(
+        &self,
+        session: &Session,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+        question: &str,
+    ) -> whycodes_core::Result<String> {
+        crate::side_turn::run(self, session, provider_name, model, api_key, question).await
+    }
+
+    pub(crate) fn inject_auto_background_completions(&self, session: &mut Session) {
+        let done = self.background.take_auto_completions();
+        if done.is_empty() {
+            return;
+        }
+        for (id, status, output) in done {
+            let tail: String = output
+                .chars()
+                .rev()
+                .take(4_000)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            session.add_user_message(&format!(
+                "Background job `{id}` finished ({status}). Output:\n{tail}",
+                status = status.as_str()
+            ));
+        }
     }
 
     /// Memory settings loaded from config (for CLI/TUI helpers).

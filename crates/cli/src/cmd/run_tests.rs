@@ -123,12 +123,16 @@ fn slash_info_cost_doctor_and_resume_helpers() {
         "Tokens: 10 in / 3 out / 13 total"
     );
     assert_eq!(
-        session_cost_line(true, 7, 0, 0, 0),
+        session_cost_line(true, 7, 0, 0, 0, None),
         "  session: ~7 tokens (estimated)"
     );
     assert_eq!(
-        session_cost_line(false, 0, 2, 4, 6),
+        session_cost_line(false, 0, 2, 4, 6, None),
         "  session: 2 in / 4 out · total 6"
+    );
+    assert!(
+        session_cost_line(false, 0, 2, 4, 6, Some("interactive"))
+            .contains("credential: interactive")
     );
     assert_eq!(doctor_api_key_status(true, true), "not required");
     assert_eq!(doctor_api_key_status(true, false), "set");

@@ -49,7 +49,7 @@ fn configured_models_includes_config_entries() {
 fn cost_report_empty_usage_is_estimated() {
     let session = Session::new("/tmp/p".into(), "sys".into());
     let app = TuiApp::new(TuiAppConfig::default());
-    let out = cost_report(&session, &app);
+    let out = cost_report(&session, &app, None);
     assert!(out.contains("Cost"), "{out}");
     assert!(
         out.contains("estimated") || out.contains("none yet"),
@@ -69,7 +69,7 @@ fn cost_report_empty_usage_is_estimated() {
         cache_creation_input_tokens: None,
         cache_read_input_tokens: None,
     });
-    let out = cost_report(&session, &app);
+    let out = cost_report(&session, &app, None);
     assert!(out.contains("last turn"), "{out}");
     assert!(out.contains("cache"), "{out}");
 }

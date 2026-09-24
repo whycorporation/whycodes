@@ -104,6 +104,32 @@ fn job_status_as_str_and_debug_fmt() {
     kill_child_group(None);
 }
 
+#[test]
+fn mark_auto_delivered_skips_inject() {
+    let job = Arc::new(Mutex::new(JobInner {
+        id: "bg-auto".into(),
+        label: "echo".into(),
+        status: JobStatus::Done,
+        started: Instant::now(),
+        finished: Some(Instant::now()),
+        output: "done".into(),
+        exit_code: Some(0),
+        kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: true,
+        completion_delivered: false,
+    }));
+    let reg = BackgroundRegistry::new(4);
+    {
+        let mut jobs = lock(&reg.inner.jobs);
+        jobs.insert("bg-auto".into(), Arc::clone(&job));
+    }
+    assert_eq!(reg.take_auto_completions().len(), 1);
+    lock(&job).completion_delivered = false;
+    reg.mark_auto_delivered("bg-auto");
+    reg.mark_auto_delivered("missing");
+    assert!(reg.take_auto_completions().is_empty());
+}
+
 #[tokio::test]
 async fn spawn_fail_already_status_output_cap_and_prune() {
     let reg = BackgroundRegistry::new(32);
@@ -134,6 +160,8 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
     }));
     append_output(&job, &"a".repeat(MAX_JOB_OUTPUT_BYTES + 32));
     {
@@ -161,6 +189,8 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
             output: String::new(),
             exit_code: Some(0),
             kill_flag: Arc::new(AtomicBool::new(false)),
+            auto_background: false,
+            completion_delivered: false,
         }));
         {
             let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -327,6 +357,8 @@ async fn run_background_job_spawn_failed_and_warning() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
     }));
     {
         let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -383,6 +415,8 @@ async fn pipe_to_job_stops_on_read_error() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
     }));
     pipe_to_job(Box::new(FailRead), &job).await;
 }
@@ -399,6 +433,8 @@ async fn run_background_job_aborts_pipe_tasks() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
     }));
     {
         let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -440,6 +476,8 @@ async fn spawn_pipe_task_none_reader_is_noop() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
     }));
     let handle = spawn_pipe_task(None, Arc::clone(&job));
     handle.await.expect("join");
@@ -465,6 +503,8 @@ fn wait_status_records_error_and_success() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
     }));
     assert!(wait_status(Err(std::io::Error::other("wait boom")), &job).is_none());
     let out = job.lock().unwrap().output.clone();
@@ -503,6 +543,8 @@ fn sample_job(status: JobStatus, output: &str) -> JobInner {
         output: output.into(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
     }
 }
 
@@ -560,7 +602,7 @@ fn lock_recovers_from_poison_and_helpers_cover_fallbacks() {
         Err(e) => assert!(!e.is_empty(), "{e}"),
     }
     let err = BackgroundRegistry::new(1)
-        .start_prepared("echo hi", None, Err("sandbox unavailable".into()))
+        .start_prepared("echo hi", None, Err("sandbox unavailable".into()), false)
         .unwrap_err();
     assert!(err.contains("sandbox unavailable"), "{err}");
     let mut already = "…keep".to_string();

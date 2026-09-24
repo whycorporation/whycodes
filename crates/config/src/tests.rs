@@ -846,6 +846,8 @@ fn merge_with_general_security_memory_swarm() {
     overlay.swarm.worktrees = false;
     overlay.swarm.isolation = Some("checkout".into());
     overlay.automation.max_background_jobs = 3;
+    overlay.tools.bash.auto_background = false;
+    overlay.tools.bash.auto_background_after_secs = 5;
 
     let merged = base.merge_with(&overlay);
     assert_eq!(

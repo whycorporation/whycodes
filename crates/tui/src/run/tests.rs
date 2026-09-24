@@ -364,7 +364,7 @@ fn cost_report_handles_empty_and_filled_usage() {
     let app = TuiApp::new(TuiAppConfig::default());
 
     // No provider usage yet → estimated line.
-    let out = cost_report(&session, &app);
+    let out = cost_report(&session, &app, None);
     assert!(out.contains("estimated"), "{out}");
     assert!(out.contains("last turn: (none yet)"), "{out}");
 
@@ -374,7 +374,7 @@ fn cost_report_handles_empty_and_filled_usage() {
         cache_creation_input_tokens: Some(500),
         cache_read_input_tokens: Some(9000),
     };
-    let out = cost_report(&session, &app);
+    let out = cost_report(&session, &app, None);
     assert!(out.contains("1.2k in / 300 out"), "{out}");
     assert!(out.contains("cache write: 500"), "{out}");
     assert!(out.contains("cache read:  9k"), "{out}");
@@ -391,7 +391,7 @@ fn cost_report_includes_last_turn_usage() {
         cache_creation_input_tokens: None,
         cache_read_input_tokens: None,
     });
-    let out = cost_report(&session, &app);
+    let out = cost_report(&session, &app, None);
     assert!(out.contains("last turn: 100 in / 50 out"), "{out}");
 }
 
@@ -2118,6 +2118,23 @@ async fn handle_slash_covers_local_commands() {
         "slash must queue compact; the event loop spawns the LLM"
     );
     assert_eq!(h.session.messages[0].content.as_text(), Some("old task"));
+
+    let before_btw = h.session.messages.len();
+    let tokens_before = h.session.token_count();
+    h.run("/btw").await;
+    assert!(h.app.status_message.contains("Usage: /btw"));
+    h.run("/btw hello").await;
+    assert!(
+        h.app.status_message.contains("No API key")
+            || h.app
+                .messages
+                .iter()
+                .any(|m| m.content.contains("/btw") || m.content.contains("hello")),
+        "btw should toast missing key or show the answer: {}",
+        h.app.status_message
+    );
+    assert_eq!(h.session.messages.len(), before_btw);
+    assert_eq!(h.session.token_count(), tokens_before);
 
     h.run("/bg").await;
     assert!(

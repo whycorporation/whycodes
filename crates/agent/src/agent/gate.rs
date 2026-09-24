@@ -387,6 +387,9 @@ impl Agent {
                 .unwrap_or(false)
         {
             self.execute_background_shell(tc, tool_ctx, events)
+        } else if (tc.name == "bash" || tc.name == "shell") && self.bash_auto_background {
+            self.execute_shell_with_auto_background(tc, tool_ctx, events)
+                .await
         } else {
             self.tool_executor
                 .execute(tc, tool_ctx, &self.info.permission)

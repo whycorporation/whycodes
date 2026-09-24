@@ -142,8 +142,10 @@ impl Agent {
         let mut overflow_retries: u32 = 0;
         let mut harmony_retries: u32 = 0;
         let harmony = whycodes_llm::uses_harmony_dialect(provider_name, model);
+        let mut api_key = api_key.to_string();
 
         loop {
+            self.inject_auto_background_completions(session);
             // Cached schemas; extra activations still apply per step.
             let tools = if tools_free_chat {
                 std::sync::Arc::from([])
@@ -197,7 +199,7 @@ impl Agent {
                 let before = session.token_count_cached();
                 if before > self.compaction_threshold {
                     let outcome = self
-                        .compact_session(session, provider_name, model, api_key, None)
+                        .compact_session(session, provider_name, model, &api_key, None)
                         .await;
                     if outcome.reduced() || outcome.dropped_messages() {
                         emit(
@@ -304,7 +306,7 @@ impl Agent {
             let race_target = match (race_ids.as_ref(), race_provider) {
                 (Some((_, m)), Some(rp)) => Some(whycodes_llm::StreamTarget {
                     provider: rp,
-                    api_key,
+                    api_key: &api_key,
                     model: m.as_str(),
                 }),
                 _ => None,
@@ -318,7 +320,7 @@ impl Agent {
                 opened = transport.stream_turn(
                     whycodes_llm::StreamTarget {
                         provider,
-                        api_key,
+                        api_key: &api_key,
                         model,
                     },
                     &request,
@@ -344,7 +346,7 @@ impl Agent {
                         ),
                     );
                     let outcome = self
-                        .compact_session(session, provider_name, model, api_key, None)
+                        .compact_session(session, provider_name, model, &api_key, None)
                         .await;
                     tracing::info!(
                         after_tokens = outcome.tokens_after,
@@ -352,9 +354,31 @@ impl Agent {
                     );
                     continue;
                 }
+                Err(e)
+                    if whycodes_llm::classify(&e).kind == whycodes_llm::ErrorKind::RateLimited =>
+                {
+                    if let Some((name, next)) = self.failover_api_key(provider_name, &api_key)
+                        && next != api_key
+                    {
+                        tracing::info!(credential = %name, "429 — retrying same model on next credential");
+                        emit(
+                            &events,
+                            TurnEvent::Status(format!(
+                                "Rate limited — retrying {provider_name}/{model} on credential `{name}`"
+                            )),
+                        );
+                        api_key = next;
+                        self.set_sticky_credential(Some(name));
+                        continue;
+                    }
+                    return Err(e);
+                }
                 Err(e) => return Err(e),
             };
             let cache_hit = turn.cache_hit;
+            if self.sticky_credential().is_none() {
+                self.set_sticky_credential(Some("default".into()));
+            }
             let race_tag = turn.race.as_str();
             if cache_hit {
                 emit(&events, TurnEvent::Status("Response cache hit".into()));
@@ -411,7 +435,7 @@ impl Agent {
                             ),
                         );
                         let outcome = self
-                            .compact_session(session, provider_name, model, api_key, None)
+                            .compact_session(session, provider_name, model, &api_key, None)
                             .await;
                         tracing::info!(
                             after_tokens = outcome.tokens_after,
@@ -556,7 +580,7 @@ impl Agent {
                                 ),
                             );
                             let outcome = self
-                                .compact_session(session, provider_name, model, api_key, None)
+                                .compact_session(session, provider_name, model, &api_key, None)
                                 .await;
                             tracing::info!(
                                 after_tokens = outcome.tokens_after,
@@ -737,7 +761,7 @@ impl Agent {
                         &tool_ctx,
                         provider_name,
                         model,
-                        api_key,
+                        &api_key,
                         &events,
                         &cancel,
                         Some(&turn_intent),
@@ -854,7 +878,7 @@ impl Agent {
             Arc::clone(&self.provider_registry),
             provider_name,
             model,
-            api_key,
+            &api_key,
             events,
         );
 

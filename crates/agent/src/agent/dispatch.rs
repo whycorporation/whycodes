@@ -46,11 +46,13 @@ impl Agent {
             let tx = tx.clone();
             self.background
                 .set_listener(Some(std::sync::Arc::new(move |ev| {
-                    let _ = tx.send(TurnEvent::Background {
+                    if let Err(e) = tx.send(TurnEvent::Background {
                         id: ev.id,
                         status: ev.status.as_str().to_string(),
                         summary: ev.summary,
-                    });
+                    }) {
+                        tracing::debug!(error = %e, "background event dropped (listener closed)");
+                    }
                 })));
         }
         match self.background.start_shell(
@@ -78,6 +80,111 @@ impl Agent {
                     is_error: false,
                 }
             }
+            Err(e) => ToolResult {
+                tool_call_id: call.id.clone(),
+                content: e,
+                is_error: true,
+            },
+        }
+    }
+
+    /// Foreground `bash` that auto-detaches after idle unless catastrophic.
+    pub(crate) async fn execute_shell_with_auto_background(
+        &self,
+        call: &ToolCall,
+        tool_ctx: &ToolContext,
+        events: Option<&EventSink>,
+    ) -> ToolResult {
+        let command = call
+            .arguments
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if command.trim().is_empty() {
+            return self
+                .tool_executor
+                .execute(call, tool_ctx, &self.info.permission)
+                .await;
+        }
+        let assessment =
+            whycodes_command_risk::assess(&command, std::path::Path::new(&tool_ctx.working_dir));
+        if assessment.level == whycodes_command_risk::RiskLevel::Catastrophic {
+            return ToolResult {
+                tool_call_id: call.id.clone(),
+                content: format!(
+                    "Refused: `{command}` is catastrophic and cannot be auto-backgrounded. \
+                     Run it yourself if you are certain."
+                ),
+                is_error: true,
+            };
+        }
+        let label = call
+            .arguments
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        if self.event_sink.is_none()
+            && let Some(tx) = events
+        {
+            let tx = tx.clone();
+            self.background
+                .set_listener(Some(std::sync::Arc::new(move |ev| {
+                    if let Err(e) = tx.send(TurnEvent::Background {
+                        id: ev.id,
+                        status: ev.status.as_str().to_string(),
+                        summary: ev.summary,
+                    }) {
+                        tracing::debug!(error = %e, "background event dropped (listener closed)");
+                    }
+                })));
+        }
+        let id = match self.background.start_shell_auto(
+            &command,
+            std::path::PathBuf::from(&tool_ctx.working_dir),
+            tool_ctx.sandbox.clone(),
+            label,
+        ) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::debug!(error = %e, "auto-background start failed; running foreground");
+                return self
+                    .tool_executor
+                    .execute(call, tool_ctx, &self.info.permission)
+                    .await;
+            }
+        };
+        let status = self
+            .background
+            .wait_until_idle(&id, self.bash_auto_background_after)
+            .await;
+        if status == crate::background::JobStatus::Running {
+            let tail = self.background.tail(&id, 2_000);
+            emit(
+                &events.cloned().or_else(|| self.event_sink.clone()),
+                TurnEvent::Background {
+                    id: id.clone(),
+                    status: "running".into(),
+                    summary: truncate_permission_detail(&command),
+                },
+            );
+            return ToolResult {
+                tool_call_id: call.id.clone(),
+                content: format!(
+                    "job_id: {id}\nstate: running\nCommand: {command}\n\
+                     Auto-backgrounded after {}s. Use `bg` action=read|kill (id={id}).\n{tail}",
+                    self.bash_auto_background_after.as_secs()
+                ),
+                is_error: false,
+            };
+        }
+        self.background.mark_auto_delivered(&id);
+        match self.background.read(&id, 8_000) {
+            Ok(s) => ToolResult {
+                tool_call_id: call.id.clone(),
+                content: s,
+                is_error: status == crate::background::JobStatus::Failed,
+            },
             Err(e) => ToolResult {
                 tool_call_id: call.id.clone(),
                 content: e,

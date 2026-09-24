@@ -427,6 +427,38 @@ impl ProviderCredentials {
             default_credential_reserve()
         }
     }
+
+    /// Ordered credential names: `order`, then remaining `env` keys, then `"default"`.
+    pub fn names(&self) -> Vec<String> {
+        let mut names = self.order.clone();
+        for key in self.env.keys() {
+            if !names.iter().any(|n| n == key) {
+                names.push(key.clone());
+            }
+        }
+        if names.is_empty() {
+            names.push("default".into());
+        }
+        names
+    }
+
+    pub fn env_var_for(&self, name: &str, provider: &str) -> String {
+        self.env
+            .get(name)
+            .cloned()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if name == "default" {
+                    format!("{}_API_KEY", provider.to_uppercase())
+                } else {
+                    format!(
+                        "{}_{}_API_KEY",
+                        provider.to_uppercase(),
+                        name.to_uppercase().replace('-', "_")
+                    )
+                }
+            })
+    }
 }
 
 impl ProviderConfig {
@@ -1136,6 +1168,13 @@ mod tests {
         assert_eq!(named.reserve_clamped(), default_credential_reserve());
         named.reserve = -0.2;
         assert_eq!(named.reserve_clamped(), 0.0);
+        assert_eq!(named.names(), vec!["interactive".to_string(), "ci".into()]);
+        assert_eq!(named.env_var_for("interactive", "openai"), "OPENAI_API_KEY");
+        assert_eq!(named.env_var_for("ci", "openai"), "OPENAI_CI_API_KEY");
+        assert_eq!(
+            ProviderCredentials::default().env_var_for("default", "xai"),
+            "XAI_API_KEY"
+        );
         let json = serde_json::to_value(provider("x")).expect("serialize");
         assert!(json.get("credentials").is_none());
         let with_creds = ProviderConfig {

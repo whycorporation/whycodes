@@ -1,8 +1,9 @@
 use super::*;
 use crate::tool_policy::*;
 use serde_json::json;
+use std::collections::HashMap;
 use whycodes_core::Tool;
-use whycodes_core::types::PermissionSet;
+use whycodes_core::types::{PermissionSet, ProviderConfig, ProviderCredentials};
 
 #[test]
 fn single_command_is_plain_string() {
@@ -1042,6 +1043,159 @@ async fn execute_background_shell_errors_when_job_cap_hit() {
             || full.content.to_lowercase().contains("max"),
         "{}",
         full.content
+    );
+    a.background.kill_all();
+}
+
+fn hang_shell() -> &'static str {
+    #[cfg(windows)]
+    {
+        "ping -n 30 127.0.0.1 >NUL"
+    }
+    #[cfg(not(windows))]
+    {
+        "sleep 60"
+    }
+}
+
+fn brief_hang_shell() -> &'static str {
+    #[cfg(windows)]
+    {
+        "ping -n 3 127.0.0.1 >NUL"
+    }
+    #[cfg(not(windows))]
+    {
+        "sleep 1"
+    }
+}
+
+#[tokio::test]
+async fn auto_background_sleep_returns_running_handle() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(80);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let t0 = std::time::Instant::now();
+    let started = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": hang_shell()})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(2),
+        "auto-bg must return before the hang finishes: {:?}",
+        t0.elapsed()
+    );
+    assert!(!started.is_error, "{started:?}");
+    assert!(started.content.contains("job_id:"), "{started:?}");
+    assert!(started.content.contains("state: running"), "{started:?}");
+    let id = started
+        .content
+        .lines()
+        .find_map(|l| l.strip_prefix("job_id: "))
+        .expect("job id")
+        .trim()
+        .to_string();
+    let snap = a
+        .background
+        .list()
+        .into_iter()
+        .find(|j| j.id == id)
+        .expect("listed");
+    assert_eq!(snap.status, crate::background::JobStatus::Running);
+    a.background.kill_all();
+}
+
+#[tokio::test]
+async fn auto_background_opt_out_and_catastrophic_stay_foreground() {
+    let mut a = test_agent();
+    a.bash_auto_background = false;
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let echo = a
+        .execute_with_permission(
+            &tc("bash", json!({"command": "echo stay-fg"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(!echo.is_error, "{echo:?}");
+    assert!(
+        echo.content.contains("stay-fg"),
+        "opt-out must run in the foreground: {}",
+        echo.content
+    );
+    assert!(!echo.content.contains("job_id:"), "{}", echo.content);
+
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(50);
+    let boom = a
+        .execute_shell_with_auto_background(&tc("bash", json!({"command": "rm -rf /"})), &ctx, None)
+        .await;
+    assert!(boom.is_error, "{boom:?}");
+    assert!(
+        boom.content.to_lowercase().contains("catastrophic"),
+        "{}",
+        boom.content
+    );
+}
+
+#[tokio::test]
+async fn auto_background_completion_is_delivered_once() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(50);
+    let dir = tempfile::tempdir().unwrap();
+    let mut session =
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let started = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": brief_hang_shell()})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(!started.is_error, "{started:?}");
+    assert!(started.content.contains("job_id:"), "{started:?}");
+    let id = started
+        .content
+        .lines()
+        .find_map(|l| l.strip_prefix("job_id: "))
+        .expect("job id")
+        .trim()
+        .to_string();
+    let before = session.messages.len();
+    let status = a
+        .background
+        .wait_until_idle(&id, std::time::Duration::from_secs(8))
+        .await;
+    assert_ne!(
+        status,
+        crate::background::JobStatus::Running,
+        "brief hang must finish so inject has a completion"
+    );
+    a.inject_auto_background_completions(&mut session);
+    assert!(
+        session.messages.len() > before,
+        "auto-background completion must land in session once"
+    );
+    let after = session.messages.len();
+    a.inject_auto_background_completions(&mut session);
+    assert_eq!(
+        session.messages.len(),
+        after,
+        "already-delivered auto-background completions must not inject twice"
     );
     a.background.kill_all();
 }
@@ -2656,6 +2810,61 @@ fn apply_plugin_count_replaces_executor_when_lsp_overlay_is_set() {
     let before = Arc::as_ptr(&a.tool_executor);
     apply_plugin_count(&mut a, ToolExecutor::new(), 0);
     assert_ne!(Arc::as_ptr(&a.tool_executor), before);
+}
+
+#[test]
+fn failover_api_key_walks_named_credentials() {
+    let mut config = whycodes_config::Config::default();
+    config.providers.insert(
+        "openai".into(),
+        ProviderConfig {
+            name: "openai".into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: ProviderCredentials {
+                order: vec!["interactive".into(), "ci".into()],
+                reserve: 0.1,
+                env: HashMap::from([
+                    ("interactive".into(), "WHYCODES_TEST_OPENAI_LIVE".into()),
+                    ("ci".into(), "WHYCODES_TEST_OPENAI_CI".into()),
+                ]),
+            },
+        },
+    );
+    let a = test_agent().with_config(&config);
+    a.set_sticky_credential(None);
+    assert!(a.sticky_credential().is_none());
+    let prev_live = std::env::var_os("WHYCODES_TEST_OPENAI_LIVE");
+    let prev_ci = std::env::var_os("WHYCODES_TEST_OPENAI_CI");
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_OPENAI_LIVE", "sk-live");
+        std::env::set_var("WHYCODES_TEST_OPENAI_CI", "sk-ci");
+    }
+    let (name, secret) = a
+        .failover_api_key("openai", "sk-live")
+        .expect("ci follows interactive");
+    assert_eq!(name, "ci");
+    assert_eq!(secret, "sk-ci");
+    assert!(a.failover_api_key("openai", "sk-ci").is_none());
+    assert!(a.failover_api_key("openai", "missing").is_none());
+    assert!(a.failover_api_key("nope", "sk-live").is_none());
+    a.set_sticky_credential(Some("ci".into()));
+    assert_eq!(a.sticky_credential().as_deref(), Some("ci"));
+    unsafe {
+        match prev_live {
+            Some(v) => std::env::set_var("WHYCODES_TEST_OPENAI_LIVE", v),
+            None => std::env::remove_var("WHYCODES_TEST_OPENAI_LIVE"),
+        }
+        match prev_ci {
+            Some(v) => std::env::set_var("WHYCODES_TEST_OPENAI_CI", v),
+            None => std::env::remove_var("WHYCODES_TEST_OPENAI_CI"),
+        }
+    }
 }
 
 #[test]

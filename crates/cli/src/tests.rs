@@ -3117,6 +3117,8 @@ async fn cmd_run_plain_repl_slash_commands() {
         "/share",
         "/export",
         "/fresh",
+        "/btw",
+        "/btw hello",
         "/compact",
         "/summarize",
         "/diff",
