@@ -293,6 +293,51 @@ async fn learn_index_code_search_and_metadata() {
         format_memory_list(Vec::new()),
         "No memories for this project."
     );
+    let row = whycodes_memory::MemoryRow {
+        id: "abcdef123456".into(),
+        project_key: "p".into(),
+        text: "prefer cargo test".into(),
+        embedding: Vec::new(),
+        source_session: None,
+        created_at: "t".into(),
+        last_recalled_at: None,
+        recall_count: 0,
+    };
+    let short = whycodes_memory::MemoryRow {
+        id: "abc".into(),
+        text: "short id".into(),
+        ..row.clone()
+    };
+    let listed = format_memory_list(vec![row.clone(), short.clone()]);
+    assert!(listed.contains("prefer cargo test"), "{listed}");
+    assert!(listed.contains("short id"), "{listed}");
+    let hits = format_memory_hits(vec![
+        whycodes_memory::RecallHit {
+            entry: row,
+            score: 0.42,
+        },
+        whycodes_memory::RecallHit {
+            entry: short,
+            score: 0.1,
+        },
+    ]);
+    assert!(hits.contains("prefer cargo test"), "{hits}");
+    let code = format_code_hits(vec![whycodes_memory::CodeHit {
+        entry: whycodes_memory::CodeChunkRow {
+            id: "c".into(),
+            project_key: "p".into(),
+            path: "src/lib.rs".into(),
+            start_line: 1,
+            end_line: 3,
+            text: "one\ntwo\nthree\nfour\nfive\nsix\nseven\n".into(),
+            embedding: Vec::new(),
+            updated_at: "t".into(),
+        },
+        score: 0.9,
+    }]);
+    assert!(code.contains("src/lib.rs"), "{code}");
+    assert!(code.contains("six"), "{code}");
+    assert!(!code.contains("seven"), "{code}");
     assert_eq!(format_memory_hits(Vec::new()), "No matching memories.");
     assert!(format_code_hits(Vec::new()).contains("No code hits"));
     assert_eq!(format_delete("abc", true), "Deleted memory abc");

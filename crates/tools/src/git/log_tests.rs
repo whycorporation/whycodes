@@ -88,6 +88,22 @@ fn init_repo() -> tempfile::TempDir {
 }
 
 #[tokio::test]
+async fn log_shows_the_initial_commit() {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = init_repo();
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let out = GitLogTool::new()
+        .execute(json!({"count": 5, "path": "a.txt"}), &ctx)
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert!(
+        out.content.contains("init") || !out.content.contains("No commits found"),
+        "{}",
+        out.content
+    );
+}
+
+#[tokio::test]
 async fn log_no_commits_for_unmatched_author() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = init_repo();

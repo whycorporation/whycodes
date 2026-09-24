@@ -450,6 +450,26 @@ fn find_browser_and_http_get_without_slash() {
     drop(client);
 }
 
+/// A real executable that is not Chromium. `/bin/false` is absent on some
+/// Linux runners (`/usr/bin/false` only); a missing path makes `ensure_session`
+/// return before spawn and leaves the poll loop uncovered.
+fn fake_browser_bin() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        std::path::PathBuf::from(r"C:\Windows\System32\cmd.exe")
+    }
+    #[cfg(not(windows))]
+    {
+        for candidate in ["/bin/false", "/usr/bin/false", "/bin/true", "/usr/bin/true"] {
+            let path = std::path::PathBuf::from(candidate);
+            if path.is_file() {
+                return path;
+            }
+        }
+        std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("false"))
+    }
+}
+
 fn fail_cmd_status() -> std::process::ExitStatus {
     #[cfg(unix)]
     {
@@ -685,11 +705,7 @@ fn ensure_session_times_out_fake_browser() {
     let prev = std::env::var_os("WHYCODES_BROWSER");
     // Must not be a real Chromium: `current_exe()` on some Linux CI hosts
     // still answers CDP and the timeout path never fires (`Ok(port)`).
-    let fake = std::path::PathBuf::from(if cfg!(windows) {
-        "C:\\Windows\\System32\\cmd.exe"
-    } else {
-        "/bin/false"
-    });
+    let fake = fake_browser_bin();
     unsafe { std::env::set_var("WHYCODES_BROWSER", &fake) };
     let err = ensure_session();
     unsafe {

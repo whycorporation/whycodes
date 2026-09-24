@@ -266,7 +266,7 @@ fn store_session(child: Child, port: u16, dir: PathBuf) -> Result<u16, String> {
 }
 
 fn poll_session_ready(mut child: Child, port: u16, mut dir: PathBuf) -> Result<u16, String> {
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + session_ready_timeout();
     while Instant::now() < deadline {
         match apply_split_poll(split_session_poll(finish_session_poll(step_session_poll(
             child, port, dir,
@@ -282,6 +282,17 @@ fn poll_session_ready(mut child: Child, port: u16, mut dir: PathBuf) -> Result<u
     }
     kill_launch_timeout(&mut child);
     Err("Chromium started but CDP never became ready".into())
+}
+
+fn session_ready_timeout() -> Duration {
+    #[cfg(test)]
+    {
+        Duration::from_millis(200)
+    }
+    #[cfg(not(test))]
+    {
+        Duration::from_secs(8)
+    }
 }
 
 fn poll_invariant() -> Result<u16, String> {

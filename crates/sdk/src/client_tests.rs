@@ -549,6 +549,36 @@ fn launch_poll_covers_timeout_exit_version_retry_and_ready() {
     assert!(err.message.contains("not found"), "{err:?}");
 }
 
+/// The file exists, so `missing_spawned_binary` lets spawn run. A non-executable
+/// payload makes `Command::spawn` return `Err` (Linux EACCES / Windows bad image).
+#[tokio::test]
+async fn launch_spawn_error_when_binary_is_not_executable() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("not-a-program");
+    std::fs::write(&bin, b"this is not a program\n").unwrap();
+    let err = match WhyCodesClient::launch(LaunchOptions {
+        working_dir: dir.path().to_path_buf(),
+        binary: Some(bin),
+        inherit_logins: false,
+        startup_timeout: Duration::from_millis(200),
+        port: Some(1),
+        home: Some(dir.path().join("home")),
+    })
+    .await
+    {
+        Err(e) => e,
+        Ok(_) => panic!("expected spawn failure"),
+    };
+    assert!(
+        err.code == ErrorCode::ServeNotFound || err.code == ErrorCode::StartupFailed,
+        "{err:?}"
+    );
+    assert!(
+        err.message.contains("could not execute") || err.message.contains("exited"),
+        "{err:?}"
+    );
+}
+
 #[tokio::test]
 async fn launch_missing_binary_is_serve_not_found() {
     let err = match WhyCodesClient::launch(LaunchOptions {
