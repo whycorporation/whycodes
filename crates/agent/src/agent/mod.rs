@@ -694,7 +694,7 @@ impl Agent {
         current: &str,
     ) -> Option<(String, String)> {
         let creds = self.provider_credentials.get(provider)?;
-        let names = creds.names();
+        let names = creds.names_for_lane(whycodes_core::types::process_is_ci());
         let mut secrets: Vec<(String, String)> = Vec::new();
         for name in names {
             let var = creds.env_var_for(&name, provider);

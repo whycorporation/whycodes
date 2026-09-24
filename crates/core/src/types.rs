@@ -442,6 +442,34 @@ impl ProviderCredentials {
         names
     }
 
+    /// Lane-aware order: with `reserve > 0`, the other lane's named key is
+    /// kept for 429 failover instead of being the first pick.
+    pub fn names_for_lane(&self, ci: bool) -> Vec<String> {
+        let names = self.names();
+        if self.reserve_clamped() <= 0.0 || names.len() < 2 {
+            return names;
+        }
+        let mut preferred = Vec::new();
+        let mut reserved = Vec::new();
+        for name in names {
+            let other_lane = if ci {
+                credential_name_is_interactive(&name)
+            } else {
+                credential_name_is_ci(&name)
+            };
+            if other_lane {
+                reserved.push(name);
+            } else {
+                preferred.push(name);
+            }
+        }
+        if preferred.is_empty() {
+            return reserved;
+        }
+        preferred.extend(reserved);
+        preferred
+    }
+
     pub fn env_var_for(&self, name: &str, provider: &str) -> String {
         self.env
             .get(name)
@@ -459,6 +487,41 @@ impl ProviderCredentials {
                 }
             })
     }
+}
+
+/// `CI` / `GITHUB_ACTIONS`, overridable with `WHYCODES_CREDENTIAL_LANE`.
+pub fn process_is_ci() -> bool {
+    process_is_ci_from(|k| std::env::var(k).ok())
+}
+
+pub fn process_is_ci_from(env: impl Fn(&str) -> Option<String>) -> bool {
+    if let Some(lane) = env("WHYCODES_CREDENTIAL_LANE") {
+        let lane = lane.trim().to_ascii_lowercase();
+        if lane == "ci" || lane == "batch" {
+            return true;
+        }
+        if lane == "interactive" || lane == "live" {
+            return false;
+        }
+    }
+    env_flag_set(&env, "CI") || env_flag_set(&env, "GITHUB_ACTIONS")
+}
+
+fn env_flag_set(env: &impl Fn(&str) -> Option<String>, key: &str) -> bool {
+    env(key).is_some_and(|v| {
+        let v = v.trim();
+        v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+    })
+}
+
+fn credential_name_is_ci(name: &str) -> bool {
+    let n = name.trim().to_ascii_lowercase();
+    n == "ci" || n == "batch" || n == "github" || n.ends_with("-ci") || n.ends_with("_ci")
+}
+
+fn credential_name_is_interactive(name: &str) -> bool {
+    let n = name.trim().to_ascii_lowercase();
+    n == "interactive" || n == "live" || n == "local" || n == "dev"
 }
 
 impl ProviderConfig {
@@ -1168,7 +1231,29 @@ mod tests {
         assert_eq!(named.reserve_clamped(), default_credential_reserve());
         named.reserve = -0.2;
         assert_eq!(named.reserve_clamped(), 0.0);
+        named.reserve = 0.1;
         assert_eq!(named.names(), vec!["interactive".to_string(), "ci".into()]);
+        assert_eq!(
+            named.names_for_lane(false),
+            vec!["interactive".to_string(), "ci".into()]
+        );
+        assert_eq!(
+            named.names_for_lane(true),
+            vec!["ci".to_string(), "interactive".into()]
+        );
+        named.reserve = 0.0;
+        assert_eq!(named.names_for_lane(true), named.names());
+        named.reserve = 0.1;
+        assert!(!process_is_ci_from(|_| None));
+        assert!(process_is_ci_from(|k| (k == "CI").then(|| "true".into())));
+        assert!(!process_is_ci_from(|k| match k {
+            "CI" => Some("true".into()),
+            "WHYCODES_CREDENTIAL_LANE" => Some("interactive".into()),
+            _ => None,
+        }));
+        assert!(process_is_ci_from(|k| {
+            (k == "WHYCODES_CREDENTIAL_LANE").then(|| "ci".into())
+        }));
         assert_eq!(named.env_var_for("interactive", "openai"), "OPENAI_API_KEY");
         assert_eq!(named.env_var_for("ci", "openai"), "OPENAI_CI_API_KEY");
         assert_eq!(

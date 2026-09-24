@@ -688,8 +688,10 @@ auto_background = false
 
 A provider may list several named credentials. The session sticks to the
 first successful one; a 429 retries the **same model** on the next name.
-Secrets stay in env. `/cost` and `whycodes stats` may show the credential
-**name** only.
+`reserve` (default `0.10`) keeps the other lane's key off the first pick:
+interactive sessions try `interactive` before `ci`, and `CI=true` /
+`WHYCODES_CREDENTIAL_LANE=ci` does the reverse. Secrets stay in env.
+`/cost` and `whycodes stats` may show the credential **name** only.
 
 ```toml
 [providers.openai.credentials]

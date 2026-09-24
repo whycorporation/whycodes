@@ -2841,9 +2841,11 @@ fn failover_api_key_walks_named_credentials() {
     assert!(a.sticky_credential().is_none());
     let prev_live = std::env::var_os("WHYCODES_TEST_OPENAI_LIVE");
     let prev_ci = std::env::var_os("WHYCODES_TEST_OPENAI_CI");
+    let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
     unsafe {
         std::env::set_var("WHYCODES_TEST_OPENAI_LIVE", "sk-live");
         std::env::set_var("WHYCODES_TEST_OPENAI_CI", "sk-ci");
+        std::env::set_var("WHYCODES_CREDENTIAL_LANE", "interactive");
     }
     let (name, secret) = a
         .failover_api_key("openai", "sk-live")
@@ -2863,6 +2865,10 @@ fn failover_api_key_walks_named_credentials() {
         match prev_ci {
             Some(v) => std::env::set_var("WHYCODES_TEST_OPENAI_CI", v),
             None => std::env::remove_var("WHYCODES_TEST_OPENAI_CI"),
+        }
+        match prev_lane {
+            Some(v) => std::env::set_var("WHYCODES_CREDENTIAL_LANE", v),
+            None => std::env::remove_var("WHYCODES_CREDENTIAL_LANE"),
         }
     }
 }

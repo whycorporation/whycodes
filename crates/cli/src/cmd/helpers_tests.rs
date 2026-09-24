@@ -48,11 +48,12 @@ fn credential_candidates_and_next_after() {
             },
         },
     );
-    let cands = credential_candidates("openai", &cfg, |k| match k {
+    let lookup = |k: &str| match k {
         "OPENAI_API_KEY" => Some("sk-live".into()),
         "OPENAI_CI_API_KEY" => Some("sk-ci".into()),
         _ => None,
-    });
+    };
+    let cands = credential_candidates_for_lane("openai", &cfg, lookup, false);
     assert_eq!(cands.len(), 3, "{cands:?}");
     assert_eq!(cands[0].name, "interactive");
     assert_eq!(cands[0].secret, "sk-live");
@@ -60,17 +61,15 @@ fn credential_candidates_and_next_after() {
     assert_eq!(cands[1].secret, "sk-ci");
     assert_eq!(cands[2].name, "config");
     assert_eq!(cands[2].secret, "cfg-key");
-    assert_eq!(
-        key_from_env_and_config("openai", &cfg, |k| match k {
-            "OPENAI_API_KEY" => Some("sk-live".into()),
-            "OPENAI_CI_API_KEY" => Some("sk-ci".into()),
-            _ => None,
-        })
-        .as_deref(),
-        Some("sk-live")
-    );
+    let ci_first = credential_candidates_for_lane("openai", &cfg, lookup, true);
+    assert_eq!(ci_first[0].name, "ci");
+    assert_eq!(ci_first[1].name, "interactive");
 
     let _home = IsolatedHome::new();
+    assert_eq!(
+        key_from_env_and_config("openai", &cfg, lookup).as_deref(),
+        Some("sk-live")
+    );
     let prev_live = std::env::var_os("OPENAI_API_KEY");
     let prev_ci = std::env::var_os("OPENAI_CI_API_KEY");
     unsafe {

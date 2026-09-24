@@ -32,6 +32,7 @@ pub(crate) struct IsolatedHome {
     _guard: std::sync::MutexGuard<'static, ()>,
     _dir: tempfile::TempDir,
     prev: Option<std::ffi::OsString>,
+    prev_lane: Option<std::ffi::OsString>,
 }
 
 #[cfg(test)]
@@ -40,11 +41,14 @@ impl IsolatedHome {
         let guard = lock_env();
         let dir = tempfile::tempdir().expect("tempdir");
         let prev = std::env::var_os("WHYCODES_HOME");
+        let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
         unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        unsafe { std::env::set_var("WHYCODES_CREDENTIAL_LANE", "interactive") };
         Self {
             _guard: guard,
             _dir: dir,
             prev,
+            prev_lane,
         }
     }
 }
@@ -56,6 +60,10 @@ impl Drop for IsolatedHome {
             match &self.prev {
                 Some(v) => std::env::set_var("WHYCODES_HOME", v),
                 None => std::env::remove_var("WHYCODES_HOME"),
+            }
+            match &self.prev_lane {
+                Some(v) => std::env::set_var("WHYCODES_CREDENTIAL_LANE", v),
+                None => std::env::remove_var("WHYCODES_CREDENTIAL_LANE"),
             }
         }
     }
@@ -161,13 +169,22 @@ pub(crate) fn credential_candidates(
     config: &Config,
     env: impl Fn(&str) -> Option<String>,
 ) -> Vec<NamedCredential> {
+    credential_candidates_for_lane(provider, config, env, whycodes_core::types::process_is_ci())
+}
+
+pub(crate) fn credential_candidates_for_lane(
+    provider: &str,
+    config: &Config,
+    env: impl Fn(&str) -> Option<String>,
+    ci: bool,
+) -> Vec<NamedCredential> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let creds = config
         .get_provider(provider)
         .map(|p| p.credentials.clone())
         .unwrap_or_default();
-    for name in creds.names() {
+    for name in creds.names_for_lane(ci) {
         let var = creds.env_var_for(&name, provider);
         if let Some(secret) = env(&var).filter(|k| !k.is_empty())
             && seen.insert(secret.clone())
