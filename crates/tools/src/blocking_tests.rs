@@ -20,6 +20,18 @@ async fn run_and_tool_ok() {
 }
 
 #[tokio::test]
+async fn run_maps_join_failure() {
+    let handle = tokio::spawn(async {
+        run(|| {
+            panic!("boom");
+        })
+        .await
+    });
+    let err = handle.await.expect("join outer").expect_err("inner panic");
+    assert!(err.contains("background task failed"), "{err}");
+}
+
+#[tokio::test]
 async fn tool_maps_join_failure() {
     let handle = tokio::spawn(async {
         tool(|| {
