@@ -442,7 +442,7 @@ fn git_credential_fill_parses_password_from_helper() {
         cmd
     } else {
         let mut cmd = Command::new("sh");
-        cmd.args(["-c", "printf 'password=from-helper\\n'"]);
+        cmd.args(["-c", "cat >/dev/null; printf 'password=from-helper\\n'"]);
         cmd
     };
     cmd.stdin(Stdio::piped())
@@ -552,7 +552,22 @@ fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
             Ok(())
         }
     }
+    struct BrokenPipeWrite;
+    impl std::io::Write for BrokenPipeWrite {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "closed",
+            ))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
     assert!(write_git_credential_payload(&mut hanging, &mut FailWrite, "github.com").is_none());
+    assert!(
+        write_git_credential_payload(&mut hanging, &mut BrokenPipeWrite, "github.com").is_some()
+    );
     let _ = hanging.kill();
     let _ = hanging.wait();
     let mut hanging = hang_cmd(true)

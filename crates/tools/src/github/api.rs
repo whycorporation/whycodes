@@ -516,6 +516,9 @@ fn write_git_credential_payload(
     let payload = format!("protocol=https\nhost={host}\n\n");
     match write_git_credential_stdin(stdin, payload.as_bytes()) {
         Ok(()) => Some(()),
+        // A helper that prints and exits without reading stdin (or races
+        // the write) still has stdout we can parse.
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Some(()),
         Err(err) => {
             git_credential_stdin_failed(child, err);
             None
