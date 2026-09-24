@@ -153,6 +153,63 @@ async fn complete_error_and_empty_and_hang() {
 }
 
 #[tokio::test]
+async fn complete_emits_tool_use_blocks() {
+    let p = ScriptedProvider::new([
+        ScriptedStep::Text("pre".into()),
+        ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "bash".into(),
+            input: json!({"command": "echo nope"}),
+        },
+    ]);
+    let out = p.complete(&req(), "", "m").await.unwrap();
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::ToolUse { name, .. } if name == "bash"
+        )),
+        "{out:?}"
+    );
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::Text { text } if text == "pre"
+        )),
+        "{out:?}"
+    );
+}
+
+#[tokio::test]
+async fn complete_emits_thinking_then_text() {
+    let p = ScriptedProvider::new([
+        ScriptedStep::Thinking("scratch".into()),
+        ScriptedStep::Text("visible".into()),
+        ScriptedStep::RedactedThinking("hid".into()),
+    ]);
+    let out = p.complete(&req(), "", "m").await.unwrap();
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::Thinking { text, .. } if text == "scratch"
+        )),
+        "{out:?}"
+    );
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::Text { text } if text == "visible"
+        )),
+        "{out:?}"
+    );
+    assert!(
+        out.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::RedactedThinking { .. })),
+        "{out:?}"
+    );
+}
+
+#[tokio::test]
 async fn repeating_replays_after_drain() {
     let p = ScriptedProvider::repeating("ollama", [ScriptedStep::Text("ok".into())]);
     let a = p.complete(&req(), "", "m").await.unwrap();

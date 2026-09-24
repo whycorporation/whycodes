@@ -248,7 +248,7 @@ Both TUI and `--plain`:
 | `/fresh` | Skip the provider prompt cache on the next turn (stale cache / wedged stream) |
 | `/btw <question>` | Side question: shown once, not written to session history, no `bash`/`write` |
 | `/context` | Context window breakdown |
-| `/cost` `/usage` | Session + last-turn token usage |
+| `/cost` `/usage` | Session + last-turn token usage (credential **name** only, never the secret) |
 | `/slop` | ΔLOC / verbosity / erosion vs git base (not a test score) |
 | `/sessions` | Session picker (Enter to resume) |
 | `/resume [id]` | Resume by id/prefix, or open the picker |

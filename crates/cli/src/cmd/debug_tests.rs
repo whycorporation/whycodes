@@ -81,6 +81,10 @@ fn debug_printer_helpers() {
     assert!(debug_home_line("/home/x").contains("/home/x"));
     assert!(debug_tool_line("Rust", "rustc 1").contains("rustc 1"));
     assert!(debug_env_set_line("FOO", "sk-xxxx").contains("set"));
+    assert!(
+        !debug_env_set_line("FOO", &mask_secret("sk-live-secret-value")).contains("sk-live-secret"),
+        "masked debug lines must not contain the raw secret"
+    );
     assert!(debug_env_unset_line("FOO").contains("not set"));
     assert!(debug_oauth_empty_line().contains("auth login"));
     assert!(debug_oauth_entry_line("acme", "oauth", "no expiry").contains("acme"));

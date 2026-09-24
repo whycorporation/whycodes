@@ -659,3 +659,71 @@ fn scratch_log_persists_and_skips_failures() {
     assert!(ensure_scratch_log(dir.path(), "bg-clash").is_none());
     persist_scratch_output(&clash, "nope");
 }
+
+#[tokio::test]
+async fn wait_until_idle_missing_id_is_failed() {
+    let reg = BackgroundRegistry::new(4);
+    let status = reg
+        .wait_until_idle("bg-missing", Duration::from_millis(20))
+        .await;
+    assert_eq!(status, JobStatus::Failed);
+}
+
+#[cfg(windows)]
+fn hang_cmd() -> &'static str {
+    "ping -n 30 127.0.0.1 >NUL"
+}
+
+#[cfg(not(windows))]
+fn hang_cmd() -> &'static str {
+    "sleep 60"
+}
+
+#[tokio::test]
+async fn wait_until_idle_ignores_a_different_job_finishing() {
+    let reg = BackgroundRegistry::new(8);
+    let other = reg
+        .start_shell(
+            "echo other-done",
+            std::env::temp_dir(),
+            SandboxSettings::off(),
+            Some("other".into()),
+        )
+        .expect("other");
+    let fg = reg
+        .start_shell(
+            hang_cmd(),
+            std::env::temp_dir(),
+            SandboxSettings::off(),
+            Some("fg".into()),
+        )
+        .expect("fg");
+    for _ in 0..80 {
+        let snap = reg.list().into_iter().find(|j| j.id == other);
+        if snap.is_some_and(|j| j.status != JobStatus::Running) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let other_snap = reg
+        .list()
+        .into_iter()
+        .find(|j| j.id == other)
+        .expect("other listed");
+    assert_ne!(
+        other_snap.status,
+        JobStatus::Running,
+        "the other job must finish so the wait is tempted to observe it"
+    );
+    let t0 = Instant::now();
+    let status = reg.wait_until_idle(&fg, Duration::from_millis(200)).await;
+    assert!(
+        t0.elapsed() >= Duration::from_millis(150),
+        "must wait the timeout, not return when the other job finished: {:?}",
+        t0.elapsed()
+    );
+    assert_eq!(status, JobStatus::Running);
+    let fg_snap = reg.list().into_iter().find(|j| j.id == fg).expect("fg");
+    assert_eq!(fg_snap.status, JobStatus::Running);
+    reg.kill_all();
+}

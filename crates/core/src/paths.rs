@@ -149,6 +149,10 @@ mod tests {
         assert_eq!(strip_windows_verbatim_prefix("/tmp/a").as_ref(), "/tmp/a");
         assert_eq!(display_path(Path::new("/tmp/a")), "/tmp/a");
         assert_eq!(project_dir(Path::new("/w")), PathBuf::from("/w/.whycodes"));
+        assert_eq!(
+            project_scratch_dir(Path::new("/w")),
+            PathBuf::from("/w/.whycodes/scratch")
+        );
         assert_eq!(or_dot(None), PathBuf::from("."));
         assert_eq!(or_dot(Some(PathBuf::from("/x"))), PathBuf::from("/x"));
         assert_eq!(config_file().file_name().unwrap(), "config.toml");

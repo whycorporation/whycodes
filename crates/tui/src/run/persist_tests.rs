@@ -72,6 +72,8 @@ fn cost_report_empty_usage_is_estimated() {
     let out = cost_report(&session, &app, None);
     assert!(out.contains("last turn"), "{out}");
     assert!(out.contains("cache"), "{out}");
+    let named = cost_report(&session, &app, Some("ci"));
+    assert!(named.contains("credential: ci"), "{named}");
 }
 
 #[test]

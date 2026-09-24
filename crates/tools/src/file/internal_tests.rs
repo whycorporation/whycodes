@@ -58,6 +58,16 @@ fn agent_url_lists_and_reads() {
     assert!(index.content.contains("bash"));
     let unknown = read_internal("agent://tools/nope", &ctx).unwrap();
     assert!(unknown.is_error);
+    for name in ["read", "edit", "write", "grep", "glob", "shell"] {
+        let g = read_internal(&format!("agent://tools/{name}"), &ctx).unwrap();
+        assert!(!g.is_error, "{name}: {}", g.content);
+        assert!(
+            g.content.contains(&format!("agent://tools/{name}"))
+                || g.content.to_lowercase().contains(name),
+            "{name}: {}",
+            g.content
+        );
+    }
 }
 
 #[test]

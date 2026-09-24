@@ -142,15 +142,35 @@ impl LlmProvider for ScriptedProvider {
     ) -> ProviderResponseFuture<'a> {
         Box::pin(async move {
             let mut text = String::new();
+            let mut content = Vec::new();
             let mut usage = Usage::default();
             for step in self.take_steps() {
                 match step {
                     ScriptedStep::Text(t) => text.push_str(&t),
-                    ScriptedStep::Thinking(_)
-                    | ScriptedStep::ThinkingDelta(_)
+                    ScriptedStep::ToolCall { id, name, input } => {
+                        if !text.is_empty() {
+                            content.push(ContentBlock::Text {
+                                text: std::mem::take(&mut text),
+                            });
+                        }
+                        content.push(ContentBlock::ToolUse { id, name, input });
+                    }
+                    ScriptedStep::Thinking(t) => {
+                        if !text.is_empty() {
+                            content.push(ContentBlock::Text {
+                                text: std::mem::take(&mut text),
+                            });
+                        }
+                        content.push(ContentBlock::Thinking {
+                            text: t,
+                            signature: None,
+                        });
+                    }
+                    ScriptedStep::RedactedThinking(data) => {
+                        content.push(ContentBlock::RedactedThinking { data });
+                    }
+                    ScriptedStep::ThinkingDelta(_)
                     | ScriptedStep::ThinkingSignature(_)
-                    | ScriptedStep::RedactedThinking(_)
-                    | ScriptedStep::ToolCall { .. }
                     | ScriptedStep::ToolUseDelta { .. }
                     | ScriptedStep::MessageStart
                     | ScriptedStep::MessageDelta(_)
@@ -168,12 +188,11 @@ impl LlmProvider for ScriptedProvider {
                     ScriptedStep::Hang(d) => tokio::time::sleep(d).await,
                 }
             }
+            if !text.is_empty() {
+                content.push(ContentBlock::Text { text });
+            }
             Ok(LlmResponse {
-                content: if text.is_empty() {
-                    vec![]
-                } else {
-                    vec![ContentBlock::Text { text }]
-                },
+                content,
                 stop_reason: Some("end_turn".into()),
                 usage,
                 model: model.into(),

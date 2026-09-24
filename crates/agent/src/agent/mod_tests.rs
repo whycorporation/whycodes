@@ -1200,6 +1200,104 @@ async fn auto_background_completion_is_delivered_once() {
     a.background.kill_all();
 }
 
+#[tokio::test]
+async fn auto_background_fast_echo_returns_output() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_secs(8);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let echo = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": "echo fast-fg"})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(!echo.is_error, "{echo:?}");
+    assert!(echo.content.contains("fast-fg"), "{echo:?}");
+    assert!(!echo.content.contains("job_id:"), "{}", echo.content);
+}
+
+#[tokio::test]
+async fn auto_background_empty_command_stays_foreground() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let empty = a
+        .execute_shell_with_auto_background(&tc("bash", json!({"command": "   "})), &ctx, None)
+        .await;
+    assert!(
+        empty.is_error || !empty.content.contains("job_id:"),
+        "{empty:?}"
+    );
+}
+
+#[tokio::test]
+async fn auto_background_falls_back_when_job_cap_hit() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(80);
+    a.background.set_max_jobs(1);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let first = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": hang_shell()})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(first.content.contains("job_id:"), "{first:?}");
+    let second = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": "echo cap-fallback"})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(!second.is_error, "{second:?}");
+    assert!(
+        second.content.contains("cap-fallback"),
+        "full job table must fall back to foreground: {}",
+        second.content
+    );
+    assert!(!second.content.contains("job_id:"), "{}", second.content);
+    a.background.kill_all();
+}
+
+#[tokio::test]
+async fn auto_background_emits_running_event_on_channel() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(80);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let started = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": hang_shell()})),
+            &ctx,
+            Some(&tx),
+        )
+        .await;
+    assert!(started.content.contains("job_id:"), "{started:?}");
+    let mut saw_bg = false;
+    while let Ok(ev) = rx.try_recv() {
+        if matches!(ev, crate::events::TurnEvent::Background { .. }) {
+            saw_bg = true;
+            break;
+        }
+    }
+    assert!(saw_bg, "auto-bg must emit a Background event");
+    a.background.kill_all();
+}
+
 #[test]
 fn execute_worktree_tool_create_enter_exit_remove_on_git_repo() {
     let a = test_agent();

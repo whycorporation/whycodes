@@ -393,6 +393,9 @@ fn cost_report_includes_last_turn_usage() {
     });
     let out = cost_report(&session, &app, None);
     assert!(out.contains("last turn: 100 in / 50 out"), "{out}");
+    let named = cost_report(&session, &app, Some("interactive"));
+    assert!(named.contains("credential: interactive"), "{named}");
+    assert!(!named.contains("sk-"), "{named}");
 }
 
 #[test]

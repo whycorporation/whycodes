@@ -59,8 +59,8 @@ pub(crate) fn session_cost_line(
     } else {
         format!("  session: {input} in / {output} out · total {total}")
     };
-    match credential.filter(|n| !n.is_empty()) {
-        Some(name) => format!("{base}\n  credential: {name}"),
+    match super::session::stats_credential_line(credential) {
+        Some(line) => format!("{base}\n{line}"),
         None => base,
     }
 }
