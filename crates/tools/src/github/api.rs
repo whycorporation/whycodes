@@ -365,7 +365,10 @@ fn git_credential_token_with(use_test: bool) -> Option<String> {
 
 /// `git credential fill` with prompts/GUI disabled. Timeout-killed.
 fn git_credential_token_from_cli() -> Option<String> {
-    let host = github_host();
+    git_credential_token_from_command(git_credential_command())
+}
+
+fn git_credential_command() -> Command {
     let mut cmd = Command::new("git");
     cmd.args(["credential", "fill"])
         .stdin(Stdio::piped())
@@ -374,6 +377,11 @@ fn git_credential_token_from_cli() -> Option<String> {
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GCM_INTERACTIVE", "never")
         .env("GH_PROMPT_DISABLED", "1");
+    cmd
+}
+
+fn git_credential_token_from_command(mut cmd: Command) -> Option<String> {
+    let host = github_host();
     let mut child = spawn_git_credential(cmd.spawn())?;
     write_or_skip_git_credential_stdin(&mut child, &host)?;
     let text = wait_child_stdout(child, GIT_CREDENTIAL_TIMEOUT, "git credential fill")?;
@@ -508,6 +516,9 @@ fn write_git_credential_payload(
     let payload = format!("protocol=https\nhost={host}\n\n");
     match write_git_credential_stdin(stdin, payload.as_bytes()) {
         Ok(()) => Some(()),
+        // A helper that prints and exits without reading stdin (or races
+        // the write) still has stdout we can parse.
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Some(()),
         Err(err) => {
             git_credential_stdin_failed(child, err);
             None

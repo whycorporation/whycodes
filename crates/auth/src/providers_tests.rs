@@ -90,37 +90,47 @@ fn https_spec(name: &str, flow: FlowKind) -> ProviderSpec {
     spec
 }
 
-fn register_fixture_specs() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let paste = https_spec("fixture-paste", FlowKind::PasteCodePkce);
-        let mut loopback = https_spec("fixture-loopback", FlowKind::LoopbackPkce);
-        loopback.loopback_port = Some(1455);
-        let mut ephemeral = https_spec("fixture-loopback-ephemeral", FlowKind::LoopbackPkce);
-        ephemeral.loopback_host = Some("127.0.0.1".into());
-        let device = https_spec("fixture-device", FlowKind::DeviceCode);
-        for spec in [paste, loopback, ephemeral, device] {
-            crate::spec::register_spec(spec);
-        }
-    });
-}
-
-fn fixture_providers() -> Vec<String> {
-    register_fixture_specs();
+fn fixture_names() -> [&'static str; 4] {
     [
         "fixture-paste",
         "fixture-loopback",
         "fixture-loopback-ephemeral",
         "fixture-device",
     ]
-    .into_iter()
-    .map(str::to_string)
-    .collect()
+}
+
+fn built_fixture_spec(name: &str) -> ProviderSpec {
+    match name {
+        "fixture-paste" => https_spec("fixture-paste", FlowKind::PasteCodePkce),
+        "fixture-loopback" => {
+            let mut spec = https_spec("fixture-loopback", FlowKind::LoopbackPkce);
+            spec.loopback_port = Some(1455);
+            spec
+        }
+        "fixture-loopback-ephemeral" => {
+            let mut spec = https_spec("fixture-loopback-ephemeral", FlowKind::LoopbackPkce);
+            spec.loopback_host = Some("127.0.0.1".into());
+            spec
+        }
+        "fixture-device" => https_spec("fixture-device", FlowKind::DeviceCode),
+        other => panic!("unknown fixture {other}"),
+    }
+}
+
+fn register_fixture_specs() {
+    for name in fixture_names() {
+        crate::spec::register_spec(built_fixture_spec(name));
+    }
+}
+
+fn fixture_providers() -> Vec<String> {
+    register_fixture_specs();
+    fixture_names().into_iter().map(str::to_string).collect()
 }
 
 fn fixture_spec(name: &str) -> ProviderSpec {
     register_fixture_specs();
-    spec_for(name).unwrap_or_else(|e| panic!("{name}: {e}"))
+    built_fixture_spec(name)
 }
 
 struct TestUi {
@@ -190,17 +200,22 @@ impl LoginUi for TestUi {
 #[test]
 fn specs_exist_for_all_advertised_providers() {
     for name in fixture_providers() {
-        let spec = spec_for(&name).expect(&name);
+        let spec = fixture_spec(&name);
         assert_eq!(spec.name, name);
         assert!(!spec.client_id.is_empty());
         assert!(spec.authorize_url.starts_with("https://"));
         assert!(spec.token_url.starts_with("https://"));
+        assert_eq!(spec_for(&name).expect(&name).name, name);
     }
 }
 
 #[test]
 fn every_oauth_provider_suggests_at_least_one_model() {
     for name in fixture_providers() {
+        assert!(
+            !fixture_spec(&name).suggested_models.is_empty(),
+            "{name}: a logged-in user must see a model in the picker"
+        );
         assert!(
             !suggested_models(&name).is_empty(),
             "{name}: a logged-in user must see a model in the picker"
@@ -435,7 +450,7 @@ fn set_derived_extra_replaces_values_in_canonical_keys() {
 #[test]
 fn conformance_every_advertised_provider_validates() {
     for name in fixture_providers() {
-        let spec = spec_for(&name).expect(&name);
+        let spec = fixture_spec(&name);
         let issues = validate(&spec);
         assert!(issues.is_empty(), "{name}: {}", issues.join("; "));
     }
@@ -450,7 +465,7 @@ fn unsupported_provider_error_mentions_plugin() {
 #[test]
 fn conformance_authorize_url_has_required_pkce_params() {
     for name in fixture_providers() {
-        let spec = spec_for(&name).expect(&name);
+        let spec = fixture_spec(&name);
         if spec.flow == FlowKind::DeviceCode {
             continue; // device flow starts at the token endpoint family
         }
@@ -501,7 +516,7 @@ fn conformance_grant_bodies_match_declared_encoding() {
         state: "st".to_string(),
     };
     for name in fixture_providers() {
-        let spec = spec_for(&name).expect(&name);
+        let spec = fixture_spec(&name);
         if spec.flow == FlowKind::DeviceCode {
             continue;
         }

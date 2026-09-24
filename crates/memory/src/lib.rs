@@ -25,8 +25,8 @@ pub use error::{MemoryError, Result};
 pub use project_key::{project_key, project_root};
 pub use retain::{extract_heuristic, llm_retain_prompt, parse_llm_facts};
 pub use service::{
-    CodeHit, MemoryService, RecallHit, SessionHit, apply_memory_prompt, maybe_auto_index,
-    maybe_auto_index_background, maybe_auto_retain, settings_from_flags,
+    CodeChunkRow, CodeHit, MemoryService, RecallHit, SessionHit, apply_memory_prompt,
+    maybe_auto_index, maybe_auto_index_background, maybe_auto_retain, settings_from_flags,
 };
 pub use settings::{EmbedBackend, MemoryScope, MemorySettings};
 pub use whycodes_storage::models::MemoryRow;

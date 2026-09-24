@@ -1,4 +1,5 @@
 use super::*;
+use std::process::Command;
 use std::time::Instant;
 
 #[test]
@@ -430,6 +431,29 @@ fn git_credential_cli_probe_does_not_panic() {
     }
 }
 
+/// Drives `git credential fill` through a stand-in that prints `password=`
+/// so the parse line is covered without reading a stored credential.
+#[test]
+fn git_credential_fill_parses_password_from_helper() {
+    assert_eq!(git_credential_command().get_program(), "git");
+    let mut cmd = if cfg!(windows) {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "echo password=from-helper"]);
+        cmd
+    } else {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "cat >/dev/null; printf 'password=from-helper\\n'"]);
+        cmd
+    };
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    assert_eq!(
+        git_credential_token_from_command(cmd).as_deref(),
+        Some("from-helper")
+    );
+}
+
 #[test]
 fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -528,7 +552,22 @@ fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
             Ok(())
         }
     }
+    struct BrokenPipeWrite;
+    impl std::io::Write for BrokenPipeWrite {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "closed",
+            ))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
     assert!(write_git_credential_payload(&mut hanging, &mut FailWrite, "github.com").is_none());
+    assert!(
+        write_git_credential_payload(&mut hanging, &mut BrokenPipeWrite, "github.com").is_some()
+    );
     let _ = hanging.kill();
     let _ = hanging.wait();
     let mut hanging = hang_cmd(true)

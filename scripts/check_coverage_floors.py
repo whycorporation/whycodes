@@ -50,6 +50,7 @@ FULL_COVER_CRATES = [
     "whycodes-format",
     "whycodes-import",
     "whycodes-slop",
+    "whycodes-sdk",
 ]
 
 # Workspace floor. rustup llvm-cov `show` inflates totals with serde /
@@ -59,12 +60,10 @@ WORKSPACE_FLOOR = float(os.environ.get("FAIL_UNDER", "82"))
 
 # Floors as (crate, min_percent)
 FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
-    # Merge of origin/main brought content-tag / browser / paths lines that
-    # skip-expansions still counts (99.0% = 8211/8290). Restore 100% in #82.
-    ("whycodes-tools", 99.0),
-    # Linux spawn("/missing") is Err, so launch()'s spawn-ok-then-exit-127
-    # arm is uncovered (785/789 = 99.5%). Restore 100% in #82.
-    ("whycodes-sdk", 99.5),
+    # Linux skip-expansions still misses host-only tools lines (browser
+    # poll, memory formatters, path/executor helpers). 8280/8344 = 99.2
+    # on the 2026-09-24 Coverage job. Raise back to 100 once those hit.
+    ("whycodes-tools", 99.2),
 ]
 
 
@@ -239,7 +238,7 @@ def main() -> int:
             continue
         covered, total = pair
         pct = (covered / total * 100.0) if total else 0.0
-        # Compare at the same 1-decimal rounding we print (785/789 → 99.5).
+        # Compare at the same 1-decimal rounding we print.
         shown = round(pct, 1)
         status = "OK" if shown + 1e-9 >= floor else "FAIL"
         print(f"{status} {crate}: {covered}/{total} lines {shown:.1f}% floor {floor:g}%")

@@ -114,6 +114,24 @@ async fn execute_replaces_text_and_reports_missing() {
     assert!(miss.is_error, "{}", miss.content);
     assert!(miss.content.contains("Could not find"), "{}", miss.content);
     assert!(miss.content.contains("Nearby lines:"), "{}", miss.content);
+
+    // First token exists, the rest does not: snippet centers on that line.
+    let partial = tool
+        .execute(
+            serde_json::json!({
+                "path": "a.rs",
+                "old_string": "let missing-tail",
+                "new_string": "x"
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(partial.is_error, "{}", partial.content);
+    assert!(
+        partial.content.contains("Could not find"),
+        "{}",
+        partial.content
+    );
 }
 
 #[tokio::test]

@@ -172,7 +172,10 @@ fn which_browser_from(output: Option<std::process::Output>) -> Option<PathBuf> {
 }
 
 fn status() -> ToolResult {
-    let bin = find_browser();
+    status_with_browser(find_browser())
+}
+
+fn status_with_browser(bin: Option<PathBuf>) -> ToolResult {
     let (running, port) = session_status();
     match bin {
         None => err(
@@ -187,10 +190,14 @@ fn user_data_dir() -> PathBuf {
 }
 
 fn ensure_session() -> Result<u16, String> {
+    ensure_session_with_browser(find_browser())
+}
+
+fn ensure_session_with_browser(bin: Option<PathBuf>) -> Result<u16, String> {
     if let Some(port) = existing_session_port(SESSION.lock()) {
         return Ok(port);
     }
-    let bin = find_browser().ok_or_else(|| {
+    let bin = bin.ok_or_else(|| {
         "No Chromium/Chrome on PATH. Install Chromium or set WHYCODES_BROWSER.".to_string()
     })?;
     let dir = user_data_dir();
@@ -266,7 +273,7 @@ fn store_session(child: Child, port: u16, dir: PathBuf) -> Result<u16, String> {
 }
 
 fn poll_session_ready(mut child: Child, port: u16, mut dir: PathBuf) -> Result<u16, String> {
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let deadline = Instant::now() + session_ready_timeout();
     while Instant::now() < deadline {
         match apply_split_poll(split_session_poll(finish_session_poll(step_session_poll(
             child, port, dir,
@@ -282,6 +289,17 @@ fn poll_session_ready(mut child: Child, port: u16, mut dir: PathBuf) -> Result<u
     }
     kill_launch_timeout(&mut child);
     Err("Chromium started but CDP never became ready".into())
+}
+
+fn session_ready_timeout() -> Duration {
+    #[cfg(test)]
+    {
+        Duration::from_millis(200)
+    }
+    #[cfg(not(test))]
+    {
+        Duration::from_secs(8)
+    }
 }
 
 fn poll_invariant() -> Result<u16, String> {

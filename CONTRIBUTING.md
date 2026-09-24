@@ -70,8 +70,9 @@ Things to know about CI:
   file change is reviewed as part of the PR.
 - Coverage is enforced with `cargo llvm-cov`: the workspace fails below 82%
   line coverage, and the crates in `scripts/check_coverage_floors.py`
-  (`FULL_COVER_CRATES`, including `whycodes-tools`) are locked at 100%
-  production lines (`tests.rs` ignored, `--skip-expansions`). Locally:
+  `FULL_COVER_CRATES` are locked at 100% production lines (`tests.rs`
+  ignored, `--skip-expansions`). `whycodes-tools` is gated at 99.2% until
+  the remaining host-only helpers are hit on Linux. Locally:
   `scripts/coverage.sh` (needs `cargo-llvm-cov` + `llvm-tools-preview`, or
   `LLVM_COV` / `LLVM_PROFDATA` on a distro toolchain). Agents must have that
   wrapper green locally before pushing coverage-related changes

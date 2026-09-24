@@ -67,10 +67,10 @@ fn clear_registry_is_restored_from_saved_specs() {
         inference: None,
     });
     clear_registry();
-    assert!(!supports_oauth("spec-clear-demo"));
     for spec in saved {
         register_spec(spec);
     }
+    assert!(!supports_oauth("spec-clear-demo"));
 }
 
 #[test]

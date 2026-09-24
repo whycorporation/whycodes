@@ -236,6 +236,21 @@ async fn status_without_session() {
     assert!(!r.content.is_empty());
 }
 
+#[test]
+fn status_and_ensure_session_when_no_browser_exists() {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    drop(close_browser());
+    let missing = status_with_browser(None);
+    assert!(missing.is_error, "{}", missing.content);
+    assert!(
+        missing.content.contains("No Chromium"),
+        "{}",
+        missing.content
+    );
+    let err = ensure_session_with_browser(None).unwrap_err();
+    assert!(err.contains("No Chromium"), "{err}");
+}
+
 #[tokio::test]
 async fn snapshot_without_session_errors() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -448,6 +463,26 @@ fn find_browser_and_http_get_without_slash() {
     set_cdp_timeouts(&client);
     drop(server);
     drop(client);
+}
+
+/// A real executable that is not Chromium. `/bin/false` is absent on some
+/// Linux runners (`/usr/bin/false` only); a missing path makes `ensure_session`
+/// return before spawn and leaves the poll loop uncovered.
+fn fake_browser_bin() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        std::path::PathBuf::from(r"C:\Windows\System32\cmd.exe")
+    }
+    #[cfg(not(windows))]
+    {
+        for candidate in ["/bin/false", "/usr/bin/false", "/bin/true", "/usr/bin/true"] {
+            let path = std::path::PathBuf::from(candidate);
+            if path.is_file() {
+                return path;
+            }
+        }
+        std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("false"))
+    }
 }
 
 fn fail_cmd_status() -> std::process::ExitStatus {
@@ -685,11 +720,7 @@ fn ensure_session_times_out_fake_browser() {
     let prev = std::env::var_os("WHYCODES_BROWSER");
     // Must not be a real Chromium: `current_exe()` on some Linux CI hosts
     // still answers CDP and the timeout path never fires (`Ok(port)`).
-    let fake = std::path::PathBuf::from(if cfg!(windows) {
-        "C:\\Windows\\System32\\cmd.exe"
-    } else {
-        "/bin/false"
-    });
+    let fake = fake_browser_bin();
     unsafe { std::env::set_var("WHYCODES_BROWSER", &fake) };
     let err = ensure_session();
     unsafe {
