@@ -8,6 +8,7 @@ use crate::keymap::KeymapContext;
 use crate::theme::ThemeName;
 use crossterm::event::{KeyModifiers, MouseButton};
 use ratatui::layout::Rect;
+use std::time::Instant;
 
 fn app() -> TuiApp {
     TuiApp::new(TuiAppConfig::default())
@@ -6629,4 +6630,34 @@ fn paste_flood_enter_and_tab_in_file_popup_stay_text() {
     a.input_batch_seq = 4;
     handle_event(&mut a, key(KeyCode::Tab));
     assert_eq!(a.input_buffer, "bak @sr\n@i");
+}
+
+#[test]
+fn recover_windows_paste_i_host_gate_covers_both_arms() {
+    let mut a = app();
+    a.last_prompt_insert_at = Some(Instant::now());
+    let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+    assert!(!recover_windows_paste_i_on(&mut a, &tab, false));
+    assert_eq!(a.input_buffer, "");
+
+    a.mode = AppMode::Help;
+    assert!(!recover_windows_paste_i_on(&mut a, &tab, true));
+
+    a.mode = AppMode::Normal;
+    a.pending_suggestion = Some("/help".into());
+    assert!(!recover_windows_paste_i_on(&mut a, &tab, true));
+    a.pending_suggestion = None;
+
+    let idle = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+    assert!(!recover_windows_paste_i_on(&mut a, &idle, true));
+
+    a.last_prompt_insert_at = None;
+    assert!(!recover_windows_paste_i_on(&mut a, &tab, true));
+
+    a.last_prompt_insert_at = Some(Instant::now() - WINDOWS_PASTE_I_WINDOW * 2);
+    assert!(!recover_windows_paste_i_on(&mut a, &tab, true));
+
+    a.last_prompt_insert_at = Some(Instant::now());
+    assert!(recover_windows_paste_i_on(&mut a, &tab, true));
+    assert_eq!(a.input_buffer, "i");
 }

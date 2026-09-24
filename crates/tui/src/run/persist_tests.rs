@@ -274,4 +274,16 @@ fn doctor_helpers_and_short_id() {
     assert!(!share_server_up(1));
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(unshare_session(dir.path(), "nope"), 0);
+    assert_eq!(doctor_bwrap_line(true, true), "  bwrap:        available");
+    assert_eq!(
+        doctor_bwrap_line(true, false),
+        "  bwrap:        not found (host fallback)"
+    );
+    assert_eq!(
+        doctor_bwrap_line(false, true),
+        "  bwrap:        n/a (non-Linux)"
+    );
+    let _ = which_bwrap();
+    let _ = linux_bwrap_available_on(false);
+    let _ = linux_bwrap_available_on(true);
 }

@@ -4087,25 +4087,10 @@ pub(crate) fn git_output_timeout(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let mut stdout = Vec::new();
-                if let Some(mut s) = child.stdout.take()
-                    && let Err(e) = std::io::Read::read_to_end(&mut s, &mut stdout)
-                {
-                    tracing::debug!(error = %e, "git stdout read after exit");
-                }
-                return Some(std::process::Output {
-                    status,
-                    stdout,
-                    stderr: Vec::new(),
-                });
+                return Some(git_child_output_after_exit(&mut child, status));
             }
             Ok(None) if start.elapsed() >= timeout => {
-                if let Err(e) = child.kill() {
-                    tracing::debug!(error = %e, "git timeout kill");
-                }
-                if let Err(e) = child.wait() {
-                    tracing::debug!(error = %e, "git timeout wait");
-                }
+                git_timeout_kill_and_wait(&mut child);
                 return None;
             }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(5)),
@@ -4114,6 +4099,32 @@ pub(crate) fn git_output_timeout(
                 return None;
             }
         }
+    }
+}
+
+fn git_child_output_after_exit(
+    child: &mut std::process::Child,
+    status: std::process::ExitStatus,
+) -> std::process::Output {
+    let mut stdout = Vec::new();
+    if let Some(mut s) = child.stdout.take()
+        && let Err(e) = std::io::Read::read_to_end(&mut s, &mut stdout)
+    {
+        tracing::debug!(error = %e, "git stdout read after exit");
+    }
+    std::process::Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    }
+}
+
+fn git_timeout_kill_and_wait(child: &mut std::process::Child) {
+    if let Err(e) = child.kill() {
+        tracing::debug!(error = %e, "git timeout kill");
+    }
+    if let Err(e) = child.wait() {
+        tracing::debug!(error = %e, "git timeout wait");
     }
 }
 

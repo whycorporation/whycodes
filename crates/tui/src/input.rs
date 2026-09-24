@@ -389,7 +389,12 @@ fn insert_paste_newline(app: &mut TuiApp) {
 }
 
 fn recover_windows_paste_i(app: &mut TuiApp, key: &KeyEvent) -> bool {
-    if !cfg!(windows) && !cfg!(test) {
+    recover_windows_paste_i_on(app, key, cfg!(windows) || cfg!(test))
+}
+
+/// Host gate extracted so Linux skip-expansions can drive both arms.
+fn recover_windows_paste_i_on(app: &mut TuiApp, key: &KeyEvent, host_recovers: bool) -> bool {
+    if !host_recovers {
         return false;
     }
     if app.mode != AppMode::Normal && app.mode != AppMode::Session {

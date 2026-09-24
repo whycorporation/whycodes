@@ -139,10 +139,12 @@ fn command_stdout_not_found_and_timeout() {
     }
 }
 
-#[cfg(target_os = "windows")]
 #[test]
 fn command_status_and_cleanup_temp() {
+    #[cfg(windows)]
     assert!(command_status("cmd", &["/C", "exit 0"], TIMEOUT).is_ok());
+    #[cfg(not(windows))]
+    assert!(command_status("true", &[], TIMEOUT).is_ok());
     match command_status("whycodes-no-such-clipboard-bin", &[], TIMEOUT) {
         Err(RunErr::NotFound) => {}
         other => panic!("expected NotFound, got {other:?}"),
@@ -151,11 +153,11 @@ fn command_status_and_cleanup_temp() {
     cleanup_temp(&path);
 }
 
-#[cfg(target_os = "windows")]
 #[test]
 fn read_windows_image_empty_clipboard_is_empty() {
     // Live PowerShell path: empty clipboard → Empty, not a panic.
-    match read_os_image() {
+    // On non-Windows hosts powershell is missing → NotFound mapped to an error.
+    match read_windows_image() {
         Ok(PromptClipboard::Empty | PromptClipboard::ImagePaths(_)) => {}
         Err(e) => {
             assert!(
@@ -341,7 +343,6 @@ fn classify_command_output_maps_spawn_and_stdout() {
     }
 }
 
-#[cfg(target_os = "windows")]
 #[test]
 fn finish_windows_clipboard_covers_temp_read_and_run_errs() {
     let missing = std::env::temp_dir().join("whycodes-clip-no-such-file.png");

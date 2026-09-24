@@ -647,22 +647,10 @@ pub(super) fn doctor_report(
         "  sandbox:      mode={} network={}",
         config.security.sandbox, config.security.sandbox_network
     ));
-    #[cfg(target_os = "linux")]
-    {
-        let bwrap = std::path::Path::new("/usr/bin/bwrap").is_file() || which_bwrap();
-        lines.push(format!(
-            "  bwrap:        {}",
-            if bwrap {
-                "available"
-            } else {
-                "not found (host fallback)"
-            }
-        ));
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        lines.push("  bwrap:        n/a (non-Linux)".into());
-    }
+    lines.push(doctor_bwrap_line(
+        cfg!(target_os = "linux"),
+        linux_bwrap_available_on(cfg!(target_os = "linux")),
+    ));
 
     // ── Automation ────────────────────────────────────────────────────
     let bg = agent.background_registry();
@@ -704,7 +692,31 @@ pub(super) fn doctor_report(
     lines.join("\n")
 }
 
-#[cfg(target_os = "linux")]
+/// Host gate extracted so Linux skip-expansions can drive both doctor arms.
+pub(super) fn doctor_bwrap_line(is_linux: bool, bwrap_available: bool) -> String {
+    if is_linux {
+        format!(
+            "  bwrap:        {}",
+            if bwrap_available {
+                "available"
+            } else {
+                "not found (host fallback)"
+            }
+        )
+    } else {
+        "  bwrap:        n/a (non-Linux)".into()
+    }
+}
+
+pub(super) fn linux_bwrap_available_on(is_linux: bool) -> bool {
+    if !is_linux {
+        return false;
+    }
+    std::path::Path::new("/usr/bin/bwrap").is_file() || which_bwrap()
+}
+
+/// Compiled in tests so every host can drive the `which bwrap` spawn.
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
 pub(super) fn which_bwrap() -> bool {
     std::process::Command::new("which")
         .arg("bwrap")

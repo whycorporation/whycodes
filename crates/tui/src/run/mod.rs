@@ -1153,16 +1153,15 @@ fn open_windows_controlling_console() -> Option<std::fs::File> {
 
 /// `/dev/tty` on Unix, `CONOUT$` on Windows. `None` if this process has no console.
 fn open_controlling_console() -> Option<std::fs::File> {
-    #[cfg(unix)]
-    {
+    open_controlling_console_for(cfg!(unix), cfg!(windows))
+}
+
+fn open_controlling_console_for(is_unix: bool, is_windows: bool) -> Option<std::fs::File> {
+    if is_unix {
         open_unix_controlling_console()
-    }
-    #[cfg(windows)]
-    {
+    } else if is_windows {
         open_windows_controlling_console()
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
+    } else {
         None
     }
 }
@@ -2426,19 +2425,31 @@ fn event_forces_redraw(ev: &Event) -> bool {
 /// device so the lines land in the real terminal scrollback even when stdout
 /// is captured. Fall back to stdout, then stderr.
 fn print_session_summary(summary: &str) {
-    if let Some(mut tty) = open_controlling_console()
+    print_session_summary_to(
+        summary,
+        open_controlling_console(),
+        &mut io::stdout(),
+        &mut io::stderr(),
+    );
+}
+
+fn print_session_summary_to(
+    summary: &str,
+    console: Option<std::fs::File>,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) {
+    if let Some(mut tty) = console
         && writeln!(tty, "{summary}").is_ok()
         && tty.flush().is_ok()
     {
         return;
     }
-    let mut out = io::stdout();
-    if writeln!(out, "{summary}").is_ok() && out.flush().is_ok() {
+    if writeln!(stdout, "{summary}").is_ok() && stdout.flush().is_ok() {
         return;
     }
-    let mut err = io::stderr();
-    let _ = writeln!(err, "{summary}");
-    let _ = err.flush();
+    let _ = writeln!(stderr, "{summary}");
+    let _ = stderr.flush();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

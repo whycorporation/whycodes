@@ -349,7 +349,9 @@ function run() {
     }
 }
 
-#[cfg(target_os = "windows")]
+/// Live PowerShell dump. Compiled in tests so Linux skip-expansions can
+/// drive the helper without a pasteboard.
+#[cfg(any(windows, test))]
 fn read_windows_image() -> Result<PromptClipboard, String> {
     let dest = std::env::temp_dir().join(format!(
         "whycodes-clip-{}-{}.png",
@@ -379,7 +381,9 @@ fn windows_clipboard_script(dest: &str) -> String {
     )
 }
 
-#[cfg(target_os = "windows")]
+/// Finish a PowerShell clipboard dump. Compiled on Windows and in tests so
+/// Linux skip-expansions can drive every arm without a pasteboard.
+#[cfg(any(windows, test))]
 fn finish_windows_clipboard(
     dest: PathBuf,
     result: Result<(), RunErr>,
@@ -390,7 +394,7 @@ fn finish_windows_clipboard(
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(windows, test))]
 fn finish_windows_saved_image(dest: &Path) -> Result<PromptClipboard, String> {
     let bytes = match std::fs::read(dest) {
         Ok(b) => b,
@@ -403,7 +407,7 @@ fn finish_windows_saved_image(dest: &Path) -> Result<PromptClipboard, String> {
     bytes_to_prompt(Ok(bytes))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(windows, test))]
 fn windows_clipboard_run_err(dest: &Path, err: RunErr) -> Result<PromptClipboard, String> {
     cleanup_temp(dest);
     match err {
@@ -414,7 +418,7 @@ fn windows_clipboard_run_err(dest: &Path, err: RunErr) -> Result<PromptClipboard
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(windows, test))]
 fn cleanup_temp(path: &Path) {
     if let Err(error) = std::fs::remove_file(path)
         && path.exists()
@@ -543,7 +547,7 @@ fn command_stdout(bin: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(windows, test))]
 fn command_status(bin: &str, args: &[&str], timeout: Duration) -> Result<(), RunErr> {
     match command_stdout(bin, args, timeout) {
         Ok(_) => Ok(()),

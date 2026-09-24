@@ -584,6 +584,7 @@ fn doctor_report_lists_checks() {
     assert!(out.contains("git_repo:     no"), "{out}");
     assert!(out.contains("bash_risk:"), "{out}");
     assert!(out.contains("sandbox:"), "{out}");
+    assert!(out.contains("bwrap:"), "{out}");
     assert!(out.contains("background:"), "{out}");
     assert!(out.contains("swarm:"), "{out}");
     assert!(out.contains("context:"), "{out}");
@@ -1142,10 +1143,18 @@ fn helpers_tui_available_summary_share_and_diff() {
     assert_eq!(unshare_session(dir.path(), "abc"), 2);
     assert_eq!(unshare_session(dir.path(), "abc"), 0);
 
-    #[cfg(target_os = "linux")]
-    {
-        let _ = which_bwrap();
-    }
+    let _ = which_bwrap();
+    assert_eq!(doctor_bwrap_line(true, true), "  bwrap:        available");
+    assert_eq!(
+        doctor_bwrap_line(true, false),
+        "  bwrap:        not found (host fallback)"
+    );
+    assert_eq!(
+        doctor_bwrap_line(false, false),
+        "  bwrap:        n/a (non-Linux)"
+    );
+    let _ = linux_bwrap_available_on(false);
+    let _ = linux_bwrap_available_on(true);
 
     persist_session_best_effort(
         &Session::new(dir.path().to_path_buf(), "sys".into()),
@@ -6405,6 +6414,44 @@ fn tui_available_does_not_panic() {
     let _ = try_open_unix_tty();
     let _ = open_windows_controlling_console();
     let _ = try_open_windows_console();
+    assert!(open_controlling_console_for(false, false).is_none());
+    let _ = open_controlling_console_for(true, false);
+    let _ = open_controlling_console_for(false, true);
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    print_session_summary_to("via-stdout", None, &mut stdout, &mut stderr);
+    assert_eq!(String::from_utf8_lossy(&stdout), "via-stdout\n");
+    assert!(stderr.is_empty());
+
+    struct FailWrite;
+    impl std::io::Write for FailWrite {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::other("no stdout"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::other("no stdout"))
+        }
+    }
+    let mut fail_out = FailWrite;
+    let mut stderr = Vec::new();
+    print_session_summary_to("via-stderr", None, &mut fail_out, &mut stderr);
+    assert_eq!(String::from_utf8_lossy(&stderr), "via-stderr\n");
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(tmp.path())
+        .unwrap();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    print_session_summary_to("via-console", Some(file), &mut stdout, &mut stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    let written = std::fs::read_to_string(tmp.path()).unwrap();
+    assert!(written.contains("via-console"), "{written}");
+
+    print_session_summary("coverage-summary");
 }
 
 #[test]
