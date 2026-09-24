@@ -81,6 +81,8 @@ async fn run_injected(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
 #[test]
 fn cell_dump_guard_hides_cursor_and_brackets_synchronized_update() {
+    begin_cell_dump(&mut TuiWriter::Fail);
+    end_cell_dump(&mut TuiWriter::Fail);
     let mut out = Vec::new();
     begin_cell_dump(&mut out);
     end_cell_dump(&mut out);
@@ -6563,6 +6565,20 @@ fn attach_live_open_error_and_raw_error() {
         err.to_string().contains("alternate") || err.to_string().contains("fail"),
         "{err}"
     );
+
+    let (term, _, tw, th) = attach_live(
+        color,
+        || Ok(TuiWriter::Buf(Vec::new())),
+        || Ok(()),
+        || Err(io::Error::other("no size")),
+    )
+    .unwrap();
+    assert_eq!(
+        (tw, th),
+        (0, 0),
+        "size Err must fall back to 0×0 then 80×24 resize"
+    );
+    term.restore(false);
 }
 
 #[test]
@@ -6797,6 +6813,8 @@ fn push_keyboard_flags_respects_support() {
     assert!(!push_keyboard_flags(&mut out, false));
     let mut out = Vec::new();
     let _ = push_keyboard_flags(&mut out, true);
+    assert!(!push_keyboard_flags(&mut TuiWriter::Fail, true));
+    let _ = keyboard_enhancement_supported();
 }
 
 #[test]
@@ -8039,6 +8057,8 @@ fn write_splash_csi_emits_alt_screen_and_label() {
     restore_splash_csi(&mut out);
     let s = String::from_utf8_lossy(&out);
     assert!(s.contains("\x1b[?1049l"), "leave alt-screen");
+
+    restore_splash_csi(&mut TuiWriter::Fail);
 }
 
 #[test]
@@ -8053,10 +8073,13 @@ fn enter_raw_and_alt_ok_and_restore_backend() {
     );
     restore_live_backend(&mut out, true);
     restore_live_backend(&mut out, false);
+    restore_live_backend(&mut TuiWriter::Fail, true);
+    restore_live_backend(&mut TuiWriter::Fail, false);
 }
 
 #[test]
 fn enable_mouse_paste_cursor_keeps_caret_hidden() {
+    enable_mouse_paste_cursor(&mut TuiWriter::Fail);
     let mut out = Vec::new();
     enable_mouse_paste_cursor(&mut out);
     let bytes = String::from_utf8_lossy(&out);
@@ -8082,6 +8105,80 @@ fn enter_raw_and_alt_write_fail_disables_raw() {
         err.to_string().contains("alternate") || err.to_string().contains("fail"),
         "{err}"
     );
+}
+
+#[test]
+fn paint_first_frame_with_covers_open_write_and_bench() {
+    let _lock = isolate_home_lock();
+    let err = paint_first_frame_with(|| Err(io::Error::other("no tty"))).unwrap_err();
+    assert!(
+        err.to_string().contains("plain") || err.to_string().contains("tty"),
+        "{err}"
+    );
+
+    let err = paint_first_frame_with(|| Ok(TuiWriter::Fail)).unwrap_err();
+    assert!(
+        err.to_string().contains("fail") || err.to_string().contains("write"),
+        "{err}"
+    );
+
+    let prev_bench = std::env::var_os("WHYCODES_BENCH");
+    let prev_dur = std::env::var_os("WHYCODES_BENCH_DURATION_MS");
+    unsafe { std::env::remove_var("WHYCODES_BENCH") };
+    let none = paint_first_frame_with(|| Ok(TuiWriter::Buf(Vec::new()))).unwrap();
+    assert!(
+        none.is_none(),
+        "no bench env must continue into the full TUI"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("bench.json");
+    unsafe {
+        std::env::set_var("WHYCODES_BENCH", &out);
+        std::env::set_var("WHYCODES_BENCH_DURATION_MS", "0");
+    }
+    let exit = paint_first_frame_with(|| Ok(TuiWriter::Buf(Vec::new()))).unwrap();
+    assert_eq!(exit, Some(TuiExit::Quit));
+    assert!(
+        out.exists(),
+        "bench harness must write results after restore"
+    );
+    match prev_bench {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
+    }
+    match prev_dur {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH_DURATION_MS", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_BENCH_DURATION_MS") },
+    }
+}
+
+#[test]
+fn run_sync_honours_test_tui_stub() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_TEST_TUI");
+    unsafe { std::env::set_var("WHYCODES_TEST_TUI", "quit") };
+    let exit = run_sync(boot_opts(dir.path(), "sk-test")).unwrap();
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[test]
+fn tui_available_for_skips_console_probe_when_stdout_is_tty() {
+    assert!(tui_available_for(true, || {
+        panic!("stdout TTY must not open CONOUT$ / /dev/tty");
+    }));
+    assert!(!tui_available_for(false, || None));
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(tmp.path())
+        .unwrap();
+    assert!(tui_available_for(false, || Some(file)));
 }
 
 #[test]
@@ -8302,7 +8399,22 @@ fn loop_term_headless_and_live_buf_draw() {
     let mut tiny = LoopTerm::headless(color).unwrap();
     tiny.resize(Rect::new(0, 0, 0, 0));
     tiny.reset_prev_for_full_redraw();
+    tiny.draw_splash().unwrap();
     tiny.restore(false);
+
+    let mut live_splash = LoopTerm::live(TuiWriter::Buf(Vec::new()), color).unwrap();
+    live_splash.draw_splash().unwrap();
+    live_splash.restore(false);
+
+    match LoopTerm::live(TuiWriter::Fail, color) {
+        Ok(term) => term.restore(false),
+        Err(err) => {
+            assert!(
+                err.to_string().contains("fail") || err.to_string().contains("terminal"),
+                "{err}"
+            );
+        }
+    }
 }
 
 #[tokio::test]

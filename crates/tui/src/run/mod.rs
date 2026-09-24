@@ -667,9 +667,16 @@ async fn prepare_tui_runtime(opts: &TuiRunOptions, app: &mut TuiApp) -> TuiRunti
 /// Windows) so IDEs/wrappers that capture stdout (`stdout_tty=false`) still
 /// get a normal TUI. Falls back to stdout when it is itself a TTY.
 pub fn tui_available() -> bool {
-    // stdout already a TTY: do not open CONOUT$ / `/dev/tty` just to probe.
-    // `cmd_run` used to pay that extra handle before first paint (Windows).
-    io::stdout().is_terminal() || open_controlling_console().is_some()
+    tui_available_for(io::stdout().is_terminal(), open_controlling_console)
+}
+
+/// stdout-TTY short-circuit so tests can prove we never probe CONOUT$ / `/dev/tty`
+/// when stdout is already a terminal (`cmd_run` used to pay that extra handle).
+fn tui_available_for(
+    stdout_is_tty: bool,
+    open_console: impl FnOnce() -> Option<std::fs::File>,
+) -> bool {
+    stdout_is_tty || open_console().is_some()
 }
 
 /// Concrete writer for ratatui/crossterm (`execute!` needs `Sized`).
@@ -1429,8 +1436,16 @@ pub fn run_sync(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 /// Returns `Some(Quit)` when `WHYCODES_BENCH` is set (harness done). `None`
 /// means the caller should keep going with the full TUI.
 pub fn paint_first_frame_sync() -> anyhow::Result<Option<TuiExit>> {
+    paint_first_frame_with(open_tui_writer)
+}
+
+/// Same CSI splash as [`paint_first_frame_sync`], with an injected writer so
+/// tests can drive restore / write-fail / bench-stop without a live TTY.
+fn paint_first_frame_with(
+    open: impl FnOnce() -> io::Result<TuiWriter>,
+) -> anyhow::Result<Option<TuiExit>> {
     let bench = crate::bench::config_from_env();
-    let mut out = open_tui_writer().map_err(|e| {
+    let mut out = open().map_err(|e| {
         anyhow::anyhow!(
             "failed to open terminal for TUI ({e}). \
              Run inside a real terminal, or use `whycodes --plain`."
