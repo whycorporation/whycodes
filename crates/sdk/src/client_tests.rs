@@ -86,6 +86,7 @@ fn status_error_maps_http_codes() {
 fn ephemeral_port_binds() {
     let p = ephemeral_port().unwrap();
     assert!(p > 0);
+    assert!(ephemeral_port_for_test() > 0);
 }
 
 #[test]

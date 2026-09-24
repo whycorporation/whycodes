@@ -172,7 +172,10 @@ fn which_browser_from(output: Option<std::process::Output>) -> Option<PathBuf> {
 }
 
 fn status() -> ToolResult {
-    let bin = find_browser();
+    status_with_browser(find_browser())
+}
+
+fn status_with_browser(bin: Option<PathBuf>) -> ToolResult {
     let (running, port) = session_status();
     match bin {
         None => err(
@@ -187,10 +190,14 @@ fn user_data_dir() -> PathBuf {
 }
 
 fn ensure_session() -> Result<u16, String> {
+    ensure_session_with_browser(find_browser())
+}
+
+fn ensure_session_with_browser(bin: Option<PathBuf>) -> Result<u16, String> {
     if let Some(port) = existing_session_port(SESSION.lock()) {
         return Ok(port);
     }
-    let bin = find_browser().ok_or_else(|| {
+    let bin = bin.ok_or_else(|| {
         "No Chromium/Chrome on PATH. Install Chromium or set WHYCODES_BROWSER.".to_string()
     })?;
     let dir = user_data_dir();

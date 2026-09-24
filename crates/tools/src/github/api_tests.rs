@@ -1,4 +1,5 @@
 use super::*;
+use std::process::Command;
 use std::time::Instant;
 
 #[test]
@@ -428,6 +429,29 @@ fn git_credential_cli_probe_does_not_panic() {
     if let Some(token) = git_credential_token_from_cli() {
         assert!(!token.is_empty());
     }
+}
+
+/// Drives `git credential fill` through a stand-in that prints `password=`
+/// so the parse line is covered without reading a stored credential.
+#[test]
+fn git_credential_fill_parses_password_from_helper() {
+    assert_eq!(git_credential_command().get_program(), "git");
+    let mut cmd = if cfg!(windows) {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "echo password=from-helper"]);
+        cmd
+    } else {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "printf 'password=from-helper\\n'"]);
+        cmd
+    };
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    assert_eq!(
+        git_credential_token_from_command(cmd).as_deref(),
+        Some("from-helper")
+    );
 }
 
 #[test]

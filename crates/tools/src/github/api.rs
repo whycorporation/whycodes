@@ -365,7 +365,10 @@ fn git_credential_token_with(use_test: bool) -> Option<String> {
 
 /// `git credential fill` with prompts/GUI disabled. Timeout-killed.
 fn git_credential_token_from_cli() -> Option<String> {
-    let host = github_host();
+    git_credential_token_from_command(git_credential_command())
+}
+
+fn git_credential_command() -> Command {
     let mut cmd = Command::new("git");
     cmd.args(["credential", "fill"])
         .stdin(Stdio::piped())
@@ -374,6 +377,11 @@ fn git_credential_token_from_cli() -> Option<String> {
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GCM_INTERACTIVE", "never")
         .env("GH_PROMPT_DISABLED", "1");
+    cmd
+}
+
+fn git_credential_token_from_command(mut cmd: Command) -> Option<String> {
+    let host = github_host();
     let mut child = spawn_git_credential(cmd.spawn())?;
     write_or_skip_git_credential_stdin(&mut child, &host)?;
     let text = wait_child_stdout(child, GIT_CREDENTIAL_TIMEOUT, "git credential fill")?;

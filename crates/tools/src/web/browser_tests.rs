@@ -236,6 +236,21 @@ async fn status_without_session() {
     assert!(!r.content.is_empty());
 }
 
+#[test]
+fn status_and_ensure_session_when_no_browser_exists() {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    drop(close_browser());
+    let missing = status_with_browser(None);
+    assert!(missing.is_error, "{}", missing.content);
+    assert!(
+        missing.content.contains("No Chromium"),
+        "{}",
+        missing.content
+    );
+    let err = ensure_session_with_browser(None).unwrap_err();
+    assert!(err.contains("No Chromium"), "{err}");
+}
+
 #[tokio::test]
 async fn snapshot_without_session_errors() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
