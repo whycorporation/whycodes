@@ -2255,7 +2255,13 @@ async fn handle_slash_covers_local_commands() {
             .collect::<Vec<_>>()
     );
 
-    std::fs::write(h._tmp.path().join(".whycodes"), "not a directory").unwrap();
+    let why = h._tmp.path().join(".whycodes");
+    if why.is_dir() {
+        let _ = std::fs::remove_dir_all(&why);
+    } else if why.exists() {
+        let _ = std::fs::remove_file(&why);
+    }
+    std::fs::write(&why, "not a directory").unwrap();
     h.run("/export").await;
     assert!(
         h.app
@@ -2271,7 +2277,8 @@ async fn handle_slash_covers_local_commands() {
             .map(|t| t.message.as_str())
             .collect::<Vec<_>>()
     );
-    let _ = std::fs::remove_file(h._tmp.path().join(".whycodes"));
+    let _ = std::fs::remove_file(&why);
+    let _ = std::fs::remove_dir_all(&why);
 
     h.run("/agent").await;
     assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Agent)));
