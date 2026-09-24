@@ -78,7 +78,8 @@ that work lands.
 | Gate | Floor | What it covers |
 |---|---|---|
 | Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
-| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, `tools`, `slop` | **100%** lines | Production files only (`tests.rs` ignored) |
+| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, `slop` | **100%** lines | Production files only (`tests.rs` ignored) |
+| `tools` | **99.2%** lines | Production files; Linux skip-expansions still misses host-only helpers |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
 comfortably above it, raise `--fail-under-lines` in
@@ -86,8 +87,12 @@ comfortably above it, raise `--fail-under-lines` in
 
 ## Last measurement
 
-Linux x86_64, 2026-09-06 (`cargo llvm-cov --workspace`, flags above — `whycodes-agent` 100% floor, #61).
-Workspace line coverage last measured 2026-09-06 at **92.56%**. Crate floors now include `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, and `tools` at 100% (production files, `tests.rs` ignored, llvm-cov `--skip-expansions`).
+Linux x86_64, 2026-09-24 (`cargo llvm-cov --workspace`, flags above).
+Workspace line coverage last measured 2026-09-24 at **98.4%** (`77160/78442`).
+`sdk` stays at 100%; `tools` is locked at **99.2%** (`8280/8344`) until the
+host-only helpers CI still lists as uncovered are hit. Other foundational
+crates remain at 100% (production files, `tests.rs` ignored, llvm-cov
+`--skip-expansions`).
 
 `core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
 (#48). Production modules also have local `#[cfg(test)]` next to the code (`error`,
