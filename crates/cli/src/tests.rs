@@ -1321,6 +1321,7 @@ fn key_from_env_config_and_missing_message() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     assert_eq!(
@@ -1390,6 +1391,7 @@ fn key_from_env_config_and_missing_message() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let proxied = missing_api_key_message_for("anthropic", Some(&cfg));
@@ -4378,6 +4380,7 @@ fn complete_provider_ids_include_custom_config() {
             models: vec!["m1".into(), "".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     cfg.default_model = Some(ModelConfig {
@@ -4530,6 +4533,7 @@ async fn get_api_key_from_config_provider() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let key = get_api_key("anthropic", &cfg).await;
@@ -4551,6 +4555,7 @@ async fn ensure_api_key_local_provider_without_key() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let mut key = String::new();

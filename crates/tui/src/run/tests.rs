@@ -499,6 +499,7 @@ fn configured_models_from_providers_and_oauth() {
             models: vec!["acme-1".into(), "acme-2".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let out = configured_models(&config);
@@ -1698,6 +1699,7 @@ async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
             models: vec!["m".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -1728,6 +1730,7 @@ async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
             models: vec!["m".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -2572,6 +2575,7 @@ async fn hydrate_after_first_frame_fills_picker_index_and_key() {
             models: vec!["m1".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     hydrate_after_first_frame(
@@ -2665,6 +2669,7 @@ async fn spawn_model_context_fetch_sends_window_from_live_http() {
             models: vec!["m1".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -3708,6 +3713,7 @@ async fn handle_slash_more_aliases_and_connect_with_key() {
             models: vec!["m1".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     h.api_key.clear();
@@ -4754,6 +4760,7 @@ fn arm_record_route_and_model_choice() {
             models: vec!["m1".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     apply_model_choice(
@@ -5829,6 +5836,7 @@ fn explicit_provider_key_from_config_and_env() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     assert_eq!(
@@ -5847,6 +5855,7 @@ fn explicit_provider_key_from_config_and_env() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     unsafe { std::env::set_var("ENVP_API_KEY", "sk-from-env") };
@@ -7408,6 +7417,7 @@ async fn run_headless_idle_models_switch_fetches_catalog() {
             models: vec!["m1".into(), "m2".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let exit = run_injected(opts).await.unwrap();
@@ -7775,6 +7785,7 @@ async fn run_headless_missing_api_key_warns_then_quits() {
             models: vec!["m1".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let exit = run_injected(opts).await.unwrap();
@@ -8327,6 +8338,7 @@ async fn spawn_model_context_fetch_hits_local_http() {
             models: vec!["m1".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -8516,6 +8528,7 @@ async fn run_live_buf_first_frame_hydrates_plugin_sessions_and_config_key() {
             models: vec!["m1".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let exit = run_injected(opts).await.unwrap();
@@ -8663,6 +8676,7 @@ async fn run_headless_applies_model_effort_mode_from_pickers() {
             models: vec!["grok-4.6".into(), "grok-4".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let mut events = Vec::new();

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use whycodes_core::types::{
-    AgentInfo, ModelConfig, PermissionAction, PermissionSet, ProviderConfig,
+    AgentInfo, ModelConfig, PermissionAction, PermissionSet, ProviderConfig, ProviderCredentials,
 };
 
 /// Serializes tests that mutate process-global env vars (WHYCODES_HOME,
@@ -51,6 +51,7 @@ fn make_provider(name: &str) -> ProviderConfig {
         models: vec![],
         tool_arguments: None,
         extra: HashMap::new(),
+        credentials: Default::default(),
     }
 }
 
@@ -371,6 +372,7 @@ fn test_merge_with_provider_override() {
             models: vec![],
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         },
     );
 
@@ -386,6 +388,7 @@ fn test_merge_with_provider_override() {
             models: vec![],
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         },
     );
 
@@ -1273,6 +1276,7 @@ fn validate_localhost_base_url_is_only_warning() {
             models: vec![],
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         },
     );
     assert!(cfg.validate().is_ok());
@@ -1679,6 +1683,8 @@ fn hook_and_security_defaults_and_serde() {
     assert!(sec.sandbox_network);
     let tools: ToolsConfig = toml::from_str("").unwrap();
     assert!(tools.enable_read && tools.enable_shell);
+    assert!(tools.bash.auto_background);
+    assert_eq!(tools.bash.auto_background_after_secs, 20);
     // serde defaults for session / tui / memory / swarm / hook match
     let cfg: Config = toml::from_str(
         r#"
@@ -1701,6 +1707,40 @@ fn hook_and_security_defaults_and_serde() {
     assert_eq!(cfg.notify.timeout_secs, 8);
     assert_eq!(cfg.hooks[0].tool_match, "*");
     assert_eq!(cfg.hooks[0].timeout_secs, 30);
+}
+
+#[test]
+fn bash_and_provider_credentials_parse_from_toml() {
+    let cfg: Config = toml::from_str(
+        r#"
+        [tools.bash]
+        auto_background = false
+        auto_background_after_secs = 45
+
+        [providers.openai]
+        name = "openai"
+
+        [providers.openai.credentials]
+        order = ["interactive", "ci"]
+        reserve = 0.2
+
+        [providers.openai.credentials.env]
+        interactive = "OPENAI_API_KEY"
+        "#,
+    )
+    .unwrap();
+    assert!(!cfg.tools.bash.auto_background);
+    assert_eq!(cfg.tools.bash.auto_background_after_secs, 45);
+    let creds = &cfg.providers["openai"].credentials;
+    assert_eq!(
+        creds.order,
+        vec!["interactive".to_string(), "ci".to_string()]
+    );
+    assert_eq!(creds.reserve, 0.2);
+    assert_eq!(
+        creds.env.get("interactive").map(String::as_str),
+        Some("OPENAI_API_KEY")
+    );
 }
 
 #[test]
@@ -2233,6 +2273,11 @@ fn merge_with_covers_provider_model_memory_tools() {
             models: vec!["m1".into()],
             tool_arguments: Some(whycodes_core::types::ToolArgumentsFormat::Object),
             extra: HashMap::from([("k".into(), serde_json::json!(1))]),
+            credentials: ProviderCredentials {
+                order: vec!["interactive".into(), "ci".into()],
+                reserve: 0.25,
+                env: HashMap::from([("interactive".into(), "OPENAI_API_KEY".into())]),
+            },
         },
     );
     base.models.insert("mid".into(), make_model("p", "mid"));
@@ -2304,6 +2349,8 @@ fn merge_with_covers_provider_model_memory_tools() {
     other.tools.enable_websearch = false;
     other.tools.question.timeout_enabled = !QuestionToolConfig::default().timeout_enabled;
     other.tools.question.timeout_secs = 1;
+    other.tools.bash.auto_background = false;
+    other.tools.bash.auto_background_after_secs = 45;
     other.tools.disabled_tools = vec!["x".into()];
     other.tools.enable_read = true;
     other.tools.enable_write = true;
@@ -2368,6 +2415,13 @@ fn merge_with_covers_provider_model_memory_tools() {
     let merged = base.merge_with(&other);
     assert_eq!(merged.providers["p"].api_key.as_deref(), Some("new"));
     assert_eq!(merged.providers["p"].api_base.as_deref(), Some("http://a"));
+    assert_eq!(
+        merged.providers["p"].credentials.order,
+        vec!["interactive".to_string(), "ci".to_string()]
+    );
+    assert_eq!(merged.providers["p"].credentials.reserve, 0.25);
+    assert!(!merged.tools.bash.auto_background);
+    assert_eq!(merged.tools.bash.auto_background_after_secs, 45);
     assert_eq!(merged.models["mid"].max_tokens, Some(1));
     assert!(merged.agents.iter().any(|a| a.name == "extra"));
     assert!(!merged.memory.enabled);
@@ -2464,6 +2518,7 @@ fn validate_empty_agents_and_provider_env_key() {
             models: vec![],
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         },
     );
     assert!(cfg.validate().is_err());
@@ -2635,6 +2690,7 @@ fn validate_env_key_aliases_and_empty_default_agent() {
             models: vec![],
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         },
     );
     unsafe { std::env::set_var("WHYCODES_LOCAL_API_KEY", "k") };

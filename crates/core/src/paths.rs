@@ -91,6 +91,11 @@ pub fn project_dir(working_dir: &Path) -> PathBuf {
     working_dir.join(PROJECT_DIR)
 }
 
+/// Throwaway agent files (`bg-*.log`, detached output). Not the OS temp dir.
+pub fn project_scratch_dir(working_dir: &Path) -> PathBuf {
+    project_dir(working_dir).join("scratch")
+}
+
 /// Format a path for humans (status bar, toasts, copy-to-clipboard).
 ///
 /// `std::fs::canonicalize` on Windows returns a Win32 extended-length path

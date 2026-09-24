@@ -35,6 +35,7 @@ fn configured_models_includes_config_entries() {
             models: vec!["tiny-test".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let models = configured_models(&cfg);

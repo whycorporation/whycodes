@@ -1267,6 +1267,10 @@ mod paths_tests {
         assert_eq!(project_dir(root), root.join(".whycodes"));
         std::fs::create_dir(root.join(".whycodes")).unwrap();
         assert_eq!(project_dir(root), root.join(".whycodes"));
+        assert_eq!(
+            project_scratch_dir(root),
+            root.join(".whycodes").join("scratch")
+        );
     }
 
     #[test]
@@ -1831,6 +1835,7 @@ mod types_tests {
             models: vec![],
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         };
         assert_eq!(
             pc.resolve_url("gpt-4"),
@@ -1846,6 +1851,7 @@ mod types_tests {
             models: vec![],
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         };
         assert_eq!(
             pc_custom.resolve_url("gpt-4"),
@@ -1996,6 +2002,7 @@ mod types_tests {
                 models: vec![],
                 tool_arguments: None,
                 extra: Default::default(),
+                credentials: Default::default(),
             };
             assert_eq!(pc.tool_arguments_format(), ToolArgumentsFormat::JsonString);
             assert!(pc.resolve_url("m").contains("http"));

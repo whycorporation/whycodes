@@ -1,17 +1,18 @@
 //! Layered config merge.
 
 use crate::types::{
-    Config, MagicKeywordsConfig, QuestionToolConfig, SlopConfig, ToolsConfig, default_agent,
-    default_auto_index_chunks, default_auto_index_files, default_code_min_score,
-    default_code_top_k, default_compaction_llm, default_compaction_threshold,
-    default_consolidate_max, default_intent_guidance, default_max_background_jobs,
-    default_max_tokens, default_memory_backend, default_memory_embed_dim,
-    default_memory_index_bytes, default_memory_index_lines, default_memory_min_score,
-    default_memory_scope, default_memory_token_budget, default_memory_top_k, default_model_race,
-    default_prompt_cache, default_race_after_ms, default_response_cache, default_retain_every_n,
-    default_retain_max_facts, default_risk_threshold, default_sandbox_fallback,
-    default_sandbox_mode, default_session_min_score, default_session_top_k,
-    default_swarm_max_agents, default_tool_profile,
+    BashConfig, Config, MagicKeywordsConfig, QuestionToolConfig, SlopConfig, ToolsConfig,
+    default_agent, default_auto_background_after_secs, default_auto_index_chunks,
+    default_auto_index_files, default_code_min_score, default_code_top_k, default_compaction_llm,
+    default_compaction_threshold, default_consolidate_max, default_intent_guidance,
+    default_max_background_jobs, default_max_tokens, default_memory_backend,
+    default_memory_embed_dim, default_memory_index_bytes, default_memory_index_lines,
+    default_memory_min_score, default_memory_scope, default_memory_token_budget,
+    default_memory_top_k, default_model_race, default_prompt_cache, default_race_after_ms,
+    default_response_cache, default_retain_every_n, default_retain_max_facts,
+    default_risk_threshold, default_sandbox_fallback, default_sandbox_mode,
+    default_session_min_score, default_session_top_k, default_swarm_max_agents,
+    default_tool_profile,
 };
 use whycodes_core::types::PermissionSet;
 
@@ -50,6 +51,9 @@ impl Config {
                     }
                     if !provider.extra.is_empty() {
                         existing.extra = provider.extra.clone();
+                    }
+                    if !provider.credentials.is_empty() {
+                        existing.credentials = provider.credentials.clone();
                     }
                 })
                 .or_insert_with(|| provider.clone());
@@ -453,6 +457,14 @@ impl ToolsConfig {
         }
         if other.question.timeout_secs != qdef.timeout_secs {
             merged.question.timeout_secs = other.question.timeout_secs;
+        }
+
+        let bdef = BashConfig::default();
+        if other.bash.auto_background != bdef.auto_background {
+            merged.bash.auto_background = other.bash.auto_background;
+        }
+        if other.bash.auto_background_after_secs != default_auto_background_after_secs() {
+            merged.bash.auto_background_after_secs = other.bash.auto_background_after_secs;
         }
 
         if !other.disabled_tools.is_empty() {

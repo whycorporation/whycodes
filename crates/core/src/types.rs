@@ -382,6 +382,51 @@ pub struct ProviderConfig {
     /// Provider-specific extra fields (optional in config.toml).
     #[serde(default)]
     pub extra: HashMap<String, serde_json::Value>,
+    /// Named credential pool. Secrets stay in env / `api_key`, never here.
+    #[serde(default, skip_serializing_if = "ProviderCredentials::is_empty")]
+    pub credentials: ProviderCredentials,
+}
+
+/// Several named credentials for one provider (`[providers.<id>.credentials]`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderCredentials {
+    /// Try these names in order (`interactive`, `ci`, …).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<String>,
+    /// Slice of a credential the other lane should not consume (default 0.10).
+    #[serde(default = "default_credential_reserve")]
+    pub reserve: f64,
+    /// Credential name → env var holding the secret (never the secret itself).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
+}
+
+pub fn default_credential_reserve() -> f64 {
+    0.10
+}
+
+impl Default for ProviderCredentials {
+    fn default() -> Self {
+        Self {
+            order: Vec::new(),
+            reserve: default_credential_reserve(),
+            env: HashMap::new(),
+        }
+    }
+}
+
+impl ProviderCredentials {
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty() && self.env.is_empty()
+    }
+
+    pub fn reserve_clamped(&self) -> f64 {
+        if self.reserve.is_finite() {
+            self.reserve.clamp(0.0, 1.0)
+        } else {
+            default_credential_reserve()
+        }
+    }
 }
 
 impl ProviderConfig {
@@ -915,6 +960,7 @@ mod tests {
             models: vec![],
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         }
     }
 
@@ -1064,6 +1110,7 @@ mod tests {
             models: vec![],
             tool_arguments: Some(ToolArgumentsFormat::Object),
             extra: HashMap::new(),
+            credentials: Default::default(),
         };
         assert_eq!(
             custom.resolve_url("m"),
@@ -1073,6 +1120,34 @@ mod tests {
         assert_eq!(
             provider("x").tool_arguments_format(),
             ToolArgumentsFormat::JsonString
+        );
+
+        let empty = ProviderCredentials::default();
+        assert!(empty.is_empty());
+        assert_eq!(empty.reserve_clamped(), default_credential_reserve());
+        let mut named = ProviderCredentials {
+            order: vec!["interactive".into(), "ci".into()],
+            reserve: 1.5,
+            env: HashMap::from([("interactive".into(), "OPENAI_API_KEY".into())]),
+        };
+        assert!(!named.is_empty());
+        assert_eq!(named.reserve_clamped(), 1.0);
+        named.reserve = f64::NAN;
+        assert_eq!(named.reserve_clamped(), default_credential_reserve());
+        named.reserve = -0.2;
+        assert_eq!(named.reserve_clamped(), 0.0);
+        let json = serde_json::to_value(provider("x")).expect("serialize");
+        assert!(json.get("credentials").is_none());
+        let with_creds = ProviderConfig {
+            credentials: named,
+            ..provider("openai")
+        };
+        let round: ProviderConfig =
+            serde_json::from_value(serde_json::to_value(&with_creds).expect("ser")).expect("de");
+        assert_eq!(round.credentials.order, with_creds.credentials.order);
+        assert_eq!(
+            round.credentials.env.get("interactive").map(String::as_str),
+            Some("OPENAI_API_KEY")
         );
     }
 }
