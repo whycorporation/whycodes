@@ -72,9 +72,11 @@ fn credential_candidates_and_next_after() {
     );
     let prev_live = std::env::var_os("OPENAI_API_KEY");
     let prev_ci = std::env::var_os("OPENAI_CI_API_KEY");
+    let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
     unsafe {
         std::env::set_var("OPENAI_API_KEY", "sk-live");
         std::env::set_var("OPENAI_CI_API_KEY", "sk-ci");
+        std::env::set_var("WHYCODES_CREDENTIAL_LANE", "interactive");
     }
     let next = next_credential_after("openai", &cfg, "sk-live").expect("ci follows interactive");
     assert_eq!(next.name, "ci");
@@ -103,6 +105,10 @@ fn credential_candidates_and_next_after() {
         match prev_ci {
             Some(v) => std::env::set_var("OPENAI_CI_API_KEY", v),
             None => std::env::remove_var("OPENAI_CI_API_KEY"),
+        }
+        match prev_lane {
+            Some(v) => std::env::set_var("WHYCODES_CREDENTIAL_LANE", v),
+            None => std::env::remove_var("WHYCODES_CREDENTIAL_LANE"),
         }
     }
 }

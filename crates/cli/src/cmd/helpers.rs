@@ -169,7 +169,8 @@ pub(crate) fn credential_candidates(
     config: &Config,
     env: impl Fn(&str) -> Option<String>,
 ) -> Vec<NamedCredential> {
-    credential_candidates_for_lane(provider, config, env, whycodes_core::types::process_is_ci())
+    let ci = whycodes_core::types::process_is_ci_from(&env);
+    credential_candidates_for_lane(provider, config, env, ci)
 }
 
 pub(crate) fn credential_candidates_for_lane(

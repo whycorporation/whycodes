@@ -1243,16 +1243,81 @@ mod tests {
         );
         named.reserve = 0.0;
         assert_eq!(named.names_for_lane(true), named.names());
-        named.reserve = 0.1;
+        let single = ProviderCredentials {
+            order: vec!["ci".into()],
+            reserve: 0.1,
+            env: HashMap::new(),
+        };
+        assert_eq!(single.names_for_lane(false), single.names());
+        let all_ci = ProviderCredentials {
+            order: vec!["ci".into(), "batch".into()],
+            reserve: 0.1,
+            env: HashMap::new(),
+        };
+        assert_eq!(all_ci.names_for_lane(false), all_ci.names());
+        let all_live = ProviderCredentials {
+            order: vec!["interactive".into(), "live".into()],
+            reserve: 0.1,
+            env: HashMap::new(),
+        };
+        assert_eq!(all_live.names_for_lane(true), all_live.names());
+        let mixed = ProviderCredentials {
+            order: vec!["interactive".into(), "github".into(), "build-ci".into()],
+            reserve: 0.1,
+            env: HashMap::new(),
+        };
+        assert_eq!(
+            mixed.names_for_lane(false),
+            vec![
+                "interactive".to_string(),
+                "github".into(),
+                "build-ci".into()
+            ]
+        );
+        assert_eq!(
+            mixed.names_for_lane(true),
+            vec![
+                "github".to_string(),
+                "build-ci".into(),
+                "interactive".into()
+            ]
+        );
+        let nightly = ProviderCredentials {
+            order: vec!["local".into(), "dev".into(), "nightly_ci".into()],
+            reserve: 0.1,
+            env: HashMap::new(),
+        };
+        assert_eq!(
+            nightly.names_for_lane(true),
+            vec!["nightly_ci".to_string(), "local".into(), "dev".into()]
+        );
+        let _ = process_is_ci();
         assert!(!process_is_ci_from(|_| None));
         assert!(process_is_ci_from(|k| (k == "CI").then(|| "true".into())));
+        assert!(process_is_ci_from(|k| (k == "CI").then(|| "1".into())));
+        assert!(process_is_ci_from(|k| (k == "CI").then(|| "yes".into())));
+        assert!(!process_is_ci_from(|k| (k == "CI").then(|| "false".into())));
+        assert!(process_is_ci_from(
+            |k| (k == "GITHUB_ACTIONS").then(|| "true".into())
+        ));
         assert!(!process_is_ci_from(|k| match k {
             "CI" => Some("true".into()),
             "WHYCODES_CREDENTIAL_LANE" => Some("interactive".into()),
             _ => None,
         }));
+        assert!(!process_is_ci_from(|k| {
+            (k == "WHYCODES_CREDENTIAL_LANE").then(|| "live".into())
+        }));
         assert!(process_is_ci_from(|k| {
             (k == "WHYCODES_CREDENTIAL_LANE").then(|| "ci".into())
+        }));
+        assert!(process_is_ci_from(|k| {
+            (k == "WHYCODES_CREDENTIAL_LANE").then(|| "batch".into())
+        }));
+        assert!(process_is_ci_from(|k| match k {
+            "CI" => Some("true".into()),
+            "WHYCODES_CREDENTIAL_LANE" => Some("other".into()),
+            _ => None,
         }));
         assert_eq!(named.env_var_for("interactive", "openai"), "OPENAI_API_KEY");
         assert_eq!(named.env_var_for("ci", "openai"), "OPENAI_CI_API_KEY");

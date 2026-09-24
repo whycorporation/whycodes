@@ -117,6 +117,7 @@ fn mark_auto_delivered_skips_inject() {
         kill_flag: Arc::new(AtomicBool::new(false)),
         auto_background: true,
         completion_delivered: false,
+        log_path: None,
     }));
     let reg = BackgroundRegistry::new(4);
     {
@@ -162,6 +163,7 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
         kill_flag: Arc::new(AtomicBool::new(false)),
         auto_background: false,
         completion_delivered: false,
+        log_path: None,
     }));
     append_output(&job, &"a".repeat(MAX_JOB_OUTPUT_BYTES + 32));
     {
@@ -191,6 +193,7 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
             kill_flag: Arc::new(AtomicBool::new(false)),
             auto_background: false,
             completion_delivered: false,
+            log_path: None,
         }));
         {
             let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -359,6 +362,7 @@ async fn run_background_job_spawn_failed_and_warning() {
         kill_flag: Arc::new(AtomicBool::new(false)),
         auto_background: false,
         completion_delivered: false,
+        log_path: None,
     }));
     {
         let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -417,6 +421,7 @@ async fn pipe_to_job_stops_on_read_error() {
         kill_flag: Arc::new(AtomicBool::new(false)),
         auto_background: false,
         completion_delivered: false,
+        log_path: None,
     }));
     pipe_to_job(Box::new(FailRead), &job).await;
 }
@@ -435,6 +440,7 @@ async fn run_background_job_aborts_pipe_tasks() {
         kill_flag: Arc::new(AtomicBool::new(false)),
         auto_background: false,
         completion_delivered: false,
+        log_path: None,
     }));
     {
         let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -478,6 +484,7 @@ async fn spawn_pipe_task_none_reader_is_noop() {
         kill_flag: Arc::new(AtomicBool::new(false)),
         auto_background: false,
         completion_delivered: false,
+        log_path: None,
     }));
     let handle = spawn_pipe_task(None, Arc::clone(&job));
     handle.await.expect("join");
@@ -505,6 +512,7 @@ fn wait_status_records_error_and_success() {
         kill_flag: Arc::new(AtomicBool::new(false)),
         auto_background: false,
         completion_delivered: false,
+        log_path: None,
     }));
     assert!(wait_status(Err(std::io::Error::other("wait boom")), &job).is_none());
     let out = job.lock().unwrap().output.clone();
@@ -545,6 +553,7 @@ fn sample_job(status: JobStatus, output: &str) -> JobInner {
         kill_flag: Arc::new(AtomicBool::new(false)),
         auto_background: false,
         completion_delivered: false,
+        log_path: None,
     }
 }
 
@@ -615,4 +624,38 @@ fn lock_recovers_from_poison_and_helpers_cover_fallbacks() {
     cap_job_output(&mut over);
     assert!(over.starts_with('…'), "{over}");
     assert!(over.len() <= MAX_JOB_OUTPUT_BYTES + 4, "{}", over.len());
+}
+
+#[test]
+fn scratch_log_persists_and_skips_failures() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = ensure_scratch_log(dir.path(), "bg-scratch").expect("log");
+    assert_eq!(
+        path,
+        dir.path()
+            .join(".whycodes")
+            .join("scratch")
+            .join("bg-scratch.log")
+    );
+    let mut job = sample_job(JobStatus::Running, "");
+    job.log_path = Some(path.clone());
+    let job = Arc::new(Mutex::new(job));
+    append_output(&job, "hello-scratch");
+    let disk = std::fs::read_to_string(&path).expect("read");
+    assert!(disk.contains("hello-scratch"), "{disk}");
+    persist_scratch_output(&path, "rewritten");
+    assert_eq!(std::fs::read_to_string(&path).expect("reread"), "rewritten");
+
+    let blocked = dir.path().join("blocked-file");
+    std::fs::write(&blocked, "not-a-dir").unwrap();
+    assert!(ensure_scratch_log(&blocked, "bg-x").is_none());
+
+    let clash = dir
+        .path()
+        .join(".whycodes")
+        .join("scratch")
+        .join("bg-clash.log");
+    std::fs::create_dir_all(&clash).unwrap();
+    assert!(ensure_scratch_log(dir.path(), "bg-clash").is_none());
+    persist_scratch_output(&clash, "nope");
 }

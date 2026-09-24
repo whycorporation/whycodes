@@ -5,7 +5,7 @@
 //! via an optional listener (`TurnEvent::Background`).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -77,6 +77,8 @@ struct JobInner {
     /// Auto-detached foreground `bash` (issue #140). Completion is delivered once.
     auto_background: bool,
     completion_delivered: bool,
+    /// Detached stdout/stderr under `.whycodes/scratch/<id>.log`.
+    log_path: Option<PathBuf>,
 }
 
 /// Shared registry of background shell jobs for one agent/session.
@@ -350,6 +352,7 @@ impl BackgroundRegistry {
         let id = format!("bg-{}", self.inner.next_id.fetch_add(1, Ordering::SeqCst));
         let label = nonempty_or_truncated(label, command);
         let kill_flag = Arc::new(AtomicBool::new(false));
+        let log_path = ensure_scratch_log(&prepared.working_dir, &id);
 
         let job = Arc::new(Mutex::new(JobInner {
             id: id.clone(),
@@ -362,6 +365,7 @@ impl BackgroundRegistry {
             kill_flag: Arc::clone(&kill_flag),
             auto_background,
             completion_delivered: false,
+            log_path,
         }));
 
         {
@@ -583,6 +587,29 @@ fn append_output(job: &Arc<Mutex<JobInner>>, chunk: &str) {
     let mut g = lock(job);
     g.output.push_str(chunk);
     cap_job_output(&mut g.output);
+    if let Some(path) = g.log_path.as_deref() {
+        persist_scratch_output(path, &g.output);
+    }
+}
+
+fn ensure_scratch_log(working_dir: &Path, id: &str) -> Option<PathBuf> {
+    let dir = whycodes_core::project_scratch_dir(working_dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::debug!(error = %e, "background scratch dir skipped");
+        return None;
+    }
+    let path = dir.join(format!("{id}.log"));
+    if let Err(e) = std::fs::write(&path, "") {
+        tracing::debug!(error = %e, "background scratch log skipped");
+        return None;
+    }
+    Some(path)
+}
+
+fn persist_scratch_output(path: &Path, output: &str) {
+    if let Err(e) = std::fs::write(path, output) {
+        tracing::debug!(error = %e, "background scratch write skipped");
+    }
 }
 
 fn cap_job_output(output: &mut String) {
