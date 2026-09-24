@@ -284,3 +284,15 @@ fn context_meter_color_scales_with_fill() {
     let _high = context_meter_color(150.0, &palette);
     let _mid = context_meter_color(50.0, &palette);
 }
+
+#[test]
+fn branch_icon_covers_nerd_and_host_fallbacks() {
+    assert_eq!(branch_icon_from(Some("1"), false), "\u{e0a0}");
+    assert_eq!(branch_icon_from(Some("true"), true), "\u{e0a0}");
+    assert_eq!(branch_icon_from(Some("0"), false), "\u{2387}");
+    assert_eq!(branch_icon_from(Some("false"), true), "\u{2261}");
+    assert_eq!(branch_icon_from(None, false), "\u{e0a0}");
+    assert_eq!(branch_icon_from(None, true), "\u{2261}");
+    let live = branch_icon();
+    assert!(!live.is_empty());
+}

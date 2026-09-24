@@ -8054,6 +8054,123 @@ fn read_event_batch_poll_err_after_first() {
     clear_crossterm_stub();
 }
 
+struct LingerStub {
+    polls: VecDeque<io::Result<bool>>,
+    reads: VecDeque<io::Result<Event>>,
+}
+
+impl CrosstermIo for LingerStub {
+    fn poll_crossterm(&mut self, _timeout: Duration) -> io::Result<bool> {
+        self.polls.pop_front().unwrap_or(Ok(false))
+    }
+
+    fn read_crossterm(&mut self) -> io::Result<Event> {
+        self.reads
+            .pop_front()
+            .unwrap_or_else(|| Err(io::Error::other("linger stub empty")))
+    }
+}
+
+#[test]
+fn windows_paste_linger_helpers_cover_host_arms() {
+    let key = press(KeyCode::Char('a'));
+    let resize = Event::Resize(40, 12);
+    assert!(!should_linger_windows_paste(
+        false,
+        false,
+        std::slice::from_ref(&key)
+    ));
+    assert!(!should_linger_windows_paste(
+        true,
+        true,
+        std::slice::from_ref(&key)
+    ));
+    assert!(!should_linger_windows_paste(
+        true,
+        false,
+        &[key.clone(), resize]
+    ));
+    assert!(should_linger_windows_paste(
+        true,
+        false,
+        std::slice::from_ref(&key)
+    ));
+    let skipped = maybe_linger_windows_paste(
+        false,
+        false,
+        &mut LingerStub {
+            polls: VecDeque::new(),
+            reads: VecDeque::new(),
+        },
+        vec![key.clone()],
+    )
+    .expect("non-windows skip");
+    assert_eq!(skipped.len(), 1);
+    assert!(paste_enter_guard_for(true, false));
+    assert!(!paste_enter_guard_for(true, true));
+    assert!(!paste_enter_guard_for(false, false));
+
+    let out = linger_windows_paste_batch(
+        &mut LingerStub {
+            polls: VecDeque::from([Ok(false)]),
+            reads: VecDeque::new(),
+        },
+        vec![key.clone()],
+    )
+    .expect("empty linger");
+    assert_eq!(out.len(), 1);
+
+    let out = linger_windows_paste_batch(
+        &mut LingerStub {
+            polls: VecDeque::from([Ok(true), Ok(false)]),
+            reads: VecDeque::from([Ok(key.clone())]),
+        },
+        vec![key.clone()],
+    )
+    .expect("one extra key");
+    assert_eq!(out.len(), 2);
+
+    let out = linger_windows_paste_batch(
+        &mut LingerStub {
+            polls: VecDeque::from([Ok(true)]),
+            reads: VecDeque::from([Ok(Event::Resize(1, 1))]),
+        },
+        vec![key.clone()],
+    )
+    .expect("resize ends linger");
+    assert_eq!(out.len(), 2);
+
+    let err = linger_windows_paste_batch(
+        &mut LingerStub {
+            polls: VecDeque::from([Err(io::Error::other("poll fail"))]),
+            reads: VecDeque::new(),
+        },
+        vec![key.clone()],
+    )
+    .expect_err("poll err");
+    assert!(err.to_string().contains("poll"), "{err}");
+
+    let err = linger_windows_paste_batch(
+        &mut LingerStub {
+            polls: VecDeque::from([Ok(true)]),
+            reads: VecDeque::from([Err(io::Error::other("read fail"))]),
+        },
+        vec![key.clone()],
+    )
+    .expect_err("read err");
+    assert!(err.to_string().contains("read"), "{err}");
+
+    let err = linger_windows_paste_batch(
+        &mut LingerStub {
+            polls: VecDeque::from([Ok(true), Err(io::Error::other("zero poll fail"))]),
+            reads: VecDeque::from([Ok(key.clone())]),
+        },
+        vec![key.clone()],
+    )
+    .expect_err("inner poll err");
+    assert!(err.to_string().contains("zero poll"), "{err}");
+}
+
 #[test]
 fn panic_restore_falls_back_when_writer_open_fails() {
     restore_terminal_with(|| Err(io::Error::other("no writer")));

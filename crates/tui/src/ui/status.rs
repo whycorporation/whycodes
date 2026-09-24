@@ -20,19 +20,27 @@ use unicode_width::UnicodeWidthStr;
 fn branch_icon() -> &'static str {
     static ICON: OnceLock<&'static str> = OnceLock::new();
     ICON.get_or_init(|| {
-        let nerd = match std::env::var("WHYCODES_NERD_FONTS").ok().as_deref() {
-            Some("0") | Some("false") => false,
-            Some(_) => true,
-            None => !cfg!(windows),
-        };
-        if nerd {
-            "\u{e0a0}" //  Powerline branch
-        } else if cfg!(windows) {
-            "\u{2261}" // ≡
-        } else {
-            "\u{2387}" // ⎇
-        }
+        branch_icon_from(
+            std::env::var("WHYCODES_NERD_FONTS").ok().as_deref(),
+            cfg!(windows),
+        )
     })
+}
+
+/// Host detection split out so Linux CI can drive the Windows glyph.
+fn branch_icon_from(nerd_env: Option<&str>, is_windows: bool) -> &'static str {
+    let nerd = match nerd_env {
+        Some("0") | Some("false") => false,
+        Some(_) => true,
+        None => !is_windows,
+    };
+    if nerd {
+        "\u{e0a0}" //  Powerline branch
+    } else if is_windows {
+        "\u{2261}" // ≡
+    } else {
+        "\u{2387}" // ⎇
+    }
 }
 
 /// Home-matching wordmark: `? ` then bold fg `why` + dim `codes`.

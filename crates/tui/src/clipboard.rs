@@ -28,21 +28,19 @@ pub fn copy_text(text: &str) -> bool {
     }
     let osc = osc52(text);
     let mut ok = write_osc52_to(&mut io::stdout().lock(), &osc);
-    if cfg!(windows) {
-        // Native Win32 clipboard. The Unix helpers can never exist here,
-        // and each failed `CreateProcess` walks the whole PATH × PATHEXT
-        // (plus Defender) — four attempts froze the TUI for seconds on
-        // hosts with a long PATH. Classic conhost also ignores OSC 52, so
-        // this is the only path that actually lands on Windows.
-        // `!cfg!(test)`: unit tests must not clobber the developer's real
-        // clipboard (the stub covers copy_text's logic).
-        ok |= !cfg!(test) && windows_clipboard::set_text(text);
-    } else {
-        ok |= try_wl_copy(text);
-        ok |= try_xclip(text);
-        ok |= try_pbcopy(text);
-    }
+    ok |= copy_text_host_paths(text, cfg!(windows), !cfg!(test));
     ok
+}
+
+/// Native Win32 on Windows (Unix helpers freeze PATH×PATHEXT there);
+/// `wl-copy` / `xclip` / `pbcopy` elsewhere. `allow_native` is false in
+/// unit tests so we never clobber the developer's clipboard.
+fn copy_text_host_paths(text: &str, is_windows: bool, allow_native: bool) -> bool {
+    if is_windows {
+        allow_native && windows_clipboard::set_text(text)
+    } else {
+        try_wl_copy(text) || try_xclip(text) || try_pbcopy(text)
+    }
 }
 
 /// Direct `CF_UNICODETEXT` write — no process spawn, no code-page loss.

@@ -52,10 +52,15 @@ pub fn is_legacy_windows_console() -> bool {
 }
 
 fn forced_legacy_console_override() -> Option<bool> {
-    match std::env::var("WHYCODES_FORCE_LEGACY_CONSOLE")
-        .ok()
-        .as_deref()
-    {
+    parse_legacy_console_override(
+        std::env::var("WHYCODES_FORCE_LEGACY_CONSOLE")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn parse_legacy_console_override(raw: Option<&str>) -> Option<bool> {
+    match raw {
         Some("1" | "true") => Some(true),
         Some("0" | "false") => Some(false),
         _ => None,
@@ -63,19 +68,28 @@ fn forced_legacy_console_override() -> Option<bool> {
 }
 
 fn detect_legacy_windows_console() -> bool {
-    if !cfg!(windows) {
+    detect_legacy_windows_console_with(cfg!(windows), |k| std::env::var_os(k), |k| std::env::var(k))
+}
+
+/// Host detection split out so Linux CI can drive the Windows arms.
+fn detect_legacy_windows_console_with(
+    is_windows: bool,
+    var_os: impl Fn(&str) -> Option<std::ffi::OsString>,
+    var: impl Fn(&str) -> Result<String, std::env::VarError>,
+) -> bool {
+    if !is_windows {
         return false;
     }
-    if std::env::var_os("WT_SESSION").is_some() {
+    if var_os("WT_SESSION").is_some() {
         return false;
     }
-    if std::env::var("ConEmuANSI")
+    if var("ConEmuANSI")
         .ok()
         .is_some_and(|v| v.trim().eq_ignore_ascii_case("ON"))
     {
         return false;
     }
-    if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
+    if let Ok(term_program) = var("TERM_PROGRAM") {
         let t = term_program.to_ascii_lowercase();
         if matches!(
             t.as_str(),
@@ -92,7 +106,7 @@ fn detect_legacy_windows_console() -> bool {
             return false;
         }
     }
-    if let Ok(term) = std::env::var("TERM") {
+    if let Ok(term) = var("TERM") {
         let t = term.to_ascii_lowercase();
         if t.contains("xterm")
             || t.contains("alacritty")
@@ -161,5 +175,107 @@ mod tests {
         assert_eq!(s.fg, Some(Color::Rgb(1, 2, 3)));
         assert_eq!(s.bg, Some(Color::Rgb(18, 18, 24)));
         assert!(!s.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn forced_legacy_console_override_reads_env_values() {
+        assert_eq!(parse_legacy_console_override(Some("1")), Some(true));
+        assert_eq!(parse_legacy_console_override(Some("true")), Some(true));
+        assert_eq!(parse_legacy_console_override(Some("0")), Some(false));
+        assert_eq!(parse_legacy_console_override(Some("false")), Some(false));
+        assert_eq!(parse_legacy_console_override(Some("maybe")), None);
+        assert_eq!(parse_legacy_console_override(None), None);
+        assert!(!detect_legacy_windows_console_with(
+            false,
+            |_| None,
+            |_| { Err(std::env::VarError::NotPresent) }
+        ));
+        assert!(detect_legacy_windows_console_with(
+            true,
+            |_| None,
+            |_| { Err(std::env::VarError::NotPresent) }
+        ));
+        assert!(!detect_legacy_windows_console_with(
+            true,
+            |k| {
+                if k == "WT_SESSION" {
+                    Some(std::ffi::OsString::from("1"))
+                } else {
+                    None
+                }
+            },
+            |_| Err(std::env::VarError::NotPresent),
+        ));
+        assert!(!detect_legacy_windows_console_with(
+            true,
+            |_| None,
+            |k| {
+                if k == "ConEmuANSI" {
+                    Ok("ON".into())
+                } else {
+                    Err(std::env::VarError::NotPresent)
+                }
+            },
+        ));
+        for program in [
+            "vscode",
+            "cursor",
+            "wezterm",
+            "ghostty",
+            "alacritty",
+            "kitty",
+            "zed",
+            "warp",
+            "windows_terminal",
+            "VSCODE",
+        ] {
+            assert!(
+                !detect_legacy_windows_console_with(
+                    true,
+                    |_| None,
+                    |k| {
+                        if k == "TERM_PROGRAM" {
+                            Ok(program.into())
+                        } else {
+                            Err(std::env::VarError::NotPresent)
+                        }
+                    },
+                ),
+                "{program}"
+            );
+        }
+        for term in ["xterm-256color", "alacritty", "kitty", "wezterm", "ghostty"] {
+            assert!(
+                !detect_legacy_windows_console_with(
+                    true,
+                    |_| None,
+                    |k| {
+                        if k == "TERM" {
+                            Ok(term.into())
+                        } else {
+                            Err(std::env::VarError::NotPresent)
+                        }
+                    },
+                ),
+                "{term}"
+            );
+        }
+        assert!(detect_legacy_windows_console_with(
+            true,
+            |_| None,
+            |k| {
+                if k == "TERM_PROGRAM" {
+                    Ok("conhost".into())
+                } else if k == "TERM" {
+                    Ok("dumb".into())
+                } else if k == "ConEmuANSI" {
+                    Ok("off".into())
+                } else {
+                    Err(std::env::VarError::NotPresent)
+                }
+            },
+        ));
+        let _ = forced_legacy_console_override();
+        let _ = detect_legacy_windows_console();
     }
 }

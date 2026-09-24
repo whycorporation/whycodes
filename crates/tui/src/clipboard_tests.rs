@@ -331,6 +331,11 @@ fn paint_ranges_clipped_skips_empty_and_inverted_clip() {
     let _ = try_pbcopy("coverage");
     let _ = try_xclip("coverage");
     let _ = try_wl_copy("coverage");
+    assert!(!copy_text_host_paths("coverage", true, false));
+    // `allow_native=true` on Windows writes CF_UNICODETEXT; Linux CI still
+    // needs the Windows arm so the not(windows) stub is counted.
+    let _ = copy_text_host_paths("coverage", true, cfg!(not(windows)));
+    let _ = copy_text_host_paths("coverage", false, true);
     assert!(!pipe_to(&["whycodes-no-such-copy-bin"], "x"));
     #[cfg(windows)]
     assert!(pipe_to(&["cmd", "/C", "exit", "0"], "coverage"));
