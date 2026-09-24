@@ -402,13 +402,49 @@ fn windows_clipboard_script_embeds_the_dest_path() {
     assert!(script.contains("ImageFormat]::Png"));
 }
 
-#[cfg(target_os = "windows")]
 #[test]
 fn command_stdout_echo_and_missing_bin() {
+    #[cfg(windows)]
     let out = command_stdout("cmd", &["/C", "echo hi"], TIMEOUT).expect("echo");
+    #[cfg(not(windows))]
+    let out = command_stdout("printf", &["hi"], TIMEOUT).expect("printf");
     assert!(!out.is_empty());
     match command_stdout("whycodes-no-such-clipboard-bin", &[], TIMEOUT) {
         Err(RunErr::NotFound) => {}
         other => panic!("expected NotFound, got {other:?}"),
+    }
+}
+
+#[test]
+fn read_os_image_host_gate_covers_every_arm() {
+    chmod_clipboard_dir(std::env::temp_dir().as_path(), false);
+    chmod_clipboard_dir(std::env::temp_dir().as_path(), true);
+
+    // Missing helpers: linux (wl-paste/xclip) → Empty; macOS (pngpaste/osascript)
+    // → Empty or the osascript-required error; Windows (powershell) as before.
+    match read_os_image_on(false, false) {
+        Ok(PromptClipboard::Empty | PromptClipboard::ImagePaths(_)) => {}
+        Err(e) => panic!("linux arm must be silent without wl-paste/xclip, got {e}"),
+        Ok(PromptClipboard::Text(_)) => panic!("production OS path must not return Text"),
+    }
+    match read_os_image_on(true, false) {
+        Ok(PromptClipboard::Empty | PromptClipboard::ImagePaths(_)) => {}
+        Err(e) => {
+            assert!(
+                e.contains("osascript") || e.contains("pngpaste") || e.contains("too large"),
+                "{e}"
+            );
+        }
+        Ok(PromptClipboard::Text(_)) => panic!("production OS path must not return Text"),
+    }
+    match read_os_image_on(false, true) {
+        Ok(PromptClipboard::Empty | PromptClipboard::ImagePaths(_)) => {}
+        Err(e) => {
+            assert!(
+                e.contains("PowerShell") || e.contains("too large") || e.contains("read clipboard"),
+                "{e}"
+            );
+        }
+        Ok(PromptClipboard::Text(_)) => panic!("production OS path must not return Text"),
     }
 }

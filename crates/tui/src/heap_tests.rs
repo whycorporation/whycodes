@@ -1,8 +1,9 @@
 use super::*;
 
 #[test]
-fn release_retained_heap_is_safe_to_call() {
-    release_retained_heap("unit_test");
+fn release_retained_heap_host_gate_covers_both_arms() {
+    release_retained_heap_on(false, "non_linux");
+    release_retained_heap_on(true, "linux_or_stub");
 }
 
 #[test]

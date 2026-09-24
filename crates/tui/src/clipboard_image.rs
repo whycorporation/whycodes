@@ -15,9 +15,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use crate::images::MAX_IMAGE_BYTES;
-#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
-use crate::images::resolve_image_path;
+use crate::images::{MAX_IMAGE_BYTES, resolve_image_path};
 
 const TIMEOUT: Duration = Duration::from_millis(1500);
 
@@ -118,13 +116,7 @@ pub(crate) fn stash_image_bytes_in(bytes: &[u8], dir: &Path) -> Result<PathBuf, 
         "clipboard data is not a recognized image (png/jpeg/gif/webp/bmp/tiff/ico)".to_string()
     })?;
     std::fs::create_dir_all(dir).map_err(|e| format!("create clipboard-images dir: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(error) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
-            tracing::debug!(%error, "clipboard-images chmod 0700");
-        }
-    }
+    chmod_clipboard_dir(dir, cfg!(unix));
     prune_old_clipboard_images(dir);
     let seq = STASH_SEQ.fetch_add(1, Ordering::Relaxed);
     let millis = std::time::SystemTime::now()
@@ -139,6 +131,24 @@ pub(crate) fn stash_image_bytes_in(bytes: &[u8], dir: &Path) -> Result<PathBuf, 
     std::fs::write(&path, bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
 }
+
+fn chmod_clipboard_dir(dir: &Path, is_unix: bool) {
+    if !is_unix {
+        return;
+    }
+    chmod_clipboard_dir_unix(dir);
+}
+
+#[cfg(unix)]
+fn chmod_clipboard_dir_unix(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(error) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
+        tracing::debug!(%error, "clipboard-images chmod 0700");
+    }
+}
+
+#[cfg(not(unix))]
+fn chmod_clipboard_dir_unix(_dir: &Path) {}
 
 fn clipboard_images_dir() -> PathBuf {
     whycodes_core::paths::data_dir().join("clipboard-images")
@@ -197,21 +207,20 @@ pub fn read_for_prompt() -> Result<PromptClipboard, String> {
 }
 
 fn read_os_image() -> Result<PromptClipboard, String> {
-    #[cfg(target_os = "macos")]
-    {
+    read_os_image_on(cfg!(target_os = "macos"), cfg!(target_os = "windows"))
+}
+
+/// Host gate extracted so Linux skip-expansions can drive every OS arm.
+fn read_os_image_on(is_macos: bool, is_windows: bool) -> Result<PromptClipboard, String> {
+    if is_macos {
         read_macos_image()
-    }
-    #[cfg(target_os = "windows")]
-    {
+    } else if is_windows {
         read_windows_image()
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
+    } else {
         read_linux_image()
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn read_linux_image() -> Result<PromptClipboard, String> {
     match read_wayland_image()? {
         PromptClipboard::Empty => {}
@@ -225,7 +234,6 @@ fn read_linux_image() -> Result<PromptClipboard, String> {
     Ok(PromptClipboard::Empty)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn read_wayland_image() -> Result<PromptClipboard, String> {
     let types = match command_stdout("wl-paste", &["--list-types"], TIMEOUT) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
@@ -258,7 +266,6 @@ fn read_wayland_image() -> Result<PromptClipboard, String> {
     Ok(PromptClipboard::Empty)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn read_xclip_image() -> Result<PromptClipboard, String> {
     let types = match command_stdout(
         "xclip",
@@ -304,7 +311,6 @@ fn read_xclip_image() -> Result<PromptClipboard, String> {
     Ok(PromptClipboard::Empty)
 }
 
-#[cfg(target_os = "macos")]
 fn read_macos_image() -> Result<PromptClipboard, String> {
     match command_stdout("pngpaste", &["-"], TIMEOUT) {
         Ok(bytes) => return bytes_to_prompt(Ok(bytes)),
@@ -349,9 +355,6 @@ function run() {
     }
 }
 
-/// Live PowerShell dump. Compiled in tests so Linux skip-expansions can
-/// drive the helper without a pasteboard.
-#[cfg(any(windows, test))]
 fn read_windows_image() -> Result<PromptClipboard, String> {
     let dest = std::env::temp_dir().join(format!(
         "whycodes-clip-{}-{}.png",
@@ -368,9 +371,7 @@ fn read_windows_image() -> Result<PromptClipboard, String> {
     finish_windows_clipboard(dest, result)
 }
 
-/// PowerShell snippet that dumps the clipboard bitmap to `dest`. Compiled on
-/// Windows and in tests so tests can drive the script without a pasteboard.
-#[cfg(any(windows, test))]
+/// PowerShell snippet that dumps the clipboard bitmap to `dest`.
 fn windows_clipboard_script(dest: &str) -> String {
     format!(
         "Add-Type -AssemblyName System.Windows.Forms; \
@@ -381,9 +382,7 @@ fn windows_clipboard_script(dest: &str) -> String {
     )
 }
 
-/// Finish a PowerShell clipboard dump. Compiled on Windows and in tests so
-/// Linux skip-expansions can drive every arm without a pasteboard.
-#[cfg(any(windows, test))]
+/// Finish a PowerShell clipboard dump.
 fn finish_windows_clipboard(
     dest: PathBuf,
     result: Result<(), RunErr>,
@@ -394,7 +393,6 @@ fn finish_windows_clipboard(
     }
 }
 
-#[cfg(any(windows, test))]
 fn finish_windows_saved_image(dest: &Path) -> Result<PromptClipboard, String> {
     let bytes = match std::fs::read(dest) {
         Ok(b) => b,
@@ -407,7 +405,6 @@ fn finish_windows_saved_image(dest: &Path) -> Result<PromptClipboard, String> {
     bytes_to_prompt(Ok(bytes))
 }
 
-#[cfg(any(windows, test))]
 fn windows_clipboard_run_err(dest: &Path, err: RunErr) -> Result<PromptClipboard, String> {
     cleanup_temp(dest);
     match err {
@@ -418,7 +415,6 @@ fn windows_clipboard_run_err(dest: &Path, err: RunErr) -> Result<PromptClipboard
     }
 }
 
-#[cfg(any(windows, test))]
 fn cleanup_temp(path: &Path) {
     if let Err(error) = std::fs::remove_file(path)
         && path.exists()
@@ -427,7 +423,6 @@ fn cleanup_temp(path: &Path) {
     }
 }
 
-#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
 fn first_image_mime<'a, I>(types: I) -> Option<&'static str>
 where
     I: IntoIterator<Item = &'a str>,
@@ -458,7 +453,6 @@ where
 
 /// `text/uri-list`: comments (`#`) skipped; `file://` and raw paths kept when
 /// they resolve to an existing image.
-#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
 pub(crate) fn parse_uri_list(data: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for line in data.lines() {
@@ -547,7 +541,6 @@ fn command_stdout(bin: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>
     }
 }
 
-#[cfg(any(windows, test))]
 fn command_status(bin: &str, args: &[&str], timeout: Duration) -> Result<(), RunErr> {
     match command_stdout(bin, args, timeout) {
         Ok(_) => Ok(()),

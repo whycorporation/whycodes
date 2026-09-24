@@ -18,25 +18,35 @@ static AFTER_DRAW_REASON: Mutex<&'static str> = Mutex::new("post-draw");
 
 /// Ask glibc to return unused arena pages. Safe no-op elsewhere.
 pub fn release_retained_heap(reason: &'static str) {
-    #[cfg(target_os = "linux")]
-    {
-        unsafe extern "C" {
-            fn malloc_trim(pad: usize) -> i32;
-        }
-        // SAFETY: malloc_trim is a documented glibc extension; pad=0 means
-        // "keep no padding". Other libcs typically lack the symbol — we
-        // only compile this block on Linux.
-        let trimmed = unsafe { malloc_trim(0) };
-        tracing::debug!(reason, trimmed, "malloc_trim");
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
+    release_retained_heap_on(cfg!(target_os = "linux"), reason);
+}
+
+/// Host gate extracted so Linux skip-expansions can drive both arms.
+fn release_retained_heap_on(is_linux: bool, reason: &'static str) {
+    if is_linux {
+        malloc_trim_linux(reason);
+    } else {
         let _ = reason;
     }
     if let Ok(mut g) = LAST_TRIM.lock() {
         *g = Some(Instant::now());
     }
 }
+
+#[cfg(target_os = "linux")]
+fn malloc_trim_linux(reason: &'static str) {
+    unsafe extern "C" {
+        fn malloc_trim(pad: usize) -> i32;
+    }
+    // SAFETY: malloc_trim is a documented glibc extension; pad=0 means
+    // "keep no padding". Other libcs typically lack the symbol — we
+    // only compile this block on Linux.
+    let trimmed = unsafe { malloc_trim(0) };
+    tracing::debug!(reason, trimmed, "malloc_trim");
+}
+
+#[cfg(not(target_os = "linux"))]
+fn malloc_trim_linux(_reason: &'static str) {}
 
 /// [`release_retained_heap`] unless one already ran inside `min_interval`.
 pub fn release_retained_heap_debounced(reason: &'static str, min_interval: Duration) -> bool {
