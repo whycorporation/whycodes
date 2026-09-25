@@ -135,6 +135,9 @@ fn refine_gate_allows_legacy_default_multi_turn() {
 
     session.title_source = whycodes_session::TitleSource::Heuristic;
     assert!(!should_refine_title(&session)); // multi-turn + already heuristicked
+
+    let empty = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
+    assert!(!should_refine_title(&empty), "no user text → skip refine");
 }
 
 #[test]

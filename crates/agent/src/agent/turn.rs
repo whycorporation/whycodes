@@ -361,12 +361,14 @@ impl Agent {
                         && next != api_key
                     {
                         tracing::info!(credential = %name, "429 — retrying same model on next credential");
-                        emit(
-                            &events,
-                            TurnEvent::Status(format!(
-                                "Rate limited — retrying {provider_name}/{model} on credential `{name}`"
-                            )),
-                        );
+                        let mut status = String::from("Rate limited — retrying ");
+                        status.push_str(provider_name);
+                        status.push('/');
+                        status.push_str(model);
+                        status.push_str(" on credential `");
+                        status.push_str(&name);
+                        status.push('`');
+                        emit(&events, TurnEvent::Status(status));
                         api_key = next;
                         self.set_sticky_credential(Some(name));
                         continue;

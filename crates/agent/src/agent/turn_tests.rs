@@ -1717,3 +1717,15 @@ async fn rate_limit_same_secret_does_not_loop() {
     }
     assert_rate_limited(&err);
 }
+
+#[tokio::test]
+async fn successful_turn_stamps_default_sticky_credential() {
+    let agent = scripted([ScriptedStep::Text("ok".into())]);
+    let mut session = session_user("please explain the retry loop");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", Some(2))
+        .await
+        .expect("turn");
+    assert!(out.contains("ok"), "{out}");
+    assert_eq!(agent.sticky_credential().as_deref(), Some("default"));
+}

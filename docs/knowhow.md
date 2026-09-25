@@ -144,6 +144,66 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-25 — Windows coverage: CLI `cmd_run` hangs on a live TUI
+
+**Symptom:** `scripts/coverage.sh` stuck in `whycodes-cli` on
+`cmd_run_force_plain_fallback_message` and a pile of sibling `cmd_run_*`
+tests (`has been running for over 60 seconds`). IsolatedHome never
+released `ENV_LOCK`.
+
+**JSONL / crash:** none.
+
+**Root cause:** `should_use_tui` treated `tui_available()` as enough.
+Git Bash / Cursor have a controlling console (`CONOUT$`), so
+`cmd_run(..., plain=false)` without `WHYCODES_TEST_TUI` entered the real
+ratatui loop and waited for input.
+
+**Fix:** Under `cfg!(test)`, TUI only when `WHYCODES_TEST_TUI` is set.
+Production still uses `tui_available()`.
+
+**Prevention:** `should_use_tui_in` cases in `crates/cli/src/cmd/run_tests.rs`.
+Do not call live `whycodes_tui::run` from CLI unit tests without the stub env.
+
+### 2026-09-25 — Windows coverage: OAuth loopback tests time out
+
+**Symptom:** `scripts/coverage.sh` died in `whycodes-auth` with
+`FlowCancelled("timed out waiting for the browser redirect")` on
+`login_with_spec_persists_loopback_flow` and three sibling loopback tests.
+
+**JSONL / crash:** none.
+
+**Root cause:** The mock UI posted the callback to `localhost:{port}`. On
+Windows that is often `::1`. `loopback_login` binds `127.0.0.1`. The
+connect hung / failed in a detached thread, and the 400ms test timeout
+expired. Coverage also started the accept loop *after* the UI posted.
+
+**Fix:** Callback helper always connects to `127.0.0.1` with retries.
+`loopback_login` spawns `wait_for_callback` before `show_sign_in`.
+
+**Prevention:** `loopback_callback_addr_uses_ipv4_not_localhost`. Do not
+`TcpStream::connect("localhost")` against a `127.0.0.1` listener.
+
+### 2026-09-25 — Windows coverage: MCP stdio tests spawn 0 tools
+
+**Symptom:** `scripts/coverage.sh` died in `whycodes-agent` with
+`mcp_load::tests::register_stdio_success_and_call_bridged_tool`:
+`expected at least one MCP tool, got 0`.
+
+**JSONL / crash:** none (connect failed, `register_mcp_tools` warned and skipped).
+
+**Root cause:** The test spawned `python3`. Coverage prepends an extensionless
+Git-Bash `python3` shim onto `PATH`. Windows `CreateProcess` only resolves
+`PATHEXT` (`.exe` / `.cmd` / …), so the shim is not spawnable. The helper
+treated any file named `python3` as a hit and never fell through to
+`python.exe` / `py.exe`.
+
+**Fix:** PATH lookup skips extensionless names when `PATHEXT` is set, then
+tries `python3` → `python` → `py`. Same helper in `crates/mcp` stdio tests.
+
+**Prevention:** `command_on_path_with` unit cases in `mcp_load_tests.rs` and
+`client_tests.rs`. Do not `Command::new("python3")` on Windows without a
+PATHEXT-aware lookup.
+
 ### 2026-09-21 — Todo tool row painted truncated JSON
 
 **Symptom:** While `todowrite` ran, the chat tool row showed

@@ -1350,6 +1350,26 @@ async fn auto_background_closed_listener_is_debug_logged() {
     a.background.kill_all();
 }
 
+#[tokio::test]
+async fn background_shell_closed_listener_is_debug_logged() {
+    let a = test_agent();
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    let started = a.execute_background_shell(
+        &tc(
+            "bash",
+            json!({"command": hang_shell(), "description": "closed"}),
+        ),
+        &ctx,
+        Some(&tx),
+    );
+    assert!(!started.is_error, "{started:?}");
+    a.background.kill_all();
+}
+
 #[test]
 fn execute_worktree_tool_create_enter_exit_remove_on_git_repo() {
     let a = test_agent();

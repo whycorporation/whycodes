@@ -17,7 +17,25 @@ pub(crate) fn force_plain_mode(cli_plain: bool) -> bool {
 }
 
 pub(crate) fn should_use_tui(force_plain: bool, stub_tui: bool, tui_available: bool) -> bool {
-    !force_plain && (stub_tui || tui_available)
+    should_use_tui_in(cfg!(test), force_plain, stub_tui, tui_available)
+}
+
+/// Tests only enter the TUI when `WHYCODES_TEST_TUI` is set (`stub_tui`).
+/// Git Bash / Cursor still have a controlling console, so `tui_available()`
+/// is true and would otherwise hang `cmd_run` on a live ratatui loop.
+pub(crate) fn should_use_tui_in(
+    for_test: bool,
+    force_plain: bool,
+    stub_tui: bool,
+    tui_available: bool,
+) -> bool {
+    if force_plain {
+        return false;
+    }
+    if for_test {
+        return stub_tui;
+    }
+    stub_tui || tui_available
 }
 
 pub(crate) fn is_repl_interactive(prompt: Option<&str>, structured: bool) -> bool {

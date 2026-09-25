@@ -1228,6 +1228,11 @@ mod paths_tests {
         let _ = user_home();
         let _ = instance_root();
         let _ = legacy_instance_roots();
+        assert!(legacy_roots_from(None).is_empty());
+        assert_eq!(
+            legacy_roots_from(Some((PathBuf::from("/a"), PathBuf::from("/a")))),
+            vec![PathBuf::from("/a")]
+        );
     }
 
     #[test]
@@ -1740,6 +1745,43 @@ mod types_tests {
     fn fallback_tool_call_id_is_call_plus_index() {
         assert_eq!(fallback_tool_call_id(0), "call_0");
         assert_eq!(fallback_tool_call_id(12), "call_12");
+    }
+
+    #[test]
+    fn credential_names_and_env_var_fallbacks() {
+        let empty = ProviderCredentials::default();
+        assert_eq!(empty.names(), vec!["default".to_string()]);
+        assert_eq!(empty.env_var_for("default", "xai"), "XAI_API_KEY");
+
+        let extra_env = ProviderCredentials {
+            order: vec!["interactive".into()],
+            reserve: 0.1,
+            env: HashMap::from([("ci".into(), "OPENAI_CI_API_KEY".into())]),
+        };
+        assert_eq!(
+            extra_env.names(),
+            vec!["interactive".to_string(), "ci".into()]
+        );
+
+        let env_only = ProviderCredentials {
+            order: vec![],
+            reserve: 0.1,
+            env: HashMap::from([("ci".into(), "OPENAI_CI_API_KEY".into())]),
+        };
+        assert_eq!(env_only.names(), vec!["ci".to_string()]);
+
+        let mut named = ProviderCredentials {
+            order: vec!["interactive".into(), "ci".into()],
+            reserve: 0.1,
+            env: HashMap::from([("interactive".into(), "OPENAI_API_KEY".into())]),
+        };
+        named.env.insert("blank".into(), String::new());
+        assert_eq!(named.env_var_for("blank", "openai"), "OPENAI_BLANK_API_KEY");
+        assert_eq!(
+            named.env_var_for("build-ci", "openai"),
+            "OPENAI_BUILD_CI_API_KEY"
+        );
+        assert_eq!(named.env_var_for("interactive", "openai"), "OPENAI_API_KEY");
     }
 
     // ── test_tool_definition_serialize ──────────────────────────────────

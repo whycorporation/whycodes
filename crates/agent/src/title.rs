@@ -87,7 +87,8 @@ pub async fn generate_title(
     assistant_snippet: Option<&str>,
 ) -> whycodes_core::Result<String> {
     let user_text = truncate(user_text, 800);
-    let mut body = format!("User request:\n{user_text}");
+    let mut body = String::from("User request:\n");
+    body.push_str(&user_text);
     if let Some(a) = assistant_snippet.map(str::trim).filter(|s| !s.is_empty()) {
         body.push_str("\n\nAssistant excerpt:\n");
         body.push_str(&truncate(a, 400));

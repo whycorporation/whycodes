@@ -43,17 +43,8 @@ impl Agent {
         if self.event_sink.is_none()
             && let Some(tx) = events
         {
-            let tx = tx.clone();
             self.background
-                .set_listener(Some(std::sync::Arc::new(move |ev| {
-                    if let Err(e) = tx.send(TurnEvent::Background {
-                        id: ev.id,
-                        status: ev.status.as_str().to_string(),
-                        summary: ev.summary,
-                    }) {
-                        tracing::debug!(error = %e, "background event dropped (listener closed)");
-                    }
-                })));
+                .set_listener(Some(background_turn_listener(tx.clone())));
         }
         match self.background.start_shell(
             &command,
@@ -70,13 +61,16 @@ impl Agent {
                         summary: truncate_permission_detail(&command),
                     },
                 );
+                let mut content = String::from("Background job `");
+                content.push_str(&id);
+                content.push_str("` started.\nCommand: ");
+                content.push_str(&command);
+                content.push_str("\nUse tool `bg` with action=list|read|kill (id=");
+                content.push_str(&id);
+                content.push_str(").");
                 ToolResult {
                     tool_call_id: call.id.clone(),
-                    content: format!(
-                        "Background job `{id}` started.\n\
-                         Command: {command}\n\
-                         Use tool `bg` with action=list|read|kill (id={id})."
-                    ),
+                    content,
                     is_error: false,
                 }
             }
@@ -110,12 +104,14 @@ impl Agent {
         let assessment =
             whycodes_command_risk::assess(&command, std::path::Path::new(&tool_ctx.working_dir));
         if assessment.level == whycodes_command_risk::RiskLevel::Catastrophic {
+            let mut content = String::from("Refused: `");
+            content.push_str(&command);
+            content.push_str(
+                "` is catastrophic and cannot be auto-backgrounded. Run it yourself if you are certain.",
+            );
             return ToolResult {
                 tool_call_id: call.id.clone(),
-                content: format!(
-                    "Refused: `{command}` is catastrophic and cannot be auto-backgrounded. \
-                     Run it yourself if you are certain."
-                ),
+                content,
                 is_error: true,
             };
         }
@@ -127,17 +123,8 @@ impl Agent {
         if self.event_sink.is_none()
             && let Some(tx) = events
         {
-            let tx = tx.clone();
             self.background
-                .set_listener(Some(std::sync::Arc::new(move |ev| {
-                    if let Err(e) = tx.send(TurnEvent::Background {
-                        id: ev.id,
-                        status: ev.status.as_str().to_string(),
-                        summary: ev.summary,
-                    }) {
-                        tracing::debug!(error = %e, "background event dropped (listener closed)");
-                    }
-                })));
+                .set_listener(Some(background_turn_listener(tx.clone())));
         }
         let id = match self.background.start_shell_auto(
             &command,
@@ -168,13 +155,20 @@ impl Agent {
                     summary: truncate_permission_detail(&command),
                 },
             );
+            let secs = self.bash_auto_background_after.as_secs().to_string();
+            let mut content = String::from("job_id: ");
+            content.push_str(&id);
+            content.push_str("\nstate: running\nCommand: ");
+            content.push_str(&command);
+            content.push_str("\nAuto-backgrounded after ");
+            content.push_str(&secs);
+            content.push_str("s. Use `bg` action=read|kill (id=");
+            content.push_str(&id);
+            content.push_str(").\n");
+            content.push_str(&tail);
             return ToolResult {
                 tool_call_id: call.id.clone(),
-                content: format!(
-                    "job_id: {id}\nstate: running\nCommand: {command}\n\
-                     Auto-backgrounded after {}s. Use `bg` action=read|kill (id={id}).\n{tail}",
-                    self.bash_auto_background_after.as_secs()
-                ),
+                content,
                 is_error: false,
             };
         }
@@ -1437,6 +1431,20 @@ fn fold_pending_usage(
         return;
     }
     super::recover_lock(pending).add(usage);
+}
+
+fn background_turn_listener(tx: EventSink) -> crate::background::BackgroundListener {
+    std::sync::Arc::new(move |ev| {
+        send_or_debug(
+            &tx,
+            TurnEvent::Background {
+                id: ev.id,
+                status: ev.status.as_str().to_string(),
+                summary: ev.summary,
+            },
+            "background event dropped (listener closed)",
+        );
+    })
 }
 
 fn send_or_debug(tx: &EventSink, event: TurnEvent, dropped: &'static str) {

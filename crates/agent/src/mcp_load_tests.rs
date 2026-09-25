@@ -156,11 +156,87 @@ async fn connect_http_sse_auto_with_bad_url_errors() {
 }
 
 fn python() -> &'static str {
-    if std::path::Path::new("/usr/bin/python3").exists() {
+    python_from(&["python3", "python", "py"])
+}
+
+fn python_from(cmds: &[&'static str]) -> &'static str {
+    python_from_with(
+        cmds,
+        command_on_path,
+        python_bin(std::path::Path::new("/usr/bin/python3").exists()),
+    )
+}
+
+fn python_from_with(
+    cmds: &[&'static str],
+    available: fn(&str) -> bool,
+    fallback: &'static str,
+) -> &'static str {
+    for cmd in cmds {
+        if available(cmd) {
+            return cmd;
+        }
+    }
+    fallback
+}
+
+fn python_bin(usr_bin_exists: bool) -> &'static str {
+    if usr_bin_exists {
         "/usr/bin/python3"
     } else {
         "python3"
     }
+}
+
+fn command_on_path(cmd: &str) -> bool {
+    command_on_path_with(
+        cmd,
+        std::env::var("PATH").ok().as_deref(),
+        std::env::var("PATHEXT").ok().as_deref(),
+        |p| p.is_file(),
+    )
+}
+
+fn command_on_path_with(
+    cmd: &str,
+    path: Option<&str>,
+    pathext: Option<&str>,
+    is_file: impl Fn(&std::path::Path) -> bool,
+) -> bool {
+    let Some(path) = path else {
+        return false;
+    };
+    let exts: Vec<String> = pathext
+        .map(|v| {
+            v.split(';')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    for dir in std::env::split_paths(path) {
+        if exts.is_empty() {
+            if is_file(&dir.join(cmd)) {
+                return true;
+            }
+            continue;
+        }
+        // Windows CreateProcess only resolves PATHEXT (.exe/.cmd/…). An
+        // extensionless Git-Bash `python3` shim is a regular file but is
+        // not spawnable — skip it so `python` / `py` win.
+        if let Some(ext) = std::path::Path::new(cmd).extension() {
+            let dotted = format!(".{}", ext.to_string_lossy());
+            if exts.iter().any(|e| e.eq_ignore_ascii_case(&dotted)) && is_file(&dir.join(cmd)) {
+                return true;
+            }
+        }
+        for ext in &exts {
+            if is_file(&dir.join(format!("{cmd}{ext}"))) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn write_stdio_script(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
@@ -291,6 +367,38 @@ async fn register_stdio_success_and_call_bridged_tool() {
 
 #[test]
 fn mcp_helpers_map_error_and_required_field() {
+    assert_eq!(python_bin(true), "/usr/bin/python3");
+    assert_eq!(python_bin(false), "python3");
+    assert_eq!(
+        python_from_with(&["python3", "python"], |_| false, "python3"),
+        "python3"
+    );
+    assert_eq!(
+        python_from_with(&["python3", "python"], |c| c == "python", "python3"),
+        "python"
+    );
+    assert!(!command_on_path_with("python3", None, None, |_| true));
+    assert!(command_on_path_with(
+        "python3",
+        Some("/usr/bin"),
+        None,
+        |p| p.file_name().and_then(|n| n.to_str()) == Some("python3"),
+    ));
+    assert!(!command_on_path_with(
+        "python3",
+        Some(r"C:\shim"),
+        Some(".EXE;.CMD"),
+        |p| p.file_name().and_then(|n| n.to_str()) == Some("python3"),
+    ));
+    assert!(command_on_path_with(
+        "python",
+        Some(r"C:\Python"),
+        Some(".EXE;.CMD"),
+        |p| p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case("python.exe")),
+    ));
     assert_eq!(mcp_call_error(Ok("ok".into())).expect("ok"), "ok");
     let err = mcp_call_error(Err(whycodes_mcp::McpError::msg("boom"))).unwrap_err();
     assert!(err.contains("boom"), "{err}");

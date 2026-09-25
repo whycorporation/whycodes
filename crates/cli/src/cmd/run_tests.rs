@@ -100,8 +100,13 @@ fn tui_plain_and_resume_helpers() {
 
     assert!(!should_use_tui(true, true, true));
     assert!(should_use_tui(false, true, false));
-    assert!(should_use_tui(false, false, true));
+    // `cmd_run` tests run with `cfg!(test)`; a live console must not open TUI.
+    assert!(!should_use_tui(false, false, true));
     assert!(!should_use_tui(false, false, false));
+    assert!(!should_use_tui_in(true, false, false, true));
+    assert!(should_use_tui_in(true, false, true, false));
+    assert!(should_use_tui_in(false, false, false, true));
+    assert!(!should_use_tui_in(false, true, true, true));
 
     assert!(is_repl_interactive(None, false));
     assert!(is_repl_interactive(Some(""), false));

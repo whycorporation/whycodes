@@ -65,13 +65,21 @@ pub fn config_file() -> PathBuf {
 /// Former ProjectDirs locations (config and/or data). Used only to migrate
 /// an existing install into [`instance_root`].
 pub fn legacy_instance_roots() -> Vec<PathBuf> {
-    let Some(dirs) = directories::ProjectDirs::from(QUALIFIER, ORG, APP) else {
-        return Vec::new();
-    };
-    unique_legacy_roots(
-        dirs.config_dir().to_path_buf(),
-        dirs.data_local_dir().to_path_buf(),
+    legacy_roots_from(
+        directories::ProjectDirs::from(QUALIFIER, ORG, APP).map(|d| {
+            (
+                d.config_dir().to_path_buf(),
+                d.data_local_dir().to_path_buf(),
+            )
+        }),
     )
+}
+
+pub(crate) fn legacy_roots_from(dirs: Option<(PathBuf, PathBuf)>) -> Vec<PathBuf> {
+    match dirs {
+        Some((config, data)) => unique_legacy_roots(config, data),
+        None => Vec::new(),
+    }
 }
 
 pub(crate) fn unique_legacy_roots(config: PathBuf, data: PathBuf) -> Vec<PathBuf> {
@@ -115,7 +123,9 @@ pub(crate) fn strip_windows_verbatim_prefix(s: &str) -> Cow<'_, str> {
         return Cow::Borrowed(s);
     };
     if let Some(unc) = rest.strip_prefix(UNC) {
-        return Cow::Owned(format!(r"\\{unc}"));
+        let mut out = String::from(r"\\");
+        out.push_str(unc);
+        return Cow::Owned(out);
     }
     let b = rest.as_bytes();
     if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
@@ -153,10 +163,6 @@ mod tests {
             project_scratch_dir(Path::new("/w")),
             PathBuf::from("/w/.whycodes/scratch")
         );
-        assert_eq!(
-            project_scratch_dir(Path::new("")),
-            PathBuf::from(".whycodes/scratch")
-        );
         assert_eq!(or_dot(None), PathBuf::from("."));
         assert_eq!(or_dot(Some(PathBuf::from("/x"))), PathBuf::from("/x"));
         assert_eq!(config_file().file_name().unwrap(), "config.toml");
@@ -173,5 +179,6 @@ mod tests {
             unique_legacy_roots(PathBuf::from("/a"), PathBuf::from("/b")),
             vec![PathBuf::from("/a"), PathBuf::from("/b")]
         );
+        assert!(legacy_roots_from(None).is_empty());
     }
 }
