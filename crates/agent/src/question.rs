@@ -18,9 +18,18 @@ use whycodes_tools::question::{
 /// `auto` auto-picks routine questions; `important: true` still prompts.
 pub fn should_prompt_questions(mode: ApprovalMode, questions: &[QuestionSpec]) -> bool {
     match mode {
-        ApprovalMode::Auto => questions.iter().any(|q| q.important),
+        ApprovalMode::Auto => questions_include_important(questions),
         ApprovalMode::Important | ApprovalMode::Manual => true,
     }
+}
+
+fn questions_include_important(questions: &[QuestionSpec]) -> bool {
+    for question in questions {
+        if question.important {
+            return true;
+        }
+    }
+    false
 }
 
 /// Failure modes for a questionnaire.

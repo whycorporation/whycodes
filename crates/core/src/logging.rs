@@ -469,7 +469,10 @@ pub(crate) fn build_env_filter(explicit: Option<&str>) -> EnvFilter {
 }
 
 pub(crate) fn maybe_layer<T>(on: bool, layer: T) -> Option<T> {
-    if on { Some(layer) } else { None }
+    match on {
+        true => Some(layer),
+        false => None,
+    }
 }
 
 pub(crate) fn note_try_init(ok: bool) {
@@ -731,5 +734,8 @@ mod tests {
         assert_eq!(clean_debug_value(r#""quoted""#.into()), "quoted");
         assert_eq!(clean_debug_value("plain".into()), "plain");
         assert_eq!(clean_debug_value("\"open".into()), "\"open");
+        // Same i32 instantiation must take both arms (skip-expansions).
+        assert_eq!(maybe_layer(true, 7), Some(7));
+        assert_eq!(maybe_layer(false, 7), None);
     }
 }

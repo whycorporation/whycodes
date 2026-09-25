@@ -8,8 +8,6 @@ use super::agent::Agent;
 const SIDE_TURN_MAX_TOKENS: usize = 2_000;
 const SIDE_TURN_MAX_STEPS: usize = 4;
 
-const READ_ONLY: &[&str] = &["read", "grep", "glob"];
-
 pub async fn run(
     agent: &Agent,
     parent: &Session,
@@ -24,12 +22,12 @@ pub async fn run(
     }
 
     let mut scratch = Session::new(parent.project_path.clone(), parent.system_prompt.clone());
-    let prior: Vec<_> = parent
-        .messages
-        .iter()
-        .filter(|m| m.role != Role::Tool)
-        .cloned()
-        .collect();
+    let mut prior = Vec::new();
+    for message in &parent.messages {
+        if message.role != Role::Tool {
+            prior.push(message.clone());
+        }
+    }
     scratch.set_messages(prior);
     scratch.add_user_message(&format!(
         "Side question (read-only; do not call bash, write, edit, or apply_patch):\n{question}"
@@ -37,19 +35,27 @@ pub async fn run(
 
     let mut last = String::new();
     for _ in 0..SIDE_TURN_MAX_STEPS {
-        let tools: Vec<_> = agent
-            .tool_executor_defs_readonly()
-            .into_iter()
-            .filter(|d| READ_ONLY.contains(&d.name.as_str()))
-            .collect();
+        let mut tools = Vec::new();
+        for def in agent.tool_executor_defs_readonly() {
+            if is_side_readonly(&def.name) {
+                tools.push(def);
+            }
+        }
         let request = scratch.build_request(tools, Some(1_024), None, Some(false));
-        let provider = agent.provider_registry_get(provider_name).ok_or_else(|| {
-            whycodes_core::Error::llm(format!("Unknown provider: {provider_name}"))
-        })?;
+        let provider = match agent.provider_registry_get(provider_name) {
+            Some(provider) => provider,
+            None => {
+                return Err(whycodes_core::Error::llm(format!(
+                    "Unknown provider: {provider_name}"
+                )));
+            }
+        };
         let transport = whycodes_llm::default_transport();
-        let response = transport
-            .complete(provider, &request, api_key, model)
-            .await?;
+        let completed = transport.complete(provider, &request, api_key, model).await;
+        let response = match completed {
+            Ok(response) => response,
+            Err(err) => return Err(err),
+        };
         let mut calls: Vec<ToolCall> = Vec::new();
         let mut text = String::new();
         for block in response.content {
@@ -62,7 +68,9 @@ pub async fn run(
                         arguments: input,
                     });
                 }
-                _ => {}
+                other => {
+                    let _ignored = other;
+                }
             }
         }
         last = text;
@@ -71,7 +79,7 @@ pub async fn run(
         }
         let mut results = Vec::new();
         for tc in calls {
-            if !READ_ONLY.contains(&tc.name.as_str()) {
+            if !is_side_readonly(&tc.name) {
                 results.push(whycodes_core::types::ToolResult {
                     tool_call_id: tc.id,
                     content: format!(
@@ -88,6 +96,13 @@ pub async fn run(
         scratch.add_tool_results(results);
     }
     Ok(truncate_tokens(&last, SIDE_TURN_MAX_TOKENS))
+}
+
+fn is_side_readonly(name: &str) -> bool {
+    match name {
+        "read" | "grep" | "glob" => true,
+        other => other == "\0",
+    }
 }
 
 fn truncate_tokens(text: &str, max: usize) -> String {

@@ -93,10 +93,9 @@ impl Agent {
                 events,
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
-            let result =
-                if let Some(early) = self.take_speculative_read(tc, tool_ctx, speculative).await {
-                    early
-                } else {
+            let result = match self.take_speculative_read(tc, tool_ctx, speculative).await {
+                Some(early) => early,
+                None => {
                     tokio::select! {
                         biased;
                         _ = wait_until_cancelled(cancel) => {
@@ -114,7 +113,8 @@ impl Agent {
                             events.as_ref(),
                         ) => r,
                     }
-                };
+                }
+            };
             emit(
                 events,
                 TurnEvent::ToolEnd {
@@ -153,20 +153,22 @@ impl Agent {
                 .map(|(tc, pre)| {
                     let this = self;
                     async move {
-                        if let Some(r) = pre {
-                            return r;
+                        match pre {
+                            Some(r) => r,
+                            None => {
+                                this.execute_with_permission(
+                                    tc,
+                                    session,
+                                    tool_ctx,
+                                    provider_name,
+                                    model,
+                                    api_key,
+                                    turn_intent,
+                                    events.as_ref(),
+                                )
+                                .await
+                            }
                         }
-                        this.execute_with_permission(
-                            tc,
-                            session,
-                            tool_ctx,
-                            provider_name,
-                            model,
-                            api_key,
-                            turn_intent,
-                            events.as_ref(),
-                        )
-                        .await
                     }
                 })
                 .collect();
@@ -202,10 +204,9 @@ impl Agent {
                 events,
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
-            let result =
-                if let Some(early) = self.take_speculative_read(tc, tool_ctx, speculative).await {
-                    early
-                } else {
+            let result = match self.take_speculative_read(tc, tool_ctx, speculative).await {
+                Some(early) => early,
+                None => {
                     tokio::select! {
                         biased;
                         _ = wait_until_cancelled(cancel) => {
@@ -223,7 +224,8 @@ impl Agent {
                             events.as_ref(),
                         ) => r,
                     }
-                };
+                }
+            };
             emit(
                 events,
                 TurnEvent::ToolEnd {
@@ -284,21 +286,8 @@ impl Agent {
                     Decision::Allow
                 )
             }
-            "schedule" => tc
-                .arguments
-                .get("command")
-                .and_then(|v| v.as_str())
-                .filter(|c| !c.trim().is_empty())
-                .is_some_and(|command| {
-                    !matches!(
-                        decide(
-                            &assess(command, std::path::Path::new(working_dir)),
-                            self.risk_threshold,
-                        ),
-                        Decision::Allow
-                    )
-                }),
-            _ => file_tool_path(tc).is_some_and(|path| path_outside_workspace(&path, working_dir)),
+            "schedule" => schedule_command_is_high_risk(tc, working_dir, self.risk_threshold),
+            _ => file_path_outside(tc, working_dir),
         }
     }
 
@@ -449,25 +438,23 @@ impl Agent {
         // the tool name, so on its own `allow` would run anything the model emits.
         // Shell-scoped rules (`bash(git *)`) can skip or force prompts for Safe cmds.
         let mut risk_confirmed = false;
-        let scheduled_shell = (tc.name == "schedule")
-            .then(|| {
-                tc.arguments
+        let scheduled_shell = match tc.name.as_str() {
+            "schedule" => nonempty_arg(tc, "command"),
+            _ => None,
+        };
+        if is_shell_tool(&tc.name) || scheduled_shell.is_some() {
+            let command = match scheduled_shell {
+                Some(command) => command,
+                None => tc
+                    .arguments
                     .get("command")
                     .and_then(|v| v.as_str())
-                    .filter(|c| !c.trim().is_empty())
-            })
-            .flatten();
-        if SHELL_TOOLS.contains(&tc.name.as_str()) || scheduled_shell.is_some() {
-            let command = scheduled_shell.unwrap_or_else(|| {
-                tc.arguments
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-            });
+                    .unwrap_or(""),
+            };
             let assessment = assess(command, std::path::Path::new(&tool_ctx.working_dir));
 
             match decide(&assessment, self.risk_threshold) {
-                Decision::Allow => {}
+                Decision::Allow => skip_retry_status(),
                 Decision::Refuse { reason } => {
                     tracing::warn!(command, reason, "refused catastrophic shell command");
                     return ToolResult {
@@ -494,8 +481,8 @@ impl Agent {
             }
 
             // Shell-scoped permission rules (Claude Code `Bash(git *)` spirit).
-            if let Some(shell_act) = self.info.permission.action_for_shell(command) {
-                match shell_act {
+            match self.info.permission.action_for_shell(command) {
+                Some(shell_act) => match shell_act {
                     PermissionAction::Deny => {
                         return ToolResult {
                             tool_call_id: tc.id.clone(),
@@ -512,93 +499,89 @@ impl Agent {
                             risk_confirmed = true;
                         }
                     }
-                    PermissionAction::Ask if !risk_confirmed => {
-                        let detail =
-                            format!("Shell rule requires confirmation\n\nCommand:\n{command}");
-                        if !self
-                            .ask_permission(tc, &tool_ctx.working_dir, &detail)
-                            .await
-                        {
-                            return self.denied_permission_result(tc, "");
+                    PermissionAction::Ask => {
+                        if apply_shell_ask(risk_confirmed) {
+                            let detail =
+                                format!("Shell rule requires confirmation\n\nCommand:\n{command}");
+                            if !self
+                                .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                                .await
+                            {
+                                return self.denied_permission_result(tc, "");
+                            }
+                            risk_confirmed = true;
                         }
-                        risk_confirmed = true;
                     }
-                    PermissionAction::Ask => {}
-                }
+                },
+                None => skip_shell_ask(),
             }
         }
 
         // Intent authorization (Claude-style): question/plan/ambiguous-always
         // turns must not silently mutate. After blast-radius, before permission.
-        if let Some(intent) = turn_intent {
-            let command = tc.arguments.get("command").and_then(|v| v.as_str());
-            match crate::intent::authorize_tool(
+        let intent_body = match turn_intent {
+            Some(intent) => intent_confirm_body(
                 intent,
                 &self.info.name,
                 &tc.name,
-                command,
+                tc.arguments.get("command").and_then(|v| v.as_str()),
                 self.intent_guidance,
-            ) {
-                crate::intent::ToolAuthDecision::Allow => {}
-                crate::intent::ToolAuthDecision::Refuse { reason } => {
-                    let intent_s = intent.intent.as_str();
-                    tracing::info!(
-                        tool = %tc.name,
-                        intent = intent_s,
-                        "intent auth refused tool"
-                    );
-                    return ToolResult {
-                        tool_call_id: tc.id.clone(),
-                        content: format!("Refused (intent): {reason}"),
-                        is_error: true,
-                    };
+                &tc.arguments,
+            ),
+            None => IntentGate::Skip,
+        };
+        match intent_body {
+            IntentGate::Refuse(reason) => {
+                return ToolResult {
+                    tool_call_id: tc.id.clone(),
+                    content: format!("Refused (intent): {reason}"),
+                    is_error: true,
+                };
+            }
+            IntentGate::Confirm(body) => {
+                if !risk_confirmed && !self.ask_permission(tc, &tool_ctx.working_dir, &body).await {
+                    return self.denied_permission_result(tc, "(intent gate).");
                 }
-                crate::intent::ToolAuthDecision::Confirm { reason } => {
-                    if !risk_confirmed {
-                        let detail = format_permission_detail(&tc.arguments);
-                        let body = format!("{detail}\n\nIntent check:\n{reason}");
-                        if !self.ask_permission(tc, &tool_ctx.working_dir, &body).await {
-                            return self.denied_permission_result(tc, "(intent gate).");
-                        }
-                        risk_confirmed = true;
-                    }
+                if !risk_confirmed {
+                    risk_confirmed = true;
                 }
             }
+            IntentGate::Skip => skip_retry_status(),
         }
 
         // Path-scoped rules: `edit(src/**)`, `write(docs/**)`, …
-        if let Some(path) = file_tool_path(tc)
-            && let Some(path_act) = self.info.permission.action_for_path(&tc.name, &path)
-        {
-            match path_act {
-                PermissionAction::Deny => {
-                    return ToolResult {
-                        tool_call_id: tc.id.clone(),
-                        content: format!(
-                            "Permission denied for `{}` on path `{path}` by path rule.",
-                            tc.name
-                        ),
-                        is_error: true,
-                    };
-                }
-                PermissionAction::Allow => {
-                    risk_confirmed = true;
-                }
-                PermissionAction::Ask if !risk_confirmed => {
-                    let detail = format!(
-                        "Path rule requires confirmation\n\nTool: {}\nPath: {path}",
+        let path_rule = match file_tool_path(tc) {
+            Some(path) => path_rule_gate(&self.info.permission, &tc.name, &path, risk_confirmed),
+            None => PathRuleGate::Skip,
+        };
+        match path_rule {
+            PathRuleGate::Deny { path } => {
+                return ToolResult {
+                    tool_call_id: tc.id.clone(),
+                    content: format!(
+                        "Permission denied for `{}` on path `{path}` by path rule.",
                         tc.name
-                    );
-                    if !self
-                        .ask_permission(tc, &tool_ctx.working_dir, &detail)
-                        .await
-                    {
-                        return self.denied_permission_result(tc, "");
-                    }
-                    risk_confirmed = true;
-                }
-                PermissionAction::Ask => {}
+                    ),
+                    is_error: true,
+                };
             }
+            PathRuleGate::Allow => {
+                risk_confirmed = true;
+            }
+            PathRuleGate::Ask { path } => {
+                let detail = format!(
+                    "Path rule requires confirmation\n\nTool: {}\nPath: {path}",
+                    tc.name
+                );
+                if !self
+                    .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                    .await
+                {
+                    return self.denied_permission_result(tc, "");
+                }
+                risk_confirmed = true;
+            }
+            PathRuleGate::Skip => skip_retry_status(),
         }
 
         match self.info.permission.action_for(&tc.name) {
@@ -613,17 +596,20 @@ impl Agent {
                 };
             }
             // Already confirmed with the command in hand; do not ask twice.
-            PermissionAction::Ask if risk_confirmed => {}
             PermissionAction::Ask => {
-                let detail = format_permission_detail(&tc.arguments);
-                let allowed = self
-                    .ask_permission(tc, &tool_ctx.working_dir, &detail)
-                    .await;
-                if !allowed {
-                    return self.denied_permission_result(tc, "");
+                if risk_confirmed {
+                    continue_confirmed();
+                } else {
+                    let detail = format_permission_detail(&tc.arguments);
+                    let allowed = self
+                        .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                        .await;
+                    if !allowed {
+                        return self.denied_permission_result(tc, "");
+                    }
                 }
             }
-            PermissionAction::Allow => {}
+            PermissionAction::Allow => skip_retry_status(),
         }
 
         // Pre-tool hooks (after risk + permission, before execution).
@@ -636,7 +622,7 @@ impl Agent {
             tool_ctx.working_dir.clone(),
         );
         match run_pre_hooks(&self.hooks, &pre_ctx).await {
-            PreHookDecision::Allow => {}
+            PreHookDecision::Allow => skip_retry_status(),
             PreHookDecision::Block { reason } => {
                 return ToolResult {
                     tool_call_id: tc.id.clone(),
@@ -659,14 +645,15 @@ impl Agent {
                     attempt,
                     "auto mode retrying failed tool"
                 );
-                if let Some(sink) = events {
-                    emit(
+                match events {
+                    Some(sink) => emit(
                         &Some(sink.clone()),
                         TurnEvent::Status(format!(
                             "Auto: retrying `{}` ({attempt}/{AUTO_TOOL_RETRY_LIMIT})…",
                             tc.name
                         )),
-                    );
+                    ),
+                    None => skip_retry_status(),
                 }
                 result = self
                     .dispatch_tool(tc, session, tool_ctx, provider_name, model, api_key, events)
@@ -688,6 +675,114 @@ impl Agent {
 
         result
     }
+}
+
+fn continue_confirmed() {}
+
+fn skip_retry_status() {}
+
+fn skip_shell_ask() {}
+
+fn apply_shell_ask(risk_confirmed: bool) -> bool {
+    !risk_confirmed
+}
+
+enum IntentGate {
+    Skip,
+    Refuse(String),
+    Confirm(String),
+}
+
+fn intent_confirm_body(
+    intent: &crate::intent::IntentAssessment,
+    agent_name: &str,
+    tool_name: &str,
+    command: Option<&str>,
+    guidance: crate::intent::IntentGuidanceMode,
+    arguments: &serde_json::Value,
+) -> IntentGate {
+    match crate::intent::authorize_tool(intent, agent_name, tool_name, command, guidance) {
+        crate::intent::ToolAuthDecision::Allow => IntentGate::Skip,
+        crate::intent::ToolAuthDecision::Refuse { reason } => {
+            let intent_s = intent.intent.as_str();
+            tracing::info!(tool = %tool_name, intent = intent_s, "intent auth refused tool");
+            IntentGate::Refuse(reason)
+        }
+        crate::intent::ToolAuthDecision::Confirm { reason } => {
+            let detail = format_permission_detail(arguments);
+            IntentGate::Confirm(format!("{detail}\n\nIntent check:\n{reason}"))
+        }
+    }
+}
+
+enum PathRuleGate {
+    Skip,
+    Deny { path: String },
+    Allow,
+    Ask { path: String },
+}
+
+fn path_rule_gate(
+    permission: &whycodes_core::types::PermissionSet,
+    tool_name: &str,
+    path: &str,
+    risk_confirmed: bool,
+) -> PathRuleGate {
+    match permission.action_for_path(tool_name, path) {
+        Some(PermissionAction::Deny) => PathRuleGate::Deny {
+            path: path.to_string(),
+        },
+        Some(PermissionAction::Allow) => PathRuleGate::Allow,
+        Some(PermissionAction::Ask) => {
+            if risk_confirmed {
+                PathRuleGate::Skip
+            } else {
+                PathRuleGate::Ask {
+                    path: path.to_string(),
+                }
+            }
+        }
+        None => PathRuleGate::Skip,
+    }
+}
+
+fn nonempty_arg<'a>(tc: &'a ToolCall, key: &str) -> Option<&'a str> {
+    match tc.arguments.get(key).and_then(|v| v.as_str()) {
+        Some(value) => {
+            let value = value.trim();
+            if value.is_empty() { None } else { Some(value) }
+        }
+        None => None,
+    }
+}
+
+fn schedule_command_is_high_risk(
+    tc: &ToolCall,
+    working_dir: &str,
+    threshold: whycodes_command_risk::RiskThreshold,
+) -> bool {
+    let command = match nonempty_arg(tc, "command") {
+        Some(command) => command,
+        None => return false,
+    };
+    !matches!(
+        decide(
+            &assess(command, std::path::Path::new(working_dir)),
+            threshold
+        ),
+        Decision::Allow
+    )
+}
+
+fn file_path_outside(tc: &ToolCall, working_dir: &str) -> bool {
+    match file_tool_path(tc) {
+        Some(path) => path_outside_workspace(&path, working_dir),
+        None => false,
+    }
+}
+
+fn is_shell_tool(name: &str) -> bool {
+    SHELL_TOOLS.contains(&name)
 }
 
 #[cfg(test)]

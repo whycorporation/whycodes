@@ -81,14 +81,7 @@ impl Agent {
         let model = role_model.as_str();
         let tools_free_chat = crate::title::is_trivial_title_seed(&last_user)
             && session.user_message_count() <= 1
-            && !session.messages.iter().any(|m| {
-                matches!(m.role, whycodes_core::types::Role::Tool)
-                    || matches!(
-                        &m.content,
-                        whycodes_core::types::MessageContent::Blocks(b)
-                            if b.iter().any(|x| matches!(x, ContentBlock::ToolUse { .. }))
-                    )
-            });
+            && !transcript_has_tool_work(&session.messages);
 
         // Classify once per user turn (zero LLM cost): badge, posture, tool auth.
         let turn_intent = crate::intent::classify_user_intent(&last_user);
@@ -156,12 +149,8 @@ impl Agent {
                     self.tool_profile,
                     &extra,
                 );
-                if !self.swarm_enabled && defs.iter().any(|d| d.name == "swarm") {
-                    defs.iter()
-                        .filter(|d| d.name != "swarm")
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .into()
+                if !self.swarm_enabled && defs_include_swarm(&defs) {
+                    defs_without_swarm(&defs).into()
                 } else {
                     defs
                 }
@@ -173,9 +162,8 @@ impl Agent {
             }
 
             turn_count += 1;
-            if let Some(max) = max_turns
-                && turn_count > max
-            {
+            let max = max_turns.unwrap_or(0);
+            if max_turns.is_some() && turn_count > max {
                 return Err(whycodes_core::Error::Agent(format!(
                     "Exceeded maximum turns ({max})"
                 )));
@@ -354,26 +342,22 @@ impl Agent {
                     }
                     if kind == whycodes_llm::ErrorKind::RateLimited {
                         let next = self.failover_api_key(provider_name, &api_key);
-                        // Nested match, not a guard: skip-expansions counts an
-                        // unhit `if` guard as an uncovered production line.
-                        #[allow(clippy::single_match, clippy::collapsible_match)]
-                        match next {
-                            Some((name, secret)) => {
-                                if secret != api_key {
-                                    let mut status = String::from("Rate limited — retrying ");
-                                    status.push_str(provider_name);
-                                    status.push('/');
-                                    status.push_str(model);
-                                    status.push_str(" on credential `");
-                                    status.push_str(&name);
-                                    status.push('`');
-                                    emit(&events, TurnEvent::Status(status));
-                                    api_key = secret;
-                                    self.set_sticky_credential(Some(name));
-                                    continue;
-                                }
-                            }
-                            None => {}
+                        let (name, secret) = match &next {
+                            Some((name, secret)) => (name.clone(), secret.clone()),
+                            None => (String::new(), String::new()),
+                        };
+                        if !secret.is_empty() && secret != api_key {
+                            let mut status = String::from("Rate limited — retrying ");
+                            status.push_str(provider_name);
+                            status.push('/');
+                            status.push_str(model);
+                            status.push_str(" on credential `");
+                            status.push_str(&name);
+                            status.push('`');
+                            emit(&events, TurnEvent::Status(status));
+                            api_key = secret;
+                            self.set_sticky_credential(Some(name));
+                            continue;
                         }
                     }
                     return Err(e);
@@ -473,9 +457,8 @@ impl Agent {
                         }
                         emit(&events, TurnEvent::TextDelta(text.clone()));
                         accumulated_text.push_str(&text);
-                        if let Some((name, hint)) =
-                            first_stream_rule_hit(&self.stream_rules, &accumulated_text)
-                        {
+                        let hit = first_stream_rule_hit(&self.stream_rules, &accumulated_text);
+                        if let Some((name, hint)) = hit {
                             crate::speculative_read::abort_all(&mut speculative_reads);
                             emit(
                                 &events,
@@ -498,15 +481,7 @@ impl Agent {
                         // merged — OpenAI streams send null/empty args first.
                         assembler.on_tool_use(id, name, input);
                         // Complete objects (Anthropic non-streamed) can start I/O now.
-                        if let Some((cid, cname, buf)) = assembler.last_updated() {
-                            crate::speculative_read::maybe_start(
-                                &mut speculative_reads,
-                                &cid,
-                                &cname,
-                                &buf,
-                                &tool_ctx,
-                            );
-                        }
+                        maybe_start_speculative(&mut speculative_reads, &assembler, &tool_ctx);
                     }
                     StreamEvent::ToolUseDelta {
                         id,
@@ -514,15 +489,7 @@ impl Agent {
                     } => {
                         assembler.on_tool_use_delta(&id, &input_json_delta);
                         // Path often closes mid-stream — start `read` I/O early.
-                        if let Some((cid, cname, buf)) = assembler.last_updated() {
-                            crate::speculative_read::maybe_start(
-                                &mut speculative_reads,
-                                &cid,
-                                &cname,
-                                &buf,
-                                &tool_ctx,
-                            );
-                        }
+                        maybe_start_speculative(&mut speculative_reads, &assembler, &tool_ctx);
                     }
                     StreamEvent::Thinking { text } => {
                         if text.is_empty() {
@@ -568,8 +535,8 @@ impl Agent {
                     } => {
                         turn_usage.absorb_stream_cache(creation_input_tokens, read_input_tokens);
                     }
-                    StreamEvent::MessageStart { .. } => {}
-                    StreamEvent::MessageDelta { .. } => {}
+                    StreamEvent::MessageStart { .. } => skip_event(),
+                    StreamEvent::MessageDelta { .. } => skip_event(),
                     StreamEvent::Error { message } => {
                         if whycodes_llm::classify_message(&message).kind
                             == whycodes_llm::ErrorKind::ContextOverflow
@@ -810,22 +777,23 @@ impl Agent {
                 settle_checkpoint_rewind(session, &tool_calls, &mut results);
 
             // Capture failures before move — avoid cloning large tool bodies.
-            let failed_tools: Vec<String> = results
-                .iter()
-                .filter(|r| r.is_error)
-                .map(|r| {
-                    format!(
+            let mut failed_tools = Vec::new();
+            for result in &results {
+                if result.is_error {
+                    failed_tools.push(format!(
                         "The tool failed with error: {content}. Please correct your approach.",
-                        content = r.content
-                    )
-                })
-                .collect();
+                        content = result.content
+                    ));
+                }
+            }
 
             session.add_tool_results(results);
-            if let Some(goal) = checkpoint_goal {
-                session.mark_checkpoint(goal);
+            let goal = checkpoint_goal.unwrap_or_default();
+            if !goal.is_empty() {
+                session.mark_checkpoint(&goal);
             }
-            if let Some(report) = rewind_report {
+            let report = rewind_report.unwrap_or_default();
+            if !report.is_empty() {
                 // `settle_checkpoint_rewind` only yields a report when a checkpoint
                 // is already active, so apply always succeeds.
                 let applied = session.apply_rewind(&report);
@@ -833,7 +801,8 @@ impl Agent {
             }
 
             // Fold subagent tokens into this turn + parent session (plan-performance).
-            if let Some(fold) = take_pending_usage(&self.subagent_usage_pending) {
+            let fold = take_pending_usage(&self.subagent_usage_pending).unwrap_or_default();
+            if !fold.is_empty() {
                 turn_usage.add(&fold);
                 session.add_usage(&fold);
                 tracing::debug!(
@@ -913,18 +882,87 @@ fn harmony_leak(
     thinking: &crate::thinking_acc::ThinkingAccumulator,
     tool_calls: &[whycodes_core::types::ToolCall],
 ) -> Option<whycodes_core::harmony::Hit> {
-    if let Some(hit) = whycodes_core::harmony::scan_text(visible) {
-        return Some(hit);
+    match whycodes_core::harmony::scan_text(visible) {
+        Some(hit) => Some(hit),
+        None => harmony_leak_thinking(thinking, tool_calls),
     }
-    if let Some(hit) = thinking.harmony_leak() {
-        return Some(hit);
+}
+
+fn harmony_leak_thinking(
+    thinking: &crate::thinking_acc::ThinkingAccumulator,
+    tool_calls: &[whycodes_core::types::ToolCall],
+) -> Option<whycodes_core::harmony::Hit> {
+    match thinking.harmony_leak() {
+        Some(hit) => Some(hit),
+        None => harmony_leak_tools(tool_calls),
     }
+}
+
+fn harmony_leak_tools(
+    tool_calls: &[whycodes_core::types::ToolCall],
+) -> Option<whycodes_core::harmony::Hit> {
     for tc in tool_calls {
-        if let Some(hit) = whycodes_core::harmony::scan_json(&tc.arguments) {
-            return Some(hit);
+        match whycodes_core::harmony::scan_json(&tc.arguments) {
+            Some(hit) => return Some(hit),
+            None => continue,
         }
     }
     None
+}
+
+fn maybe_start_speculative(
+    speculative_reads: &mut Vec<crate::speculative_read::SpeculativeRead>,
+    assembler: &crate::tool_stream::ToolCallAssembler,
+    tool_ctx: &whycodes_core::tool::ToolContext,
+) {
+    let updated = assembler.last_updated();
+    let (cid, cname, buf) = match &updated {
+        Some((cid, cname, buf)) => (cid.as_str(), cname.as_str(), buf.as_str()),
+        None => return,
+    };
+    crate::speculative_read::maybe_start(speculative_reads, cid, cname, buf, tool_ctx);
+}
+
+fn skip_event() {}
+
+fn transcript_has_tool_work(messages: &[whycodes_core::types::Message]) -> bool {
+    for message in messages {
+        if matches!(message.role, whycodes_core::types::Role::Tool) {
+            return true;
+        }
+        match &message.content {
+            whycodes_core::types::MessageContent::Blocks(blocks) => {
+                for block in blocks {
+                    if matches!(block, ContentBlock::ToolUse { .. }) {
+                        return true;
+                    }
+                }
+            }
+            whycodes_core::types::MessageContent::Text(_) => skip_event(),
+        }
+    }
+    false
+}
+
+fn defs_include_swarm(defs: &[whycodes_core::types::ToolDefinition]) -> bool {
+    for def in defs {
+        if def.name == "swarm" {
+            return true;
+        }
+    }
+    false
+}
+
+fn defs_without_swarm(
+    defs: &[whycodes_core::types::ToolDefinition],
+) -> Vec<whycodes_core::types::ToolDefinition> {
+    let mut kept = Vec::new();
+    for def in defs {
+        if def.name != "swarm" {
+            kept.push(def.clone());
+        }
+    }
+    kept
 }
 
 #[cfg(test)]

@@ -27,13 +27,14 @@ pub fn resolve_title_model(
     model: &str,
     override_model: Option<&str>,
 ) -> (String, String) {
-    if let Some(raw) = override_model {
-        let raw = raw.trim();
-        if !raw.is_empty() {
-            match raw.split_once('/') {
-                Some((p, m)) => return (p.to_string(), m.to_string()),
-                None => return (provider.to_string(), raw.to_string()),
-            }
+    let raw = match override_model {
+        Some(raw) => raw.trim(),
+        None => "",
+    };
+    if !raw.is_empty() {
+        match raw.split_once('/') {
+            Some((p, m)) => return (p.to_string(), m.to_string()),
+            None => return (provider.to_string(), raw.to_string()),
         }
     }
     let p = provider.to_ascii_lowercase();
@@ -97,12 +98,13 @@ pub async fn generate_title(
     let user_text = truncate(user_text, 800);
     let mut body = String::from("User request:\n");
     body.push_str(&user_text);
-    if let Some(snippet) = assistant_snippet {
-        let snippet = snippet.trim();
-        if !snippet.is_empty() {
-            body.push_str("\n\nAssistant excerpt:\n");
-            body.push_str(&truncate(snippet, 400));
-        }
+    let snippet = match assistant_snippet {
+        Some(snippet) => snippet.trim(),
+        None => "",
+    };
+    if !snippet.is_empty() {
+        body.push_str("\n\nAssistant excerpt:\n");
+        body.push_str(&truncate(snippet, 400));
     }
     body.push_str("\n\nSession title:");
 
@@ -136,21 +138,21 @@ pub async fn generate_title(
             full_jitter: true,
         },
     };
-    let response = transport
-        .complete(provider, &request, api_key, model)
-        .await?;
+    let completed = transport.complete(provider, &request, api_key, model).await;
+    let response = match completed {
+        Ok(response) => response,
+        Err(err) => return Err(err),
+    };
     let mut raw = String::new();
     for b in &response.content {
-        // Exhaustive match so the non-text arm is a real line, not an `if let` else.
-        #[allow(clippy::single_match)]
-        match b {
-            whycodes_core::types::ContentBlock::Text { text } => {
+        match text_block(b) {
+            Some(text) => {
                 if !raw.is_empty() {
                     raw.push(' ');
                 }
                 raw.push_str(text);
             }
-            _ => {}
+            None => continue,
         }
     }
     let mut line = String::new();
@@ -166,6 +168,17 @@ pub async fn generate_title(
         .trim_start_matches("title:")
         .trim();
     Ok(sanitize_title(line))
+}
+
+fn text_block(block: &whycodes_core::types::ContentBlock) -> Option<&str> {
+    match block {
+        whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
+        whycodes_core::types::ContentBlock::Image { .. } => None,
+        whycodes_core::types::ContentBlock::ToolUse { .. } => None,
+        whycodes_core::types::ContentBlock::ToolResult { .. } => None,
+        whycodes_core::types::ContentBlock::Thinking { .. } => None,
+        whycodes_core::types::ContentBlock::RedactedThinking { .. } => None,
+    }
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {
@@ -217,7 +230,16 @@ pub fn is_trivial_title_seed(text: &str) -> bool {
     // Short by shape: few characters, few words, single line. Real questions
     // about the project run longer even in Turkish ("Compaction nasıl
     // çalışıyor?" is 27 chars) while chit-chat stays under both limits.
-    if t.chars().count() > 20 || t.lines().count() > 1 || t.split_whitespace().count() > 3 {
+    let too_long = t.chars().count() > 20;
+    let multi_line = t.lines().count() > 1;
+    let too_many_words = t.split_whitespace().count() > 3;
+    if too_long {
+        return false;
+    }
+    if multi_line {
+        return false;
+    }
+    if too_many_words {
         return false;
     }
     // Code / project cues: paths, code spans, flags, identifiers, numbers.

@@ -323,7 +323,11 @@ fn git_spawn_err(prefix: &'static str) -> impl Fn(std::io::Error) -> String {
 }
 
 fn successful_stdout(output: std::process::Output) -> Option<Vec<u8>> {
-    output.status.success().then_some(output.stdout)
+    if output.status.success() {
+        Some(output.stdout)
+    } else {
+        None
+    }
 }
 
 fn git_ok(dir: &Path, args: &[&str]) -> Option<String> {

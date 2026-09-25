@@ -161,6 +161,10 @@ fn skips_trivial_greetings() {
     // Short dotted name is a file, not chit-chat; final punctuation is not.
     assert!(!is_trivial_title_seed("main.rs"));
     assert!(is_trivial_title_seed("selam."));
+    // Digit, extra line, and a fourth word each leave the trivial shape.
+    assert!(!is_trivial_title_seed("v2"));
+    assert!(!is_trivial_title_seed("hi\nthere"));
+    assert!(!is_trivial_title_seed("one two three four"));
 
     let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
     session.title_source = whycodes_session::TitleSource::Heuristic;
@@ -261,6 +265,18 @@ async fn generate_title_skips_blank_assistant_snippet() {
     .await
     .expect("title");
     assert!(!title.is_empty(), "{title}");
+}
+
+#[tokio::test]
+async fn generate_title_propagates_provider_error() {
+    let provider = whycodes_llm::ScriptedProvider::named(
+        "title-err",
+        [whycodes_llm::ScriptedStep::Error("title boom".into())],
+    );
+    let err = generate_title(&provider, "k", "title-err-unique-model", "fix auth", None)
+        .await
+        .expect_err("provider error");
+    assert!(err.to_string().contains("title boom"), "{err}");
 }
 
 #[tokio::test]
@@ -391,6 +407,70 @@ fn apply_refine_result_skips_manual_title_source() {
     session.title_source = whycodes_session::TitleSource::Manual;
     apply_refine_result(&mut session, "Retry Loop", "gpt-4o-mini");
     assert_eq!(session.title, "Keep me");
+}
+
+#[tokio::test]
+async fn generate_title_skips_tool_result_and_redacted() {
+    let title = generate_title(
+        &MixedTitleProvider,
+        "k",
+        "title-mixed-unique-model",
+        "please explain the retry loop",
+        None,
+    )
+    .await
+    .expect("title");
+    assert!(title.contains("Retry"), "{title}");
+    assert!(title.contains("Loop"), "{title}");
+}
+
+struct MixedTitleProvider;
+
+impl whycodes_llm::LlmProvider for MixedTitleProvider {
+    fn name(&self) -> &str {
+        "title-mixed"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async move {
+            Ok(whycodes_core::types::LlmResponse {
+                content: vec![
+                    whycodes_core::types::ContentBlock::ToolUse {
+                        id: "1".into(),
+                        name: "read".into(),
+                        input: serde_json::json!({}),
+                    },
+                    whycodes_core::types::ContentBlock::ToolResult {
+                        tool_use_id: "1".into(),
+                        content: "nope".into(),
+                        is_error: None,
+                    },
+                    whycodes_core::types::ContentBlock::RedactedThinking { data: "x".into() },
+                    whycodes_core::types::ContentBlock::Text {
+                        text: "Retry Loop".into(),
+                    },
+                ],
+                stop_reason: Some("end_turn".into()),
+                usage: Default::default(),
+                model: model.into(),
+            })
+        })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::llm("complete-only")) })
+    }
 }
 
 #[test]

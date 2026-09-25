@@ -34,11 +34,11 @@ async fn empty_question_is_usage_error() {
 
 #[test]
 fn read_only_set_excludes_bash_and_write() {
-    assert!(READ_ONLY.contains(&"read"));
-    assert!(READ_ONLY.contains(&"grep"));
-    assert!(READ_ONLY.contains(&"glob"));
-    assert!(!READ_ONLY.contains(&"bash"));
-    assert!(!READ_ONLY.contains(&"write"));
+    assert!(is_side_readonly("read"));
+    assert!(is_side_readonly("grep"));
+    assert!(is_side_readonly("glob"));
+    assert!(!is_side_readonly("bash"));
+    assert!(!is_side_readonly("write"));
 }
 
 #[tokio::test]

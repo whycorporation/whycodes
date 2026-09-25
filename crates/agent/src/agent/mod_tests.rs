@@ -241,6 +241,7 @@ fn system_prompt_includes_route_overlays() {
         .insert("xai".into(), "xai extra".into());
     agent.apply_config(&cfg);
     agent.set_route("xai", "grok-4.6");
+    assert_eq!(agent.route(), ("xai", "grok-4.6"));
     let prompt = agent.system_prompt();
     assert!(prompt.contains("role"), "{prompt}");
     assert!(prompt.contains("xai extra"), "{prompt}");
@@ -3016,8 +3017,8 @@ fn apply_plugin_count_replaces_executor_when_lsp_overlay_is_set() {
     assert_ne!(Arc::as_ptr(&a.tool_executor), before);
 }
 
-#[test]
-fn failover_api_key_walks_named_credentials() {
+#[tokio::test]
+async fn failover_api_key_walks_named_credentials() {
     let mut config = whycodes_config::Config::default();
     config.providers.insert(
         "openai".into(),
@@ -3059,6 +3060,19 @@ fn failover_api_key_walks_named_credentials() {
     assert!(a.failover_api_key("openai", "sk-ci").is_none());
     assert!(a.failover_api_key("openai", "missing").is_none());
     assert!(a.failover_api_key("nope", "sk-live").is_none());
+    let session = whycodes_session::Session::new(std::path::PathBuf::from("."), String::new());
+    let side = a
+        .run_side_turn(&session, "openai", "gpt-4o", "sk-live", "   ")
+        .await
+        .expect_err("blank side question");
+    assert!(side.to_string().contains("/btw"), "{side}");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_OPENAI_CI");
+    }
+    assert!(
+        a.failover_api_key("openai", "sk-live").is_none(),
+        "missing env must be skipped"
+    );
     unsafe {
         std::env::set_var("WHYCODES_TEST_OPENAI_CI", "");
     }

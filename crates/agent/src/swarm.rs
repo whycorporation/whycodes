@@ -88,10 +88,7 @@ pub fn ensure_tldr(body: &str) -> String {
     if trimmed.len() <= SWARM_TLDR_REQUIRED_OVER_CHARS {
         return trimmed.to_string();
     }
-    if trimmed.lines().next().is_some_and(|l| {
-        let u = l.trim().to_ascii_uppercase();
-        u.starts_with("TLDR:") || u.starts_with("TL;DR:")
-    }) {
+    if first_line_is_tldr(trimmed) {
         return truncate_chars(trimmed, MAX_SWARM_COMPLETION_REPORT_CHARS);
     }
     // Synthesize from first non-empty sentence-ish line.
@@ -106,6 +103,14 @@ pub fn ensure_tldr(body: &str) -> String {
         MAX_SWARM_COMPLETION_REPORT_CHARS.saturating_sub(200),
     );
     format!("TLDR: {summary}\n\n{rest}")
+}
+
+fn first_line_is_tldr(body: &str) -> bool {
+    let line = match body.lines().next() {
+        Some(line) => line.trim().to_ascii_uppercase(),
+        None => return false,
+    };
+    line.starts_with("TLDR:") || line.starts_with("TL;DR:")
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {
