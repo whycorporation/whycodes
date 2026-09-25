@@ -140,7 +140,7 @@ async fn complete_error_and_empty_and_hang() {
     assert!(err.complete(&req(), "", "m").await.is_err());
 
     let empty = ScriptedProvider::new([
-        ScriptedStep::Thinking("t".into()),
+        ScriptedStep::ThinkingDelta("t".into()),
         ScriptedStep::Hang(Duration::from_millis(1)),
         ScriptedStep::Usage {
             input_tokens: 3,
