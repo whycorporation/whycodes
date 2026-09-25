@@ -314,6 +314,62 @@ impl whycodes_llm::LlmProvider for ImageOnlyTitleProvider {
     }
 }
 
+struct TwoTextTitleProvider;
+
+impl whycodes_llm::LlmProvider for TwoTextTitleProvider {
+    fn name(&self) -> &str {
+        "title-join"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async move {
+            Ok(whycodes_core::types::LlmResponse {
+                content: vec![
+                    whycodes_core::types::ContentBlock::Text {
+                        text: "Retry".into(),
+                    },
+                    whycodes_core::types::ContentBlock::Text {
+                        text: "Loop".into(),
+                    },
+                ],
+                stop_reason: Some("end_turn".into()),
+                usage: Default::default(),
+                model: model.into(),
+            })
+        })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::llm("complete-only")) })
+    }
+}
+
+#[tokio::test]
+async fn generate_title_joins_two_text_blocks() {
+    let title = generate_title(
+        &TwoTextTitleProvider,
+        "k",
+        "title-join-unique-model",
+        "please explain the retry loop",
+        None,
+    )
+    .await
+    .expect("title");
+    assert!(title.contains("Retry"), "{title}");
+    assert!(title.contains("Loop"), "{title}");
+}
+
 #[tokio::test]
 async fn generate_title_filters_non_text_image_block() {
     let title = generate_title(

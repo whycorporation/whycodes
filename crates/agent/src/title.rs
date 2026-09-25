@@ -141,18 +141,23 @@ pub async fn generate_title(
         .await?;
     let mut raw = String::new();
     for b in &response.content {
-        if let whycodes_core::types::ContentBlock::Text { text } = b {
-            if !raw.is_empty() {
-                raw.push(' ');
+        // Exhaustive match so the non-text arm is a real line, not an `if let` else.
+        #[allow(clippy::single_match)]
+        match b {
+            whycodes_core::types::ContentBlock::Text { text } => {
+                if !raw.is_empty() {
+                    raw.push(' ');
+                }
+                raw.push_str(text);
             }
-            raw.push_str(text);
+            _ => {}
         }
     }
-    let mut line = "";
+    let mut line = String::new();
     for candidate in raw.lines() {
         let candidate = candidate.trim();
         if !candidate.is_empty() {
-            line = candidate;
+            line = candidate.to_string();
             break;
         }
     }

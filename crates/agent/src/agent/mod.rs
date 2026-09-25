@@ -698,9 +698,16 @@ impl Agent {
         let mut secrets: Vec<(String, String)> = Vec::new();
         for name in names {
             let var = creds.env_var_for(&name, provider);
+            // Nested match, not `if let Ok &&`: skip-expansions counts the
+            // unused guard as an uncovered production line.
+            #[allow(clippy::single_match)]
             match std::env::var(&var) {
-                Ok(secret) if !secret.is_empty() => secrets.push((name, secret)),
-                _ => {}
+                Ok(secret) => {
+                    if !secret.is_empty() {
+                        secrets.push((name, secret));
+                    }
+                }
+                Err(_missing) => {}
             }
         }
         let idx = secrets.iter().position(|(_, s)| s == current)?;

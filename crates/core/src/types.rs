@@ -479,8 +479,14 @@ impl ProviderCredentials {
 
     pub fn env_var_for(&self, name: &str, provider: &str) -> String {
         match self.env.get(name) {
-            Some(s) if !s.is_empty() => s.clone(),
-            _ => credential_env_var(name, provider),
+            Some(s) => {
+                if s.is_empty() {
+                    credential_env_var(name, provider)
+                } else {
+                    s.clone()
+                }
+            }
+            None => credential_env_var(name, provider),
         }
     }
 }
@@ -499,20 +505,32 @@ fn credential_env_var(name: &str, provider: &str) -> String {
 
 /// `CI` / `GITHUB_ACTIONS`, overridable with `WHYCODES_CREDENTIAL_LANE`.
 pub fn process_is_ci() -> bool {
-    process_is_ci_from(|k| std::env::var(k).ok())
+    process_is_ci_from(read_process_env)
+}
+
+fn read_process_env(key: &str) -> Option<String> {
+    #[allow(clippy::manual_ok_err)] // `.ok()` leaves a skip-expansions brace on the 100% floor
+    match std::env::var(key) {
+        Ok(value) => Some(value),
+        Err(_missing) => None,
+    }
 }
 
 pub fn process_is_ci_from(env: impl Fn(&str) -> Option<String>) -> bool {
-    if let Some(lane) = env("WHYCODES_CREDENTIAL_LANE") {
-        let lane = lane.trim().to_ascii_lowercase();
-        if lane == "ci" || lane == "batch" {
-            return true;
-        }
-        if lane == "interactive" || lane == "live" {
-            return false;
-        }
+    let lane = match env("WHYCODES_CREDENTIAL_LANE") {
+        Some(lane) => lane.trim().to_ascii_lowercase(),
+        None => String::new(),
+    };
+    if lane == "ci" || lane == "batch" {
+        return true;
     }
-    env_flag_set(&env, "CI") || env_flag_set(&env, "GITHUB_ACTIONS")
+    if lane == "interactive" || lane == "live" {
+        return false;
+    }
+    if env_flag_set(&env, "CI") {
+        return true;
+    }
+    env_flag_set(&env, "GITHUB_ACTIONS")
 }
 
 fn env_flag_set(env: &impl Fn(&str) -> Option<String>, key: &str) -> bool {
@@ -1320,26 +1338,54 @@ mod tests {
         );
         let _ = process_is_ci();
         assert!(!process_is_ci_from(|_| None));
-        assert!(process_is_ci_from(|k| (k == "CI").then(|| "true".into())));
-        assert!(process_is_ci_from(|k| (k == "CI").then(|| "1".into())));
-        assert!(process_is_ci_from(|k| (k == "CI").then(|| "yes".into())));
-        assert!(!process_is_ci_from(|k| (k == "CI").then(|| "false".into())));
-        assert!(process_is_ci_from(
-            |k| (k == "GITHUB_ACTIONS").then(|| "true".into())
-        ));
+        assert!(process_is_ci_from(|k| {
+            if k == "CI" { Some("true".into()) } else { None }
+        }));
+        assert!(process_is_ci_from(|k| {
+            if k == "CI" { Some("1".into()) } else { None }
+        }));
+        assert!(process_is_ci_from(|k| {
+            if k == "CI" { Some("yes".into()) } else { None }
+        }));
+        assert!(!process_is_ci_from(|k| {
+            if k == "CI" {
+                Some("false".into())
+            } else {
+                None
+            }
+        }));
+        assert!(process_is_ci_from(|k| {
+            if k == "GITHUB_ACTIONS" {
+                Some("true".into())
+            } else {
+                None
+            }
+        }));
         assert!(!process_is_ci_from(|k| match k {
             "CI" => Some("true".into()),
             "WHYCODES_CREDENTIAL_LANE" => Some("interactive".into()),
             _ => None,
         }));
         assert!(!process_is_ci_from(|k| {
-            (k == "WHYCODES_CREDENTIAL_LANE").then(|| "live".into())
+            if k == "WHYCODES_CREDENTIAL_LANE" {
+                Some("live".into())
+            } else {
+                None
+            }
         }));
         assert!(process_is_ci_from(|k| {
-            (k == "WHYCODES_CREDENTIAL_LANE").then(|| "ci".into())
+            if k == "WHYCODES_CREDENTIAL_LANE" {
+                Some("ci".into())
+            } else {
+                None
+            }
         }));
         assert!(process_is_ci_from(|k| {
-            (k == "WHYCODES_CREDENTIAL_LANE").then(|| "batch".into())
+            if k == "WHYCODES_CREDENTIAL_LANE" {
+                Some("batch".into())
+            } else {
+                None
+            }
         }));
         assert!(process_is_ci_from(|k| match k {
             "CI" => Some("true".into()),
