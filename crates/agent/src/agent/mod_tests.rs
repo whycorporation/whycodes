@@ -1351,6 +1351,40 @@ async fn auto_background_closed_listener_is_debug_logged() {
 }
 
 #[tokio::test]
+async fn auto_background_uses_wired_event_sink_when_turn_events_omitted() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(80);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    a.wire_event_sink(tx);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let started = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": hang_shell()})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(started.content.contains("job_id:"), "{started:?}");
+    let mut saw_bg = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(600);
+    while std::time::Instant::now() < deadline {
+        match rx.try_recv() {
+            Ok(crate::events::TurnEvent::Background { .. }) => {
+                saw_bg = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
+        }
+    }
+    assert!(saw_bg, "wired sink must receive auto-background running");
+    a.background.kill_all();
+}
+
+#[tokio::test]
 async fn background_shell_closed_listener_is_debug_logged() {
     let a = test_agent();
     let dir = tempfile::tempdir().unwrap();

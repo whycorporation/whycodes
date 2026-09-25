@@ -78,3 +78,33 @@ fn dispatch_helpers_cover_poison_and_optional_sinks() {
     fold_pending_usage(&pending, &usage);
     assert_eq!(super::super::recover_lock(&pending).input_tokens, 3);
 }
+
+#[test]
+fn background_turn_listener_delivers_and_drops() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let live = background_turn_listener(tx.clone());
+    live(crate::background::BackgroundEvent {
+        id: "bg-1".into(),
+        status: crate::background::JobStatus::Running,
+        summary: "echo hi".into(),
+    });
+    match rx.try_recv() {
+        Ok(TurnEvent::Background {
+            id,
+            status,
+            summary,
+        }) => {
+            assert_eq!(id, "bg-1");
+            assert_eq!(status, "running");
+            assert_eq!(summary, "echo hi");
+        }
+        other => panic!("expected background event, got {other:?}"),
+    }
+    drop(rx);
+    let closed = background_turn_listener(tx);
+    closed(crate::background::BackgroundEvent {
+        id: "bg-2".into(),
+        status: crate::background::JobStatus::Failed,
+        summary: "gone".into(),
+    });
+}

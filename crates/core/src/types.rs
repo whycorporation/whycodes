@@ -432,7 +432,14 @@ impl ProviderCredentials {
     pub fn names(&self) -> Vec<String> {
         let mut names = self.order.clone();
         for key in self.env.keys() {
-            if !names.iter().any(|n| n == key) {
+            let mut seen = false;
+            for n in &names {
+                if n == key {
+                    seen = true;
+                    break;
+                }
+            }
+            if !seen {
                 names.push(key.clone());
             }
         }
@@ -471,11 +478,10 @@ impl ProviderCredentials {
     }
 
     pub fn env_var_for(&self, name: &str, provider: &str) -> String {
-        self.env
-            .get(name)
-            .cloned()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| credential_env_var(name, provider))
+        match self.env.get(name) {
+            Some(s) if !s.is_empty() => s.clone(),
+            _ => credential_env_var(name, provider),
+        }
     }
 }
 
@@ -510,10 +516,13 @@ pub fn process_is_ci_from(env: impl Fn(&str) -> Option<String>) -> bool {
 }
 
 fn env_flag_set(env: &impl Fn(&str) -> Option<String>, key: &str) -> bool {
-    env(key).is_some_and(|v| {
-        let v = v.trim();
-        v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
-    })
+    match env(key) {
+        Some(v) => {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+        }
+        None => false,
+    }
 }
 
 fn credential_name_is_ci(name: &str) -> bool {
@@ -1221,7 +1230,23 @@ mod tests {
 
         let empty = ProviderCredentials::default();
         assert!(empty.is_empty());
+        assert_eq!(empty.names(), vec!["default".to_string()]);
         assert_eq!(empty.reserve_clamped(), default_credential_reserve());
+        let extra_env = ProviderCredentials {
+            order: vec!["interactive".into()],
+            reserve: 0.1,
+            env: HashMap::from([("ci".into(), "OPENAI_CI_API_KEY".into())]),
+        };
+        assert_eq!(
+            extra_env.names(),
+            vec!["interactive".to_string(), "ci".into()]
+        );
+        let env_only = ProviderCredentials {
+            order: vec![],
+            reserve: 0.1,
+            env: HashMap::from([("ci".into(), "OPENAI_CI_API_KEY".into())]),
+        };
+        assert_eq!(env_only.names(), vec!["ci".to_string()]);
         let mut named = ProviderCredentials {
             order: vec!["interactive".into(), "ci".into()],
             reserve: 1.5,
@@ -1321,8 +1346,14 @@ mod tests {
             "WHYCODES_CREDENTIAL_LANE" => Some("other".into()),
             _ => None,
         }));
+        named.env.insert("blank".into(), String::new());
         assert_eq!(named.env_var_for("interactive", "openai"), "OPENAI_API_KEY");
         assert_eq!(named.env_var_for("ci", "openai"), "OPENAI_CI_API_KEY");
+        assert_eq!(named.env_var_for("blank", "openai"), "OPENAI_BLANK_API_KEY");
+        assert_eq!(
+            named.env_var_for("build-ci", "openai"),
+            "OPENAI_BUILD_CI_API_KEY"
+        );
         assert_eq!(
             ProviderCredentials::default().env_var_for("default", "xai"),
             "XAI_API_KEY"

@@ -3087,3 +3087,17 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 **Fix:** Default fail-closed: `AutoDenyPrompter` + `Agent::set_fail_closed_ask(true)` so `auto` cannot skip the ask. Denied results stamp `denied:headless` and are not retried. Escape hatches: `--approve-tools`, `[session] headless_ask = "allow"`, `WHYCODES_HEADLESS_ASK=allow`. `question` stays auto-picked. Child `bash` / plugin / MCP stdio also strip known secret env names (`*_API_KEY`, `GITHUB_TOKEN`, …).
 
 **Prevention:** A fixture `write` with `[permission] write = "ask"` under `--format json` must return `is_error` and must not create the file. Do not re-attach `AutoApprovePrompter` on the structured path without an explicit allow flag.
+
+## Coverage 100% floors ignore `tests.rs`, not inline `mod tests`
+
+**Date:** 2026-09-25 · **Area:** `crates/core` types / `crates/agent` dispatch+turn+title
+
+**Symptom:** PR #141 `Coverage (line floor)` fails `whycodes-core` 2593/2597 and `whycodes-agent` 6973/6981 after credential failover / auto-background landed. Workspace 98.4% is green.
+
+**JSONL / crash:** none.
+
+**Root cause:** `CRATE_IGNORE` drops files named `tests.rs`, so helpers hit only from `crates/core/src/tests.rs` never count. After those branches moved into `types.rs` inline tests, Linux skip-expansions still missed iterator closures (`.any()`, `.filter()`, `.or_else(|| …)`), `if let … &&` let-chains, and `is_some_and` closing braces in `types.rs` / `dispatch.rs` / `turn.rs` / `title.rs`.
+
+**Fix:** Drive credential helpers from `types.rs` inline tests. Rewrite those closures/let-chains as `match` / nested `if` / explicit loops so llvm-cov `-skip-expansions` has no phantom brace. Replace the dead `background.read` `Err` arm with `tail`.
+
+**Prevention:** On 100% crates, do not put the only hit in `src/tests.rs`. Prefer `match` / nested `if` over `.filter().unwrap_or_else`, `.any()`, `is_some_and`, and `if let … &&` let-chains — skip-expansions attributes the unused closure/`None` arm to a production line.

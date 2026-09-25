@@ -40,12 +40,7 @@ impl Agent {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         // Prefer long-lived sink; fall back to turn events for listener (optional).
-        if self.event_sink.is_none()
-            && let Some(tx) = events
-        {
-            self.background
-                .set_listener(Some(background_turn_listener(tx.clone())));
-        }
+        self.wire_background_turn_listener(events);
         match self.background.start_shell(
             &command,
             std::path::PathBuf::from(&tool_ctx.working_dir),
@@ -54,7 +49,7 @@ impl Agent {
         ) {
             Ok(id) => {
                 emit(
-                    &events.cloned().or_else(|| self.event_sink.clone()),
+                    &first_event_sink(events, self.event_sink.as_ref()),
                     TurnEvent::Background {
                         id: id.clone(),
                         status: "running".into(),
@@ -120,12 +115,7 @@ impl Agent {
             .get("description")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        if self.event_sink.is_none()
-            && let Some(tx) = events
-        {
-            self.background
-                .set_listener(Some(background_turn_listener(tx.clone())));
-        }
+        self.wire_background_turn_listener(events);
         let id = match self.background.start_shell_auto(
             &command,
             std::path::PathBuf::from(&tool_ctx.working_dir),
@@ -133,8 +123,7 @@ impl Agent {
             label,
         ) {
             Ok(id) => id,
-            Err(e) => {
-                tracing::debug!(error = %e, "auto-background start failed; running foreground");
+            Err(_start) => {
                 return self
                     .tool_executor
                     .execute(call, tool_ctx, &self.info.permission)
@@ -148,7 +137,7 @@ impl Agent {
         if status == crate::background::JobStatus::Running {
             let tail = self.background.tail(&id, 2_000);
             emit(
-                &events.cloned().or_else(|| self.event_sink.clone()),
+                &first_event_sink(events, self.event_sink.as_ref()),
                 TurnEvent::Background {
                     id: id.clone(),
                     status: "running".into(),
@@ -173,17 +162,21 @@ impl Agent {
             };
         }
         self.background.mark_auto_delivered(&id);
-        match self.background.read(&id, 8_000) {
-            Ok(s) => ToolResult {
-                tool_call_id: call.id.clone(),
-                content: s,
-                is_error: status == crate::background::JobStatus::Failed,
-            },
-            Err(e) => ToolResult {
-                tool_call_id: call.id.clone(),
-                content: e,
-                is_error: true,
-            },
+        // `tail` never errors: missing jobs yield "" (same as a vanished handle).
+        ToolResult {
+            tool_call_id: call.id.clone(),
+            content: self.background.tail(&id, 8_000),
+            is_error: status == crate::background::JobStatus::Failed,
+        }
+    }
+
+    fn wire_background_turn_listener(&self, events: Option<&EventSink>) {
+        if self.event_sink.is_some() {
+            return;
+        }
+        if let Some(tx) = events {
+            self.background
+                .set_listener(Some(background_turn_listener(tx.clone())));
         }
     }
 
@@ -1414,13 +1407,17 @@ fn optional_exit_suffix(code: Option<i32>) -> String {
 
 fn clear_cwd_if_under(cwd: &std::sync::Mutex<Option<std::path::PathBuf>>, dest: &std::path::Path) {
     let mut g = super::recover_lock(cwd);
-    if g.as_ref().is_some_and(|p| p.starts_with(dest)) {
-        *g = None;
+    match g.as_ref() {
+        Some(p) if p.starts_with(dest) => *g = None,
+        _ => {}
     }
 }
 
 fn first_event_sink(events: Option<&EventSink>, fallback: Option<&EventSink>) -> Option<EventSink> {
-    events.cloned().or_else(|| fallback.cloned())
+    match events {
+        Some(tx) => Some(tx.clone()),
+        None => fallback.cloned(),
+    }
 }
 
 fn fold_pending_usage(

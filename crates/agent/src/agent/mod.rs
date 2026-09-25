@@ -698,10 +698,9 @@ impl Agent {
         let mut secrets: Vec<(String, String)> = Vec::new();
         for name in names {
             let var = creds.env_var_for(&name, provider);
-            if let Ok(secret) = std::env::var(&var)
-                && !secret.is_empty()
-            {
-                secrets.push((name, secret));
+            match std::env::var(&var) {
+                Ok(secret) if !secret.is_empty() => secrets.push((name, secret)),
+                _ => {}
             }
         }
         let idx = secrets.iter().position(|(_, s)| s == current)?;

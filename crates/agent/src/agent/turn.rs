@@ -357,23 +357,22 @@ impl Agent {
                 Err(e)
                     if whycodes_llm::classify(&e).kind == whycodes_llm::ErrorKind::RateLimited =>
                 {
-                    if let Some((name, next)) = self.failover_api_key(provider_name, &api_key)
-                        && next != api_key
-                    {
-                        tracing::info!(credential = %name, "429 — retrying same model on next credential");
-                        let mut status = String::from("Rate limited — retrying ");
-                        status.push_str(provider_name);
-                        status.push('/');
-                        status.push_str(model);
-                        status.push_str(" on credential `");
-                        status.push_str(&name);
-                        status.push('`');
-                        emit(&events, TurnEvent::Status(status));
-                        api_key = next;
-                        self.set_sticky_credential(Some(name));
-                        continue;
+                    match self.failover_api_key(provider_name, &api_key) {
+                        Some((name, next)) if next != api_key => {
+                            let mut status = String::from("Rate limited — retrying ");
+                            status.push_str(provider_name);
+                            status.push('/');
+                            status.push_str(model);
+                            status.push_str(" on credential `");
+                            status.push_str(&name);
+                            status.push('`');
+                            emit(&events, TurnEvent::Status(status));
+                            api_key = next;
+                            self.set_sticky_credential(Some(name));
+                            continue;
+                        }
+                        _ => return Err(e),
                     }
-                    return Err(e);
                 }
                 Err(e) => return Err(e),
             };

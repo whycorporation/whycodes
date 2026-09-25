@@ -13,6 +13,10 @@ fn resolves_override_and_small_siblings() {
     let (p, m) = resolve_title_model("xai", "grok-4", Some("openrouter/foo"));
     assert_eq!(p, "openrouter");
     assert_eq!(m, "foo");
+
+    let kept = resolve_title_model("openai", "gpt-4o", None);
+    assert_eq!(resolve_title_model("openai", "gpt-4o", Some("")), kept);
+    assert_eq!(resolve_title_model("openai", "gpt-4o", Some("   ")), kept);
 }
 
 #[test]
@@ -194,6 +198,27 @@ async fn generate_title_uses_scripted_text_and_strips_prefix() {
         "title-gen-unique-model",
         "please explain the retry loop",
         Some("I walked through crates/llm"),
+    )
+    .await
+    .expect("title");
+    assert!(!title.is_empty(), "{title}");
+    assert!(!title.to_lowercase().starts_with("title:"), "{title}");
+}
+
+#[tokio::test]
+async fn generate_title_strips_lowercase_prefix() {
+    let provider = whycodes_llm::ScriptedProvider::named(
+        "title-lower",
+        [whycodes_llm::ScriptedStep::Text(
+            "title: Retry Loop\n".into(),
+        )],
+    );
+    let title = generate_title(
+        &provider,
+        "k",
+        "title-lower-unique-model",
+        "please explain the retry loop",
+        None,
     )
     .await
     .expect("title");

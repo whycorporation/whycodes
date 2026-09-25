@@ -1577,8 +1577,19 @@ async fn rate_limit_retries_same_model_on_next_credential() {
         .with_config(&config)
         .with_provider_registry(registry);
     let mut session = session_user("please explain the retry loop");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let out = agent
-        .run_turn(&mut session, "openai", "gpt-4o", "sk-live", Some(2))
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "openai",
+                model: "gpt-4o",
+                api_key: "sk-live",
+                max_turns: Some(2),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
         .await;
     unsafe {
         match prev_live {
@@ -1596,6 +1607,19 @@ async fn rate_limit_retries_same_model_on_next_credential() {
     }
     let out = out.expect("failover turn");
     assert!(out.contains("failover-ok"), "{out}");
+    let mut saw_rate_status = false;
+    while let Ok(ev) = rx.try_recv() {
+        if let TurnEvent::Status(s) = ev
+            && s.contains("credential")
+        {
+            saw_rate_status = true;
+            break;
+        }
+    }
+    assert!(
+        saw_rate_status,
+        "429 failover must emit a credential status"
+    );
     let calls = recorder.lock().unwrap_or_else(|e| e.into_inner()).clone();
     assert!(
         calls.iter().any(|(k, m)| k == "sk-live" && m == "gpt-4o"),
