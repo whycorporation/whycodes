@@ -153,6 +153,10 @@ mod tests {
             project_scratch_dir(Path::new("/w")),
             PathBuf::from("/w/.whycodes/scratch")
         );
+        assert_eq!(
+            project_scratch_dir(Path::new("")),
+            PathBuf::from(".whycodes/scratch")
+        );
         assert_eq!(or_dot(None), PathBuf::from("."));
         assert_eq!(or_dot(Some(PathBuf::from("/x"))), PathBuf::from("/x"));
         assert_eq!(config_file().file_name().unwrap(), "config.toml");

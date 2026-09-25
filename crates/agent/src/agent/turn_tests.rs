@@ -1612,3 +1612,108 @@ async fn rate_limit_retries_same_model_on_next_credential() {
     );
     assert_eq!(agent.sticky_credential().as_deref(), Some("ci"));
 }
+
+struct AlwaysRateLimited;
+
+impl LlmProvider for AlwaysRateLimited {
+    fn name(&self) -> &str {
+        "openai"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::Provider("unused".into())) })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        Box::pin(async {
+            Err(whycodes_core::Error::Provider(
+                "HTTP 429 rate_limit_exceeded retry in 0 seconds".into(),
+            ))
+        })
+    }
+}
+
+fn assert_rate_limited(err: &whycodes_core::Error) {
+    assert!(
+        err.to_string().to_lowercase().contains("429")
+            || err.to_string().to_lowercase().contains("rate"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn rate_limit_without_failover_returns_err() {
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(AlwaysRateLimited));
+    let agent = Agent::new(info("build")).with_provider_registry(registry);
+    let mut session = session_user("please explain the retry loop");
+    let err = agent
+        .run_turn(&mut session, "openai", "gpt-4o", "sk-live", Some(2))
+        .await
+        .expect_err("no next credential");
+    assert_rate_limited(&err);
+}
+
+#[tokio::test]
+async fn rate_limit_same_secret_does_not_loop() {
+    let prev = std::env::var_os("WHYCODES_TEST_FAILOVER_DUP");
+    let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_FAILOVER_DUP", "sk-same");
+        std::env::set_var("WHYCODES_CREDENTIAL_LANE", "interactive");
+    }
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(AlwaysRateLimited));
+    let mut config = whycodes_config::Config::default();
+    config.providers.insert(
+        "openai".into(),
+        ProviderConfig {
+            name: "openai".into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: ProviderCredentials {
+                order: vec!["interactive".into(), "ci".into()],
+                reserve: 0.1,
+                env: std::collections::HashMap::from([
+                    ("interactive".into(), "WHYCODES_TEST_FAILOVER_DUP".into()),
+                    ("ci".into(), "WHYCODES_TEST_FAILOVER_DUP".into()),
+                ]),
+            },
+        },
+    );
+    let agent = Agent::new(info("build"))
+        .with_config(&config)
+        .with_provider_registry(registry);
+    let mut session = session_user("please explain the retry loop");
+    let err = agent
+        .run_turn(&mut session, "openai", "gpt-4o", "sk-same", Some(2))
+        .await
+        .expect_err("identical secrets must not failover-loop");
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var("WHYCODES_TEST_FAILOVER_DUP", v),
+            None => std::env::remove_var("WHYCODES_TEST_FAILOVER_DUP"),
+        }
+        match prev_lane {
+            Some(v) => std::env::set_var("WHYCODES_CREDENTIAL_LANE", v),
+            None => std::env::remove_var("WHYCODES_CREDENTIAL_LANE"),
+        }
+    }
+    assert_rate_limited(&err);
+}

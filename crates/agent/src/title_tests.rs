@@ -199,6 +199,43 @@ async fn generate_title_uses_scripted_text_and_strips_prefix() {
 }
 
 #[tokio::test]
+async fn generate_title_truncates_long_assistant_snippet() {
+    let provider = whycodes_llm::ScriptedProvider::named(
+        "title-long",
+        [whycodes_llm::ScriptedStep::Text("Retry Loop".into())],
+    );
+    let long = "α".repeat(500);
+    let title = generate_title(
+        &provider,
+        "k",
+        "title-long-unique-model",
+        "please explain the retry loop",
+        Some(&long),
+    )
+    .await
+    .expect("title");
+    assert!(!title.is_empty(), "{title}");
+}
+
+#[tokio::test]
+async fn generate_title_skips_blank_assistant_snippet() {
+    let provider = whycodes_llm::ScriptedProvider::named(
+        "title-blank",
+        [whycodes_llm::ScriptedStep::Text("Retry Loop".into())],
+    );
+    let title = generate_title(
+        &provider,
+        "k",
+        "title-blank-unique-model",
+        "please explain the retry loop",
+        Some("   "),
+    )
+    .await
+    .expect("title");
+    assert!(!title.is_empty(), "{title}");
+}
+
+#[tokio::test]
 async fn generate_title_empty_on_non_text() {
     let provider = whycodes_llm::ScriptedProvider::named(
         "title-empty",

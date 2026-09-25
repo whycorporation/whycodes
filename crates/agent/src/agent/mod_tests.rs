@@ -1298,6 +1298,58 @@ async fn auto_background_emits_running_event_on_channel() {
     a.background.kill_all();
 }
 
+#[tokio::test]
+async fn auto_background_missing_command_and_failed_exit() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_secs(8);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let missing = a
+        .execute_shell_with_auto_background(&tc("bash", json!({})), &ctx, None)
+        .await;
+    assert!(
+        missing.is_error || !missing.content.contains("job_id:"),
+        "{missing:?}"
+    );
+    let failed = a
+        .execute_shell_with_auto_background(
+            &tc(
+                "bash",
+                json!({
+                    "command": "whycodes-no-such-command-xyz",
+                    "description": "expect fail"
+                }),
+            ),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(failed.is_error, "{failed:?}");
+}
+
+#[tokio::test]
+async fn auto_background_closed_listener_is_debug_logged() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(80);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    let started = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": hang_shell()})),
+            &ctx,
+            Some(&tx),
+        )
+        .await;
+    assert!(started.content.contains("job_id:"), "{started:?}");
+    a.background.kill_all();
+}
+
 #[test]
 fn execute_worktree_tool_create_enter_exit_remove_on_git_repo() {
     let a = test_agent();
@@ -2953,6 +3005,16 @@ fn failover_api_key_walks_named_credentials() {
     assert!(a.failover_api_key("openai", "sk-ci").is_none());
     assert!(a.failover_api_key("openai", "missing").is_none());
     assert!(a.failover_api_key("nope", "sk-live").is_none());
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_OPENAI_CI", "");
+    }
+    assert!(
+        a.failover_api_key("openai", "sk-live").is_none(),
+        "empty secret must be skipped"
+    );
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_OPENAI_CI", "sk-ci");
+    }
     a.set_sticky_credential(Some("ci".into()));
     assert_eq!(a.sticky_credential().as_deref(), Some("ci"));
     unsafe {
