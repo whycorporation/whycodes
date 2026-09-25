@@ -144,6 +144,28 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-25 — Windows coverage: `cmd_serve(1)` never errors
+
+**Symptom:** After the TUI hang fix, `scripts/coverage.sh` stuck on
+`cmd_serve_bind_privileged_port_fails` and a pile of sibling IsolatedHome
+tests (`has been running for over 60 seconds`).
+
+**JSONL / crash:** none.
+
+**Root cause:** The test assumed bind on port 1 fails (Unix privileged).
+Windows lets a non-admin bind `:1`, so `cmd_serve` reached `axum::serve`
+and never returned. IsolatedHome held `ENV_LOCK`.
+`dispatch_serve_and_connect_error_arms` had the same await.
+
+**Fix:** Bound both `cmd_serve` awaits with a 400ms timeout. Bind error
+*or* timeout satisfies the test. Production still tries `:1` and runs if
+it binds. `cmd_connect` now uses the same `should_use_tui` gate as
+`cmd_run`, so a leftover daemon on `:1` cannot open a live ratatui loop.
+
+**Prevention:** Do not `await cmd_serve` in unit tests without abort or
+timeout. `cmd_serve_binds_then_abort` already aborts the task. Do not
+call live `whycodes_tui::run` from `cmd_connect` without `WHYCODES_TEST_TUI`.
+
 ### 2026-09-25 — Windows coverage: CLI `cmd_run` hangs on a live TUI
 
 **Symptom:** `scripts/coverage.sh` stuck in `whycodes-cli` on
