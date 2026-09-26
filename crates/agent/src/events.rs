@@ -173,8 +173,11 @@ pub async fn wait_until_cancelled(flag: &Option<CancelFlag>) {
 }
 
 pub fn emit(sink: &Option<EventSink>, event: TurnEvent) {
-    if let Some(tx) = sink {
-        let _ = tx.send(event);
+    if let Some(tx) = sink
+        && let Err(e) = tx.send(event)
+    {
+        let error = e.to_string();
+        tracing::debug!(error = %error, "turn event dropped (listener closed)");
     }
 }
 

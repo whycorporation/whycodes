@@ -236,7 +236,9 @@ impl BackgroundRegistry {
             .map(|j| j.id)
             .collect();
         for id in ids {
-            let _ = self.kill(&id);
+            if let Err(e) = self.kill(&id) {
+                tracing::debug!(error = %e, %id, "background kill skipped");
+            }
         }
     }
 

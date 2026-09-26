@@ -667,11 +667,17 @@ impl Agent {
         let tx = sink;
         self.background
             .set_listener(Some(std::sync::Arc::new(move |ev| {
-                let _ = tx.send(TurnEvent::Background {
+                if let Err(e) = tx.send(TurnEvent::Background {
                     id: ev.id,
                     status: ev.status.as_str().to_string(),
                     summary: ev.summary,
-                });
+                }) {
+                    let error = e.to_string();
+                    tracing::debug!(
+                        error = %error,
+                        "background event dropped (listener closed)"
+                    );
+                }
             })));
     }
 
@@ -1099,7 +1105,10 @@ impl Agent {
             match title {
                 Ok(title) if !title.is_empty() => {
                     tracing::debug!(%title, model = %use_model, "session title refined (async)");
-                    let _ = title_tx.send((session_id, title));
+                    if let Err(e) = title_tx.send((session_id, title)) {
+                        let error = e.to_string();
+                        tracing::debug!(error = %error, "session title dropped (listener closed)");
+                    }
                 }
                 Ok(_) => {
                     tracing::debug!("title model returned empty; keeping heuristic/default");

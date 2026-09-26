@@ -648,31 +648,37 @@ impl Agent {
             if let Some(cmd) = command {
                 match background.start_shell(&cmd, cwd, sandbox, label) {
                     Ok(id) => match &sink {
-                        Some(tx) => {
-                            let _ = tx.send(TurnEvent::Background {
+                        Some(tx) => send_or_debug(
+                            tx,
+                            TurnEvent::Background {
                                 id: id.clone(),
                                 status: "running".into(),
                                 summary: format!("scheduled: {cmd}"),
-                            });
-                        }
+                            },
+                            "scheduled background event dropped (listener closed)",
+                        ),
                         None => skip_dispatch(),
                     },
                     Err(e) => match &sink {
-                        Some(tx) => {
-                            let _ = tx.send(TurnEvent::Background {
+                        Some(tx) => send_or_debug(
+                            tx,
+                            TurnEvent::Background {
                                 id: "schedule".into(),
                                 status: "failed".into(),
                                 summary: e,
-                            });
-                        }
+                            },
+                            "scheduled background failure dropped (listener closed)",
+                        ),
                         None => skip_dispatch(),
                     },
                 }
             }
             match (&goal, &sink) {
-                (Some(g), Some(tx)) => {
-                    let _ = tx.send(TurnEvent::EnqueuePrompt { text: g.clone() });
-                }
+                (Some(g), Some(tx)) => send_or_debug(
+                    tx,
+                    TurnEvent::EnqueuePrompt { text: g.clone() },
+                    "scheduled prompt dropped (listener closed)",
+                ),
                 _ => skip_dispatch(),
             }
         });
@@ -829,13 +835,15 @@ impl Agent {
                         owner_id: _,
                     } => {
                         match events {
-                            Some(tx) => {
-                                let _ = tx.send(TurnEvent::FileConflict {
+                            Some(tx) => send_or_debug(
+                                tx,
+                                TurnEvent::FileConflict {
                                     path: full.display().to_string(),
                                     claimant: label.clone(),
                                     owner: owner_label.clone(),
-                                });
-                            }
+                                },
+                                "pre-claim conflict event dropped (listener closed)",
+                            ),
                             None => skip_dispatch(),
                         }
                         return ToolResult {
@@ -906,13 +914,15 @@ impl Agent {
                 // The semaphore lives for this swarm run; it is never closed.
                 let _guard = permit.acquire().await;
                 match &events_tx {
-                    Some(tx) => {
-                        let _ = tx.send(TurnEvent::SwarmStatus {
+                    Some(tx) => send_or_debug(
+                        tx,
+                        TurnEvent::SwarmStatus {
                             active: 0,
                             total,
                             message: format!("Swarm {label}: running…"),
-                        });
-                    }
+                        },
+                        "swarm status event dropped (listener closed)",
+                    ),
                     None => skip_dispatch(),
                 }
 
@@ -1151,13 +1161,15 @@ impl Agent {
                             let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
                             for c in &merge.conflicts {
                                 match &events_tx {
-                                    Some(tx) => {
-                                        let _ = tx.send(TurnEvent::FileConflict {
+                                    Some(tx) => send_or_debug(
+                                        tx,
+                                        TurnEvent::FileConflict {
                                             path: c.path.clone(),
                                             claimant: label.clone(),
                                             owner: "main".into(),
-                                        });
-                                    }
+                                        },
+                                        "merge conflict event dropped (listener closed)",
+                                    ),
                                     None => skip_dispatch(),
                                 }
                             }
@@ -1194,7 +1206,13 @@ impl Agent {
 
         claims.clear();
         // Best-effort prune empty swarm run dir.
-        let _ = std::fs::remove_dir_all(&swarm_run_dir);
+        if let Err(e) = std::fs::remove_dir_all(&swarm_run_dir) {
+            tracing::debug!(
+                error = %e,
+                path = %swarm_run_dir.display(),
+                "swarm run dir remove skipped"
+            );
+        }
 
         let wall = wall_t0.elapsed().as_secs_f64();
         emit(

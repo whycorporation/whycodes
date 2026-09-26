@@ -160,12 +160,17 @@ impl QuestionPrompter for StdinQuestionPrompter {
     }
 }
 
+fn flush_prompt(skipped: &'static str) {
+    if let Err(e) = std::io::Write::flush(&mut std::io::stderr()) {
+        tracing::debug!(error = %e, "{skipped}");
+    }
+}
+
 #[allow(clippy::question_mark)]
 fn ask_stdin_questions(
     questions: Vec<QuestionSpec>,
     read_line: &mut dyn FnMut() -> Result<String, String>,
 ) -> Result<Vec<QuestionAnswer>, QuestionError> {
-    use std::io::Write;
     let mut answers = Vec::with_capacity(questions.len());
     for (qi, q) in questions.iter().enumerate() {
         eprintln!();
@@ -175,7 +180,7 @@ fn ask_stdin_questions(
         eprintln!("❓ {}", q.prompt);
         if q.options.is_empty() {
             eprint!("   Your answer: ");
-            let _ = std::io::stderr().flush();
+            flush_prompt("question prompt flush skipped");
             let line = match invalid_line(read_line()) {
                 Ok(line) => line,
                 Err(e) => return Err(e),
@@ -196,7 +201,7 @@ fn ask_stdin_questions(
         let other_n = q.options.len() + 1;
         eprintln!("  {other_n}. Other (type your own)");
         eprint!("   Choice: ");
-        let _ = std::io::stderr().flush();
+        flush_prompt("question choice flush skipped");
         let line = match invalid_line(read_line()) {
             Ok(line) => line,
             Err(e) => return Err(e),
@@ -204,7 +209,7 @@ fn ask_stdin_questions(
         let parsed = parse_stdin_question_line(q, &line);
         let other_text = if matches!(parsed, StdinQuestionParse::Other) {
             eprint!("   Other text: ");
-            let _ = std::io::stderr().flush();
+            flush_prompt("question other-text flush skipped");
             Some(line_or_empty(read_line()))
         } else {
             None

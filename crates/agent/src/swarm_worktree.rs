@@ -247,11 +247,27 @@ pub fn remove_worktree(wt: &SwarmWorktree) -> Result<(), String> {
 
     if !output.status.success() {
         // Fallback: force-delete directory and prune.
-        let _ = std::fs::remove_dir_all(&wt.path);
-        let _ = Command::new("git")
+        if let Err(e) = std::fs::remove_dir_all(&wt.path) {
+            tracing::debug!(
+                error = %e,
+                path = %wt.path.display(),
+                "worktree dir remove skipped"
+            );
+        }
+        match Command::new("git")
             .args(["worktree", "prune"])
             .current_dir(&wt.repo_root)
-            .output();
+            .output()
+        {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => {
+                let error = String::from_utf8_lossy(&output.stderr);
+                tracing::debug!(error = %error, "worktree prune failed");
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "worktree prune spawn failed");
+            }
+        }
         let err = String::from_utf8_lossy(&output.stderr);
         return after_git_remove_failed(&wt.path, &err);
     }
