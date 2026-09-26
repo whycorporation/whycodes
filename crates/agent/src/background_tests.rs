@@ -55,17 +55,20 @@ async fn start_echo_completes() {
 #[tokio::test]
 async fn max_jobs_enforced() {
     let reg = BackgroundRegistry::new(1);
-    reg.start_shell(
-        "sleep 60",
-        std::env::temp_dir(),
-        SandboxSettings::off(),
-        None,
-    )
-    .unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // The cap is checked synchronously when the job is marked Running, before
+    // the child is spawned. A short command avoids a 60s sleeper that the
+    // runtime can block on while reaping at shutdown.
+    let id = reg
+        .start_shell(
+            "echo cap",
+            std::env::temp_dir(),
+            SandboxSettings::off(),
+            None,
+        )
+        .unwrap();
     let err = reg
         .start_shell(
-            "sleep 60",
+            "echo cap-2",
             std::env::temp_dir(),
             SandboxSettings::off(),
             None,
@@ -73,6 +76,7 @@ async fn max_jobs_enforced() {
         .unwrap_err();
     assert!(err.contains("too many"), "{err}");
     reg.kill_all();
+    let _ = reg.wait_until_idle(&id, Duration::from_secs(2)).await;
 }
 
 #[test]
@@ -142,12 +146,16 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
             Some("missing".into()),
         )
         .expect("spawn is recorded even if the child fails");
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    let snap = reg
-        .list()
-        .into_iter()
-        .find(|j| j.id == missing)
-        .expect("job");
+    // Instrumentation can delay the spawn-failure task past a fixed sleep.
+    let mut snap = None;
+    for _ in 0..40 {
+        snap = reg.list().into_iter().find(|j| j.id == missing);
+        if snap.as_ref().is_some_and(|j| j.status == JobStatus::Failed) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let snap = snap.expect("job");
     assert_eq!(snap.status, JobStatus::Failed);
     let already = reg.kill(&missing).expect("already");
     assert!(already.contains("already"), "{already}");

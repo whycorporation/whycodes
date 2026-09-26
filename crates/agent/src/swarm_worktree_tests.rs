@@ -516,14 +516,24 @@ fn after_git_remove_failed_ok_when_gone_and_err_when_present() {
     assert!(err.contains("still there"), "{err}");
 }
 
+fn exit_status(success: bool) -> std::process::ExitStatus {
+    // Do not spawn `cmd`/`false`: Linux has no `cmd`, and sibling tests can
+    // empty PATH so a real process is not a stable exit-code source.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(if success { 0 } else { 1 << 8 })
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(if success { 0 } else { 1 })
+    }
+}
+
 fn exit_status_output(success: bool) -> std::process::Output {
-    let code = if success { 0 } else { 1 };
-    let status = std::process::Command::new("cmd")
-        .args(["/C", "exit", &code.to_string()])
-        .status()
-        .expect("cmd exit");
     std::process::Output {
-        status,
+        status: exit_status(success),
         stdout: if success { b"ok".to_vec() } else { Vec::new() },
         stderr: Vec::new(),
     }

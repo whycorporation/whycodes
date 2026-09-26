@@ -458,20 +458,18 @@ impl Agent {
                         emit(&events, TurnEvent::TextDelta(text.clone()));
                         accumulated_text.push_str(&text);
                         let hit = first_stream_rule_hit(&self.stream_rules, &accumulated_text);
-                        if let Some((name, hint)) = hit {
-                            crate::speculative_read::abort_all(&mut speculative_reads);
-                            emit(
+                        match hit {
+                            Some((name, hint)) => apply_stream_rule_hit(
+                                &mut speculative_reads,
                                 &events,
-                                TurnEvent::Status(format!(
-                                    "Stream rule `{name}` interrupted the draft"
-                                )),
-                            );
-                            session.add_user_message(&format!(
-                                "<whycodes_rule name=\"{name}\">\n{hint}\n\
-                                 The previous draft was discarded. Continue without violating this rule.\n\
-                                 </whycodes_rule>"
-                            ));
-                            stream_rule_retry = true;
+                                session,
+                                name,
+                                hint,
+                                &mut stream_rule_retry,
+                            ),
+                            None => skip_event(),
+                        }
+                        if stream_rule_retry {
                             break;
                         }
                     }
@@ -924,6 +922,27 @@ fn maybe_start_speculative(
 }
 
 fn skip_event() {}
+
+fn apply_stream_rule_hit(
+    speculative_reads: &mut Vec<crate::speculative_read::SpeculativeRead>,
+    events: &Option<crate::events::EventSink>,
+    session: &mut whycodes_session::Session,
+    name: &str,
+    hint: &str,
+    stream_rule_retry: &mut bool,
+) {
+    crate::speculative_read::abort_all(speculative_reads);
+    emit(
+        events,
+        TurnEvent::Status(format!("Stream rule `{name}` interrupted the draft")),
+    );
+    session.add_user_message(&format!(
+        "<whycodes_rule name=\"{name}\">\n{hint}\n\
+         The previous draft was discarded. Continue without violating this rule.\n\
+         </whycodes_rule>"
+    ));
+    *stream_rule_retry = true;
+}
 
 fn transcript_has_tool_work(messages: &[whycodes_core::types::Message]) -> bool {
     for message in messages {
