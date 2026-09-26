@@ -3,13 +3,17 @@
 #
 # cargo-llvm-cov ProcessBuilder strips LLVM_COV_FLAGS (and often other
 # WHYCODES_* env) from the child. Bake the real binary into this file
-# at generation time (`coverage.sh` writes a copy with @@REAL@@ replaced).
+# at generation time (replace the @@REAL@@ placeholder below).
 # rustup llvm-cov 21 rejects the flag on `show`; only `export` gets it.
+#
+# Do not compare `$real` to that placeholder. Substitution rewrites every
+# copy, so the guard becomes "path equals the baked path" and, once the
+# env override is stripped, the wrapper always exits 1.
 set -eu
 
 real="${WHYCODES_LLVM_COV_REAL:-@@REAL@@}"
-if [ "$real" = "@@REAL@@" ] || [ -z "$real" ]; then
-    printf 'error: llvm-cov wrapper has no real binary path\n' >&2
+if [ -z "$real" ] || [ ! -x "$real" ]; then
+    printf 'error: llvm-cov wrapper has no real binary path (%s)\n' "$real" >&2
     exit 1
 fi
 

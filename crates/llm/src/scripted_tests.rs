@@ -140,7 +140,7 @@ async fn complete_error_and_empty_and_hang() {
     assert!(err.complete(&req(), "", "m").await.is_err());
 
     let empty = ScriptedProvider::new([
-        ScriptedStep::Thinking("t".into()),
+        ScriptedStep::ThinkingDelta("t".into()),
         ScriptedStep::Hang(Duration::from_millis(1)),
         ScriptedStep::Usage {
             input_tokens: 3,
@@ -150,6 +150,116 @@ async fn complete_error_and_empty_and_hang() {
     let out = empty.complete(&req(), "", "m").await.unwrap();
     assert!(out.content.is_empty());
     assert_eq!(out.usage.input_tokens, 3);
+}
+
+#[tokio::test]
+async fn complete_emits_tool_use_blocks() {
+    let p = ScriptedProvider::new([
+        ScriptedStep::Text("pre".into()),
+        ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "bash".into(),
+            input: json!({"command": "echo nope"}),
+        },
+    ]);
+    let out = p.complete(&req(), "", "m").await.unwrap();
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::ToolUse { name, .. } if name == "bash"
+        )),
+        "{out:?}"
+    );
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::Text { text } if text == "pre"
+        )),
+        "{out:?}"
+    );
+}
+
+#[tokio::test]
+async fn complete_emits_tool_use_without_prior_text() {
+    let p = ScriptedProvider::new([ScriptedStep::ToolCall {
+        id: "c1".into(),
+        name: "read".into(),
+        input: json!({"path": "a"}),
+    }]);
+    let out = p.complete(&req(), "", "m").await.unwrap();
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::ToolUse { name, .. } if name == "read"
+        )),
+        "{out:?}"
+    );
+    assert!(
+        !out.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::Text { .. })),
+        "{out:?}"
+    );
+}
+
+#[tokio::test]
+async fn complete_flushes_text_before_thinking() {
+    let p = ScriptedProvider::new([
+        ScriptedStep::Text("pre".into()),
+        ScriptedStep::Thinking("scratch".into()),
+        ScriptedStep::FailOpen("nope".into()),
+    ]);
+    assert!(p.complete(&req(), "", "m").await.is_err());
+
+    let p = ScriptedProvider::new([
+        ScriptedStep::Text("pre".into()),
+        ScriptedStep::Thinking("scratch".into()),
+    ]);
+    let out = p.complete(&req(), "", "m").await.unwrap();
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::Text { text } if text == "pre"
+        )),
+        "{out:?}"
+    );
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::Thinking { text, .. } if text == "scratch"
+        )),
+        "{out:?}"
+    );
+}
+
+#[tokio::test]
+async fn complete_emits_thinking_then_text() {
+    let p = ScriptedProvider::new([
+        ScriptedStep::Thinking("scratch".into()),
+        ScriptedStep::Text("visible".into()),
+        ScriptedStep::RedactedThinking("hid".into()),
+    ]);
+    let out = p.complete(&req(), "", "m").await.unwrap();
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::Thinking { text, .. } if text == "scratch"
+        )),
+        "{out:?}"
+    );
+    assert!(
+        out.content.iter().any(|b| matches!(
+            b,
+            ContentBlock::Text { text } if text == "visible"
+        )),
+        "{out:?}"
+    );
+    assert!(
+        out.content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::RedactedThinking { .. })),
+        "{out:?}"
+    );
 }
 
 #[tokio::test]

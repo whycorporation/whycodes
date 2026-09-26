@@ -27,11 +27,15 @@ pub fn resolve_title_model(
     model: &str,
     override_model: Option<&str>,
 ) -> (String, String) {
-    if let Some(raw) = override_model.map(str::trim).filter(|s| !s.is_empty()) {
-        if let Some((p, m)) = raw.split_once('/') {
-            return (p.to_string(), m.to_string());
+    let raw = match override_model {
+        Some(raw) => raw.trim(),
+        None => "",
+    };
+    if !raw.is_empty() {
+        match raw.split_once('/') {
+            Some((p, m)) => return (p.to_string(), m.to_string()),
+            None => return (provider.to_string(), raw.to_string()),
         }
-        return (provider.to_string(), raw.to_string());
     }
     let p = provider.to_ascii_lowercase();
     let m = model.to_ascii_lowercase();
@@ -75,7 +79,12 @@ fn is_already_small(model: &str) -> bool {
     const MARKERS: &[&str] = &[
         "haiku", "mini", "nano", "flash", "small", "lite", "8b", "7b", "3b", "instant",
     ];
-    MARKERS.iter().any(|m| model.contains(m))
+    for marker in MARKERS {
+        if model.contains(marker) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Generate a refined title; empty string on blank/useless output.
@@ -87,10 +96,15 @@ pub async fn generate_title(
     assistant_snippet: Option<&str>,
 ) -> whycodes_core::Result<String> {
     let user_text = truncate(user_text, 800);
-    let mut body = format!("User request:\n{user_text}");
-    if let Some(a) = assistant_snippet.map(str::trim).filter(|s| !s.is_empty()) {
+    let mut body = String::from("User request:\n");
+    body.push_str(&user_text);
+    let snippet = match assistant_snippet {
+        Some(snippet) => snippet.trim(),
+        None => "",
+    };
+    if !snippet.is_empty() {
         body.push_str("\n\nAssistant excerpt:\n");
-        body.push_str(&truncate(a, 400));
+        body.push_str(&truncate(snippet, 400));
     }
     body.push_str("\n\nSession title:");
 
@@ -124,28 +138,47 @@ pub async fn generate_title(
             full_jitter: true,
         },
     };
-    let response = transport
-        .complete(provider, &request, api_key, model)
-        .await?;
-    let raw = response
-        .content
-        .iter()
-        .filter_map(|b| match b {
-            whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    // Models sometimes prefix "Title:" — strip once.
-    let line = raw
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
+    let completed = transport.complete(provider, &request, api_key, model).await;
+    let response = match completed {
+        Ok(response) => response,
+        Err(err) => return Err(err),
+    };
+    let mut raw = String::new();
+    for b in &response.content {
+        match text_block(b) {
+            Some(text) => {
+                if !raw.is_empty() {
+                    raw.push(' ');
+                }
+                raw.push_str(text);
+            }
+            None => continue,
+        }
+    }
+    let mut line = String::new();
+    for candidate in raw.lines() {
+        let candidate = candidate.trim();
+        if !candidate.is_empty() {
+            line = candidate.to_string();
+            break;
+        }
+    }
+    let line = line
         .trim_start_matches("Title:")
         .trim_start_matches("title:")
         .trim();
     Ok(sanitize_title(line))
+}
+
+fn text_block(block: &whycodes_core::types::ContentBlock) -> Option<&str> {
+    match block {
+        whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
+        whycodes_core::types::ContentBlock::Image { .. } => None,
+        whycodes_core::types::ContentBlock::ToolUse { .. } => None,
+        whycodes_core::types::ContentBlock::ToolResult { .. } => None,
+        whycodes_core::types::ContentBlock::Thinking { .. } => None,
+        whycodes_core::types::ContentBlock::RedactedThinking { .. } => None,
+    }
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {
@@ -170,8 +203,9 @@ pub fn should_refine_title(session: &Session) -> bool {
     if !session.title_source.allows_llm() {
         return false;
     }
-    let Some(user) = session.first_user_text() else {
-        return false;
+    let user = match session.first_user_text() {
+        Some(text) => text,
+        None => return false,
     };
     if is_trivial_title_seed(&user) {
         return false;
@@ -196,15 +230,28 @@ pub fn is_trivial_title_seed(text: &str) -> bool {
     // Short by shape: few characters, few words, single line. Real questions
     // about the project run longer even in Turkish ("Compaction nasıl
     // çalışıyor?" is 27 chars) while chit-chat stays under both limits.
-    if t.chars().count() > 20 || t.lines().count() > 1 || t.split_whitespace().count() > 3 {
+    let too_long = t.chars().count() > 20;
+    let multi_line = t.lines().count() > 1;
+    let too_many_words = t.split_whitespace().count() > 3;
+    if too_long {
+        return false;
+    }
+    if multi_line {
+        return false;
+    }
+    if too_many_words {
         return false;
     }
     // Code / project cues: paths, code spans, flags, identifiers, numbers.
     if t.contains([
         '/', '\\', '`', '=', '_', '(', ')', '{', '}', '<', '>', '@', '#', '$',
-    ]) || t.chars().any(|c| c.is_ascii_digit())
-    {
+    ]) {
         return false;
+    }
+    for c in t.chars() {
+        if c.is_ascii_digit() {
+            return false;
+        }
     }
     // Dotted names ("main.rs") — but allow sentence-final punctuation.
     if t.trim_end_matches(['.', '!', '?']).contains('.') {

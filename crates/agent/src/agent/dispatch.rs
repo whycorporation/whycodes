@@ -11,6 +11,8 @@ use crate::events::{EventSink, TurnEvent, emit};
 use crate::subagent::{SubagentRunner, SubagentTask};
 use crate::tool_policy::*;
 
+fn skip_dispatch() {}
+
 use super::{Agent, persist_agent_artifact};
 
 impl Agent {
@@ -40,19 +42,7 @@ impl Agent {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         // Prefer long-lived sink; fall back to turn events for listener (optional).
-        if self.event_sink.is_none()
-            && let Some(tx) = events
-        {
-            let tx = tx.clone();
-            self.background
-                .set_listener(Some(std::sync::Arc::new(move |ev| {
-                    let _ = tx.send(TurnEvent::Background {
-                        id: ev.id,
-                        status: ev.status.as_str().to_string(),
-                        summary: ev.summary,
-                    });
-                })));
-        }
+        self.wire_background_turn_listener(events);
         match self.background.start_shell(
             &command,
             std::path::PathBuf::from(&tool_ctx.working_dir),
@@ -61,20 +51,23 @@ impl Agent {
         ) {
             Ok(id) => {
                 emit(
-                    &events.cloned().or_else(|| self.event_sink.clone()),
+                    &first_event_sink(events, self.event_sink.as_ref()),
                     TurnEvent::Background {
                         id: id.clone(),
                         status: "running".into(),
                         summary: truncate_permission_detail(&command),
                     },
                 );
+                let mut content = String::from("Background job `");
+                content.push_str(&id);
+                content.push_str("` started.\nCommand: ");
+                content.push_str(&command);
+                content.push_str("\nUse tool `bg` with action=list|read|kill (id=");
+                content.push_str(&id);
+                content.push_str(").");
                 ToolResult {
                     tool_call_id: call.id.clone(),
-                    content: format!(
-                        "Background job `{id}` started.\n\
-                         Command: {command}\n\
-                         Use tool `bg` with action=list|read|kill (id={id})."
-                    ),
+                    content,
                     is_error: false,
                 }
             }
@@ -83,6 +76,111 @@ impl Agent {
                 content: e,
                 is_error: true,
             },
+        }
+    }
+
+    /// Foreground `bash` that auto-detaches after idle unless catastrophic.
+    pub(crate) async fn execute_shell_with_auto_background(
+        &self,
+        call: &ToolCall,
+        tool_ctx: &ToolContext,
+        events: Option<&EventSink>,
+    ) -> ToolResult {
+        let command = call
+            .arguments
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if command.trim().is_empty() {
+            return self
+                .tool_executor
+                .execute(call, tool_ctx, &self.info.permission)
+                .await;
+        }
+        let assessment =
+            whycodes_command_risk::assess(&command, std::path::Path::new(&tool_ctx.working_dir));
+        if assessment.level == whycodes_command_risk::RiskLevel::Catastrophic {
+            let mut content = String::from("Refused: `");
+            content.push_str(&command);
+            content.push_str(
+                "` is catastrophic and cannot be auto-backgrounded. Run it yourself if you are certain.",
+            );
+            return ToolResult {
+                tool_call_id: call.id.clone(),
+                content,
+                is_error: true,
+            };
+        }
+        let label = call
+            .arguments
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        self.wire_background_turn_listener(events);
+        let id = match self.background.start_shell_auto(
+            &command,
+            std::path::PathBuf::from(&tool_ctx.working_dir),
+            tool_ctx.sandbox.clone(),
+            label,
+        ) {
+            Ok(id) => id,
+            Err(_start) => {
+                return self
+                    .tool_executor
+                    .execute(call, tool_ctx, &self.info.permission)
+                    .await;
+            }
+        };
+        let status = self
+            .background
+            .wait_until_idle(&id, self.bash_auto_background_after)
+            .await;
+        if status == crate::background::JobStatus::Running {
+            let tail = self.background.tail(&id, 2_000);
+            emit(
+                &first_event_sink(events, self.event_sink.as_ref()),
+                TurnEvent::Background {
+                    id: id.clone(),
+                    status: "running".into(),
+                    summary: truncate_permission_detail(&command),
+                },
+            );
+            let secs = self.bash_auto_background_after.as_secs().to_string();
+            let mut content = String::from("job_id: ");
+            content.push_str(&id);
+            content.push_str("\nstate: running\nCommand: ");
+            content.push_str(&command);
+            content.push_str("\nAuto-backgrounded after ");
+            content.push_str(&secs);
+            content.push_str("s. Use `bg` action=read|kill (id=");
+            content.push_str(&id);
+            content.push_str(").\n");
+            content.push_str(&tail);
+            return ToolResult {
+                tool_call_id: call.id.clone(),
+                content,
+                is_error: false,
+            };
+        }
+        self.background.mark_auto_delivered(&id);
+        // `tail` never errors: missing jobs yield "" (same as a vanished handle).
+        ToolResult {
+            tool_call_id: call.id.clone(),
+            content: self.background.tail(&id, 8_000),
+            is_error: status == crate::background::JobStatus::Failed,
+        }
+    }
+
+    fn wire_background_turn_listener(&self, events: Option<&EventSink>) {
+        if self.event_sink.is_some() {
+            return;
+        }
+        match events {
+            Some(tx) => self
+                .background
+                .set_listener(Some(background_turn_listener(tx.clone()))),
+            None => skip_dispatch(),
         }
     }
 
@@ -223,7 +321,7 @@ impl Agent {
                 )];
                 lines.push(format!("Deferred catalogue ({}):", catalog.len()));
                 for (name, desc) in catalog.iter().take(40) {
-                    let active = if activated.iter().any(|a| a == name) {
+                    let active = if names_contain(&activated, name) {
                         " [on]"
                     } else {
                         ""
@@ -249,12 +347,7 @@ impl Agent {
                         is_error: true,
                     };
                 }
-                let names: Vec<String> = query
-                    .split(|c: char| c == ',' || c.is_whitespace())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-                    .collect();
+                let names = split_nonempty(&query);
                 let mut added = Vec::new();
                 let mut missing = Vec::new();
                 let mut guard = super::recover_lock(&self.activated_tools);
@@ -364,8 +457,9 @@ impl Agent {
         match action {
             "list" => {
                 let mut lines = vec![format!("Worktrees under {}", base.display())];
-                if let Some(cwd) = self.cwd_override_path() {
-                    lines.push(format!("Active cwd override: {}", cwd.display()));
+                match self.cwd_override_path() {
+                    Some(cwd) => lines.push(format!("Active cwd override: {}", cwd.display())),
+                    None => skip_dispatch(),
                 }
                 match std::fs::read_dir(&base) {
                     Ok(rd) => {
@@ -553,39 +647,50 @@ impl Agent {
             }
             if let Some(cmd) = command {
                 match background.start_shell(&cmd, cwd, sandbox, label) {
-                    Ok(id) => {
-                        if let Some(ref tx) = sink {
-                            let _ = tx.send(TurnEvent::Background {
+                    Ok(id) => match &sink {
+                        Some(tx) => send_or_debug(
+                            tx,
+                            TurnEvent::Background {
                                 id: id.clone(),
                                 status: "running".into(),
                                 summary: format!("scheduled: {cmd}"),
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        if let Some(ref tx) = sink {
-                            let _ = tx.send(TurnEvent::Background {
+                            },
+                            "scheduled background event dropped (listener closed)",
+                        ),
+                        None => skip_dispatch(),
+                    },
+                    Err(e) => match &sink {
+                        Some(tx) => send_or_debug(
+                            tx,
+                            TurnEvent::Background {
                                 id: "schedule".into(),
                                 status: "failed".into(),
                                 summary: e,
-                            });
-                        }
-                    }
+                            },
+                            "scheduled background failure dropped (listener closed)",
+                        ),
+                        None => skip_dispatch(),
+                    },
                 }
             }
-            if let Some(g) = goal
-                && let Some(ref tx) = sink
-            {
-                let _ = tx.send(TurnEvent::EnqueuePrompt { text: g });
+            match (&goal, &sink) {
+                (Some(g), Some(tx)) => send_or_debug(
+                    tx,
+                    TurnEvent::EnqueuePrompt { text: g.clone() },
+                    "scheduled prompt dropped (listener closed)",
+                ),
+                _ => skip_dispatch(),
             }
         });
 
         let mut parts = vec![format!("Scheduled in {after_secs}s")];
-        if let Some(ref c) = call.arguments.get("command").and_then(|v| v.as_str()) {
-            parts.push(format!("shell: {c}"));
+        match call.arguments.get("command").and_then(|v| v.as_str()) {
+            Some(c) => parts.push(format!("shell: {c}")),
+            None => skip_dispatch(),
         }
-        if let Some(ref g) = call.arguments.get("goal").and_then(|v| v.as_str()) {
-            parts.push(format!("prompt queue: {g}"));
+        match call.arguments.get("goal").and_then(|v| v.as_str()) {
+            Some(g) => parts.push(format!("prompt queue: {g}")),
+            None => skip_dispatch(),
         }
         ToolResult {
             tool_call_id: call.id.clone(),
@@ -724,17 +829,22 @@ impl Agent {
                     session.project_path.join(rel)
                 };
                 match claims.try_claim(&worker_id, &label, &full) {
-                    ClaimResult::Acquired | ClaimResult::Held => {}
+                    ClaimResult::Acquired | ClaimResult::Held => skip_dispatch(),
                     ClaimResult::Conflict {
                         owner_label,
                         owner_id: _,
                     } => {
-                        if let Some(tx) = events {
-                            let _ = tx.send(TurnEvent::FileConflict {
-                                path: full.display().to_string(),
-                                claimant: label.clone(),
-                                owner: owner_label.clone(),
-                            });
+                        match events {
+                            Some(tx) => send_or_debug(
+                                tx,
+                                TurnEvent::FileConflict {
+                                    path: full.display().to_string(),
+                                    claimant: label.clone(),
+                                    owner: owner_label.clone(),
+                                },
+                                "pre-claim conflict event dropped (listener closed)",
+                            ),
+                            None => skip_dispatch(),
                         }
                         return ToolResult {
                             tool_call_id: call.id.clone(),
@@ -803,12 +913,17 @@ impl Agent {
             handles.push(tokio::spawn(async move {
                 // The semaphore lives for this swarm run; it is never closed.
                 let _guard = permit.acquire().await;
-                if let Some(ref tx) = events_tx {
-                    let _ = tx.send(TurnEvent::SwarmStatus {
-                        active: 0,
-                        total,
-                        message: format!("Swarm {label}: running…"),
-                    });
+                match &events_tx {
+                    Some(tx) => send_or_debug(
+                        tx,
+                        TurnEvent::SwarmStatus {
+                            active: 0,
+                            total,
+                            message: format!("Swarm {label}: running…"),
+                        },
+                        "swarm status event dropped (listener closed)",
+                    ),
+                    None => skip_dispatch(),
                 }
 
                 // Optional isolated checkout.
@@ -883,9 +998,7 @@ impl Agent {
                         let mut perm = parent_permission;
                         let mut denied = perm.denied_tools.unwrap_or_default();
                         for t in ["todowrite", "todo", "todoread", "task", "swarm"] {
-                            if !denied.iter().any(|x| x == t) {
-                                denied.push(t.to_string());
-                            }
+                            push_unique(&mut denied, t);
                         }
                         perm.denied_tools = Some(denied);
                         (
@@ -963,8 +1076,8 @@ impl Agent {
                 }
 
                 let t0 = Instant::now();
-                if let Some(ref tx) = events_tx
-                    && let Err(e) = tx.send(TurnEvent::Subagent {
+                match &events_tx {
+                    Some(tx) => match tx.send(TurnEvent::Subagent {
                         id: worker_id.clone(),
                         kind: spec.subagent_type.clone(),
                         description: spec.goal.clone(),
@@ -972,10 +1085,14 @@ impl Agent {
                         activity: "Thinking".into(),
                         elapsed_ms: 0,
                         output: String::new(),
-                    })
-                {
-                    let error = e.to_string();
-                    tracing::debug!(error = %error, "subagent running event dropped");
+                    }) {
+                        Ok(()) => skip_dispatch(),
+                        Err(e) => {
+                            let error = e.to_string();
+                            tracing::debug!(error = %error, "subagent running event dropped");
+                        }
+                    },
+                    None => skip_dispatch(),
                 }
                 let result = runner.run(task, &pn, &m, &ak).await;
                 let secs = t0.elapsed().as_secs_f64();
@@ -985,8 +1102,8 @@ impl Agent {
                 if success {
                     persist_agent_artifact(&project_path, &worker_id, &body);
                 }
-                if let Some(ref tx) = events_tx
-                    && let Err(e) = tx.send(TurnEvent::Subagent {
+                match &events_tx {
+                    Some(tx) => match tx.send(TurnEvent::Subagent {
                         id: worker_id.clone(),
                         kind: spec.subagent_type.clone(),
                         description: spec.goal.clone(),
@@ -994,10 +1111,14 @@ impl Agent {
                         activity: String::new(),
                         elapsed_ms: (secs * 1000.0) as u64,
                         output: body.clone(),
-                    })
-                {
-                    let error = e.to_string();
-                    tracing::debug!(error = %error, "subagent finished event dropped");
+                    }) {
+                        Ok(()) => skip_dispatch(),
+                        Err(e) => {
+                            let error = e.to_string();
+                            tracing::debug!(error = %error, "subagent finished event dropped");
+                        }
+                    },
+                    None => skip_dispatch(),
                 }
 
                 (
@@ -1035,28 +1156,36 @@ impl Agent {
                     label,
                 )) => {
                     fold_pending_usage(&self.subagent_usage_pending, &worker_usage);
-                    if let Some(wt) = worktree {
-                        let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
-                        for c in &merge.conflicts {
-                            if let Some(ref tx) = events_tx {
-                                let _ = tx.send(TurnEvent::FileConflict {
-                                    path: c.path.clone(),
-                                    claimant: label.clone(),
-                                    owner: "main".into(),
-                                });
+                    match worktree {
+                        Some(wt) => {
+                            let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
+                            for c in &merge.conflicts {
+                                match &events_tx {
+                                    Some(tx) => send_or_debug(
+                                        tx,
+                                        TurnEvent::FileConflict {
+                                            path: c.path.clone(),
+                                            claimant: label.clone(),
+                                            owner: "main".into(),
+                                        },
+                                        "merge conflict event dropped (listener closed)",
+                                    ),
+                                    None => skip_dispatch(),
+                                }
                             }
+                            if !merge.conflicts.is_empty() {
+                                success = false;
+                            }
+                            let merge_txt = crate::swarm_worktree::format_merge_report(&merge);
+                            if !merge_txt.is_empty() {
+                                body = format!("{body}\n\n{merge_txt}");
+                            }
+                            body = append_cleanup_warning(
+                                body,
+                                crate::swarm_worktree::remove_worktree(&wt),
+                            );
                         }
-                        if !merge.conflicts.is_empty() {
-                            success = false;
-                        }
-                        let merge_txt = crate::swarm_worktree::format_merge_report(&merge);
-                        if !merge_txt.is_empty() {
-                            body = format!("{body}\n\n{merge_txt}");
-                        }
-                        body = append_cleanup_warning(
-                            body,
-                            crate::swarm_worktree::remove_worktree(&wt),
-                        );
+                        None => skip_dispatch(),
                     }
 
                     if success {
@@ -1077,7 +1206,13 @@ impl Agent {
 
         claims.clear();
         // Best-effort prune empty swarm run dir.
-        let _ = std::fs::remove_dir_all(&swarm_run_dir);
+        if let Err(e) = std::fs::remove_dir_all(&swarm_run_dir) {
+            tracing::debug!(
+                error = %e,
+                path = %swarm_run_dir.display(),
+                "swarm run dir remove skipped"
+            );
+        }
 
         let wall = wall_t0.elapsed().as_secs_f64();
         emit(
@@ -1193,9 +1328,7 @@ impl Agent {
                 let mut perm = self.info.permission.clone();
                 let mut denied = perm.denied_tools.unwrap_or_default();
                 for t in ["todowrite", "todo", "todoread", "swarm"] {
-                    if !denied.iter().any(|x| x == t) {
-                        denied.push(t.to_string());
-                    }
+                    push_unique(&mut denied, t);
                 }
                 perm.denied_tools = Some(denied);
                 (
@@ -1311,15 +1444,21 @@ fn optional_exit_suffix(code: Option<i32>) -> String {
     }
 }
 
+fn keep_cwd() {}
+
 fn clear_cwd_if_under(cwd: &std::sync::Mutex<Option<std::path::PathBuf>>, dest: &std::path::Path) {
     let mut g = super::recover_lock(cwd);
-    if g.as_ref().is_some_and(|p| p.starts_with(dest)) {
-        *g = None;
+    match g.as_ref() {
+        Some(p) if p.starts_with(dest) => *g = None,
+        _ => keep_cwd(),
     }
 }
 
 fn first_event_sink(events: Option<&EventSink>, fallback: Option<&EventSink>) -> Option<EventSink> {
-    events.cloned().or_else(|| fallback.cloned())
+    match events {
+        Some(tx) => Some(tx.clone()),
+        None => fallback.cloned(),
+    }
 }
 
 fn fold_pending_usage(
@@ -1330,6 +1469,20 @@ fn fold_pending_usage(
         return;
     }
     super::recover_lock(pending).add(usage);
+}
+
+fn background_turn_listener(tx: EventSink) -> crate::background::BackgroundListener {
+    std::sync::Arc::new(move |ev| {
+        send_or_debug(
+            &tx,
+            TurnEvent::Background {
+                id: ev.id,
+                status: ev.status.as_str().to_string(),
+                summary: ev.summary,
+            },
+            "background event dropped (listener closed)",
+        );
+    })
 }
 
 fn send_or_debug(tx: &EventSink, event: TurnEvent, dropped: &'static str) {
@@ -1343,6 +1496,32 @@ fn append_cleanup_warning(body: String, err: Result<(), String>) -> String {
     match err {
         Ok(()) => body,
         Err(e) => format!("{body}\n\n_Worktree cleanup warning: {e}_"),
+    }
+}
+
+fn names_contain(names: &[String], needle: &str) -> bool {
+    for name in names {
+        if name == needle {
+            return true;
+        }
+    }
+    false
+}
+
+fn split_nonempty(query: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for part in query.split(|c: char| c == ',' || c.is_whitespace()) {
+        let part = part.trim();
+        if !part.is_empty() {
+            names.push(part.to_string());
+        }
+    }
+    names
+}
+
+fn push_unique(denied: &mut Vec<String>, name: &str) {
+    if !names_contain(denied, name) {
+        denied.push(name.to_string());
     }
 }
 

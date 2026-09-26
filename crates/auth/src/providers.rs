@@ -317,16 +317,17 @@ async fn loopback_login(
         &spec.extra_authorize,
     );
 
+    // Accept loop first: the test UI posts the callback as soon as
+    // `show_sign_in` returns, and a 400ms test timeout cannot cover
+    // "connect, then spawn the waiter" on a loaded Windows coverage run.
+    let expected_state = pkce.state.clone();
+    let wait = tokio::task::spawn_blocking(move || {
+        flow::wait_for_callback(&listener, &expected_state, BROWSER_FLOW_TIMEOUT)
+    });
     let opened = maybe_open_browser(open_browser, &url);
     ui.show_sign_in(&spec.label, &url, opened);
     ui.note("Waiting for the sign-in to complete…");
-
-    let expected_state = pkce.state.clone();
-    let joined = tokio::task::spawn_blocking(move || {
-        flow::wait_for_callback(&listener, &expected_state, BROWSER_FLOW_TIMEOUT)
-    })
-    .await;
-    let callback = join_blocking_callback(joined)?;
+    let callback = join_blocking_callback(wait.await)?;
 
     exchange_code(spec, &callback.code, &redirect_uri, &pkce).await
 }

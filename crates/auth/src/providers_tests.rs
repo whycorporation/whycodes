@@ -4,6 +4,7 @@ use std::io::{BufReader, Write};
 use std::net::TcpListener;
 use std::pin::Pin;
 use std::thread;
+use std::time::Duration;
 
 fn mock_server(responses: Vec<(u16, &'static str)>) -> String {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -139,6 +140,28 @@ struct TestUi {
 
 struct LoopbackUi;
 
+fn loopback_callback_addr(redirect: &str) -> (String, String) {
+    let callback = url::Url::parse(redirect).unwrap();
+    let port = callback.port().expect("loopback redirect needs a port");
+    // The listener binds `127.0.0.1`. Windows `localhost` is often `::1`,
+    // so connecting to the host from the redirect URI misses the socket.
+    (format!("127.0.0.1:{port}"), callback.path().to_string())
+}
+
+fn connect_loopback(addr: &str) -> std::net::TcpStream {
+    let mut last = None;
+    for _ in 0..40 {
+        match std::net::TcpStream::connect(addr) {
+            Ok(stream) => return stream,
+            Err(err) => {
+                last = Some(err);
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+    panic!("connect {addr}: {last:?}");
+}
+
 fn post_loopback_callback(url: &str, state_override: Option<&str>) {
     let url = url::Url::parse(url).unwrap();
     let state = state_override.map(str::to_string).unwrap_or_else(|| {
@@ -155,18 +178,11 @@ fn post_loopback_callback(url: &str, state_override: Option<&str>) {
         .1
         .into_owned();
     thread::spawn(move || {
-        let callback = url::Url::parse(&redirect).unwrap();
-        let addr = format!(
-            "{}:{}",
-            callback.host_str().unwrap(),
-            callback.port().unwrap()
-        );
-        let mut stream = std::net::TcpStream::connect(addr).unwrap();
+        let (addr, path) = loopback_callback_addr(&redirect);
+        let mut stream = connect_loopback(&addr);
         write!(
             stream,
-            "GET {}?code=loop&state={} HTTP/1.1\r\nHost: localhost\r\n\r\n",
-            callback.path(),
-            state
+            "GET {path}?code=loop&state={state} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
         )
         .unwrap();
     });
@@ -1723,6 +1739,15 @@ fn browser_flow_timeout_covers_test_and_production() {
         browser_flow_timeout_for_test(false),
         std::time::Duration::from_secs(5 * 60)
     );
+}
+
+#[test]
+fn loopback_callback_addr_uses_ipv4_not_localhost() {
+    let (addr, path) = loopback_callback_addr("http://localhost:1455/callback");
+    assert_eq!(addr, "127.0.0.1:1455");
+    assert_eq!(path, "/callback");
+    let (v6, _) = loopback_callback_addr("http://[::1]:9/cb");
+    assert_eq!(v6, "127.0.0.1:9");
 }
 
 #[tokio::test]

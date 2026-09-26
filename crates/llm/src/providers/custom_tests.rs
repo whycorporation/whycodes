@@ -42,6 +42,7 @@ fn from_config_uses_normalized_base_url() {
         models: vec!["some/model".into()],
         tool_arguments: None,
         extra: Default::default(),
+        credentials: Default::default(),
     };
     let p = CustomProvider::from_config(&pc);
     assert_eq!(
@@ -63,6 +64,7 @@ fn from_config_honors_tool_arguments_object() {
         models: vec![],
         tool_arguments: Some(ToolArgumentsFormat::Object),
         extra: Default::default(),
+        credentials: Default::default(),
     };
     let p = CustomProvider::from_config(&pc);
     assert_eq!(p.tool_arguments, ToolArgumentsFormat::Object);
@@ -221,6 +223,7 @@ fn from_config_uses_api_base_and_existing_authorization() {
         models: vec![],
         tool_arguments: None,
         extra: Default::default(),
+        credentials: Default::default(),
     };
     let p = CustomProvider::from_config(&pc);
     assert!(p.default_base_url().ends_with("/chat/completions"));

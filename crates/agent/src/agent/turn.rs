@@ -81,14 +81,7 @@ impl Agent {
         let model = role_model.as_str();
         let tools_free_chat = crate::title::is_trivial_title_seed(&last_user)
             && session.user_message_count() <= 1
-            && !session.messages.iter().any(|m| {
-                matches!(m.role, whycodes_core::types::Role::Tool)
-                    || matches!(
-                        &m.content,
-                        whycodes_core::types::MessageContent::Blocks(b)
-                            if b.iter().any(|x| matches!(x, ContentBlock::ToolUse { .. }))
-                    )
-            });
+            && !transcript_has_tool_work(&session.messages);
 
         // Classify once per user turn (zero LLM cost): badge, posture, tool auth.
         let turn_intent = crate::intent::classify_user_intent(&last_user);
@@ -142,8 +135,10 @@ impl Agent {
         let mut overflow_retries: u32 = 0;
         let mut harmony_retries: u32 = 0;
         let harmony = whycodes_llm::uses_harmony_dialect(provider_name, model);
+        let mut api_key = api_key.to_string();
 
         loop {
+            self.inject_auto_background_completions(session);
             // Cached schemas; extra activations still apply per step.
             let tools = if tools_free_chat {
                 std::sync::Arc::from([])
@@ -154,12 +149,8 @@ impl Agent {
                     self.tool_profile,
                     &extra,
                 );
-                if !self.swarm_enabled && defs.iter().any(|d| d.name == "swarm") {
-                    defs.iter()
-                        .filter(|d| d.name != "swarm")
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .into()
+                if !self.swarm_enabled && defs_include_swarm(&defs) {
+                    defs_without_swarm(&defs).into()
                 } else {
                     defs
                 }
@@ -171,9 +162,8 @@ impl Agent {
             }
 
             turn_count += 1;
-            if let Some(max) = max_turns
-                && turn_count > max
-            {
+            let max = max_turns.unwrap_or(0);
+            if max_turns.is_some() && turn_count > max {
                 return Err(whycodes_core::Error::Agent(format!(
                     "Exceeded maximum turns ({max})"
                 )));
@@ -197,7 +187,7 @@ impl Agent {
                 let before = session.token_count_cached();
                 if before > self.compaction_threshold {
                     let outcome = self
-                        .compact_session(session, provider_name, model, api_key, None)
+                        .compact_session(session, provider_name, model, &api_key, None)
                         .await;
                     if outcome.reduced() || outcome.dropped_messages() {
                         emit(
@@ -304,7 +294,7 @@ impl Agent {
             let race_target = match (race_ids.as_ref(), race_provider) {
                 (Some((_, m)), Some(rp)) => Some(whycodes_llm::StreamTarget {
                     provider: rp,
-                    api_key,
+                    api_key: &api_key,
                     model: m.as_str(),
                 }),
                 _ => None,
@@ -318,7 +308,7 @@ impl Agent {
                 opened = transport.stream_turn(
                     whycodes_llm::StreamTarget {
                         provider,
-                        api_key,
+                        api_key: &api_key,
                         model,
                     },
                     &request,
@@ -331,30 +321,52 @@ impl Agent {
             };
             let turn = match opened {
                 Ok(t) => t,
-                Err(e)
-                    if whycodes_llm::classify(&e).kind
-                        == whycodes_llm::ErrorKind::ContextOverflow
-                        && overflow_retries < 1 =>
-                {
-                    overflow_retries = overflow_retries.saturating_add(1);
-                    emit(
-                        &events,
-                        TurnEvent::Status(
-                            "Context overflow — compacting and retrying this step…".into(),
-                        ),
-                    );
-                    let outcome = self
-                        .compact_session(session, provider_name, model, api_key, None)
-                        .await;
-                    tracing::info!(
-                        after_tokens = outcome.tokens_after,
-                        "compacted after context overflow"
-                    );
-                    continue;
+                Err(e) => {
+                    let kind = whycodes_llm::classify(&e).kind;
+                    if kind == whycodes_llm::ErrorKind::ContextOverflow && overflow_retries < 1 {
+                        overflow_retries = overflow_retries.saturating_add(1);
+                        emit(
+                            &events,
+                            TurnEvent::Status(
+                                "Context overflow — compacting and retrying this step…".into(),
+                            ),
+                        );
+                        let outcome = self
+                            .compact_session(session, provider_name, model, &api_key, None)
+                            .await;
+                        tracing::info!(
+                            after_tokens = outcome.tokens_after,
+                            "compacted after context overflow"
+                        );
+                        continue;
+                    }
+                    if kind == whycodes_llm::ErrorKind::RateLimited {
+                        let next = self.failover_api_key(provider_name, &api_key);
+                        let (name, secret) = match &next {
+                            Some((name, secret)) => (name.clone(), secret.clone()),
+                            None => (String::new(), String::new()),
+                        };
+                        if !secret.is_empty() && secret != api_key {
+                            let mut status = String::from("Rate limited — retrying ");
+                            status.push_str(provider_name);
+                            status.push('/');
+                            status.push_str(model);
+                            status.push_str(" on credential `");
+                            status.push_str(&name);
+                            status.push('`');
+                            emit(&events, TurnEvent::Status(status));
+                            api_key = secret;
+                            self.set_sticky_credential(Some(name));
+                            continue;
+                        }
+                    }
+                    return Err(e);
                 }
-                Err(e) => return Err(e),
             };
             let cache_hit = turn.cache_hit;
+            if self.sticky_credential().is_none() {
+                self.set_sticky_credential(Some("default".into()));
+            }
             let race_tag = turn.race.as_str();
             if cache_hit {
                 emit(&events, TurnEvent::Status("Response cache hit".into()));
@@ -411,7 +423,7 @@ impl Agent {
                             ),
                         );
                         let outcome = self
-                            .compact_session(session, provider_name, model, api_key, None)
+                            .compact_session(session, provider_name, model, &api_key, None)
                             .await;
                         tracing::info!(
                             after_tokens = outcome.tokens_after,
@@ -445,22 +457,19 @@ impl Agent {
                         }
                         emit(&events, TurnEvent::TextDelta(text.clone()));
                         accumulated_text.push_str(&text);
-                        if let Some((name, hint)) =
-                            first_stream_rule_hit(&self.stream_rules, &accumulated_text)
-                        {
-                            crate::speculative_read::abort_all(&mut speculative_reads);
-                            emit(
+                        let hit = first_stream_rule_hit(&self.stream_rules, &accumulated_text);
+                        match hit {
+                            Some((name, hint)) => apply_stream_rule_hit(
+                                &mut speculative_reads,
                                 &events,
-                                TurnEvent::Status(format!(
-                                    "Stream rule `{name}` interrupted the draft"
-                                )),
-                            );
-                            session.add_user_message(&format!(
-                                "<whycodes_rule name=\"{name}\">\n{hint}\n\
-                                 The previous draft was discarded. Continue without violating this rule.\n\
-                                 </whycodes_rule>"
-                            ));
-                            stream_rule_retry = true;
+                                session,
+                                name,
+                                hint,
+                                &mut stream_rule_retry,
+                            ),
+                            None => skip_event(),
+                        }
+                        if stream_rule_retry {
                             break;
                         }
                     }
@@ -470,15 +479,7 @@ impl Agent {
                         // merged — OpenAI streams send null/empty args first.
                         assembler.on_tool_use(id, name, input);
                         // Complete objects (Anthropic non-streamed) can start I/O now.
-                        if let Some((cid, cname, buf)) = assembler.last_updated() {
-                            crate::speculative_read::maybe_start(
-                                &mut speculative_reads,
-                                &cid,
-                                &cname,
-                                &buf,
-                                &tool_ctx,
-                            );
-                        }
+                        maybe_start_speculative(&mut speculative_reads, &assembler, &tool_ctx);
                     }
                     StreamEvent::ToolUseDelta {
                         id,
@@ -486,15 +487,7 @@ impl Agent {
                     } => {
                         assembler.on_tool_use_delta(&id, &input_json_delta);
                         // Path often closes mid-stream — start `read` I/O early.
-                        if let Some((cid, cname, buf)) = assembler.last_updated() {
-                            crate::speculative_read::maybe_start(
-                                &mut speculative_reads,
-                                &cid,
-                                &cname,
-                                &buf,
-                                &tool_ctx,
-                            );
-                        }
+                        maybe_start_speculative(&mut speculative_reads, &assembler, &tool_ctx);
                     }
                     StreamEvent::Thinking { text } => {
                         if text.is_empty() {
@@ -540,8 +533,8 @@ impl Agent {
                     } => {
                         turn_usage.absorb_stream_cache(creation_input_tokens, read_input_tokens);
                     }
-                    StreamEvent::MessageStart { .. } => {}
-                    StreamEvent::MessageDelta { .. } => {}
+                    StreamEvent::MessageStart { .. } => skip_event(),
+                    StreamEvent::MessageDelta { .. } => skip_event(),
                     StreamEvent::Error { message } => {
                         if whycodes_llm::classify_message(&message).kind
                             == whycodes_llm::ErrorKind::ContextOverflow
@@ -556,7 +549,7 @@ impl Agent {
                                 ),
                             );
                             let outcome = self
-                                .compact_session(session, provider_name, model, api_key, None)
+                                .compact_session(session, provider_name, model, &api_key, None)
                                 .await;
                             tracing::info!(
                                 after_tokens = outcome.tokens_after,
@@ -737,7 +730,7 @@ impl Agent {
                         &tool_ctx,
                         provider_name,
                         model,
-                        api_key,
+                        &api_key,
                         &events,
                         &cancel,
                         Some(&turn_intent),
@@ -782,22 +775,23 @@ impl Agent {
                 settle_checkpoint_rewind(session, &tool_calls, &mut results);
 
             // Capture failures before move — avoid cloning large tool bodies.
-            let failed_tools: Vec<String> = results
-                .iter()
-                .filter(|r| r.is_error)
-                .map(|r| {
-                    format!(
+            let mut failed_tools = Vec::new();
+            for result in &results {
+                if result.is_error {
+                    failed_tools.push(format!(
                         "The tool failed with error: {content}. Please correct your approach.",
-                        content = r.content
-                    )
-                })
-                .collect();
+                        content = result.content
+                    ));
+                }
+            }
 
             session.add_tool_results(results);
-            if let Some(goal) = checkpoint_goal {
-                session.mark_checkpoint(goal);
+            let goal = checkpoint_goal.unwrap_or_default();
+            if !goal.is_empty() {
+                session.mark_checkpoint(&goal);
             }
-            if let Some(report) = rewind_report {
+            let report = rewind_report.unwrap_or_default();
+            if !report.is_empty() {
                 // `settle_checkpoint_rewind` only yields a report when a checkpoint
                 // is already active, so apply always succeeds.
                 let applied = session.apply_rewind(&report);
@@ -805,7 +799,8 @@ impl Agent {
             }
 
             // Fold subagent tokens into this turn + parent session (plan-performance).
-            if let Some(fold) = take_pending_usage(&self.subagent_usage_pending) {
+            let fold = take_pending_usage(&self.subagent_usage_pending).unwrap_or_default();
+            if !fold.is_empty() {
                 turn_usage.add(&fold);
                 session.add_usage(&fold);
                 tracing::debug!(
@@ -854,7 +849,7 @@ impl Agent {
             Arc::clone(&self.provider_registry),
             provider_name,
             model,
-            api_key,
+            &api_key,
             events,
         );
 
@@ -885,18 +880,108 @@ fn harmony_leak(
     thinking: &crate::thinking_acc::ThinkingAccumulator,
     tool_calls: &[whycodes_core::types::ToolCall],
 ) -> Option<whycodes_core::harmony::Hit> {
-    if let Some(hit) = whycodes_core::harmony::scan_text(visible) {
-        return Some(hit);
+    match whycodes_core::harmony::scan_text(visible) {
+        Some(hit) => Some(hit),
+        None => harmony_leak_thinking(thinking, tool_calls),
     }
-    if let Some(hit) = thinking.harmony_leak() {
-        return Some(hit);
+}
+
+fn harmony_leak_thinking(
+    thinking: &crate::thinking_acc::ThinkingAccumulator,
+    tool_calls: &[whycodes_core::types::ToolCall],
+) -> Option<whycodes_core::harmony::Hit> {
+    match thinking.harmony_leak() {
+        Some(hit) => Some(hit),
+        None => harmony_leak_tools(tool_calls),
     }
+}
+
+fn harmony_leak_tools(
+    tool_calls: &[whycodes_core::types::ToolCall],
+) -> Option<whycodes_core::harmony::Hit> {
     for tc in tool_calls {
-        if let Some(hit) = whycodes_core::harmony::scan_json(&tc.arguments) {
-            return Some(hit);
+        match whycodes_core::harmony::scan_json(&tc.arguments) {
+            Some(hit) => return Some(hit),
+            None => continue,
         }
     }
     None
+}
+
+fn maybe_start_speculative(
+    speculative_reads: &mut Vec<crate::speculative_read::SpeculativeRead>,
+    assembler: &crate::tool_stream::ToolCallAssembler,
+    tool_ctx: &whycodes_core::tool::ToolContext,
+) {
+    let updated = assembler.last_updated();
+    let (cid, cname, buf) = match &updated {
+        Some((cid, cname, buf)) => (cid.as_str(), cname.as_str(), buf.as_str()),
+        None => return,
+    };
+    crate::speculative_read::maybe_start(speculative_reads, cid, cname, buf, tool_ctx);
+}
+
+fn skip_event() {}
+
+fn apply_stream_rule_hit(
+    speculative_reads: &mut Vec<crate::speculative_read::SpeculativeRead>,
+    events: &Option<crate::events::EventSink>,
+    session: &mut whycodes_session::Session,
+    name: &str,
+    hint: &str,
+    stream_rule_retry: &mut bool,
+) {
+    crate::speculative_read::abort_all(speculative_reads);
+    emit(
+        events,
+        TurnEvent::Status(format!("Stream rule `{name}` interrupted the draft")),
+    );
+    session.add_user_message(&format!(
+        "<whycodes_rule name=\"{name}\">\n{hint}\n\
+         The previous draft was discarded. Continue without violating this rule.\n\
+         </whycodes_rule>"
+    ));
+    *stream_rule_retry = true;
+}
+
+fn transcript_has_tool_work(messages: &[whycodes_core::types::Message]) -> bool {
+    for message in messages {
+        if matches!(message.role, whycodes_core::types::Role::Tool) {
+            return true;
+        }
+        match &message.content {
+            whycodes_core::types::MessageContent::Blocks(blocks) => {
+                for block in blocks {
+                    if matches!(block, ContentBlock::ToolUse { .. }) {
+                        return true;
+                    }
+                }
+            }
+            whycodes_core::types::MessageContent::Text(_) => skip_event(),
+        }
+    }
+    false
+}
+
+fn defs_include_swarm(defs: &[whycodes_core::types::ToolDefinition]) -> bool {
+    for def in defs {
+        if def.name == "swarm" {
+            return true;
+        }
+    }
+    false
+}
+
+fn defs_without_swarm(
+    defs: &[whycodes_core::types::ToolDefinition],
+) -> Vec<whycodes_core::types::ToolDefinition> {
+    let mut kept = Vec::new();
+    for def in defs {
+        if def.name != "swarm" {
+            kept.push(def.clone());
+        }
+    }
+    kept
 }
 
 #[cfg(test)]

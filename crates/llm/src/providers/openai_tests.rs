@@ -39,6 +39,7 @@ fn from_base_and_from_config_normalize_urls() {
         models: vec![],
         tool_arguments: None,
         extra: Default::default(),
+        credentials: Default::default(),
     };
     let from_cfg = OpenAiProvider::from_config(&cfg);
     assert!(from_cfg.default_base_url().contains("example.invalid"));
@@ -57,6 +58,7 @@ fn from_base_and_from_config_normalize_urls() {
         models: vec![],
         tool_arguments: None,
         extra: Default::default(),
+        credentials: Default::default(),
     });
     let via_url = via_api_base.default_base_url();
     assert!(via_url.contains("127.0.0.1:9"), "{via_url}");

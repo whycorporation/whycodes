@@ -1,8 +1,9 @@
 use super::*;
 use crate::tool_policy::*;
 use serde_json::json;
+use std::collections::HashMap;
 use whycodes_core::Tool;
-use whycodes_core::types::PermissionSet;
+use whycodes_core::types::{PermissionSet, ProviderConfig, ProviderCredentials};
 
 #[test]
 fn single_command_is_plain_string() {
@@ -240,6 +241,7 @@ fn system_prompt_includes_route_overlays() {
         .insert("xai".into(), "xai extra".into());
     agent.apply_config(&cfg);
     agent.set_route("xai", "grok-4.6");
+    assert_eq!(agent.route(), ("xai", "grok-4.6"));
     let prompt = agent.system_prompt();
     assert!(prompt.contains("role"), "{prompt}");
     assert!(prompt.contains("xai extra"), "{prompt}");
@@ -1043,6 +1045,363 @@ async fn execute_background_shell_errors_when_job_cap_hit() {
         "{}",
         full.content
     );
+    a.background.kill_all();
+}
+
+fn hang_shell() -> &'static str {
+    #[cfg(windows)]
+    {
+        "ping -n 30 127.0.0.1 >NUL"
+    }
+    #[cfg(not(windows))]
+    {
+        "sleep 60"
+    }
+}
+
+fn brief_hang_shell() -> &'static str {
+    #[cfg(windows)]
+    {
+        "ping -n 3 127.0.0.1 >NUL"
+    }
+    #[cfg(not(windows))]
+    {
+        "sleep 1"
+    }
+}
+
+#[tokio::test]
+async fn auto_background_sleep_returns_running_handle() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(80);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let t0 = std::time::Instant::now();
+    let started = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": hang_shell()})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(2),
+        "auto-bg must return before the hang finishes: {:?}",
+        t0.elapsed()
+    );
+    assert!(!started.is_error, "{started:?}");
+    assert!(started.content.contains("job_id:"), "{started:?}");
+    assert!(started.content.contains("state: running"), "{started:?}");
+    let id = started
+        .content
+        .lines()
+        .find_map(|l| l.strip_prefix("job_id: "))
+        .expect("job id")
+        .trim()
+        .to_string();
+    let snap = a
+        .background
+        .list()
+        .into_iter()
+        .find(|j| j.id == id)
+        .expect("listed");
+    assert_eq!(snap.status, crate::background::JobStatus::Running);
+    a.background.kill_all();
+}
+
+#[tokio::test]
+async fn auto_background_opt_out_and_catastrophic_stay_foreground() {
+    let mut a = test_agent();
+    a.bash_auto_background = false;
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let echo = a
+        .execute_with_permission(
+            &tc("bash", json!({"command": "echo stay-fg"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(!echo.is_error, "{echo:?}");
+    assert!(
+        echo.content.contains("stay-fg"),
+        "opt-out must run in the foreground: {}",
+        echo.content
+    );
+    assert!(!echo.content.contains("job_id:"), "{}", echo.content);
+
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(50);
+    let boom = a
+        .execute_shell_with_auto_background(&tc("bash", json!({"command": "rm -rf /"})), &ctx, None)
+        .await;
+    assert!(boom.is_error, "{boom:?}");
+    assert!(
+        boom.content.to_lowercase().contains("catastrophic"),
+        "{}",
+        boom.content
+    );
+}
+
+#[tokio::test]
+async fn auto_background_completion_is_delivered_once() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(50);
+    let dir = tempfile::tempdir().unwrap();
+    let mut session =
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let started = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": brief_hang_shell()})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(!started.is_error, "{started:?}");
+    assert!(started.content.contains("job_id:"), "{started:?}");
+    let id = started
+        .content
+        .lines()
+        .find_map(|l| l.strip_prefix("job_id: "))
+        .expect("job id")
+        .trim()
+        .to_string();
+    let before = session.messages.len();
+    let status = a
+        .background
+        .wait_until_idle(&id, std::time::Duration::from_secs(8))
+        .await;
+    assert_ne!(
+        status,
+        crate::background::JobStatus::Running,
+        "brief hang must finish so inject has a completion"
+    );
+    a.inject_auto_background_completions(&mut session);
+    assert!(
+        session.messages.len() > before,
+        "auto-background completion must land in session once"
+    );
+    let after = session.messages.len();
+    a.inject_auto_background_completions(&mut session);
+    assert_eq!(
+        session.messages.len(),
+        after,
+        "already-delivered auto-background completions must not inject twice"
+    );
+    a.background.kill_all();
+}
+
+#[tokio::test]
+async fn auto_background_fast_echo_returns_output() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_secs(8);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let echo = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": "echo fast-fg"})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(!echo.is_error, "{echo:?}");
+    assert!(echo.content.contains("fast-fg"), "{echo:?}");
+    assert!(!echo.content.contains("job_id:"), "{}", echo.content);
+}
+
+#[tokio::test]
+async fn auto_background_empty_command_stays_foreground() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let empty = a
+        .execute_shell_with_auto_background(&tc("bash", json!({"command": "   "})), &ctx, None)
+        .await;
+    assert!(
+        empty.is_error || !empty.content.contains("job_id:"),
+        "{empty:?}"
+    );
+}
+
+#[tokio::test]
+async fn auto_background_falls_back_when_job_cap_hit() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(80);
+    a.background.set_max_jobs(1);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let first = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": hang_shell()})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(first.content.contains("job_id:"), "{first:?}");
+    let second = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": "echo cap-fallback"})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(!second.is_error, "{second:?}");
+    assert!(
+        second.content.contains("cap-fallback"),
+        "full job table must fall back to foreground: {}",
+        second.content
+    );
+    assert!(!second.content.contains("job_id:"), "{}", second.content);
+    a.background.kill_all();
+}
+
+#[tokio::test]
+async fn auto_background_emits_running_event_on_channel() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(80);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let started = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": hang_shell()})),
+            &ctx,
+            Some(&tx),
+        )
+        .await;
+    assert!(started.content.contains("job_id:"), "{started:?}");
+    let mut saw_bg = false;
+    while let Ok(ev) = rx.try_recv() {
+        if matches!(ev, crate::events::TurnEvent::Background { .. }) {
+            saw_bg = true;
+            break;
+        }
+    }
+    assert!(saw_bg, "auto-bg must emit a Background event");
+    a.background.kill_all();
+}
+
+#[tokio::test]
+async fn auto_background_missing_command_and_failed_exit() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_secs(8);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let missing = a
+        .execute_shell_with_auto_background(&tc("bash", json!({})), &ctx, None)
+        .await;
+    assert!(
+        missing.is_error || !missing.content.contains("job_id:"),
+        "{missing:?}"
+    );
+    let failed = a
+        .execute_shell_with_auto_background(
+            &tc(
+                "bash",
+                json!({
+                    "command": "whycodes-no-such-command-xyz",
+                    "description": "expect fail"
+                }),
+            ),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(failed.is_error, "{failed:?}");
+}
+
+#[tokio::test]
+async fn auto_background_closed_listener_is_debug_logged() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(80);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    let started = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": hang_shell()})),
+            &ctx,
+            Some(&tx),
+        )
+        .await;
+    assert!(started.content.contains("job_id:"), "{started:?}");
+    a.background.kill_all();
+}
+
+#[tokio::test]
+async fn auto_background_uses_wired_event_sink_when_turn_events_omitted() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_millis(80);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    a.wire_event_sink(tx);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let started = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": hang_shell()})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(started.content.contains("job_id:"), "{started:?}");
+    let mut saw_bg = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(600);
+    while std::time::Instant::now() < deadline {
+        match rx.try_recv() {
+            Ok(crate::events::TurnEvent::Background { .. }) => {
+                saw_bg = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
+        }
+    }
+    assert!(saw_bg, "wired sink must receive auto-background running");
+    a.background.kill_all();
+}
+
+#[tokio::test]
+async fn background_shell_closed_listener_is_debug_logged() {
+    let a = test_agent();
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    let started = a.execute_background_shell(
+        &tc(
+            "bash",
+            json!({"command": hang_shell(), "description": "closed"}),
+        ),
+        &ctx,
+        Some(&tx),
+    );
+    assert!(!started.is_error, "{started:?}");
     a.background.kill_all();
 }
 
@@ -2656,6 +3015,90 @@ fn apply_plugin_count_replaces_executor_when_lsp_overlay_is_set() {
     let before = Arc::as_ptr(&a.tool_executor);
     apply_plugin_count(&mut a, ToolExecutor::new(), 0);
     assert_ne!(Arc::as_ptr(&a.tool_executor), before);
+}
+
+#[tokio::test]
+async fn failover_api_key_walks_named_credentials() {
+    let mut config = whycodes_config::Config::default();
+    config.providers.insert(
+        "openai".into(),
+        ProviderConfig {
+            name: "openai".into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: ProviderCredentials {
+                order: vec!["interactive".into(), "ci".into()],
+                reserve: 0.1,
+                env: HashMap::from([
+                    ("interactive".into(), "WHYCODES_TEST_OPENAI_LIVE".into()),
+                    ("ci".into(), "WHYCODES_TEST_OPENAI_CI".into()),
+                ]),
+            },
+        },
+    );
+    let a = test_agent().with_config(&config);
+    a.set_sticky_credential(None);
+    assert!(a.sticky_credential().is_none());
+    let prev_live = std::env::var_os("WHYCODES_TEST_OPENAI_LIVE");
+    let prev_ci = std::env::var_os("WHYCODES_TEST_OPENAI_CI");
+    let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_OPENAI_LIVE", "sk-live");
+        std::env::set_var("WHYCODES_TEST_OPENAI_CI", "sk-ci");
+        std::env::set_var("WHYCODES_CREDENTIAL_LANE", "interactive");
+    }
+    let (name, secret) = a
+        .failover_api_key("openai", "sk-live")
+        .expect("ci follows interactive");
+    assert_eq!(name, "ci");
+    assert_eq!(secret, "sk-ci");
+    assert!(a.failover_api_key("openai", "sk-ci").is_none());
+    assert!(a.failover_api_key("openai", "missing").is_none());
+    assert!(a.failover_api_key("nope", "sk-live").is_none());
+    let session = whycodes_session::Session::new(std::path::PathBuf::from("."), String::new());
+    let side = a
+        .run_side_turn(&session, "openai", "gpt-4o", "sk-live", "   ")
+        .await
+        .expect_err("blank side question");
+    assert!(side.to_string().contains("/btw"), "{side}");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_OPENAI_CI");
+    }
+    assert!(
+        a.failover_api_key("openai", "sk-live").is_none(),
+        "missing env must be skipped"
+    );
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_OPENAI_CI", "");
+    }
+    assert!(
+        a.failover_api_key("openai", "sk-live").is_none(),
+        "empty secret must be skipped"
+    );
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_OPENAI_CI", "sk-ci");
+    }
+    a.set_sticky_credential(Some("ci".into()));
+    assert_eq!(a.sticky_credential().as_deref(), Some("ci"));
+    unsafe {
+        match prev_live {
+            Some(v) => std::env::set_var("WHYCODES_TEST_OPENAI_LIVE", v),
+            None => std::env::remove_var("WHYCODES_TEST_OPENAI_LIVE"),
+        }
+        match prev_ci {
+            Some(v) => std::env::set_var("WHYCODES_TEST_OPENAI_CI", v),
+            None => std::env::remove_var("WHYCODES_TEST_OPENAI_CI"),
+        }
+        match prev_lane {
+            Some(v) => std::env::set_var("WHYCODES_CREDENTIAL_LANE", v),
+            None => std::env::remove_var("WHYCODES_CREDENTIAL_LANE"),
+        }
+    }
 }
 
 #[test]

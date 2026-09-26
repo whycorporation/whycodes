@@ -83,8 +83,11 @@ pub(crate) fn is_safe_worktree_name(name: &str) -> bool {
     if name.is_empty() || name.len() > 64 {
         return false;
     }
-    name.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    name.chars().all(worktree_name_char)
+}
+
+fn worktree_name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
 }
 
 /// Path argument for file mutators / readers (permission path globs).
@@ -112,11 +115,12 @@ pub(crate) fn file_tool_path(tc: &ToolCall) -> Option<String> {
         "grep" => "path",
         _ => return None,
     };
-    tc.arguments
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().replace('\\', "/"))
-        .filter(|s| !s.is_empty())
+    #[allow(clippy::question_mark)]
+    let path = match tc.arguments.get(key).and_then(|v| v.as_str()) {
+        Some(path) => path.trim().replace('\\', "/"),
+        None => return None,
+    };
+    if path.is_empty() { None } else { Some(path) }
 }
 
 /// Tools that must never fan out in parallel (side effects, races, or UI ask).

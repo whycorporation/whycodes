@@ -5,7 +5,7 @@
 //! via an optional listener (`TurnEvent::Background`).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -74,6 +74,11 @@ struct JobInner {
     output: String,
     exit_code: Option<i32>,
     kill_flag: Arc<AtomicBool>,
+    /// Auto-detached foreground `bash` (issue #140). Completion is delivered once.
+    auto_background: bool,
+    completion_delivered: bool,
+    /// Detached stdout/stderr under `.whycodes/scratch/<id>.log`.
+    log_path: Option<PathBuf>,
 }
 
 /// Shared registry of background shell jobs for one agent/session.
@@ -231,7 +236,9 @@ impl BackgroundRegistry {
             .map(|j| j.id)
             .collect();
         for id in ids {
-            let _ = self.kill(&id);
+            if let Err(e) = self.kill(&id) {
+                tracing::debug!(error = %e, %id, "background kill skipped");
+            }
         }
     }
 
@@ -242,6 +249,28 @@ impl BackgroundRegistry {
         working_dir: PathBuf,
         sandbox: SandboxSettings,
         label: Option<String>,
+    ) -> Result<String, String> {
+        self.start_shell_tagged(command, working_dir, sandbox, label, false)
+    }
+
+    /// Start a shell that was auto-detached from a foreground `bash`.
+    pub fn start_shell_auto(
+        &self,
+        command: &str,
+        working_dir: PathBuf,
+        sandbox: SandboxSettings,
+        label: Option<String>,
+    ) -> Result<String, String> {
+        self.start_shell_tagged(command, working_dir, sandbox, label, true)
+    }
+
+    fn start_shell_tagged(
+        &self,
+        command: &str,
+        working_dir: PathBuf,
+        sandbox: SandboxSettings,
+        label: Option<String>,
+        auto_background: bool,
     ) -> Result<String, String> {
         let max = self.max_jobs();
         if self.running_count() >= max {
@@ -255,7 +284,58 @@ impl BackgroundRegistry {
             working_dir,
             settings: sandbox,
         };
-        self.start_prepared(command, label, prepare_job(&request))
+        self.start_prepared(command, label, prepare_job(&request), auto_background)
+    }
+
+    /// Poll until `id` leaves `Running` or `timeout` elapses. Does not observe
+    /// other jobs — a different completion cannot detach this wait.
+    pub async fn wait_until_idle(&self, id: &str, timeout: Duration) -> JobStatus {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let status = {
+                let jobs = lock(&self.inner.jobs);
+                jobs.get(id).map(|j| lock(j).status)
+            };
+            match status {
+                None => return JobStatus::Failed,
+                Some(JobStatus::Running) => {
+                    if Instant::now() >= deadline {
+                        return JobStatus::Running;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Some(st) => return st,
+            }
+        }
+    }
+
+    /// Last lines of output for a running handle (truncated).
+    pub fn tail(&self, id: &str, max_chars: usize) -> String {
+        self.read(id, max_chars).unwrap_or_default()
+    }
+
+    /// Finished auto-background jobs that have not been delivered to the model.
+    pub fn take_auto_completions(&self) -> Vec<(String, JobStatus, String)> {
+        let jobs = lock(&self.inner.jobs);
+        let mut out = Vec::new();
+        for job in jobs.values() {
+            let mut g = lock(job);
+            if !g.auto_background || g.completion_delivered || g.status == JobStatus::Running {
+                continue;
+            }
+            g.completion_delivered = true;
+            out.push((g.id.clone(), g.status, g.output.clone()));
+        }
+        out
+    }
+
+    /// Foreground auto-bg that finished before the idle timeout: do not inject
+    /// the same output again on the next turn.
+    pub fn mark_auto_delivered(&self, id: &str) {
+        let jobs = lock(&self.inner.jobs);
+        if let Some(job) = jobs.get(id) {
+            lock(job).completion_delivered = true;
+        }
     }
 
     #[allow(clippy::question_mark)]
@@ -264,6 +344,7 @@ impl BackgroundRegistry {
         command: &str,
         label: Option<String>,
         prepared: Result<PreparedCommand, String>,
+        auto_background: bool,
     ) -> Result<String, String> {
         let prepared = match prepared {
             Ok(prepared) => prepared,
@@ -273,6 +354,7 @@ impl BackgroundRegistry {
         let id = format!("bg-{}", self.inner.next_id.fetch_add(1, Ordering::SeqCst));
         let label = nonempty_or_truncated(label, command);
         let kill_flag = Arc::new(AtomicBool::new(false));
+        let log_path = ensure_scratch_log(&prepared.working_dir, &id);
 
         let job = Arc::new(Mutex::new(JobInner {
             id: id.clone(),
@@ -283,6 +365,9 @@ impl BackgroundRegistry {
             output: String::new(),
             exit_code: None,
             kill_flag: Arc::clone(&kill_flag),
+            auto_background,
+            completion_delivered: false,
+            log_path,
         }));
 
         {
@@ -504,6 +589,29 @@ fn append_output(job: &Arc<Mutex<JobInner>>, chunk: &str) {
     let mut g = lock(job);
     g.output.push_str(chunk);
     cap_job_output(&mut g.output);
+    if let Some(path) = g.log_path.as_deref() {
+        persist_scratch_output(path, &g.output);
+    }
+}
+
+fn ensure_scratch_log(working_dir: &Path, id: &str) -> Option<PathBuf> {
+    let dir = whycodes_core::project_scratch_dir(working_dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::debug!(error = %e, "background scratch dir skipped");
+        return None;
+    }
+    let path = dir.join(format!("{id}.log"));
+    if let Err(e) = std::fs::write(&path, "") {
+        tracing::debug!(error = %e, "background scratch log skipped");
+        return None;
+    }
+    Some(path)
+}
+
+fn persist_scratch_output(path: &Path, output: &str) {
+    if let Err(e) = std::fs::write(path, output) {
+        tracing::debug!(error = %e, "background scratch write skipped");
+    }
 }
 
 fn cap_job_output(output: &mut String) {

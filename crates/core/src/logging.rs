@@ -444,10 +444,10 @@ pub(crate) fn crash_user_message(result: &io::Result<PathBuf>) -> String {
 }
 
 pub(crate) fn clean_debug_value(s: String) -> String {
-    s.strip_prefix('"')
-        .and_then(|x| x.strip_suffix('"'))
-        .map(|x| x.to_string())
-        .unwrap_or(s)
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        return s[1..s.len() - 1].to_string();
+    }
+    s
 }
 
 pub(crate) fn build_env_filter(explicit: Option<&str>) -> EnvFilter {
@@ -469,7 +469,10 @@ pub(crate) fn build_env_filter(explicit: Option<&str>) -> EnvFilter {
 }
 
 pub(crate) fn maybe_layer<T>(on: bool, layer: T) -> Option<T> {
-    if on { Some(layer) } else { None }
+    match on {
+        true => Some(layer),
+        false => None,
+    }
 }
 
 pub(crate) fn note_try_init(ok: bool) {
@@ -728,5 +731,11 @@ mod tests {
         append_jsonl(&dirs.unified_jsonl(), &ev).unwrap();
         let written = std::fs::read_to_string(dirs.unified_jsonl()).unwrap();
         assert!(written.contains("hello"));
+        assert_eq!(clean_debug_value(r#""quoted""#.into()), "quoted");
+        assert_eq!(clean_debug_value("plain".into()), "plain");
+        assert_eq!(clean_debug_value("\"open".into()), "\"open");
+        // Same i32 instantiation must take both arms (skip-expansions).
+        assert_eq!(maybe_layer(true, 7), Some(7));
+        assert_eq!(maybe_layer(false, 7), None);
     }
 }

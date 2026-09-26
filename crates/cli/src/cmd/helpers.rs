@@ -32,6 +32,7 @@ pub(crate) struct IsolatedHome {
     _guard: std::sync::MutexGuard<'static, ()>,
     _dir: tempfile::TempDir,
     prev: Option<std::ffi::OsString>,
+    prev_lane: Option<std::ffi::OsString>,
 }
 
 #[cfg(test)]
@@ -40,11 +41,14 @@ impl IsolatedHome {
         let guard = lock_env();
         let dir = tempfile::tempdir().expect("tempdir");
         let prev = std::env::var_os("WHYCODES_HOME");
+        let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
         unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        unsafe { std::env::set_var("WHYCODES_CREDENTIAL_LANE", "interactive") };
         Self {
             _guard: guard,
             _dir: dir,
             prev,
+            prev_lane,
         }
     }
 }
@@ -56,6 +60,10 @@ impl Drop for IsolatedHome {
             match &self.prev {
                 Some(v) => std::env::set_var("WHYCODES_HOME", v),
                 None => std::env::remove_var("WHYCODES_HOME"),
+            }
+            match &self.prev_lane {
+                Some(v) => std::env::set_var("WHYCODES_CREDENTIAL_LANE", v),
+                None => std::env::remove_var("WHYCODES_CREDENTIAL_LANE"),
             }
         }
     }
@@ -135,23 +143,125 @@ pub(crate) fn key_from_env_and_config(
     config: &Config,
     env: impl Fn(&str) -> Option<String>,
 ) -> Option<String> {
-    let env_var = provider_env_var(provider);
-    if let Some(key) = env(&env_var).filter(|k| !k.is_empty()) {
+    if let Some(key) = credential_candidates(provider, config, &env)
+        .into_iter()
+        .next()
+        .map(|c| c.secret)
+    {
         return Some(key);
+    }
+    // openai: empty OPENAI_API_KEY still wins over a missing config key.
+    if provider == "openai" {
+        return env("OPENAI_API_KEY");
+    }
+    None
+}
+
+/// Named credentials for one provider, secrets never logged.
+#[derive(Debug, Clone)]
+pub(crate) struct NamedCredential {
+    pub name: String,
+    pub secret: String,
+}
+
+pub(crate) fn credential_candidates(
+    provider: &str,
+    config: &Config,
+    env: impl Fn(&str) -> Option<String>,
+) -> Vec<NamedCredential> {
+    let ci = whycodes_core::types::process_is_ci_from(&env);
+    credential_candidates_for_lane(provider, config, env, ci)
+}
+
+pub(crate) fn credential_candidates_for_lane(
+    provider: &str,
+    config: &Config,
+    env: impl Fn(&str) -> Option<String>,
+    ci: bool,
+) -> Vec<NamedCredential> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let creds = config
+        .get_provider(provider)
+        .map(|p| p.credentials.clone())
+        .unwrap_or_default();
+    for name in creds.names_for_lane(ci) {
+        let var = creds.env_var_for(&name, provider);
+        if let Some(secret) = env(&var).filter(|k| !k.is_empty())
+            && seen.insert(secret.clone())
+        {
+            out.push(NamedCredential {
+                name: name.clone(),
+                secret,
+            });
+        }
     }
     if let Some(pc) = config.get_provider(provider)
         && let Some(key) = &pc.api_key
         && !key.is_empty()
+        && seen.insert(key.clone())
     {
-        return Some(key.clone());
+        out.push(NamedCredential {
+            name: "config".into(),
+            secret: key.clone(),
+        });
     }
-    // openai: empty OPENAI_API_KEY still wins over a missing config key.
+    let env_var = provider_env_var(provider);
+    if let Some(secret) = env(&env_var).filter(|k| !k.is_empty())
+        && seen.insert(secret.clone())
+    {
+        out.insert(
+            0,
+            NamedCredential {
+                name: "default".into(),
+                secret,
+            },
+        );
+    }
     if provider == "openai"
-        && let Some(key) = env("OPENAI_API_KEY")
+        && let Some(secret) = env("OPENAI_API_KEY").filter(|k| !k.is_empty())
+        && seen.insert(secret.clone())
     {
-        return Some(key);
+        out.push(NamedCredential {
+            name: "default".into(),
+            secret,
+        });
     }
-    None
+    out
+}
+
+pub(crate) fn next_credential_after(
+    provider: &str,
+    config: &Config,
+    current_secret: &str,
+) -> Option<NamedCredential> {
+    let cands = credential_candidates(provider, config, |k| std::env::var(k).ok());
+    let idx = cands.iter().position(|c| c.secret == current_secret)?;
+    cands.into_iter().nth(idx + 1)
+}
+
+/// Label the session with the named credential that produced `secret`.
+pub(crate) fn apply_sticky_credential(
+    agent: &Agent,
+    provider: &str,
+    config: &Config,
+    secret: &str,
+) {
+    if secret.is_empty() {
+        return;
+    }
+    if let Some(c) = credential_candidates(provider, config, |k| std::env::var(k).ok())
+        .into_iter()
+        .find(|c| c.secret == secret)
+    {
+        agent.set_sticky_credential(Some(c.name));
+    }
+    if let Some(next) = next_credential_after(provider, config, secret) {
+        tracing::debug!(
+            credential = %next.name,
+            "next named credential available for failover"
+        );
+    }
 }
 
 pub(crate) fn missing_api_key_message_for(provider: &str, config: Option<&Config>) -> String {
@@ -325,6 +435,7 @@ pub(crate) fn print_slash_help() {
     println!("  /compact [context]     — Compact conversation (LLM summary)");
     println!("  /summarize             — Alias for /compact");
     println!("  /fresh                 — Skip provider prompt cache on the next turn");
+    println!("  /btw <question>        — Side question (not written to session history)");
     println!("  /diff                  — Git status + diff --stat");
     println!("  /context               — Context window breakdown");
     println!("  /review                — AI review of git changes");

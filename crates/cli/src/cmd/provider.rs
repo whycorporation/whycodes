@@ -208,6 +208,7 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                 models: Vec::new(),
                 tool_arguments: None,
                 extra: std::collections::HashMap::new(),
+                credentials: Default::default(),
             };
 
             if config.providers.contains_key(name) {

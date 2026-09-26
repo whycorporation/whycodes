@@ -516,14 +516,37 @@ fn after_git_remove_failed_ok_when_gone_and_err_when_present() {
     assert!(err.contains("still there"), "{err}");
 }
 
+fn exit_status(success: bool) -> std::process::ExitStatus {
+    // Do not spawn `cmd`/`false`: Linux has no `cmd`, and sibling tests can
+    // empty PATH so a real process is not a stable exit-code source.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(if success { 0 } else { 1 << 8 })
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(if success { 0 } else { 1 })
+    }
+}
+
+fn exit_status_output(success: bool) -> std::process::Output {
+    std::process::Output {
+        status: exit_status(success),
+        stdout: if success { b"ok".to_vec() } else { Vec::new() },
+        stderr: Vec::new(),
+    }
+}
+
 #[test]
 fn git_spawn_and_stdout_helpers() {
     let err = git_spawn_err("git worktree add failed to spawn")(std::io::Error::other("no git"));
     assert!(err.contains("git worktree add failed to spawn"), "{err}");
     assert!(err.contains("no git"), "{err}");
-    let fail = std::process::Command::new("false").output().expect("false");
+    let fail = exit_status_output(false);
     assert!(successful_stdout(fail).is_none());
-    let ok = std::process::Command::new("true").output().expect("true");
+    let ok = exit_status_output(true);
     assert!(successful_stdout(ok).is_some());
 }
 

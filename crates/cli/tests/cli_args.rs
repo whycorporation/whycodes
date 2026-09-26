@@ -851,6 +851,7 @@ fn test_plain_repl_slash_commands_without_api_key() {
          /share\n\
          /compact\n\
          /fresh\n\
+         /btw\n\
          /diff\n\
          /cost\n\
          /slop\n\

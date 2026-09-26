@@ -246,8 +246,9 @@ Both TUI and `--plain`:
 | `/share` `/export` | Export the session and print its local share URL |
 | `/compact [context]` `/summarize` | Compact the conversation (LLM full-replace; optional note of what to keep) |
 | `/fresh` | Skip the provider prompt cache on the next turn (stale cache / wedged stream) |
+| `/btw <question>` | Side question: shown once, not written to session history, no `bash`/`write` |
 | `/context` | Context window breakdown |
-| `/cost` `/usage` | Session + last-turn token usage |
+| `/cost` `/usage` | Session + last-turn token usage (credential **name** only, never the secret) |
 | `/slop` | ΔLOC / verbosity / erosion vs git base (not a test score) |
 | `/sessions` | Session picker (Enter to resume) |
 | `/resume [id]` | Resume by id/prefix, or open the picker |
@@ -364,9 +365,9 @@ model answers instead of over-eager edits. Set
 
 | Category | Tools |
 |---|---|
-| Files | `read` (also `skill://`, `agent://`), `write`, `edit`, `apply_patch` |
+| Files | `read` (also `skill://`, `agent://`, `agent://tools/<name>`), `write`, `edit`, `apply_patch` |
 | Search | `grep`, `glob`, `list`, `repomap` |
-| Execution | `bash` (alias `shell`) |
+| Execution | `bash` (alias `shell`; auto-background after 20s unless `[tools.bash] auto_background = false`) |
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
 | GitHub | `github_issue`, `github_pr` (token: env, `gh auth login`, or stored git credentials — not SSH-only remotes) |
 | Web | `webfetch`, `websearch`, `browser` |
@@ -674,6 +675,34 @@ The threshold is the lowest level that prompts. Default is `destructive`:
 
 `catastrophic` is refused outright and **cannot be approved** — not by a
 prompt, not by `bash = "allow"`, not by `bash_risk_threshold = "off"`.
+
+A still-running `bash` that is not catastrophic is auto-detached after 20s
+(default) and returns `job_id` + last lines. Completions arrive once on a
+later turn. Detached stdout/stderr is also written to
+`.whycodes/scratch/<job-id>.log`. Opt out:
+
+```toml
+[tools.bash]
+auto_background = false
+# auto_background_after_secs = 20
+```
+
+A provider may list several named credentials. The session sticks to the
+first successful one; a 429 retries the **same model** on the next name.
+`reserve` (default `0.10`) keeps the other lane's key off the first pick:
+interactive sessions try `interactive` before `ci`, and `CI=true` /
+`WHYCODES_CREDENTIAL_LANE=ci` does the reverse. Secrets stay in env.
+`/cost` and `whycodes stats` may show the credential **name** only.
+
+```toml
+[providers.openai.credentials]
+order = ["interactive", "ci"]
+reserve = 0.10
+env = { interactive = "OPENAI_API_KEY", ci = "OPENAI_CI_API_KEY" }
+```
+
+Long tool notes live at `agent://tools/<name>` (`read agent://tools/bash`).
+The default tool schema keeps a one-line description.
 
 Limits: an unrecognised command is treated as `safe` (the alternative is
 prompting on every build). An obfuscated command can defeat a static

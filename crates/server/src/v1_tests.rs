@@ -213,6 +213,7 @@ async fn list_models_uses_catalog_and_default_fallback() {
             models: Vec::new(),
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         },
     );
     state.config = std::sync::Arc::new(cfg);

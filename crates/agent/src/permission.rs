@@ -108,7 +108,9 @@ impl PermissionPrompter for StdinPrompter {
                 eprintln!("  {detail}");
             }
             eprint!("  Allow? [y/N] ");
-            let _ = io::stderr().flush();
+            if let Err(e) = io::stderr().flush() {
+                tracing::debug!(error = %e, "permission prompt flush skipped");
+            }
             let mut line = String::new();
             let read = io::stdin().read_line(&mut line);
             permission_from_read(read, &line)

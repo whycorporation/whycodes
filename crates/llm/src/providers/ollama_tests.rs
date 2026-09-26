@@ -129,6 +129,7 @@ fn from_config_uses_base_url() {
         models: vec![],
         tool_arguments: None,
         extra: Default::default(),
+        credentials: Default::default(),
     };
     let p = OllamaProvider::from_config(&pc);
     assert_eq!(p.default_base_url(), "http://127.0.0.1:4554/api/chat");

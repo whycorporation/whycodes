@@ -11,6 +11,7 @@ fn pc(base: Option<&str>) -> ProviderConfig {
         models: vec![],
         tool_arguments: None,
         extra: Default::default(),
+        credentials: Default::default(),
     }
 }
 

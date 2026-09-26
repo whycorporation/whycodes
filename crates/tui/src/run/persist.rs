@@ -547,7 +547,7 @@ pub(super) fn project_slop_report(
 }
 
 /// Session + last-turn token usage (Claude Code `/cost` spirit).
-pub(super) fn cost_report(session: &Session, app: &TuiApp) -> String {
+pub(super) fn cost_report(session: &Session, app: &TuiApp, credential: Option<&str>) -> String {
     let mut lines = vec!["Cost / usage".to_string()];
     let u = &session.usage;
     if u.is_empty() {
@@ -585,6 +585,9 @@ pub(super) fn cost_report(session: &Session, app: &TuiApp) -> String {
         format_token_count(app.max_context_tokens),
         app.context_percent()
     ));
+    if let Some(name) = credential.filter(|n| !n.is_empty()) {
+        lines.push(format!("  credential: {name}"));
+    }
     lines
         .push("  note:      providers bill differently; figures are token counts, not USD.".into());
     lines.join("\n")

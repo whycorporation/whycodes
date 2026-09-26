@@ -1321,6 +1321,7 @@ fn key_from_env_config_and_missing_message() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     assert_eq!(
@@ -1390,6 +1391,7 @@ fn key_from_env_config_and_missing_message() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let proxied = missing_api_key_message_for("anthropic", Some(&cfg));
@@ -2638,12 +2640,23 @@ async fn session_missing_ids_and_import_share() {
     cmd_session(&SessionCmd::Delete { id }).await.unwrap();
 }
 
+/// Windows lets non-admin bind `:1`, so `cmd_serve` can sit in `axum::serve`
+/// forever and hold IsolatedHome's ENV_LOCK. Bind error *or* timeout is OK.
+async fn cmd_serve_must_not_run_forever(
+    fut: impl std::future::Future<Output = anyhow::Result<()>>,
+) {
+    match tokio::time::timeout(std::time::Duration::from_millis(400), fut).await {
+        Ok(Ok(_)) => panic!("serve on port 1 succeeded"),
+        Ok(Err(_)) => {}
+        Err(_) => {}
+    }
+}
+
 #[tokio::test]
 async fn cmd_serve_bind_privileged_port_fails() {
     let _home = IsolatedHome::new();
     let _cwd = IsolatedCwd::new();
-    let err = cmd_serve(1, true).await;
-    assert!(err.is_err(), "{err:?}");
+    cmd_serve_must_not_run_forever(cmd_serve(1, true)).await;
 }
 
 #[tokio::test]
@@ -2728,15 +2741,14 @@ async fn dispatch_serve_and_connect_error_arms() {
     let mut c = cli(None);
     c.plain = true;
     c.no_memory = true;
-    let err = dispatch_command(
+    cmd_serve_must_not_run_forever(dispatch_command(
         &Commands::Serve {
             port: 1,
             no_takeover: true,
         },
         &c,
-    )
+    ))
     .await;
-    assert!(err.is_err(), "{err:?}");
     let err = dispatch_command(
         &Commands::Connect {
             addr: "127.0.0.1:1".into(),
@@ -3115,6 +3127,8 @@ async fn cmd_run_plain_repl_slash_commands() {
         "/share",
         "/export",
         "/fresh",
+        "/btw",
+        "/btw hello",
         "/compact",
         "/summarize",
         "/diff",
@@ -4378,6 +4392,7 @@ fn complete_provider_ids_include_custom_config() {
             models: vec!["m1".into(), "".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     cfg.default_model = Some(ModelConfig {
@@ -4530,6 +4545,7 @@ async fn get_api_key_from_config_provider() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let key = get_api_key("anthropic", &cfg).await;
@@ -4551,6 +4567,7 @@ async fn ensure_api_key_local_provider_without_key() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let mut key = String::new();
