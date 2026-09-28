@@ -263,12 +263,16 @@ pub fn is_trivial_title_seed(text: &str) -> bool {
 
 /// Apply a generated title string, logging success/empty results.
 pub fn apply_refine_result(session: &mut Session, title: &str, model: &str) {
-    if title.is_empty() {
-        tracing::debug!("title model returned empty; keeping heuristic/default");
-        return;
+    match title.is_empty() {
+        true => tracing::debug!("title model returned empty; keeping heuristic/default"),
+        false => apply_nonempty_title(session, title, model),
     }
-    if session.apply_generated_title(title) {
-        tracing::debug!(%title, %model, "session title refined");
+}
+
+fn apply_nonempty_title(session: &mut Session, title: &str, model: &str) {
+    match session.apply_generated_title(title) {
+        true => tracing::debug!(%title, %model, "session title refined"),
+        false => tracing::debug!(%title, "session title left unchanged"),
     }
 }
 

@@ -161,10 +161,13 @@ impl QuestionPrompter for StdinQuestionPrompter {
 }
 
 fn flush_prompt(skipped: &'static str) {
-    if let Err(e) = std::io::Write::flush(&mut std::io::stderr()) {
-        tracing::debug!(error = %e, "{skipped}");
+    match std::io::Write::flush(&mut std::io::stderr()) {
+        Ok(()) => note_prompt_flushed(),
+        Err(e) => tracing::debug!(error = %e, "{skipped}"),
     }
 }
+
+fn note_prompt_flushed() {}
 
 #[allow(clippy::question_mark)]
 fn ask_stdin_questions(

@@ -110,7 +110,10 @@ fn first_line_is_tldr(body: &str) -> bool {
         Some(line) => line.trim().to_ascii_uppercase(),
         None => return false,
     };
-    line.starts_with("TLDR:") || line.starts_with("TL;DR:")
+    match (line.starts_with("TLDR:"), line.starts_with("TL;DR:")) {
+        (true, _) | (_, true) => true,
+        (false, false) => false,
+    }
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {

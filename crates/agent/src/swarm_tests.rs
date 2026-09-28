@@ -44,6 +44,11 @@ fn parse_rejects_empty_array_too_many_and_empty_goal() {
 #[test]
 fn ensure_tldr_empty_existing_and_truncate() {
     assert!(ensure_tldr("   ").is_empty());
+    let semicolon = format!(
+        "TL;DR: already\n{}",
+        "x".repeat(SWARM_TLDR_REQUIRED_OVER_CHARS + 20)
+    );
+    assert!(ensure_tldr(&semicolon).starts_with("TL;DR:"));
     let existing = format!(
         "TLDR: already\n{}",
         "x".repeat(SWARM_TLDR_REQUIRED_OVER_CHARS + 20)

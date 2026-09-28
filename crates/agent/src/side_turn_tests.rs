@@ -39,6 +39,9 @@ fn read_only_set_excludes_bash_and_write() {
     assert!(is_side_readonly("glob"));
     assert!(!is_side_readonly("bash"));
     assert!(!is_side_readonly("write"));
+    assert!(!is_side_readonly("edit"));
+    assert!(!is_side_readonly("apply_patch"));
+    assert!(!is_side_readonly("unknown"));
 }
 
 #[tokio::test]

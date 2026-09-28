@@ -236,8 +236,9 @@ impl BackgroundRegistry {
             .map(|j| j.id)
             .collect();
         for id in ids {
-            if let Err(e) = self.kill(&id) {
-                tracing::debug!(error = %e, %id, "background kill skipped");
+            match self.kill(&id) {
+                Ok(_killed) => note_kill_ok(),
+                Err(e) => tracing::debug!(error = %e, %id, "background kill skipped"),
             }
         }
     }
@@ -539,10 +540,15 @@ fn nonempty_or_truncated(label: Option<String>, command: &str) -> String {
 }
 
 fn kill_child_group(pid: Option<u32>) {
-    if let Some(pid) = pid {
-        kill_pid_group(pid);
+    match pid {
+        Some(pid) => kill_pid_group(pid),
+        None => note_no_pid(),
     }
 }
+
+fn note_no_pid() {}
+
+fn note_kill_ok() {}
 
 fn exit_summary(label: String, code: Option<i32>) -> String {
     match code {

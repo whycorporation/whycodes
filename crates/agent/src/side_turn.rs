@@ -101,7 +101,8 @@ pub async fn run(
 fn is_side_readonly(name: &str) -> bool {
     match name {
         "read" | "grep" | "glob" => true,
-        other => other == "\0",
+        "bash" | "write" | "edit" | "apply_patch" => false,
+        _ => false,
     }
 }
 

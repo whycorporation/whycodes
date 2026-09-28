@@ -108,8 +108,9 @@ impl PermissionPrompter for StdinPrompter {
                 eprintln!("  {detail}");
             }
             eprint!("  Allow? [y/N] ");
-            if let Err(e) = io::stderr().flush() {
-                tracing::debug!(error = %e, "permission prompt flush skipped");
+            match io::stderr().flush() {
+                Ok(()) => note_permission_flushed(),
+                Err(e) => tracing::debug!(error = %e, "permission prompt flush skipped"),
             }
             let mut line = String::new();
             let read = io::stdin().read_line(&mut line);
@@ -164,6 +165,8 @@ fn permission_line_allows(line: &str) -> bool {
         "y" | "yes" | "a" | "allow"
     )
 }
+
+fn note_permission_flushed() {}
 
 #[cfg(test)]
 #[path = "permission_tests.rs"]
