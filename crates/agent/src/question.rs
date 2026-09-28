@@ -161,9 +161,14 @@ impl QuestionPrompter for StdinQuestionPrompter {
 }
 
 fn flush_prompt(skipped: &'static str) {
-    match std::io::Write::flush(&mut std::io::stderr()) {
-        Ok(()) => note_prompt_flushed(),
-        Err(e) => tracing::debug!(error = %e, "{skipped}"),
+    flush_writer(&mut std::io::stderr(), skipped);
+}
+
+fn flush_writer(out: &mut dyn std::io::Write, skipped: &'static str) {
+    if let Err(e) = out.flush() {
+        tracing::debug!(error = %e, "{skipped}");
+    } else {
+        note_prompt_flushed();
     }
 }
 

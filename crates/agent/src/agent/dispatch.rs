@@ -647,30 +647,36 @@ impl Agent {
             }
             if let Some(cmd) = command {
                 match background.start_shell(&cmd, cwd, sandbox, label) {
-                    Ok(id) => match &sink {
-                        Some(tx) => send_or_debug(
-                            tx,
-                            TurnEvent::Background {
-                                id: id.clone(),
-                                status: "running".into(),
-                                summary: format!("scheduled: {cmd}"),
-                            },
-                            "scheduled background event dropped (listener closed)",
-                        ),
-                        None => skip_dispatch(),
-                    },
-                    Err(e) => match &sink {
-                        Some(tx) => send_or_debug(
-                            tx,
-                            TurnEvent::Background {
-                                id: "schedule".into(),
-                                status: "failed".into(),
-                                summary: e,
-                            },
-                            "scheduled background failure dropped (listener closed)",
-                        ),
-                        None => skip_dispatch(),
-                    },
+                    Ok(id) => {
+                        if let Some(tx) = &sink {
+                            send_or_debug(
+                                tx,
+                                TurnEvent::Background {
+                                    id: id.clone(),
+                                    status: "running".into(),
+                                    summary: format!("scheduled: {cmd}"),
+                                },
+                                "scheduled background event dropped (listener closed)",
+                            );
+                        } else {
+                            skip_dispatch();
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(tx) = &sink {
+                            send_or_debug(
+                                tx,
+                                TurnEvent::Background {
+                                    id: "schedule".into(),
+                                    status: "failed".into(),
+                                    summary: e,
+                                },
+                                "scheduled background failure dropped (listener closed)",
+                            );
+                        } else {
+                            skip_dispatch();
+                        }
+                    }
                 }
             }
             match (&goal, &sink) {
@@ -834,8 +840,8 @@ impl Agent {
                         owner_label,
                         owner_id: _,
                     } => {
-                        match events {
-                            Some(tx) => send_or_debug(
+                        if let Some(tx) = events {
+                            send_or_debug(
                                 tx,
                                 TurnEvent::FileConflict {
                                     path: full.display().to_string(),
@@ -843,8 +849,9 @@ impl Agent {
                                     owner: owner_label.clone(),
                                 },
                                 "pre-claim conflict event dropped (listener closed)",
-                            ),
-                            None => skip_dispatch(),
+                            );
+                        } else {
+                            skip_dispatch();
                         }
                         return ToolResult {
                             tool_call_id: call.id.clone(),
@@ -1160,8 +1167,8 @@ impl Agent {
                         Some(wt) => {
                             let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
                             for c in &merge.conflicts {
-                                match &events_tx {
-                                    Some(tx) => send_or_debug(
+                                if let Some(tx) = &events_tx {
+                                    send_or_debug(
                                         tx,
                                         TurnEvent::FileConflict {
                                             path: c.path.clone(),
@@ -1169,8 +1176,9 @@ impl Agent {
                                             owner: "main".into(),
                                         },
                                         "merge conflict event dropped (listener closed)",
-                                    ),
-                                    None => skip_dispatch(),
+                                    );
+                                } else {
+                                    skip_dispatch();
                                 }
                             }
                             if !merge.conflicts.is_empty() {
@@ -1207,11 +1215,7 @@ impl Agent {
         claims.clear();
         // Best-effort prune empty swarm run dir.
         if let Err(e) = std::fs::remove_dir_all(&swarm_run_dir) {
-            tracing::debug!(
-                error = %e,
-                path = %swarm_run_dir.display(),
-                "swarm run dir remove skipped"
-            );
+            tracing::debug!(error = %e, path = %swarm_run_dir.display(), "swarm run dir remove skipped");
         }
 
         let wall = wall_t0.elapsed().as_secs_f64();

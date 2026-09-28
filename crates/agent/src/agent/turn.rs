@@ -458,16 +458,17 @@ impl Agent {
                         emit(&events, TurnEvent::TextDelta(text.clone()));
                         accumulated_text.push_str(&text);
                         let hit = first_stream_rule_hit(&self.stream_rules, &accumulated_text);
-                        match hit {
-                            Some((name, hint)) => apply_stream_rule_hit(
+                        if let Some((name, hint)) = hit {
+                            apply_stream_rule_hit(
                                 &mut speculative_reads,
                                 &events,
                                 session,
                                 name,
                                 hint,
                                 &mut stream_rule_retry,
-                            ),
-                            None => skip_event(),
+                            );
+                        } else {
+                            skip_event();
                         }
                         if stream_rule_retry {
                             break;
@@ -900,9 +901,8 @@ fn harmony_leak_tools(
     tool_calls: &[whycodes_core::types::ToolCall],
 ) -> Option<whycodes_core::harmony::Hit> {
     for tc in tool_calls {
-        match whycodes_core::harmony::scan_json(&tc.arguments) {
-            Some(hit) => return Some(hit),
-            None => continue,
+        if let Some(hit) = whycodes_core::harmony::scan_json(&tc.arguments) {
+            return Some(hit);
         }
     }
     None
@@ -914,9 +914,8 @@ fn maybe_start_speculative(
     tool_ctx: &whycodes_core::tool::ToolContext,
 ) {
     let updated = assembler.last_updated();
-    let (cid, cname, buf) = match &updated {
-        Some((cid, cname, buf)) => (cid.as_str(), cname.as_str(), buf.as_str()),
-        None => return,
+    let Some((cid, cname, buf)) = updated.as_ref() else {
+        return;
     };
     crate::speculative_read::maybe_start(speculative_reads, cid, cname, buf, tool_ctx);
 }

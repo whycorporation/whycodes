@@ -106,10 +106,10 @@ pub fn ensure_tldr(body: &str) -> String {
 }
 
 fn first_line_is_tldr(body: &str) -> bool {
-    let line = match body.lines().next() {
-        Some(line) => line.trim().to_ascii_uppercase(),
-        None => return false,
+    let Some(line) = body.lines().next() else {
+        return false;
     };
+    let line = line.trim().to_ascii_uppercase();
     match (line.starts_with("TLDR:"), line.starts_with("TL;DR:")) {
         (true, _) | (_, true) => true,
         (false, false) => false,

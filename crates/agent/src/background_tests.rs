@@ -538,6 +538,19 @@ fn wait_status_records_error_and_success() {
         );
         assert_eq!(job_status_from_wait(None), (JobStatus::Failed, None));
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+        let ok = std::process::ExitStatus::from_raw(0);
+        let fail = std::process::ExitStatus::from_raw(1);
+        assert!(wait_status(Ok(ok), &job).is_some_and(|s| s.success()));
+        assert_eq!(job_status_from_wait(Some(ok)), (JobStatus::Done, Some(0)));
+        assert_eq!(
+            job_status_from_wait(Some(fail)),
+            (JobStatus::Failed, Some(1))
+        );
+        assert_eq!(job_status_from_wait(None), (JobStatus::Failed, None));
+    }
 }
 
 fn poison_mutex<T>(value: T) -> Mutex<T> {

@@ -624,3 +624,21 @@ impl std::io::Read for FailRead {
         Err(std::io::Error::other("stdin boom"))
     }
 }
+
+struct FailFlush;
+
+impl std::io::Write for FailFlush {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::other("flush boom"))
+    }
+}
+
+#[test]
+fn flush_writer_covers_ok_and_error() {
+    flush_writer(&mut std::io::sink(), "question prompt flush skipped");
+    flush_writer(&mut FailFlush, "question prompt flush skipped");
+}

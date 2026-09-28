@@ -153,10 +153,12 @@ pub(crate) fn settle_checkpoint_rewind(
                     r.is_error = true;
                     r.content = "Checkpoint already active.".into();
                 } else {
-                    let goal = match tc.arguments.get("goal").and_then(|v| v.as_str()) {
-                        Some(goal) => goal.trim(),
-                        None => "",
-                    };
+                    let goal = tc
+                        .arguments
+                        .get("goal")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
                     if !goal.is_empty() {
                         checkpoint_goal = Some(goal.to_string());
                     }
@@ -173,10 +175,12 @@ pub(crate) fn settle_checkpoint_rewind(
                         "No active checkpoint. Create a checkpoint before calling rewind.".into()
                     };
                 } else {
-                    let report = match tc.arguments.get("report").and_then(|v| v.as_str()) {
-                        Some(report) => report.trim(),
-                        None => "",
-                    };
+                    let report = tc
+                        .arguments
+                        .get("report")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
                     if !report.is_empty() {
                         rewind_report = Some(report.to_string());
                     }
@@ -673,10 +677,7 @@ impl Agent {
                     summary: ev.summary,
                 }) {
                     let error = e.to_string();
-                    tracing::debug!(
-                        error = %error,
-                        "background event dropped (listener closed)"
-                    );
+                    tracing::debug!(error = %error, "background event dropped (listener closed)");
                 }
             })));
     }

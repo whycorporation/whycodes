@@ -433,9 +433,20 @@ fn create_worktree_add_fails_when_git_dir_is_readonly_after_head() {
             "{err}"
         );
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = create_worktree(&root, &dest, "worker-0");
+        let worktrees = root.join(".git").join("worktrees");
+        std::fs::create_dir_all(&worktrees).expect("worktrees dir");
+        assert!(
+            deny_modify(&worktrees),
+            "icacls must deny writes under .git/worktrees"
+        );
+        let err = create_worktree(&root, &dest, "worker-0").unwrap_err();
+        allow_modify(&worktrees);
+        assert!(
+            err.contains("worktree") || err.contains("git") || err.contains("failed"),
+            "{err}"
+        );
     }
 }
 
@@ -448,6 +459,7 @@ fn merge_delete_fails_when_main_parent_is_readonly() {
         .join("run-del-chmod")
         .join("worker-0");
     let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+    #[cfg(unix)]
     std::fs::remove_file(wt.path.join("a.txt")).unwrap();
     #[cfg(unix)]
     {
@@ -462,10 +474,20 @@ fn merge_delete_fails_when_main_parent_is_readonly() {
             "{report:?}"
         );
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
+        let target = root.join("a.txt");
+        std::fs::remove_file(wt.path.join("a.txt")).expect("delete worktree a.txt");
+        let held = hold_exclusive(&target);
         let report = merge_into_main(&wt, &root);
-        let _ = report;
+        drop(held);
+        assert!(
+            report
+                .conflicts
+                .iter()
+                .any(|c| c.path == "a.txt" && c.reason.contains("failed to delete")),
+            "{report:?}"
+        );
     }
     remove_worktree(&wt).ok();
 }
@@ -498,9 +520,12 @@ fn remove_worktree_path_remains_when_replaced_with_readonly_file() {
         let _ = std::fs::remove_file(&wt.path);
         let _ = result;
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = remove_worktree(&wt);
+        std::fs::write(&wt.path, b"stuck").expect("replace worktree with a file");
+        let err = remove_worktree(&wt).unwrap_err();
+        assert!(err.contains("path remains"), "{err}");
+        let _ = std::fs::remove_file(&wt.path);
     }
 }
 
@@ -514,6 +539,64 @@ fn after_git_remove_failed_ok_when_gone_and_err_when_present() {
     let err = after_git_remove_failed(&stuck, "still there").unwrap_err();
     assert!(err.contains("path remains"), "{err}");
     assert!(err.contains("still there"), "{err}");
+}
+
+#[cfg(windows)]
+fn hold_exclusive(path: &std::path::Path) -> std::fs::File {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::FromRawHandle;
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            0x8000_0000,
+            1,
+            std::ptr::null_mut(),
+            3,
+            0x80,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_ne!(handle, INVALID_HANDLE, "CreateFileW must lock the file");
+    unsafe { std::fs::File::from_raw_handle(handle as _) }
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn CreateFileW(
+        name: *const u16,
+        access: u32,
+        share: u32,
+        security: *mut std::ffi::c_void,
+        disposition: u32,
+        flags: u32,
+        template: *mut std::ffi::c_void,
+    ) -> *mut std::ffi::c_void;
+}
+
+#[cfg(windows)]
+const INVALID_HANDLE: *mut std::ffi::c_void = -1isize as *mut std::ffi::c_void;
+
+#[cfg(windows)]
+fn deny_modify(path: &std::path::Path) -> bool {
+    Command::new("icacls")
+        .arg(path)
+        .args(["/deny", "*S-1-1-0:(W,D,DC,WDAC,WO)"])
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+#[cfg(windows)]
+fn allow_modify(path: &std::path::Path) {
+    let _ = Command::new("icacls")
+        .arg(path)
+        .args(["/remove:d", "*S-1-1-0"])
+        .status();
 }
 
 fn exit_status(success: bool) -> std::process::ExitStatus {
