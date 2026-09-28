@@ -3136,3 +3136,17 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 **Fix:** Those sites are a `match` with both arms on one line. The unused arm calls a one-line stub (`note_permission_flushed`, `note_prompt_flushed`, `note_kill_ok`). `/btw` names `edit` and `apply_patch` instead of comparing to a NUL. Title apply splits the empty and unchanged cases into one-line arms.
 
 **Prevention:** On the agent 100% floor, do not add a new `if let` in production code. Both arms of a `match` must be a one-line call or an expression, not a block whose brace llvm-cov can miss.
+
+## Coverage job dies before the floor report
+
+**Date:** 2026-09-28 · **Area:** `crates/tools` github credential test / PR #141
+
+**Symptom:** `Coverage (line floor)` exits 101 in about two minutes. There is no `FAIL whycodes-agent` line. `cargo llvm-cov` stops on `github::api::tests::git_credential_fill_parses_password_from_helper`: `left: None`, `right: Some("from-helper")`.
+
+**JSONL / crash:** none.
+
+**Root cause:** The Linux stand-in was `sh -c "cat >/dev/null; printf …"`. `sh -c` does not leave stdin open for `cat`, so the shell exits before the test writes `protocol=https`. `wait` then sees a failed status and `git_credential_token_from_command` returns `None` without reading stdout. Windows `cmd /C echo` does not have this race, so the test stayed green locally.
+
+**Fix:** The stand-in reads stdin until the blank line, then prints `password=from-helper`.
+
+**Prevention:** A fake `git credential fill` must consume the payload the production path writes. Do not use `sh -c cat` as that consumer.
