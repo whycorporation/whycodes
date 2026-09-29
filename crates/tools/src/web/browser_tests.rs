@@ -878,4 +878,59 @@ fn uncovered_io_error_arms() {
 
     let pretty = snapshot_from_eval(Ok(json!({"a": 1})));
     assert!(pretty.content.contains('\n') || pretty.content.contains("\"a\""));
+
+    // HTTP body with no header separator, and a host that has no path.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 256];
+        let _ = stream.read(&mut buf);
+        let _ = stream.write_all(b"raw-body");
+    });
+    let raw = http_get(&format!("http://{addr}")).expect("body without headers");
+    assert_eq!(raw, "raw-body");
+    server.join().ok();
+
+    // CDP list whose only target is not a page.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 256];
+        let _ = stream.read(&mut buf);
+        let body = r#"[{"type":"browser","webSocketDebuggerUrl":"ws://127.0.0.1:1/browser"}]"#;
+        let resp = format!("HTTP/1.0 200 OK\r\n\r\n{body}");
+        let _ = stream.write_all(resp.as_bytes());
+    });
+    let pages = cdp(addr.port(), "Page.enable", json!({})).unwrap_err();
+    assert!(pages.contains("no CDP page target"), "{pages}");
+    server.join().ok();
+
+    // WebSocket URL with no path, and a masked frame whose payload is not UTF-8.
+    assert!(
+        ws_cdp_call("ws://127.0.0.1:1", "Page.enable", json!({}))
+            .unwrap_err()
+            .contains("cdp connect")
+    );
+    let (mut writer, mut reader) = connected_streams();
+    write_ws_text(&mut writer, &[0xc3, 0x28]).expect("write masked invalid utf-8");
+    assert!(
+        read_ws_text(&mut reader)
+            .unwrap_err()
+            .contains("invalid utf-8")
+    );
+
+    // Poisoned session lock is recovered; `store_session` still returns the port.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+        panic!("poison session");
+    }));
+    let stored = store_session(
+        hang_browser_child(),
+        17,
+        PathBuf::from("/tmp/poison-session"),
+    );
+    assert_eq!(stored.ok(), Some(17));
+    drop(close_browser());
 }

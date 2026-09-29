@@ -346,3 +346,45 @@ async fn learn_index_code_search_and_metadata() {
     assert!(failed.is_error);
     assert_eq!(failed.content, "nope");
 }
+
+#[tokio::test]
+async fn write_records_session_and_blocked_home_fails_open() {
+    let home = IsolatedHome::new();
+    let mut ctx = ToolContext::new(home.dir.path().to_string_lossy());
+    ctx.session_id = Some("sess-coverage".into());
+    let tool = MemoryTool::new();
+
+    let written = tool
+        .execute(
+            serde_json::json!({"action": "write", "text": "remember this session"}),
+            &ctx,
+        )
+        .await;
+    assert!(!written.is_error, "{}", written.content);
+    assert!(
+        written.content.contains("Saved memory"),
+        "{}",
+        written.content
+    );
+
+    let learned = tool
+        .execute(
+            serde_json::json!({"action": "learn", "text": "session lesson"}),
+            &ctx,
+        )
+        .await;
+    assert!(!learned.is_error, "{}", learned.content);
+
+    let blocker = home.dir.path().join("not-a-home");
+    std::fs::write(&blocker, b"x").unwrap();
+    unsafe { std::env::set_var("WHYCODES_HOME", &blocker) };
+    let opened = tool
+        .execute(serde_json::json!({"action": "list"}), &ctx)
+        .await;
+    assert!(opened.is_error, "{}", opened.content);
+    assert!(
+        opened.content.contains("open memory store"),
+        "{}",
+        opened.content
+    );
+}
