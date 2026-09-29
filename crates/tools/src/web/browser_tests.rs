@@ -3,6 +3,12 @@ use std::net::TcpListener;
 use std::process::Stdio;
 use std::thread;
 
+fn dir_as_file(name: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(dir.path().join(name), b"not-a-directory").expect("blocker file");
+    dir
+}
+
 fn hang_browser_child() -> Child {
     #[cfg(windows)]
     {
@@ -183,6 +189,25 @@ fn websocket_reader_reports_close_and_invalid_utf8_frames() {
             .unwrap_err()
             .contains("invalid utf-8 sequence")
     );
+
+    // Unmasked frames (server → client). Masked writes never take these arms.
+    let (mut writer, mut reader) = connected_streams();
+    let mut frame = vec![0x81, 126];
+    frame.extend_from_slice(&126u16.to_be_bytes());
+    frame.extend(std::iter::repeat_n(b'z', 126));
+    writer
+        .write_all(&frame)
+        .expect("write unmasked 16-bit frame");
+    assert_eq!(read_ws_text(&mut reader).unwrap().len(), 126);
+
+    let (mut writer, mut reader) = connected_streams();
+    let mut frame = vec![0x81, 127];
+    frame.extend_from_slice(&1u64.to_be_bytes());
+    frame.push(b'q');
+    writer
+        .write_all(&frame)
+        .expect("write unmasked 64-bit frame");
+    assert_eq!(read_ws_text(&mut reader).unwrap(), "q");
 }
 
 #[test]
@@ -731,4 +756,126 @@ fn ensure_session_times_out_fake_browser() {
     }
     drop(close_browser());
     assert!(err.is_err(), "{err:?}");
+}
+
+#[test]
+fn uncovered_io_error_arms() {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    drop(close_browser());
+
+    let missing = dir_as_file("whycodes-not-a-browser");
+    let bin = missing.path().join("whycodes-not-a-browser");
+    let launch = ensure_session_with_browser(Some(bin));
+    assert!(
+        launch.as_ref().unwrap_err().contains("failed to launch"),
+        "{launch:?}"
+    );
+
+    let blocked = dir_as_file("browser-profile");
+    let profile = blocked.path().join("browser-profile");
+    mkdir_browser_profile(&profile);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 256];
+        let _ = stream.read(&mut buf);
+        drop(stream);
+    });
+    // A clean close is `Ok("")` on Windows; an abort is `Err`. Either is fine.
+    let _ = http_get(&format!("http://{addr}/json/version"));
+    server.join().ok();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    drop(listener);
+    let connect =
+        ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({})).unwrap_err();
+    assert!(connect.contains("cdp connect"), "{connect}");
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept");
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+    });
+    let err = ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({})).unwrap_err();
+    assert!(!err.is_empty(), "{err}");
+    server.join().ok();
+
+    let (mut writer, reader) = connected_streams();
+    drop(reader);
+    // Windows may buffer a short write after the peer drops. Either outcome
+    // still executes the write path.
+    let _ = write_ws_text(&mut writer, b"x");
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+        let _ = stream.write_all(b"HTTP/1.1 101 Switching Protocols\r\n\r\n");
+        let _ = stream.write_all(&[0x81, 4]);
+        let _ = stream.write_all(br#"{"x":"#);
+    });
+    let parse =
+        ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({})).unwrap_err();
+    assert!(!parse.is_empty(), "{parse}");
+    server.join().ok();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+        let _ = stream.write_all(b"HTTP/1.1 101 Switching Protocols\r\n\r\n");
+        let _ = stream.flush();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let _ = write_ws_text(&mut stream, br#"{"id":1}"#);
+        let _ = stream.flush();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    });
+    let missing_result = ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({}))
+        .expect("null result");
+    assert!(missing_result.is_null());
+    server.join().ok();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 256];
+        let _ = stream.read(&mut buf);
+        let _ = stream.write_all(b"not json at all");
+    });
+    let pages = cdp(addr.port(), "Page.enable", json!({})).unwrap_err();
+    assert!(pages.contains("no CDP page target"), "{pages}");
+    server.join().ok();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 256];
+        let _ = stream.read(&mut buf);
+        let body = r#"[{"type":"page"}]"#;
+        let resp = format!("HTTP/1.0 200 OK\r\n\r\n{body}");
+        let _ = stream.write_all(resp.as_bytes());
+    });
+    let pages = cdp(addr.port(), "Page.enable", json!({})).unwrap_err();
+    assert!(pages.contains("no CDP page target"), "{pages}");
+    server.join().ok();
+
+    let eval_null = evaluate_cdp_result(Ok(json!({})));
+    assert_eq!(eval_null.ok(), Some(serde_json::Value::Null));
+
+    let running = browser_status_line(std::path::Path::new("chrome"), true, Some(9));
+    assert!(running.contains("running: true"));
+    assert!(running.contains("port: 9"));
+
+    let pretty = snapshot_from_eval(Ok(json!({"a": 1})));
+    assert!(pretty.content.contains('\n') || pretty.content.contains("\"a\""));
 }
