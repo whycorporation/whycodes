@@ -415,6 +415,16 @@ async fn default_constructs() {
     let from_ok = listing_from(Ok((Vec::new(), false, 0, 0)), ".", false, 1);
     assert!(!from_ok.is_error);
     assert!(from_ok.content.contains("(empty)"));
+    let unknown = listing_ok(
+        ".",
+        vec![("gone.txt".into(), false, None)],
+        false,
+        0,
+        1,
+        false,
+        1,
+    );
+    assert!(unknown.content.contains('?'), "{}", unknown.content);
 }
 
 #[tokio::test]

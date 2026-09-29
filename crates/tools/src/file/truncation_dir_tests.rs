@@ -1,4 +1,5 @@
 use super::*;
+use crate::file::paths::DirEntryInfo;
 use crate::tool::ToolContext;
 use std::path::Path;
 
@@ -119,6 +120,17 @@ async fn list_error_is_surfaced_for_unreadable() {
     let from_ok = truncation_from(Ok(Vec::new()), ".", 10);
     assert!(!from_ok.is_error);
     assert!(from_ok.content.contains("0 entries"));
+    let unknown = truncation_ok(
+        ".",
+        vec![DirEntryInfo {
+            name: "gone.txt".into(),
+            path: Path::new("gone.txt").into(),
+            is_dir: false,
+            size: None,
+        }],
+        10,
+    );
+    assert!(unknown.content.contains('?'), "{}", unknown.content);
     let _ = ctx;
     let _ = nested;
 }

@@ -195,6 +195,15 @@ fn search_context_includes_markers_only_between() {
     assert!(out.contains(":x"), "{out}");
 }
 
+#[test]
+fn search_context_separator_between_matches() {
+    let dir = TempDir::new().unwrap();
+    let f = write(&dir, "a.txt", "hit\n\n\nhit\n");
+    let out = GrepTool::search("hit", &f, None, false, 1, 50, "/", None).unwrap();
+    assert!(out.contains("--"), "{out}");
+    assert!(out.contains("in 1 file"), "{out}");
+}
+
 #[tokio::test]
 async fn execute_missing_pattern_is_error() {
     let ctx = ToolContext::new("/");

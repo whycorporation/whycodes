@@ -408,3 +408,25 @@ fn visit_index_prefix_stop_and_cold() {
     let _ = link;
     assert!(!glob_match("[", "x"));
 }
+
+#[test]
+fn walk_file_and_shared_prefix_suggestions() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("notes.txt");
+    fs::write(&file, "hello").unwrap();
+    let mut seen = Vec::new();
+    let stopped = walk_entries(&file, 1, 10, &mut |path, rel, is_dir, size| {
+        seen.push((rel.to_string(), is_dir, size));
+        let _ = path;
+        true
+    });
+    assert!(!stopped);
+    assert_eq!(seen.len(), 1);
+    assert!(!seen[0].1);
+    assert_eq!(seen[0].2, Some(5));
+
+    fs::write(dir.path().join("readme.md"), "x").unwrap();
+    fs::write(dir.path().join("readme_extra.md"), "x").unwrap();
+    let hits = suggest_similar(&dir.path().join("readme"), 5);
+    assert!(hits.iter().any(|n| n.starts_with("readme")), "{hits:?}");
+}

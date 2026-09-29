@@ -209,6 +209,24 @@ async fn remaining_glob_edges() {
 }
 
 #[tokio::test]
+async fn absolute_pattern_with_no_walk_hit_reports_none() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+    let missing = dir.path().join("no-such-dir").join("*.rs");
+    let out = GlobTool::new()
+        .execute(
+            serde_json::json!({
+                "pattern": missing.to_string_lossy(),
+                "path": dir.path().to_string_lossy(),
+            }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert!(out.content.contains("No files matched"), "{}", out.content);
+}
+
+#[tokio::test]
 async fn fallback_glob_skips_heavy_dirs() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("target/debug")).unwrap();

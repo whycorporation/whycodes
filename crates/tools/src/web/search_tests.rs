@@ -235,3 +235,18 @@ async fn serpapi_and_ddg_network_and_connect_errors() {
         .await;
     assert!(ddg.is_error, "{}", ddg.content);
 }
+
+#[tokio::test]
+async fn duckduckgo_network_deny_without_serpapi() {
+    let _env = SearchEnv::lock();
+    unsafe { std::env::remove_var("SERPAPI_API_KEY") };
+    let mut ctx = crate::tool::ToolContext::unsandboxed("/");
+    ctx.network = whycodes_core::NetworkPolicy {
+        allowlist: vec!["example.com".into()],
+        denylist: vec![],
+    };
+    let blocked = WebSearchTool::new()
+        .execute(serde_json::json!({"query": "q"}), &ctx)
+        .await;
+    assert!(blocked.is_error, "{}", blocked.content);
+}

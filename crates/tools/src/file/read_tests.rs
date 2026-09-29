@@ -189,6 +189,19 @@ async fn execute_image_returns_b64() {
 }
 
 #[tokio::test]
+async fn oversized_image_is_refused() {
+    let dir = TempDir::new().unwrap();
+    let big = vec![0u8; (2 * 1024 * 1024) + 1];
+    fs::write(dir.path().join("big.png"), big).unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let result = ReadTool::new()
+        .execute(serde_json::json!({"path": "big.png"}), &ctx)
+        .await;
+    assert!(result.is_error, "{}", result.content);
+    assert!(result.content.contains("max"), "{}", result.content);
+}
+
+#[tokio::test]
 async fn execute_missing_path_param() {
     let ctx = ToolContext::new("/");
     let result = ReadTool::new().execute(serde_json::json!({}), &ctx).await;
