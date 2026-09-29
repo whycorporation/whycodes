@@ -5298,7 +5298,9 @@ async fn spawn_remote_turn_arms_generating_and_delivers_error() {
     assert!(rt.agent_busy);
     assert_eq!(app.current_agent_state, AgentState::Generating);
     assert!(app.status_message.contains("remote"));
-    let outcome = tokio::time::timeout(Duration::from_secs(3), rt.done_rx.recv()).await;
+    // `remote::client` connect_timeout is 3s. The test must outlast that
+    // or a refused port looks like a hang.
+    let outcome = tokio::time::timeout(Duration::from_secs(8), rt.done_rx.recv()).await;
     match outcome {
         Ok(Some(TurnOutcome::Remote {
             error: Some(err), ..

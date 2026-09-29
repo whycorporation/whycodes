@@ -831,6 +831,33 @@ async fn important_prompts_high_risk_schedule() {
 }
 
 #[tokio::test]
+async fn important_treats_blank_schedule_command_as_low_risk() {
+    let asks = Arc::new(CountingDenyPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut info = info("build");
+    info.permission
+        .rules
+        .insert("schedule".into(), PermissionAction::Ask);
+    let mut a = Agent::new(info).with_permission_prompter(asks.clone());
+    a.set_approval_mode(ApprovalMode::Important);
+    let (session, ctx) = session_ctx(&a);
+    let _ = a
+        .execute_with_permission(
+            &tc("schedule", json!({"command": "   "})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(asks.asks.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn parallel_speculative_and_sequential_speculative() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.txt"), "alpha").unwrap();

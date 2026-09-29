@@ -152,7 +152,7 @@ pub async fn generate_title(
                 }
                 raw.push_str(text);
             }
-            None => continue,
+            None => note_non_text_title_block(),
         }
     }
     let mut line = String::new();
@@ -163,12 +163,12 @@ pub async fn generate_title(
             break;
         }
     }
-    let line = line
-        .trim_start_matches("Title:")
-        .trim_start_matches("title:")
-        .trim();
+    let line = line.trim_start_matches("Title:");
+    let line = line.trim_start_matches("title:").trim();
     Ok(sanitize_title(line))
 }
+
+fn note_non_text_title_block() {}
 
 fn text_block(block: &whycodes_core::types::ContentBlock) -> Option<&str> {
     match block {
@@ -243,9 +243,21 @@ pub fn is_trivial_title_seed(text: &str) -> bool {
         return false;
     }
     // Code / project cues: paths, code spans, flags, identifiers, numbers.
-    if t.contains([
-        '/', '\\', '`', '=', '_', '(', ')', '{', '}', '<', '>', '@', '#', '$',
-    ]) {
+    if t.contains('/')
+        || t.contains('\\')
+        || t.contains('`')
+        || t.contains('=')
+        || t.contains('_')
+        || t.contains('(')
+        || t.contains(')')
+        || t.contains('{')
+        || t.contains('}')
+        || t.contains('<')
+        || t.contains('>')
+        || t.contains('@')
+        || t.contains('#')
+        || t.contains('$')
+    {
         return false;
     }
     for c in t.chars() {

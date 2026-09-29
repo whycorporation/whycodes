@@ -236,11 +236,7 @@ impl BackgroundRegistry {
             .map(|j| j.id)
             .collect();
         for id in ids {
-            if let Err(e) = self.kill(&id) {
-                tracing::debug!(error = %e, %id, "background kill skipped");
-            } else {
-                note_kill_ok();
-            }
+            note_kill_result(self.kill(&id), &id);
         }
     }
 
@@ -414,6 +410,11 @@ impl BackgroundRegistry {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn emit_for_test(&self, ev: BackgroundEvent) {
+        self.emit(ev);
+    }
+
     fn prune_locked(
         &self,
         jobs: &mut HashMap<String, Arc<Mutex<JobInner>>>,
@@ -541,15 +542,17 @@ fn nonempty_or_truncated(label: Option<String>, command: &str) -> String {
 }
 
 fn kill_child_group(pid: Option<u32>) {
-    match pid {
-        Some(pid) => kill_pid_group(pid),
-        None => note_no_pid(),
+    if let Some(pid) = pid {
+        kill_pid_group(pid);
     }
 }
 
-fn note_no_pid() {}
-
-fn note_kill_ok() {}
+fn note_kill_result(result: Result<String, String>, id: &str) {
+    match result {
+        Ok(_) => {}
+        Err(e) => tracing::debug!(error = %e, %id, "background kill skipped"),
+    }
+}
 
 fn exit_summary(label: String, code: Option<i32>) -> String {
     match code {

@@ -334,6 +334,69 @@ async fn harmony_leak_in_thinking_retries() {
 fn harmony_leak_helper_none_on_clean() {
     let acc = crate::thinking_acc::ThinkingAccumulator::new();
     assert!(harmony_leak("hello", &acc, &[]).is_none());
+    assert!(harmony_leak("", &acc, &[]).is_none());
+    let leak = serde_json::json!({"note": "analysis to=functions.edit code leftover"});
+    let calls = [whycodes_core::types::ToolCall {
+        id: "c1".into(),
+        name: "edit".into(),
+        arguments: leak.clone(),
+    }];
+    assert!(harmony_leak_tools(&calls).is_some());
+    let mixed = [
+        whycodes_core::types::ToolCall {
+            id: "c0".into(),
+            name: "read".into(),
+            arguments: serde_json::json!({"path": "a.txt"}),
+        },
+        whycodes_core::types::ToolCall {
+            id: "c1".into(),
+            name: "edit".into(),
+            arguments: leak,
+        },
+    ];
+    assert!(harmony_leak_tools(&mixed).is_some());
+    assert!(harmony_leak_tools(&[]).is_none());
+    let text_only = [whycodes_core::types::Message {
+        role: whycodes_core::types::Role::User,
+        content: whycodes_core::types::MessageContent::Text("hello".into()),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }];
+    assert!(!transcript_has_tool_work(&text_only));
+    let tool_role = [whycodes_core::types::Message {
+        role: whycodes_core::types::Role::Tool,
+        content: whycodes_core::types::MessageContent::Text("out".into()),
+        tool_call_id: Some("c1".into()),
+        name: None,
+        created_at: None,
+    }];
+    assert!(transcript_has_tool_work(&tool_role));
+    let tool_use = [whycodes_core::types::Message {
+        role: whycodes_core::types::Role::Assistant,
+        content: whycodes_core::types::MessageContent::Blocks(vec![ContentBlock::ToolUse {
+            id: "c1".into(),
+            name: "read".into(),
+            input: serde_json::json!({}),
+        }]),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }];
+    assert!(transcript_has_tool_work(&tool_use));
+    let swarm = whycodes_core::types::ToolDefinition {
+        name: "swarm".into(),
+        description: String::new(),
+        parameters: serde_json::json!({}),
+    };
+    let read = whycodes_core::types::ToolDefinition {
+        name: "read".into(),
+        description: String::new(),
+        parameters: serde_json::json!({}),
+    };
+    assert!(defs_include_swarm(std::slice::from_ref(&swarm)));
+    assert!(!defs_include_swarm(std::slice::from_ref(&read)));
+    assert_eq!(defs_without_swarm(&[swarm, read.clone()]).len(), 1);
 }
 
 #[tokio::test]

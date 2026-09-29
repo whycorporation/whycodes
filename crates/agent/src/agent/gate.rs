@@ -761,8 +761,9 @@ fn schedule_command_is_high_risk(
     working_dir: &str,
     threshold: whycodes_command_risk::RiskThreshold,
 ) -> bool {
-    let Some(command) = nonempty_arg(tc, "command") else {
-        return false;
+    let command = match nonempty_arg(tc, "command") {
+        Some(command) => command,
+        None => return false,
     };
     !matches!(
         decide(

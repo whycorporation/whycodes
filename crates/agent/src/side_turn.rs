@@ -52,8 +52,9 @@ pub async fn run(
         };
         let transport = whycodes_llm::default_transport();
         let completed = transport.complete(provider, &request, api_key, model).await;
-        let Ok(response) = completed else {
-            return Err(completed.unwrap_err());
+        let response = match completed {
+            Ok(response) => response,
+            Err(err) => return Err(err),
         };
         let mut calls: Vec<ToolCall> = Vec::new();
         let mut text = String::new();

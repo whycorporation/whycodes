@@ -507,7 +507,7 @@ impl Agent {
 
     /// Replace loaded `prompts/*.md` extras (TUI hydrate after first paint).
     pub fn set_system_prompt_overlays(&mut self, overlays: SystemPromptOverlays) {
-        self.system_prompt_overlays = overlays;
+        self.system_prompt_overlays = overlays
     }
 
     /// Current approval overlay.

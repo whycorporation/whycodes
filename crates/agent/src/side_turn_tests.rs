@@ -128,6 +128,30 @@ async fn unknown_provider_is_llm_error() {
 }
 
 #[tokio::test]
+async fn provider_complete_error_is_returned() {
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(ScriptedProvider::new([ScriptedStep::Error(
+        "btw boom".into(),
+    )])));
+    let a = Agent::new(AgentInfo {
+        name: "build".into(),
+        description: String::new(),
+        mode: AgentMode::Primary,
+        permission: PermissionSet::default(),
+        model: None,
+        system_prompt: Some("sys".into()),
+        temperature: None,
+        top_p: None,
+    })
+    .with_provider_registry(registry);
+    let parent = Session::new(std::path::PathBuf::from("."), "sys".into());
+    let err = run(&a, &parent, "script", "m", "k", "hello")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("btw boom"), "{err}");
+}
+
+#[tokio::test]
 async fn thinking_blocks_are_ignored_and_text_is_kept() {
     let mut registry = ProviderRegistry::new();
     registry.register(Box::new(ScriptedProvider::new([

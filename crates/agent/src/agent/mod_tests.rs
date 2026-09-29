@@ -811,6 +811,12 @@ async fn spawn_title_refine_sends_nonempty_title() {
         .expect("title pair");
     assert_eq!(got.0, s.id);
     assert!(!got.1.is_empty(), "{}", got.1);
+
+    // Closed listener: the refine still succeeds and the send error is logged.
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    assert!(a.spawn_title_refine(&s, "script", "title-drop-cov", "k", None, tx));
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 }
 
 #[tokio::test]
@@ -2375,6 +2381,7 @@ fn builder_setters_and_memory_settings() {
     let mut a = test_agent();
     a.set_reasoning_effort(Some("xhigh".into()));
     assert_eq!(a.reasoning_effort.as_deref(), Some("xhigh"));
+    a.set_system_prompt_overlays(whycodes_config::SystemPromptOverlays::default());
     let _ = a.memory_settings();
     let reg = crate::background::BackgroundRegistry::new(2);
     let a = a.with_background_registry(reg);
@@ -2405,6 +2412,13 @@ async fn wire_event_sink_forwards_background_listener() {
         }
     }
     assert!(saw_bg, "expected background listener event");
+    drop(rx);
+    a.background
+        .emit_for_test(crate::background::BackgroundEvent {
+            id: "bg-dropped".into(),
+            status: crate::background::JobStatus::Done,
+            summary: "listener gone".into(),
+        });
     a.background.kill_all();
 }
 

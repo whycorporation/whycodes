@@ -167,12 +167,8 @@ fn flush_prompt(skipped: &'static str) {
 fn flush_writer(out: &mut dyn std::io::Write, skipped: &'static str) {
     if let Err(e) = out.flush() {
         tracing::debug!(error = %e, "{skipped}");
-    } else {
-        note_prompt_flushed();
     }
 }
-
-fn note_prompt_flushed() {}
 
 #[allow(clippy::question_mark)]
 fn ask_stdin_questions(

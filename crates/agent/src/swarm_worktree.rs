@@ -174,7 +174,7 @@ fn merge_changed_path(
     let base = git_show_blob(repo_root, base_head, &rel);
 
     match (base.as_ref(), work.as_ref(), main.as_ref()) {
-        (None, None, _) => skip_vanished_untracked(),
+        (None, None, _) => {}
         // Deleted in worktree
         (Some(b), None, Some(m)) if m == b => {
             if let Err(e) = std::fs::remove_file(main_path) {
@@ -246,29 +246,29 @@ pub fn remove_worktree(wt: &SwarmWorktree) -> Result<(), String> {
         .map_err(git_spawn_err("git worktree remove spawn"))?;
 
     if !output.status.success() {
-        // Fallback: force-delete directory and prune.
-        if let Err(e) = std::fs::remove_dir_all(&wt.path) {
-            tracing::debug!(error = %e, path = %wt.path.display(), "worktree dir remove skipped");
-        }
-        match Command::new("git")
-            .args(["worktree", "prune"])
-            .current_dir(&wt.repo_root)
-            .output()
-        {
-            Ok(output) if output.status.success() => {}
-            Ok(output) => {
-                let error = String::from_utf8_lossy(&output.stderr);
-                tracing::debug!(error = %error, "worktree prune failed");
-            }
-            Err(e) => {
-                tracing::debug!(error = %e, "worktree prune spawn failed");
-            }
-        }
-        let err = String::from_utf8_lossy(&output.stderr);
-        return after_git_remove_failed(&wt.path, &err);
+        finish_failed_worktree_remove(wt, &output.stderr)?;
     }
     Ok(())
 }
+
+fn finish_failed_worktree_remove(wt: &SwarmWorktree, stderr: &[u8]) -> Result<(), String> {
+    match std::fs::remove_dir_all(&wt.path) {
+        Ok(()) => note_worktree_dir_removed(),
+        Err(e) => {
+            tracing::debug!(error = %e, path = %wt.path.display(), "worktree dir remove skipped")
+        }
+    }
+    match prune_worktree(&wt.repo_root) {
+        Ok(()) => note_worktree_pruned(),
+        Err(e) => tracing::debug!(error = %e, "worktree prune failed"),
+    }
+    let err = String::from_utf8_lossy(stderr);
+    after_git_remove_failed(&wt.path, &err)
+}
+
+fn note_worktree_dir_removed() {}
+
+fn note_worktree_pruned() {}
 
 fn after_git_remove_failed(path: &Path, stderr: &str) -> Result<(), String> {
     if path.exists() {
@@ -280,7 +280,18 @@ fn after_git_remove_failed(path: &Path, stderr: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn skip_vanished_untracked() {}
+fn prune_worktree(repo_root: &Path) -> Result<(), String> {
+    let output = Command::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| format!("worktree prune spawn failed: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let error = String::from_utf8_lossy(&output.stderr);
+    Err(error.trim().to_string())
+}
 
 /// Directory for one swarm run: `{project}/.whycodes/swarm/{run_id}`.
 pub fn run_dir(project: &Path, run_id: &str) -> PathBuf {

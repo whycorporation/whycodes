@@ -98,7 +98,7 @@ impl StdinPrompter {
 impl PermissionPrompter for StdinPrompter {
     fn ask<'a>(&'a self, tool_name: &'a str, detail: &'a str) -> PermissionAskFuture<'a> {
         Box::pin(async move {
-            use std::io::{self, Write};
+            use std::io;
             if let Some(cfg) = self.notify.as_deref() {
                 spawn_need_input_wait(cfg, &format!("Permission · `{tool_name}`"), detail);
             }
@@ -108,11 +108,7 @@ impl PermissionPrompter for StdinPrompter {
                 eprintln!("  {detail}");
             }
             eprint!("  Allow? [y/N] ");
-            if let Err(e) = io::stderr().flush() {
-                tracing::debug!(error = %e, "permission prompt flush skipped");
-            } else {
-                note_permission_flushed();
-            }
+            flush_permission_prompt(&mut io::stderr());
             let mut line = String::new();
             let read = io::stdin().read_line(&mut line);
             permission_from_read(read, &line)
@@ -167,7 +163,12 @@ fn permission_line_allows(line: &str) -> bool {
     )
 }
 
-fn note_permission_flushed() {}
+fn flush_permission_prompt(out: &mut dyn std::io::Write) {
+    match out.flush() {
+        Ok(()) => {}
+        Err(e) => tracing::debug!(error = %e, "permission prompt flush skipped"),
+    }
+}
 
 #[cfg(test)]
 #[path = "permission_tests.rs"]

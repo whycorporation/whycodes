@@ -49,6 +49,7 @@ fn ensure_tldr_empty_existing_and_truncate() {
         "x".repeat(SWARM_TLDR_REQUIRED_OVER_CHARS + 20)
     );
     assert!(ensure_tldr(&semicolon).starts_with("TL;DR:"));
+    assert!(ensure_tldr("").is_empty());
     let existing = format!(
         "TLDR: already\n{}",
         "x".repeat(SWARM_TLDR_REQUIRED_OVER_CHARS + 20)

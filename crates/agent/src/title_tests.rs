@@ -158,6 +158,16 @@ fn skips_trivial_greetings() {
         "fix the auth retry bug in session.rs"
     ));
     assert!(!is_trivial_title_seed("read crates/tui/src/run.rs"));
+    assert!(!is_trivial_title_seed(r"src\main.rs"));
+    assert!(!is_trivial_title_seed("`code`"));
+    assert!(!is_trivial_title_seed("a=b"));
+    assert!(!is_trivial_title_seed("snake_case"));
+    assert!(!is_trivial_title_seed("f()"));
+    assert!(!is_trivial_title_seed("{ok}"));
+    assert!(!is_trivial_title_seed("<tag>"));
+    assert!(!is_trivial_title_seed("@me"));
+    assert!(!is_trivial_title_seed("#tag"));
+    assert!(!is_trivial_title_seed("$var"));
     // Short dotted name is a file, not chit-chat; final punctuation is not.
     assert!(!is_trivial_title_seed("main.rs"));
     assert!(is_trivial_title_seed("selam."));
@@ -398,6 +408,64 @@ async fn generate_title_filters_non_text_image_block() {
     .await
     .expect("ok empty");
     assert!(title.is_empty(), "{title}");
+}
+
+struct TextAfterImageTitleProvider;
+
+impl whycodes_llm::LlmProvider for TextAfterImageTitleProvider {
+    fn name(&self) -> &str {
+        "title-after-image"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async move {
+            Ok(whycodes_core::types::LlmResponse {
+                content: vec![
+                    whycodes_core::types::ContentBlock::Image {
+                        source: whycodes_core::types::ImageSource::Base64 {
+                            media_type: "image/png".into(),
+                            data: "abc".into(),
+                        },
+                    },
+                    whycodes_core::types::ContentBlock::Text {
+                        text: "\nRetry Loop".into(),
+                    },
+                ],
+                stop_reason: Some("end_turn".into()),
+                usage: Default::default(),
+                model: model.into(),
+            })
+        })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::llm("complete-only")) })
+    }
+}
+
+#[tokio::test]
+async fn generate_title_joins_text_after_a_non_text_block() {
+    let title = generate_title(
+        &TextAfterImageTitleProvider,
+        "k",
+        "title-after-image-unique-model",
+        "please explain the retry loop",
+        None,
+    )
+    .await
+    .expect("title");
+    assert!(title.contains("Retry"), "{title}");
 }
 
 #[test]

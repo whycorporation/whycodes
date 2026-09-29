@@ -467,8 +467,6 @@ impl Agent {
                                 hint,
                                 &mut stream_rule_retry,
                             );
-                        } else {
-                            skip_event();
                         }
                         if stream_rule_retry {
                             break;
@@ -578,8 +576,9 @@ impl Agent {
             {
                 crate::speculative_read::abort_all(&mut speculative_reads);
                 let summary = hit.summary();
+                let co_signal = hit.co_signal.as_str();
                 tracing::warn!(
-                    co_signal = hit.co_signal.as_str(),
+                    co_signal,
                     retry = harmony_retries,
                     "harmony protocol leak; discarding draft"
                 );
@@ -901,23 +900,24 @@ fn harmony_leak_tools(
     tool_calls: &[whycodes_core::types::ToolCall],
 ) -> Option<whycodes_core::harmony::Hit> {
     for tc in tool_calls {
-        if let Some(hit) = whycodes_core::harmony::scan_json(&tc.arguments) {
-            return Some(hit);
+        match whycodes_core::harmony::scan_json(&tc.arguments) {
+            Some(hit) => return Some(hit),
+            None => note_clean_tool_args(),
         }
     }
     None
 }
+
+fn note_clean_tool_args() {}
 
 fn maybe_start_speculative(
     speculative_reads: &mut Vec<crate::speculative_read::SpeculativeRead>,
     assembler: &crate::tool_stream::ToolCallAssembler,
     tool_ctx: &whycodes_core::tool::ToolContext,
 ) {
-    let updated = assembler.last_updated();
-    let Some((cid, cname, buf)) = updated.as_ref() else {
-        return;
-    };
-    crate::speculative_read::maybe_start(speculative_reads, cid, cname, buf, tool_ctx);
+    if let Some((cid, cname, buf)) = assembler.last_updated() {
+        crate::speculative_read::maybe_start(speculative_reads, &cid, &cname, &buf, tool_ctx);
+    }
 }
 
 fn skip_event() {}
@@ -944,43 +944,30 @@ fn apply_stream_rule_hit(
 }
 
 fn transcript_has_tool_work(messages: &[whycodes_core::types::Message]) -> bool {
-    for message in messages {
+    messages.iter().any(|message| {
         if matches!(message.role, whycodes_core::types::Role::Tool) {
             return true;
         }
-        match &message.content {
-            whycodes_core::types::MessageContent::Blocks(blocks) => {
-                for block in blocks {
-                    if matches!(block, ContentBlock::ToolUse { .. }) {
-                        return true;
-                    }
-                }
-            }
-            whycodes_core::types::MessageContent::Text(_) => skip_event(),
-        }
-    }
-    false
+        let whycodes_core::types::MessageContent::Blocks(blocks) = &message.content else {
+            return false;
+        };
+        blocks
+            .iter()
+            .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
+    })
 }
 
 fn defs_include_swarm(defs: &[whycodes_core::types::ToolDefinition]) -> bool {
-    for def in defs {
-        if def.name == "swarm" {
-            return true;
-        }
-    }
-    false
+    defs.iter().any(|def| def.name == "swarm")
 }
 
 fn defs_without_swarm(
     defs: &[whycodes_core::types::ToolDefinition],
 ) -> Vec<whycodes_core::types::ToolDefinition> {
-    let mut kept = Vec::new();
-    for def in defs {
-        if def.name != "swarm" {
-            kept.push(def.clone());
-        }
-    }
-    kept
+    defs.iter()
+        .filter(|def| def.name != "swarm")
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]

@@ -106,14 +106,12 @@ pub fn ensure_tldr(body: &str) -> String {
 }
 
 fn first_line_is_tldr(body: &str) -> bool {
-    let Some(line) = body.lines().next() else {
-        return false;
-    };
+    body.lines().next().is_some_and(tldr_prefix)
+}
+
+fn tldr_prefix(line: &str) -> bool {
     let line = line.trim().to_ascii_uppercase();
-    match (line.starts_with("TLDR:"), line.starts_with("TL;DR:")) {
-        (true, _) | (_, true) => true,
-        (false, false) => false,
-    }
+    line.starts_with("TLDR:") || line.starts_with("TL;DR:")
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {

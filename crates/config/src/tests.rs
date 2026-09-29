@@ -182,12 +182,13 @@ fn write_atomic_replaces_existing_and_creates() {
 
 #[test]
 fn write_atomic_empty_parent_uses_dot() {
+    let _guard = lock_env();
     let dir = tempfile::tempdir().unwrap();
     let prev = std::env::current_dir().unwrap();
     std::env::set_current_dir(dir.path()).unwrap();
     let result = write_atomic(Path::new("rel.toml"), b"x");
     let body = std::fs::read_to_string("rel.toml");
-    std::env::set_current_dir(prev).unwrap();
+    let _ = std::env::set_current_dir(prev);
     result.unwrap();
     assert_eq!(body.unwrap(), "x");
 }

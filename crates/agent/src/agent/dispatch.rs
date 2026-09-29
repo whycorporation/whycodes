@@ -658,8 +658,6 @@ impl Agent {
                                 },
                                 "scheduled background event dropped (listener closed)",
                             );
-                        } else {
-                            skip_dispatch();
                         }
                     }
                     Err(e) => {
@@ -673,8 +671,6 @@ impl Agent {
                                 },
                                 "scheduled background failure dropped (listener closed)",
                             );
-                        } else {
-                            skip_dispatch();
                         }
                     }
                 }
@@ -850,8 +846,6 @@ impl Agent {
                                 },
                                 "pre-claim conflict event dropped (listener closed)",
                             );
-                        } else {
-                            skip_dispatch();
                         }
                         return ToolResult {
                             tool_call_id: call.id.clone(),
@@ -1177,8 +1171,6 @@ impl Agent {
                                         },
                                         "merge conflict event dropped (listener closed)",
                                     );
-                                } else {
-                                    skip_dispatch();
                                 }
                             }
                             if !merge.conflicts.is_empty() {

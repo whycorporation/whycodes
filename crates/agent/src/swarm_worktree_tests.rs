@@ -230,6 +230,35 @@ fn porcelain_path_skips_short_and_parses_rename() {
 }
 
 #[test]
+fn finish_failed_remove_covers_dir_gone_and_prune_error() {
+    let (_keep, root) = init_repo();
+    let dest = root
+        .join(".whycodes")
+        .join("swarm")
+        .join("run-finish")
+        .join("worker-0");
+    let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+    finish_failed_worktree_remove(&wt, b"git said no").expect("checkout removed");
+    assert!(!wt.path.exists());
+
+    std::fs::write(&wt.path, b"stuck-file").expect("replace dir with a file");
+    let err = finish_failed_worktree_remove(&wt, b"still there").unwrap_err();
+    assert!(err.contains("path remains"), "{err}");
+    let _ = std::fs::remove_file(&wt.path);
+
+    let orphan = SwarmWorktree {
+        path: root.join("not-a-dir.txt"),
+        repo_root: root.join("missing-repo"),
+        base_head: String::new(),
+        worker_id: "worker-0".into(),
+    };
+    std::fs::write(&orphan.path, b"file").unwrap();
+    let err = finish_failed_worktree_remove(&orphan, b"not a dir").unwrap_err();
+    assert!(err.contains("path remains"), "{err}");
+    let _ = std::fs::remove_file(&orphan.path);
+}
+
+#[test]
 fn remove_worktree_fallback_when_path_already_gone() {
     let (_keep, root) = init_repo();
     let dest = root
@@ -240,6 +269,8 @@ fn remove_worktree_fallback_when_path_already_gone() {
     let wt = create_worktree(&root, &dest, "worker-0").expect("create");
     let _ = std::fs::remove_dir_all(&wt.path);
     let _ = remove_worktree(&wt);
+    // Directory is already gone; the fallback still prunes git metadata.
+    assert!(prune_worktree(&root).is_ok());
 }
 
 #[test]
@@ -631,6 +662,15 @@ fn git_spawn_and_stdout_helpers() {
     assert!(successful_stdout(fail).is_none());
     let ok = exit_status_output(true);
     assert!(successful_stdout(ok).is_some());
+}
+
+#[test]
+fn prune_worktree_reports_spawn_and_status_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("not-a-repo");
+    std::fs::create_dir(&missing).unwrap();
+    let err = prune_worktree(&missing).unwrap_err();
+    assert!(!err.is_empty(), "{err}");
 }
 
 #[test]

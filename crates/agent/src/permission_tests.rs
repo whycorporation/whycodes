@@ -121,6 +121,24 @@ fn permission_from_read_err_denies() {
     assert!(!permission_from_read(Ok(0), "n"));
 }
 
+#[test]
+fn flush_permission_prompt_covers_ok_and_error() {
+    flush_permission_prompt(&mut std::io::sink());
+    flush_permission_prompt(&mut FailFlush);
+}
+
+struct FailFlush;
+
+impl std::io::Write for FailFlush {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::other("flush boom"))
+    }
+}
+
 #[tokio::test]
 async fn stdin_prompter_eof_denies() {
     if std::io::IsTerminal::is_terminal(&std::io::stdin()) {

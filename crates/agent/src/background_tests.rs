@@ -106,6 +106,8 @@ fn job_status_as_str_and_debug_fmt() {
     assert_eq!(exit_summary("job".into(), Some(0)), "job (exit 0)");
     assert_eq!(exit_summary("job".into(), None), "job");
     kill_child_group(None);
+    note_kill_result(Ok("killed".into()), "bg-1");
+    note_kill_result(Err("missing".into()), "bg-1");
 }
 
 #[test]
