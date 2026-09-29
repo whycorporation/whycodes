@@ -19,12 +19,12 @@ cargo run -p whycodes-cli -- -d .
 cargo check -p whycodes-<crate>
 cargo check --workspace
 
-# Tests
-cargo test --workspace
-cargo test -p whycodes-<crate>
-cargo test -p whycodes-<crate> --lib
+# Tests — only what the diff touches. Do not run --workspace for a leaf edit.
+python scripts/affected_tests.py --paths crates/<crate>/src/<module>.rs --execute
+# Whole crate (lib.rs / main.rs / crate Cargo.toml) plus dependents' --lib:
+python scripts/affected_tests.py --paths crates/<crate>/src/lib.rs --execute
 
-# One test by name
+# One test by name, when you already know it
 cargo test -p whycodes-<crate> <test-name>
 
 # One integration test exactly

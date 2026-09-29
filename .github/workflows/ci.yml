@@ -124,6 +124,7 @@ jobs:
           sh scripts/test_pre_push.sh
           python scripts/test_tracked_secrets.py
           python scripts/test_release_downloads.py
+          python scripts/test_affected_tests.py
       - name: Installer syntax (PowerShell)
         run: |
           set -euo pipefail
@@ -171,7 +172,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 1
+          # affected_tests.py diffs against origin/<base>. Depth 1 has no
+          # merge base, so the selector would print nothing and CI would
+          # skip every test.
+          fetch-depth: 0
       - name: Isolate Cargo home
         run: sh scripts/ci_isolate_cargo_home.sh
       - uses: dtolnay/rust-toolchain@stable
@@ -182,13 +186,16 @@ jobs:
           cache-targets: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run tests
-        # IsolatedHome pins WHYCODES_HOME; cargo test --workspace runs crates
-        # in one process and siblings overwrite that env. Coverage already
-        # skips these two; Test must too or the catalog is empty (`[]`).
+        # Changed files pick the crates and modules. A leaf edit does not
+        # re-run the workspace. Root Cargo.toml / Cargo.lock still means
+        # --workspace (same two WHYCODES_HOME skips as before).
+        # Pull requests diff against the base branch. A push has no base
+        # ref; the script then tests the files in HEAD.
+        env:
+          AFFECTED_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD' }}
         run: |
-          cargo test --workspace --locked --features whycodes-storage/bundled -- \
-            --skip provider_and_model_dialogs_load_custom_from_isolated_home \
-            --skip fill_model_catalog_from_disk_is_a_noop_when_config_load_fails
+          python3 scripts/affected_tests.py --base "$AFFECTED_BASE" \
+            --locked --features whycodes-storage/bundled --execute
 
   coverage:
     name: Coverage (line floor)
