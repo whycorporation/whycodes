@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Print the cargo test commands that cover a set of changed files.
 
+CONTRIBUTING.md sends pull requests here instead of `cargo test --workspace`.
+
 A change inside one module should not re-run the rest of that crate, and it
 must not re-run crates that do not depend on it. This walks the workspace
 dependency graph (the same edges `check_dependency_boundaries.py` reads) and
