@@ -22,11 +22,15 @@ pub fn resolve_turn_model(
         return (provider.to_string(), model.to_string());
     }
     // Explicit override wins (config session.model_fast).
-    if let Some(raw) = fast_override.map(str::trim).filter(|s| !s.is_empty()) {
-        if let Some((p, m)) = raw.split_once('/') {
-            return (p.to_string(), m.to_string());
+    let raw = match fast_override {
+        Some(raw) => raw.trim(),
+        None => "",
+    };
+    if !raw.is_empty() {
+        match raw.split_once('/') {
+            Some((p, m)) => return (p.to_string(), m.to_string()),
+            None => return (provider.to_string(), raw.to_string()),
         }
-        return (provider.to_string(), raw.to_string());
     }
     // Reuse small-model sibling table (haiku/mini/flash/…).
     resolve_title_model(provider, model, None)
@@ -57,9 +61,11 @@ pub fn resolve_agent_model(
     agent_name: &str,
     plan_override: Option<&str>,
 ) -> (String, String) {
-    if agent_name.eq_ignore_ascii_case("plan")
-        && let Some(raw) = plan_override.map(str::trim).filter(|s| !s.is_empty())
-    {
+    let raw = match plan_override {
+        Some(raw) => raw.trim(),
+        None => "",
+    };
+    if agent_name.eq_ignore_ascii_case("plan") && !raw.is_empty() {
         return resolve_title_model(provider, model, Some(raw));
     }
     (provider.to_string(), model.to_string())

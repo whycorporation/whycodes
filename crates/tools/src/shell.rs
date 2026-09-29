@@ -30,11 +30,7 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in the project environment and return stdout/stderr. \
-         When security.sandbox=workspace (default), the process is confined: project \
-         directory is writable, the rest of the filesystem is read-only; network may \
-         be disabled via security.sandbox_network=false. \
-         Set background=true to return immediately with a job id (use `bg` to read/kill)."
+        "Run a shell command. Long notes: `read agent://tools/bash`."
     }
 
     fn parameters(&self) -> serde_json::Value {

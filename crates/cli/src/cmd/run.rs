@@ -17,7 +17,25 @@ pub(crate) fn force_plain_mode(cli_plain: bool) -> bool {
 }
 
 pub(crate) fn should_use_tui(force_plain: bool, stub_tui: bool, tui_available: bool) -> bool {
-    !force_plain && (stub_tui || tui_available)
+    should_use_tui_in(cfg!(test), force_plain, stub_tui, tui_available)
+}
+
+/// Tests only enter the TUI when `WHYCODES_TEST_TUI` is set (`stub_tui`).
+/// Git Bash / Cursor still have a controlling console, so `tui_available()`
+/// is true and would otherwise hang `cmd_run` on a live ratatui loop.
+pub(crate) fn should_use_tui_in(
+    for_test: bool,
+    force_plain: bool,
+    stub_tui: bool,
+    tui_available: bool,
+) -> bool {
+    if force_plain {
+        return false;
+    }
+    if for_test {
+        return stub_tui;
+    }
+    stub_tui || tui_available
 }
 
 pub(crate) fn is_repl_interactive(prompt: Option<&str>, structured: bool) -> bool {
@@ -52,11 +70,16 @@ pub(crate) fn session_cost_line(
     input: u64,
     output: u64,
     total: u64,
+    credential: Option<&str>,
 ) -> String {
-    if usage_empty {
+    let base = if usage_empty {
         format!("  session: ~{estimated} tokens (estimated)")
     } else {
         format!("  session: {input} in / {output} out · total {total}")
+    };
+    match super::session::stats_credential_line(credential) {
+        Some(line) => format!("{base}\n{line}"),
+        None => base,
     }
 }
 
@@ -606,6 +629,7 @@ pub(crate) async fn cmd_run(
         .with_mcp(&config)
         .await;
     agent.set_route(&provider, &model);
+    apply_sticky_credential(&agent, &provider, &config, &api_key);
     maybe_inject_test_llm(&mut agent, &provider);
     let system_prompt = with_project_memory(
         &Agent::with_agents_md(
@@ -788,6 +812,7 @@ pub(crate) async fn cmd_run(
                 if !ensure_api_key(&mut api_key, &provider, &config).await {
                     continue;
                 }
+                apply_sticky_credential(&agent, &provider, &config, &api_key);
                 println!("{}", custom_command_line(name));
                 history.push_before_turn(&session.messages, &project_dir);
                 refresh_session_memory(
@@ -935,6 +960,25 @@ pub(crate) async fn cmd_run(
                     println!("{}", skip_prompt_cache_line());
                     continue;
                 }
+                "/btw" => {
+                    let q = rest.trim();
+                    if q.is_empty() {
+                        println!("Usage: /btw <question>");
+                        continue;
+                    }
+                    if !ensure_api_key(&mut api_key, &provider, &config).await {
+                        continue;
+                    }
+                    apply_sticky_credential(&agent, &provider, &config, &api_key);
+                    match agent
+                        .run_side_turn(&session, &provider, &model, &api_key, q)
+                        .await
+                    {
+                        Ok(answer) => println!("{answer}"),
+                        Err(e) => eprintln!("{} {e}", "✗".red()),
+                    }
+                    continue;
+                }
                 "/compact" | "/summarize" => {
                     if session.messages.is_empty() {
                         println!("{}", nothing_to_compact_line());
@@ -1012,6 +1056,7 @@ pub(crate) async fn cmd_run(
                             u.input_tokens,
                             u.output_tokens,
                             u.total(),
+                            agent.sticky_credential().as_deref(),
                         )
                     );
                     continue;
@@ -1087,6 +1132,7 @@ pub(crate) async fn cmd_run(
                                 provider = p;
                                 model = m;
                                 api_key = get_api_key(&provider, &config).await.unwrap_or_default();
+                                apply_sticky_credential(&agent, &provider, &config, &api_key);
                                 agent.set_route(&provider, &model);
                                 refresh_session_memory(
                                     &mut session,
@@ -1181,6 +1227,7 @@ pub(crate) async fn cmd_run(
                     }
                     if let Some(k) = get_api_key(&provider, &config).await {
                         api_key = k;
+                        apply_sticky_credential(&agent, &provider, &config, &api_key);
                         println!(
                             "{}",
                             api_key_loaded_line(&provider, &masked_api_key_prefix(&api_key))
@@ -1235,6 +1282,7 @@ pub(crate) async fn cmd_run(
                             && let Some(k) = get_api_key(&provider, &config).await
                         {
                             api_key = k;
+                            apply_sticky_credential(&agent, &provider, &config, &api_key);
                         }
                     } else {
                         println!("{}", oauth_unavailable_line(arg, &oauth_provider_list()));
@@ -1331,6 +1379,7 @@ pub(crate) async fn cmd_run(
         if !ensure_api_key(&mut api_key, &provider, &config).await {
             continue;
         }
+        apply_sticky_credential(&agent, &provider, &config, &api_key);
 
         history.push_before_turn(&session.messages, &project_dir);
         refresh_session_memory(&mut session, &agent, &project_dir, &config, Some(&expanded));
@@ -1557,6 +1606,7 @@ pub(crate) async fn cmd_generate(
         .with_mcp(&config)
         .await;
     agent.set_route(&provider, &model);
+    apply_sticky_credential(&agent, &provider, &config, &api_key);
     maybe_inject_test_llm(&mut agent, &provider);
     let system_prompt = with_project_memory(
         &Agent::with_agents_md(
@@ -1757,6 +1807,7 @@ pub(crate) async fn run_one_parallel_turn(
         .with_mcp(config)
         .await;
     agent.set_route(provider, model);
+    apply_sticky_credential(&agent, provider, config, api_key);
     maybe_inject_test_llm(&mut agent, provider);
     let system_prompt = with_project_memory(
         &Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project_dir),

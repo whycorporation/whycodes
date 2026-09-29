@@ -1,7 +1,117 @@
 use super::*;
 use crate::args::Cli;
 use clap::Parser;
+use std::collections::HashMap;
 use whycodes_config::Config;
+use whycodes_core::types::{ProviderConfig, ProviderCredentials};
+
+#[test]
+fn empty_openai_env_still_wins_over_missing_config() {
+    let cfg = Config::default();
+    assert_eq!(
+        key_from_env_and_config("openai", &cfg, |k| {
+            (k == "OPENAI_API_KEY").then(String::new)
+        })
+        .as_deref(),
+        Some("")
+    );
+    assert_eq!(key_from_env_and_config("openai", &cfg, |_| None), None);
+    assert_eq!(
+        key_from_env_and_config("anthropic", &cfg, |k| {
+            (k == "ANTHROPIC_API_KEY").then(String::new)
+        }),
+        None
+    );
+}
+
+#[test]
+fn credential_candidates_and_next_after() {
+    let mut cfg = Config::default();
+    cfg.providers.insert(
+        "openai".into(),
+        ProviderConfig {
+            name: "openai".into(),
+            api_key: Some("cfg-key".into()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: ProviderCredentials {
+                order: vec!["interactive".into(), "ci".into()],
+                reserve: 0.1,
+                env: HashMap::from([
+                    ("interactive".into(), "OPENAI_API_KEY".into()),
+                    ("ci".into(), "OPENAI_CI_API_KEY".into()),
+                ]),
+            },
+        },
+    );
+    let lookup = |k: &str| match k {
+        "OPENAI_API_KEY" => Some("sk-live".into()),
+        "OPENAI_CI_API_KEY" => Some("sk-ci".into()),
+        _ => None,
+    };
+    let cands = credential_candidates_for_lane("openai", &cfg, lookup, false);
+    assert_eq!(cands.len(), 3, "{cands:?}");
+    assert_eq!(cands[0].name, "interactive");
+    assert_eq!(cands[0].secret, "sk-live");
+    assert_eq!(cands[1].name, "ci");
+    assert_eq!(cands[1].secret, "sk-ci");
+    assert_eq!(cands[2].name, "config");
+    assert_eq!(cands[2].secret, "cfg-key");
+    let ci_first = credential_candidates_for_lane("openai", &cfg, lookup, true);
+    assert_eq!(ci_first[0].name, "ci");
+    assert_eq!(ci_first[1].name, "interactive");
+
+    let _home = IsolatedHome::new();
+    assert_eq!(
+        key_from_env_and_config("openai", &cfg, lookup).as_deref(),
+        Some("sk-live")
+    );
+    let prev_live = std::env::var_os("OPENAI_API_KEY");
+    let prev_ci = std::env::var_os("OPENAI_CI_API_KEY");
+    let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
+    unsafe {
+        std::env::set_var("OPENAI_API_KEY", "sk-live");
+        std::env::set_var("OPENAI_CI_API_KEY", "sk-ci");
+        std::env::set_var("WHYCODES_CREDENTIAL_LANE", "interactive");
+    }
+    let next = next_credential_after("openai", &cfg, "sk-live").expect("ci follows interactive");
+    assert_eq!(next.name, "ci");
+    assert_eq!(next.secret, "sk-ci");
+    assert!(next_credential_after("openai", &cfg, "sk-ci").is_some());
+    assert!(next_credential_after("openai", &cfg, "missing").is_none());
+    let agent = Agent::new(whycodes_core::types::AgentInfo {
+        name: "build".into(),
+        description: String::new(),
+        mode: whycodes_core::types::AgentMode::Primary,
+        permission: Default::default(),
+        model: None,
+        system_prompt: None,
+        temperature: None,
+        top_p: None,
+    });
+    apply_sticky_credential(&agent, "openai", &cfg, "sk-live");
+    assert_eq!(agent.sticky_credential().as_deref(), Some("interactive"));
+    apply_sticky_credential(&agent, "openai", &cfg, "");
+    assert_eq!(agent.sticky_credential().as_deref(), Some("interactive"));
+    unsafe {
+        match prev_live {
+            Some(v) => std::env::set_var("OPENAI_API_KEY", v),
+            None => std::env::remove_var("OPENAI_API_KEY"),
+        }
+        match prev_ci {
+            Some(v) => std::env::set_var("OPENAI_CI_API_KEY", v),
+            None => std::env::remove_var("OPENAI_CI_API_KEY"),
+        }
+        match prev_lane {
+            Some(v) => std::env::set_var("WHYCODES_CREDENTIAL_LANE", v),
+            None => std::env::remove_var("WHYCODES_CREDENTIAL_LANE"),
+        }
+    }
+}
 
 #[test]
 fn resolve_dir_falls_back_to_cwd() {

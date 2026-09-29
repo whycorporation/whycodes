@@ -50,6 +50,7 @@ fn first_provider_is_the_fallback_without_a_default_model() {
             models: Vec::new(),
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         },
     );
     let (p, m) = default_provider_model(&c);
@@ -429,6 +430,7 @@ async fn resolve_api_key_prefers_env_then_config_then_openai() {
             models: Vec::new(),
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         },
     );
 
@@ -465,6 +467,7 @@ async fn resolve_api_key_prefers_env_then_config_then_openai() {
             models: Vec::new(),
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         },
     );
     unsafe { std::env::remove_var("GROQ_API_KEY") };
@@ -595,6 +598,7 @@ async fn list_models_uses_catalog_or_default() {
             models: Vec::new(),
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         },
     );
     state.config = std::sync::Arc::new(cfg);

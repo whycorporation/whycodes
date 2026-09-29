@@ -51,6 +51,23 @@ fn agent_url_lists_and_reads() {
     assert!(bad.is_error);
     let missing = read_internal("agent://nope", &ctx).unwrap();
     assert!(missing.is_error);
+    let guide = read_internal("agent://tools/bash", &ctx).unwrap();
+    assert!(!guide.is_error, "{}", guide.content);
+    assert!(guide.content.contains("auto-detach") || guide.content.contains("background"));
+    let index = read_internal("agent://tools", &ctx).unwrap();
+    assert!(index.content.contains("bash"));
+    let unknown = read_internal("agent://tools/nope", &ctx).unwrap();
+    assert!(unknown.is_error);
+    for name in ["read", "edit", "write", "grep", "glob", "shell"] {
+        let g = read_internal(&format!("agent://tools/{name}"), &ctx).unwrap();
+        assert!(!g.is_error, "{name}: {}", g.content);
+        assert!(
+            g.content.contains(&format!("agent://tools/{name}"))
+                || g.content.to_lowercase().contains(name),
+            "{name}: {}",
+            g.content
+        );
+    }
 }
 
 #[test]

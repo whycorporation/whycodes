@@ -215,6 +215,7 @@ mod tests {
             models: vec![],
             tool_arguments: None,
             extra: HashMap::new(),
+            credentials: Default::default(),
         }
     }
 

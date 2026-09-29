@@ -68,6 +68,23 @@ fn override_bare_id_keeps_provider() {
 }
 
 #[test]
+fn greeting_whitespace_override_falls_through_to_sibling() {
+    let (p, m) = resolve_turn_model("openai", "gpt-4o", "hi", Some("   "));
+    assert_eq!(p, "openai");
+    assert!(m.contains("mini"), "{m}");
+}
+
+#[test]
+fn plan_agent_blank_override_keeps_session_model() {
+    let (p, m) = resolve_agent_model("openai", "gpt-4o", "plan", Some("  "));
+    assert_eq!(p, "openai");
+    assert_eq!(m, "gpt-4o");
+    let (p, m) = resolve_agent_model("openai", "gpt-4o", "plan", None);
+    assert_eq!(p, "openai");
+    assert_eq!(m, "gpt-4o");
+}
+
+#[test]
 fn greeting_bare_fast_override_keeps_provider() {
     let (p, m) = resolve_turn_model("anthropic", "claude-sonnet-4-5", "hi", Some("haiku"));
     assert_eq!(p, "anthropic");

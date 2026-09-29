@@ -1,5 +1,13 @@
 use super::*;
 
+#[test]
+fn connect_shares_cmd_run_test_tui_gate() {
+    // Windows coverage: a leftover serve on :1 plus tui_available() used to
+    // open a live TUI from `cmd_connect` and hold IsolatedHome's ENV_LOCK.
+    assert!(!should_use_tui(false, false, true));
+    assert!(should_use_tui(false, true, false));
+}
+
 #[tokio::test]
 async fn web_stub_runs() {
     cmd_web().await.unwrap();

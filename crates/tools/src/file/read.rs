@@ -34,14 +34,7 @@ impl Tool for ReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read a text file (line-numbered). Prefer project-relative paths. \
-         Each line is `N tag|text` — pass `from`/`to`/`insert_after` on `edit` \
-         instead of reciting `old_string`. \
-         Use offset/limit for large files instead of reading everything. \
-         `skill://<name>` loads a skill body; `agent://<id>` re-reads a finished \
-         task/swarm artifact (empty id lists them). \
-         For directories use `list`; for finding files use `glob`/`grep`. \
-         Do not read cargo registry, node_modules, or target/ artifacts."
+        "Read a text file (line-numbered). Long notes: `read agent://tools/read`."
     }
 
     fn parameters(&self) -> serde_json::Value {

@@ -1878,6 +1878,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Skip provider prompt cache on the next turn",
     },
     SlashCommand {
+        name: "/btw",
+        hint: "[question] Side question (not written to history)",
+    },
+    SlashCommand {
         name: "/remember",
         hint: "[text] Save a durable project memory",
     },

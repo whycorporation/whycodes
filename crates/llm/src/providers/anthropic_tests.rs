@@ -464,6 +464,19 @@ async fn complete_maps_all_content_block_types() {
 }
 
 #[tokio::test]
+async fn complete_invalid_json_is_parse_error() {
+    use crate::provider::LlmProvider;
+    let p =
+        AnthropicProvider::from_base(Some(&serve_once("200 OK", "not-json{", "application/json")));
+    let err = p.complete(&base_request(), "", "claude").await.unwrap_err();
+    assert!(
+        err.to_string().to_lowercase().contains("json")
+            || err.to_string().to_lowercase().contains("parse"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
 async fn oauth_token_and_empty_key_complete_against_loopback() {
     use crate::provider::LlmProvider;
     use whycodes_core::types::ContentBlock;

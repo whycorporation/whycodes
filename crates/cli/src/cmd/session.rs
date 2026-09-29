@@ -306,6 +306,12 @@ pub(crate) fn stats_top_session_title(title: &str, id: &str) -> String {
     }
 }
 
+/// Credential **name** only — never the secret (`/cost` / `stats`).
+pub(crate) fn stats_credential_line(name: Option<&str>) -> Option<String> {
+    name.filter(|n| !n.is_empty())
+        .map(|n| format!("  credential: {n}"))
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Auth (OAuth subscription login)
 // ────────────────────────────────────────────────────────────────────────

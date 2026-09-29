@@ -22,7 +22,7 @@ pub use network::NetworkPolicy;
 pub use panel::{PanelSink, PanelUpdate};
 pub use paths::{
     config_dir, config_file, data_dir, display_path, instance_root, legacy_instance_roots,
-    project_dir, user_home, whycodes_home,
+    project_dir, project_scratch_dir, user_home, whycodes_home,
 };
 pub use sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
 pub use swarm_hub::{SwarmHub, SwarmMessage, SwarmMessageListener};

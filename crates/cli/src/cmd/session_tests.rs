@@ -37,4 +37,10 @@ fn session_and_stats_printer_helpers() {
     assert!(stats_cache_line(None, None).is_none());
     assert_eq!(stats_top_session_title("hello", "abcdefghij"), "hello");
     assert_eq!(stats_top_session_title("", "abcdefghij"), "abcdefgh");
+    assert_eq!(
+        stats_credential_line(Some("interactive")).as_deref(),
+        Some("  credential: interactive")
+    );
+    assert!(stats_credential_line(Some("")).is_none());
+    assert!(stats_credential_line(None).is_none());
 }

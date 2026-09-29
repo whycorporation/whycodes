@@ -1,7 +1,10 @@
 use super::*;
 use crate::events::{TurnEvent, TurnOpts};
 use serde_json::json;
-use whycodes_core::types::{AgentInfo, AgentMode, ApprovalMode, ContentBlock, PermissionSet, Role};
+use whycodes_core::types::{
+    AgentInfo, AgentMode, ApprovalMode, ContentBlock, LlmRequest, PermissionSet, ProviderConfig,
+    ProviderCredentials, Role,
+};
 use whycodes_llm::{LlmProvider, ProviderRegistry, ScriptedProvider, ScriptedStep};
 
 fn info(name: &str) -> AgentInfo {
@@ -331,6 +334,69 @@ async fn harmony_leak_in_thinking_retries() {
 fn harmony_leak_helper_none_on_clean() {
     let acc = crate::thinking_acc::ThinkingAccumulator::new();
     assert!(harmony_leak("hello", &acc, &[]).is_none());
+    assert!(harmony_leak("", &acc, &[]).is_none());
+    let leak = serde_json::json!({"note": "analysis to=functions.edit code leftover"});
+    let calls = [whycodes_core::types::ToolCall {
+        id: "c1".into(),
+        name: "edit".into(),
+        arguments: leak.clone(),
+    }];
+    assert!(harmony_leak_tools(&calls).is_some());
+    let mixed = [
+        whycodes_core::types::ToolCall {
+            id: "c0".into(),
+            name: "read".into(),
+            arguments: serde_json::json!({"path": "a.txt"}),
+        },
+        whycodes_core::types::ToolCall {
+            id: "c1".into(),
+            name: "edit".into(),
+            arguments: leak,
+        },
+    ];
+    assert!(harmony_leak_tools(&mixed).is_some());
+    assert!(harmony_leak_tools(&[]).is_none());
+    let text_only = [whycodes_core::types::Message {
+        role: whycodes_core::types::Role::User,
+        content: whycodes_core::types::MessageContent::Text("hello".into()),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }];
+    assert!(!transcript_has_tool_work(&text_only));
+    let tool_role = [whycodes_core::types::Message {
+        role: whycodes_core::types::Role::Tool,
+        content: whycodes_core::types::MessageContent::Text("out".into()),
+        tool_call_id: Some("c1".into()),
+        name: None,
+        created_at: None,
+    }];
+    assert!(transcript_has_tool_work(&tool_role));
+    let tool_use = [whycodes_core::types::Message {
+        role: whycodes_core::types::Role::Assistant,
+        content: whycodes_core::types::MessageContent::Blocks(vec![ContentBlock::ToolUse {
+            id: "c1".into(),
+            name: "read".into(),
+            input: serde_json::json!({}),
+        }]),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }];
+    assert!(transcript_has_tool_work(&tool_use));
+    let swarm = whycodes_core::types::ToolDefinition {
+        name: "swarm".into(),
+        description: String::new(),
+        parameters: serde_json::json!({}),
+    };
+    let read = whycodes_core::types::ToolDefinition {
+        name: "read".into(),
+        description: String::new(),
+        parameters: serde_json::json!({}),
+    };
+    assert!(defs_include_swarm(std::slice::from_ref(&swarm)));
+    assert!(!defs_include_swarm(std::slice::from_ref(&read)));
+    assert_eq!(defs_without_swarm(&[swarm, read.clone()]).len(), 1);
 }
 
 #[tokio::test]
@@ -1482,4 +1548,271 @@ async fn intent_always_injects_on_first_turn() {
         .await
         .expect("turn");
     assert!(out.contains("changed") || !out.is_empty(), "{out}");
+}
+
+struct RateThenOk {
+    inner: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+}
+
+impl LlmProvider for RateThenOk {
+    fn name(&self) -> &str {
+        "openai"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::Provider("unused".into())) })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        let key = api_key.to_string();
+        let model = model.to_string();
+        let inner = std::sync::Arc::clone(&self.inner);
+        Box::pin(async move {
+            {
+                let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
+                g.push((key.clone(), model.clone()));
+            }
+            if key == "sk-live" {
+                return Err(whycodes_core::Error::Provider(
+                    "HTTP 429 rate_limit_exceeded retry in 0 seconds".into(),
+                ));
+            }
+            Ok(Box::pin(futures::stream::iter([
+                Ok(whycodes_core::types::StreamEvent::TextDelta {
+                    text: "failover-ok".into(),
+                }),
+                Ok(whycodes_core::types::StreamEvent::MessageStop),
+            ]))
+                as whycodes_llm::provider::ProviderEventStream)
+        })
+    }
+}
+
+#[tokio::test]
+async fn rate_limit_retries_same_model_on_next_credential() {
+    let prev_live = std::env::var_os("WHYCODES_TEST_FAILOVER_LIVE");
+    let prev_ci = std::env::var_os("WHYCODES_TEST_FAILOVER_CI");
+    let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_FAILOVER_LIVE", "sk-live");
+        std::env::set_var("WHYCODES_TEST_FAILOVER_CI", "sk-ci");
+        std::env::set_var("WHYCODES_CREDENTIAL_LANE", "interactive");
+    }
+    let recorder = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(RateThenOk {
+        inner: std::sync::Arc::clone(&recorder),
+    }));
+    let mut config = whycodes_config::Config::default();
+    config.providers.insert(
+        "openai".into(),
+        ProviderConfig {
+            name: "openai".into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: ProviderCredentials {
+                order: vec!["interactive".into(), "ci".into()],
+                reserve: 0.1,
+                env: std::collections::HashMap::from([
+                    ("interactive".into(), "WHYCODES_TEST_FAILOVER_LIVE".into()),
+                    ("ci".into(), "WHYCODES_TEST_FAILOVER_CI".into()),
+                ]),
+            },
+        },
+    );
+    let agent = Agent::new(info("build"))
+        .with_config(&config)
+        .with_provider_registry(registry);
+    let mut session = session_user("please explain the retry loop");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "openai",
+                model: "gpt-4o",
+                api_key: "sk-live",
+                max_turns: Some(2),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await;
+    unsafe {
+        match prev_live {
+            Some(v) => std::env::set_var("WHYCODES_TEST_FAILOVER_LIVE", v),
+            None => std::env::remove_var("WHYCODES_TEST_FAILOVER_LIVE"),
+        }
+        match prev_ci {
+            Some(v) => std::env::set_var("WHYCODES_TEST_FAILOVER_CI", v),
+            None => std::env::remove_var("WHYCODES_TEST_FAILOVER_CI"),
+        }
+        match prev_lane {
+            Some(v) => std::env::set_var("WHYCODES_CREDENTIAL_LANE", v),
+            None => std::env::remove_var("WHYCODES_CREDENTIAL_LANE"),
+        }
+    }
+    let out = out.expect("failover turn");
+    assert!(out.contains("failover-ok"), "{out}");
+    let mut saw_rate_status = false;
+    while let Ok(ev) = rx.try_recv() {
+        if let TurnEvent::Status(s) = ev
+            && s.contains("credential")
+        {
+            saw_rate_status = true;
+            break;
+        }
+    }
+    assert!(
+        saw_rate_status,
+        "429 failover must emit a credential status"
+    );
+    let calls = recorder.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert!(
+        calls.iter().any(|(k, m)| k == "sk-live" && m == "gpt-4o"),
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls.last(),
+        Some(&("sk-ci".into(), "gpt-4o".into())),
+        "{calls:?}"
+    );
+    assert!(
+        calls.iter().all(|(_, m)| m == "gpt-4o"),
+        "429 failover must keep the same model: {calls:?}"
+    );
+    assert_eq!(agent.sticky_credential().as_deref(), Some("ci"));
+}
+
+struct AlwaysRateLimited;
+
+impl LlmProvider for AlwaysRateLimited {
+    fn name(&self) -> &str {
+        "openai"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::Provider("unused".into())) })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        Box::pin(async {
+            Err(whycodes_core::Error::Provider(
+                "HTTP 429 rate_limit_exceeded retry in 0 seconds".into(),
+            ))
+        })
+    }
+}
+
+fn assert_rate_limited(err: &whycodes_core::Error) {
+    assert!(
+        err.to_string().to_lowercase().contains("429")
+            || err.to_string().to_lowercase().contains("rate"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn rate_limit_without_failover_returns_err() {
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(AlwaysRateLimited));
+    let agent = Agent::new(info("build")).with_provider_registry(registry);
+    let mut session = session_user("please explain the retry loop");
+    let err = agent
+        .run_turn(&mut session, "openai", "gpt-4o", "sk-live", Some(2))
+        .await
+        .expect_err("no next credential");
+    assert_rate_limited(&err);
+}
+
+#[tokio::test]
+async fn rate_limit_same_secret_does_not_loop() {
+    let prev = std::env::var_os("WHYCODES_TEST_FAILOVER_DUP");
+    let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_FAILOVER_DUP", "sk-same");
+        std::env::set_var("WHYCODES_CREDENTIAL_LANE", "interactive");
+    }
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(AlwaysRateLimited));
+    let mut config = whycodes_config::Config::default();
+    config.providers.insert(
+        "openai".into(),
+        ProviderConfig {
+            name: "openai".into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: ProviderCredentials {
+                order: vec!["interactive".into(), "ci".into()],
+                reserve: 0.1,
+                env: std::collections::HashMap::from([
+                    ("interactive".into(), "WHYCODES_TEST_FAILOVER_DUP".into()),
+                    ("ci".into(), "WHYCODES_TEST_FAILOVER_DUP".into()),
+                ]),
+            },
+        },
+    );
+    let agent = Agent::new(info("build"))
+        .with_config(&config)
+        .with_provider_registry(registry);
+    let mut session = session_user("please explain the retry loop");
+    let err = agent
+        .run_turn(&mut session, "openai", "gpt-4o", "sk-same", Some(2))
+        .await
+        .expect_err("identical secrets must not failover-loop");
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var("WHYCODES_TEST_FAILOVER_DUP", v),
+            None => std::env::remove_var("WHYCODES_TEST_FAILOVER_DUP"),
+        }
+        match prev_lane {
+            Some(v) => std::env::set_var("WHYCODES_CREDENTIAL_LANE", v),
+            None => std::env::remove_var("WHYCODES_CREDENTIAL_LANE"),
+        }
+    }
+    assert_rate_limited(&err);
+}
+
+#[tokio::test]
+async fn successful_turn_stamps_default_sticky_credential() {
+    let agent = scripted([ScriptedStep::Text("ok".into())]);
+    let mut session = session_user("please explain the retry loop");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", Some(2))
+        .await
+        .expect("turn");
+    assert!(out.contains("ok"), "{out}");
+    assert_eq!(agent.sticky_credential().as_deref(), Some("default"));
 }

@@ -1205,6 +1205,33 @@ pub struct ToolsConfig {
     pub disabled_tools: Vec<String>,
     #[serde(default)]
     pub custom_tools: HashMap<String, CustomToolConfig>,
+    /// Long-running `bash` auto-detach (issue #140).
+    #[serde(default)]
+    pub bash: BashConfig,
+}
+
+/// `[tools.bash]` — auto-background a still-running shell after idle.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BashConfig {
+    /// Detach a still-running command after [`Self::auto_background_after_secs`].
+    #[serde(default = "default_true")]
+    pub auto_background: bool,
+    /// Seconds before a non-catastrophic foreground `bash` is detached (default 20).
+    #[serde(default = "default_auto_background_after_secs")]
+    pub auto_background_after_secs: u64,
+}
+
+pub(crate) fn default_auto_background_after_secs() -> u64 {
+    20
+}
+
+impl Default for BashConfig {
+    fn default() -> Self {
+        Self {
+            auto_background: true,
+            auto_background_after_secs: default_auto_background_after_secs(),
+        }
+    }
 }
 
 pub(crate) fn default_true() -> bool {

@@ -55,17 +55,20 @@ async fn start_echo_completes() {
 #[tokio::test]
 async fn max_jobs_enforced() {
     let reg = BackgroundRegistry::new(1);
-    reg.start_shell(
-        "sleep 60",
-        std::env::temp_dir(),
-        SandboxSettings::off(),
-        None,
-    )
-    .unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // The cap is checked synchronously when the job is marked Running, before
+    // the child is spawned. A short command avoids a 60s sleeper that the
+    // runtime can block on while reaping at shutdown.
+    let id = reg
+        .start_shell(
+            "echo cap",
+            std::env::temp_dir(),
+            SandboxSettings::off(),
+            None,
+        )
+        .unwrap();
     let err = reg
         .start_shell(
-            "sleep 60",
+            "echo cap-2",
             std::env::temp_dir(),
             SandboxSettings::off(),
             None,
@@ -73,6 +76,7 @@ async fn max_jobs_enforced() {
         .unwrap_err();
     assert!(err.contains("too many"), "{err}");
     reg.kill_all();
+    let _ = reg.wait_until_idle(&id, Duration::from_secs(2)).await;
 }
 
 #[test]
@@ -102,6 +106,35 @@ fn job_status_as_str_and_debug_fmt() {
     assert_eq!(exit_summary("job".into(), Some(0)), "job (exit 0)");
     assert_eq!(exit_summary("job".into(), None), "job");
     kill_child_group(None);
+    note_kill_result(Ok("killed".into()), "bg-1");
+    note_kill_result(Err("missing".into()), "bg-1");
+}
+
+#[test]
+fn mark_auto_delivered_skips_inject() {
+    let job = Arc::new(Mutex::new(JobInner {
+        id: "bg-auto".into(),
+        label: "echo".into(),
+        status: JobStatus::Done,
+        started: Instant::now(),
+        finished: Some(Instant::now()),
+        output: "done".into(),
+        exit_code: Some(0),
+        kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: true,
+        completion_delivered: false,
+        log_path: None,
+    }));
+    let reg = BackgroundRegistry::new(4);
+    {
+        let mut jobs = lock(&reg.inner.jobs);
+        jobs.insert("bg-auto".into(), Arc::clone(&job));
+    }
+    assert_eq!(reg.take_auto_completions().len(), 1);
+    lock(&job).completion_delivered = false;
+    reg.mark_auto_delivered("bg-auto");
+    reg.mark_auto_delivered("missing");
+    assert!(reg.take_auto_completions().is_empty());
 }
 
 #[tokio::test]
@@ -115,12 +148,16 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
             Some("missing".into()),
         )
         .expect("spawn is recorded even if the child fails");
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    let snap = reg
-        .list()
-        .into_iter()
-        .find(|j| j.id == missing)
-        .expect("job");
+    // Instrumentation can delay the spawn-failure task past a fixed sleep.
+    let mut snap = None;
+    for _ in 0..40 {
+        snap = reg.list().into_iter().find(|j| j.id == missing);
+        if snap.as_ref().is_some_and(|j| j.status == JobStatus::Failed) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let snap = snap.expect("job");
     assert_eq!(snap.status, JobStatus::Failed);
     let already = reg.kill(&missing).expect("already");
     assert!(already.contains("already"), "{already}");
@@ -134,6 +171,9 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
+        log_path: None,
     }));
     append_output(&job, &"a".repeat(MAX_JOB_OUTPUT_BYTES + 32));
     {
@@ -161,6 +201,9 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
             output: String::new(),
             exit_code: Some(0),
             kill_flag: Arc::new(AtomicBool::new(false)),
+            auto_background: false,
+            completion_delivered: false,
+            log_path: None,
         }));
         {
             let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -327,6 +370,9 @@ async fn run_background_job_spawn_failed_and_warning() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
+        log_path: None,
     }));
     {
         let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -383,6 +429,9 @@ async fn pipe_to_job_stops_on_read_error() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
+        log_path: None,
     }));
     pipe_to_job(Box::new(FailRead), &job).await;
 }
@@ -399,6 +448,9 @@ async fn run_background_job_aborts_pipe_tasks() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
+        log_path: None,
     }));
     {
         let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -440,6 +492,9 @@ async fn spawn_pipe_task_none_reader_is_noop() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
+        log_path: None,
     }));
     let handle = spawn_pipe_task(None, Arc::clone(&job));
     handle.await.expect("join");
@@ -465,6 +520,9 @@ fn wait_status_records_error_and_success() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
+        log_path: None,
     }));
     assert!(wait_status(Err(std::io::Error::other("wait boom")), &job).is_none());
     let out = job.lock().unwrap().output.clone();
@@ -474,6 +532,19 @@ fn wait_status_records_error_and_success() {
         use std::os::unix::process::ExitStatusExt;
         let ok = std::process::ExitStatus::from_raw(0);
         let fail = std::process::ExitStatus::from_raw(1 << 8);
+        assert!(wait_status(Ok(ok), &job).is_some_and(|s| s.success()));
+        assert_eq!(job_status_from_wait(Some(ok)), (JobStatus::Done, Some(0)));
+        assert_eq!(
+            job_status_from_wait(Some(fail)),
+            (JobStatus::Failed, Some(1))
+        );
+        assert_eq!(job_status_from_wait(None), (JobStatus::Failed, None));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+        let ok = std::process::ExitStatus::from_raw(0);
+        let fail = std::process::ExitStatus::from_raw(1);
         assert!(wait_status(Ok(ok), &job).is_some_and(|s| s.success()));
         assert_eq!(job_status_from_wait(Some(ok)), (JobStatus::Done, Some(0)));
         assert_eq!(
@@ -503,6 +574,9 @@ fn sample_job(status: JobStatus, output: &str) -> JobInner {
         output: output.into(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        auto_background: false,
+        completion_delivered: false,
+        log_path: None,
     }
 }
 
@@ -560,7 +634,7 @@ fn lock_recovers_from_poison_and_helpers_cover_fallbacks() {
         Err(e) => assert!(!e.is_empty(), "{e}"),
     }
     let err = BackgroundRegistry::new(1)
-        .start_prepared("echo hi", None, Err("sandbox unavailable".into()))
+        .start_prepared("echo hi", None, Err("sandbox unavailable".into()), false)
         .unwrap_err();
     assert!(err.contains("sandbox unavailable"), "{err}");
     let mut already = "…keep".to_string();
@@ -573,4 +647,106 @@ fn lock_recovers_from_poison_and_helpers_cover_fallbacks() {
     cap_job_output(&mut over);
     assert!(over.starts_with('…'), "{over}");
     assert!(over.len() <= MAX_JOB_OUTPUT_BYTES + 4, "{}", over.len());
+}
+
+#[test]
+fn scratch_log_persists_and_skips_failures() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = ensure_scratch_log(dir.path(), "bg-scratch").expect("log");
+    assert_eq!(
+        path,
+        dir.path()
+            .join(".whycodes")
+            .join("scratch")
+            .join("bg-scratch.log")
+    );
+    let mut job = sample_job(JobStatus::Running, "");
+    job.log_path = Some(path.clone());
+    let job = Arc::new(Mutex::new(job));
+    append_output(&job, "hello-scratch");
+    let disk = std::fs::read_to_string(&path).expect("read");
+    assert!(disk.contains("hello-scratch"), "{disk}");
+    persist_scratch_output(&path, "rewritten");
+    assert_eq!(std::fs::read_to_string(&path).expect("reread"), "rewritten");
+
+    let blocked = dir.path().join("blocked-file");
+    std::fs::write(&blocked, "not-a-dir").unwrap();
+    assert!(ensure_scratch_log(&blocked, "bg-x").is_none());
+
+    let clash = dir
+        .path()
+        .join(".whycodes")
+        .join("scratch")
+        .join("bg-clash.log");
+    std::fs::create_dir_all(&clash).unwrap();
+    assert!(ensure_scratch_log(dir.path(), "bg-clash").is_none());
+    persist_scratch_output(&clash, "nope");
+}
+
+#[tokio::test]
+async fn wait_until_idle_missing_id_is_failed() {
+    let reg = BackgroundRegistry::new(4);
+    let status = reg
+        .wait_until_idle("bg-missing", Duration::from_millis(20))
+        .await;
+    assert_eq!(status, JobStatus::Failed);
+}
+
+#[cfg(windows)]
+fn hang_cmd() -> &'static str {
+    "ping -n 30 127.0.0.1 >NUL"
+}
+
+#[cfg(not(windows))]
+fn hang_cmd() -> &'static str {
+    "sleep 60"
+}
+
+#[tokio::test]
+async fn wait_until_idle_ignores_a_different_job_finishing() {
+    let reg = BackgroundRegistry::new(8);
+    let other = reg
+        .start_shell(
+            "echo other-done",
+            std::env::temp_dir(),
+            SandboxSettings::off(),
+            Some("other".into()),
+        )
+        .expect("other");
+    let fg = reg
+        .start_shell(
+            hang_cmd(),
+            std::env::temp_dir(),
+            SandboxSettings::off(),
+            Some("fg".into()),
+        )
+        .expect("fg");
+    for _ in 0..80 {
+        let snap = reg.list().into_iter().find(|j| j.id == other);
+        if snap.is_some_and(|j| j.status != JobStatus::Running) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let other_snap = reg
+        .list()
+        .into_iter()
+        .find(|j| j.id == other)
+        .expect("other listed");
+    assert_ne!(
+        other_snap.status,
+        JobStatus::Running,
+        "the other job must finish so the wait is tempted to observe it"
+    );
+    let t0 = Instant::now();
+    let status = reg.wait_until_idle(&fg, Duration::from_millis(200)).await;
+    assert!(
+        t0.elapsed() >= Duration::from_millis(150),
+        "must wait the timeout, not return when the other job finished: {:?}",
+        t0.elapsed()
+    );
+    assert_eq!(status, JobStatus::Running);
+    let fg_snap = reg.list().into_iter().find(|j| j.id == fg).expect("fg");
+    assert_eq!(fg_snap.status, JobStatus::Running);
+    reg.kill_all();
 }

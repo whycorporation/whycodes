@@ -1,5 +1,6 @@
 //! Connect, serve, and web commands.
 use super::helpers::*;
+use super::should_use_tui;
 use crate::Cli;
 use colored::*;
 use std::path::PathBuf;
@@ -59,9 +60,11 @@ pub(crate) async fn cmd_connect(
     let agent_name = resolve_agent(cli, &config);
     let api_key = get_api_key(&provider, &config).await.unwrap_or_default();
 
-    if !whycodes_tui::tui_available()
-        && !(cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some())
-    {
+    // Same gate as `cmd_run`: tests only enter TUI when `WHYCODES_TEST_TUI`
+    // is set. Git Bash / Cursor have a console, so `tui_available()` is true
+    // and would otherwise hang `connect` on a live ratatui loop.
+    let stub_tui = cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some();
+    if !should_use_tui(false, stub_tui, whycodes_tui::tui_available()) {
         anyhow::bail!("connect needs a real TUI terminal (not --plain)");
     }
 

@@ -272,6 +272,7 @@ impl Config {
                 models: Vec::new(),
                 tool_arguments: None,
                 extra: HashMap::new(),
+                credentials: Default::default(),
             });
         if entry.name.is_empty() {
             entry.name = DEFAULT_PROVIDER.to_string();
@@ -314,6 +315,7 @@ impl Config {
                 models: Vec::new(),
                 tool_arguments: None,
                 extra: HashMap::new(),
+                credentials: Default::default(),
             },
         );
         cfg.default_model = Some(ModelConfig {
@@ -372,6 +374,7 @@ impl Config {
                         models: Vec::new(),
                         tool_arguments: None,
                         extra: HashMap::new(),
+                        credentials: Default::default(),
                     },
                 );
             }

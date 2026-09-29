@@ -39,6 +39,7 @@ fn catalog_request_requires_config_base_url() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     assert!(catalog_request_from_config(&cfg, "naked", Some("sk-test")).is_none());
@@ -54,6 +55,7 @@ fn catalog_request_requires_config_base_url() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let req = catalog_request_from_config(&cfg, "gw", Some("sk-runtime")).unwrap();
@@ -233,6 +235,7 @@ fn base_url_from_provider_config_prefers_base_url() {
         models: vec![],
         tool_arguments: None,
         extra: Default::default(),
+        credentials: Default::default(),
     };
     assert_eq!(
         base_url_from_provider_config(&pc).as_deref(),
@@ -383,6 +386,7 @@ fn catalog_request_filters_unknown_provider_and_uses_runtime_fallback() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
 
@@ -408,6 +412,7 @@ fn base_url_does_not_fall_through_when_present_value_is_blank() {
         models: vec![],
         tool_arguments: None,
         extra: Default::default(),
+        credentials: Default::default(),
     };
     assert_eq!(base_url_from_provider_config(&pc), None);
 }
@@ -544,6 +549,7 @@ fn catalog_request_falls_back_to_env_api_key() {
             models: vec![],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let req = catalog_request_from_config(&cfg, &name, None).unwrap();

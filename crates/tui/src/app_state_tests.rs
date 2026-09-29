@@ -718,6 +718,7 @@ fn catalog_models_merges_config_and_dedups() {
             models: vec!["m1".into(), "m2".into()],
             tool_arguments: None,
             extra: Default::default(),
+            credentials: Default::default(),
         },
     );
     let models = catalog_models(&cfg);
