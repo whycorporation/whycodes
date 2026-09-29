@@ -61,10 +61,16 @@ WORKSPACE_FLOOR = float(os.environ.get("FAIL_UNDER", "82"))
 # Floors as (crate, min_percent)
 FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
     # Linux skip-expansions still misses host-only tools lines (browser
-    # poll, memory formatters, path/executor helpers). 8280/8344 = 99.2
-    # on the 2026-09-24 Coverage job. Raise back to 100 once those hit.
+    # poll, memory formatters, path/executor helpers). 8323/8387 = 99.2
+    # on the 2026-09-29 Coverage job (run 36516045996). Raise back to 100
+    # once those hit. Issue #82.
     ("whycodes-tools", 99.2),
 ]
+
+# Print uncovered files even when the crate is at its floor, so the next
+# #82 slice can see the miss list without dropping the floor first.
+GAP_REPORT = {"whycodes-tools"}
+GAP_FILE_LIMIT = 25
 
 
 def crate_rel_path(filename: str) -> tuple[str, str] | None:
@@ -196,6 +202,25 @@ def aggregate_by_crate(report: dict) -> dict[str, tuple[int, int]]:
     return aggregated
 
 
+def uncovered_files(crate: str) -> list[tuple[str, int, int]]:
+    """Production files in `crate` that still have at least one missed line."""
+    files = getattr(aggregate_by_crate, "files", {}).get(crate, [])
+    gaps = [(name, cov, tot) for name, cov, tot in files if tot and cov < tot]
+    gaps.sort(key=lambda row: (row[2] - row[1], row[0]), reverse=True)
+    return gaps
+
+
+def print_gaps(crate: str, limit: int = GAP_FILE_LIMIT) -> None:
+    gaps = uncovered_files(crate)
+    shown = gaps[:limit]
+    for name, cov, tot in shown:
+        fpct = cov / tot * 100.0
+        print(f"     {name}: {cov}/{tot} ({fpct:.1f}%) miss {tot - cov}")
+    rest = len(gaps) - len(shown)
+    if rest:
+        print(f"     … {rest} more files with missed lines")
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(f"usage: {sys.argv[0]} <cov.json>", file=sys.stderr)
@@ -245,21 +270,17 @@ def main() -> int:
         if shown + 1e-9 < floor:
             ok = False
             print(f"  -> below floor by {floor - shown:.1f}pp", file=sys.stderr)
-            files = getattr(aggregate_by_crate, "files", {}).get(crate, [])
-            for name, cov, tot in sorted(files, key=lambda x: (x[2] - x[1], x[0]), reverse=True):
-                if tot == 0:
-                    continue
-                fpct = cov / tot * 100.0
-                if cov < tot:
-                    print(
-                        f"     {name}: {cov}/{tot} ({fpct:.1f}%)",
-                        file=sys.stderr,
-                    )
+        if shown + 1e-9 < floor or crate in GAP_REPORT:
+            print_gaps(crate)
 
-    # Also print any whycodes crate not in floors for visibility
+    # Unfloored crates (#82: tui, cli) need a percent in the log. Names
+    # alone hid the gap between the 82% workspace gate and a 100% close.
     extra = sorted(set(agg.keys()) - {c for c, _ in FLOORS})
-    if extra:
-        print(f"info: other crates in report (no floor): {', '.join(extra)}")
+    for crate in extra:
+        covered, total = agg[crate]
+        pct = (covered / total * 100.0) if total else 0.0
+        print(f"info {crate}: {covered}/{total} lines {pct:.1f}% (no floor)")
+        print_gaps(crate)
 
     return 0 if ok else 1
 
@@ -315,6 +336,31 @@ def _self_check() -> None:
     assert "whycodes-config" in files
     assert files["whycodes-config"][0][0] == "config/src/load.rs"
     assert WORKSPACE_FLOOR >= 0
+    gap_report = {
+        "data": [
+            {
+                "files": [
+                    {
+                        "filename": "crates/cli/src/main.rs",
+                        "summary": {"lines": {"covered": 40, "count": 100}},
+                    },
+                    {
+                        "filename": "crates/tools/src/web/browser.rs",
+                        "summary": {"lines": {"covered": 90, "count": 100}},
+                    },
+                    {
+                        "filename": "crates/tools/src/lib.rs",
+                        "summary": {"lines": {"covered": 10, "count": 10}},
+                    },
+                ]
+            }
+        ]
+    }
+    aggregate_by_crate(gap_report)
+    tools_gaps = uncovered_files("whycodes-tools")
+    assert tools_gaps == [("tools/src/web/browser.rs", 90, 100)], tools_gaps
+    assert uncovered_files("whycodes-cli") == [("cli/src/main.rs", 40, 100)]
+    assert "whycodes-tools" in GAP_REPORT
 
 
 if __name__ == "__main__":

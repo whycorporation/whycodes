@@ -69,9 +69,11 @@ Do **not** loop `cargo llvm-cov -p <crate>` for each floor — that
 re-instruments the workspace (~12×). The Python script reads one JSON
 report.
 
-The 100% workspace raise is tracked as [#57](https://github.com/whycorporation/whycodes/issues/57)
-(sub-issues #58–#67). This file’s floors stay at the current CI values until
-that work lands.
+The 100% workspace raise is tracked as [#82](https://github.com/whycorporation/whycodes/issues/82)
+(successor of closed #57). This file’s floors stay at the current CI values
+until that work lands. Do not raise `FAIL_UNDER` to 100, and do not add
+`whycodes-tui` / `whycodes-cli` to `FULL_COVER_CRATES`, until a Linux
+skip-expansions run prints `OK` at 100% for those crates.
 
 ## Floors
 
@@ -87,12 +89,13 @@ comfortably above it, raise `--fail-under-lines` in
 
 ## Last measurement
 
-Linux x86_64, 2026-09-24 (`cargo llvm-cov --workspace`, flags above).
-Workspace line coverage last measured 2026-09-24 at **98.4%** (`77160/78442`).
-`sdk` stays at 100%; `tools` is locked at **99.2%** (`8280/8344`) until the
-host-only helpers CI still lists as uncovered are hit. Other foundational
-crates remain at 100% (production files, `tests.rs` ignored, llvm-cov
-`--skip-expansions`).
+Linux x86_64, 2026-09-29, CI Coverage job on `main`
+([run 36516045996](https://github.com/whycorporation/whycodes/actions/runs/36516045996)).
+Workspace **98.4%** (`78556/79821`). Every `FULL_COVER_CRATES` entry printed
+`OK` at 100%. `tools` is locked at **99.2%** (`8323/8387`, floor 99.2) until
+the remaining host-only helpers are hit. `tui` and `cli` have no floor; the
+checker now prints their percents and uncovered files on every run so the
+next #82 slice does not have to guess from a Windows unique-line dump.
 
 `core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
 (#48). Production modules also have local `#[cfg(test)]` next to the code (`error`,
@@ -109,15 +112,11 @@ informational.
 
 | Crate | Lines |
 |---|---|
-| function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, format, index | **100%** |
-| session, memory, llm, auth, agent | **100%** |
-| tui | 86.3% |
-| tools | 86.0% |
-| mcp | 80.8% |
-| sdk | 80.4% |
-| server | 79.1% |
-| cli | 69.6% |
-| lsp | 64.1% |
+| function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, index | **100%** |
+| session, memory, llm, auth, agent, lsp, mcp, sdk, server, format, import, slop | **100%** |
+| tools | **99.2%** (`8323/8387`, floor 99.2) |
+| tui | no floor (percent printed by the checker; not yet 100%) |
+| cli | no floor (percent printed by the checker; not yet 100%) |
 
 When re-measuring, update this breakdown and the dated workspace total here,
 then copy only the workspace percent into any README claim if it is mentioned.

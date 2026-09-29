@@ -73,12 +73,12 @@ Things to know about CI:
   line coverage, and the crates in `scripts/check_coverage_floors.py`
   `FULL_COVER_CRATES` are locked at 100% production lines (`tests.rs`
   ignored, `--skip-expansions`). `whycodes-tools` is gated at 99.2% until
-  the remaining host-only helpers are hit on Linux. Locally:
+  the remaining host-only helpers are hit on Linux. `whycodes-tui` and
+  `whycodes-cli` have no floor yet. The 100% workspace raise is #82. Locally:
   `scripts/coverage.sh` (needs `cargo-llvm-cov` + `llvm-tools-preview`, or
   `LLVM_COV` / `LLVM_PROFDATA` on a distro toolchain). Agents must have that
   wrapper green locally before pushing coverage-related changes
-  (`AGENTS.md`). See [docs/coverage.md](docs/coverage.md). The 100%
-  workspace raise is #57.
+  (`AGENTS.md`). See [docs/coverage.md](docs/coverage.md).
 - Internal crate edges are allowlisted in
   `scripts/dependency_boundaries.json`. Adding an edge is a deliberate
   architectural decision — see [docs/architecture.md](docs/architecture.md).
