@@ -31,7 +31,7 @@ CI runs exactly these commands and fails on any of them:
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --features whycodes-storage/bundled -- -D warnings
-cargo test --workspace --features whycodes-storage/bundled
+python scripts/affected_tests.py --execute   # only the tests the diff touches
 python scripts/check_panic_budget.py
 python scripts/check_swallowed_error_budget.py
 python scripts/check_dependency_boundaries.py
