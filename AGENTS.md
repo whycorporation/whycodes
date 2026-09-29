@@ -18,13 +18,13 @@ Whenever you edit Rust source, `Cargo.toml`, or anything that affects compilatio
    cargo build -p whycodes-cli
    ```
 
-3. If the change is non-trivial (logic, API, providers, agent loop, TUI), also run the relevant tests:
+3. If the change is non-trivial (logic, API, providers, agent loop, TUI), run only the tests the diff touches:
 
    ```bash
-   cargo test -p whycodes-<crate>
-   # or
-   cargo test -p whycodes-<crate> --lib
+   python scripts/affected_tests.py --paths <changed files...> --execute
    ```
+
+   A module runs that module's tests (`--lib ui::spinner::`), not the crate and not dependents. `lib.rs`, `main.rs`, or a crate `Cargo.toml` also runs direct dependents' `--lib` tests. Root `Cargo.toml` / `Cargo.lock` still runs the workspace. Docs and scripts select nothing. Print the plan without running it by omitting `--execute`.
 
 4. **Fix compile errors in the same turn** before reporting done. A “done” response with a red `cargo check` is incomplete.
 5. Docs-only, comment-only, or pure markdown/config prose that cannot affect the build may skip compile — when unsure, run `cargo check -p …` anyway.

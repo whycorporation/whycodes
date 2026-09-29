@@ -37,6 +37,7 @@ python scripts/check_swallowed_error_budget.py
 python scripts/check_dependency_boundaries.py
 python scripts/check_sdk_protocol.py   # Rust ↔ TypeScript protocol v1 tags
 python scripts/check_tracked_secrets.py
+python scripts/test_affected_tests.py          # diff -> cargo test selection
 cargo deny check licenses sources      # license / crates.io-only sources
 cargo audit --deny warnings            # advisories (see .cargo/audit.toml)
 ```

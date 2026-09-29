@@ -10,6 +10,6 @@
 
 - [ ] `cargo fmt --all --check`
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test --workspace` (or the narrowest crate tests that cover the change)
+- [ ] `python scripts/affected_tests.py --paths <changed files> --execute` (not `cargo test --workspace` for a leaf edit)
 - [ ] Budget scripts if you touched `.rs` or `Cargo.toml` (`python scripts/check_panic_budget.py` and the other ratchets in [CONTRIBUTING.md](../CONTRIBUTING.md))
 - [ ] TypeScript SDK tests if you changed `crates/protocol/src/sdk.rs` or `sdk/typescript`
