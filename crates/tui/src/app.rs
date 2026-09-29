@@ -531,6 +531,9 @@ pub struct SidebarState {
     pub diagnostics: usize,
     /// MCP server status messages.
     pub mcp_status: Vec<String>,
+    /// [`whycodes_index::WorkspaceIndex::generation`] last copied into `file_tree`.
+    /// `u64::MAX` means the tree has never been filled.
+    pub file_tree_generation: u64,
     /// Agent-pinned preview (file / diff / mermaid).
     pub preview: SidebarPreview,
     /// Last-paint hit boxes for the tab strip (click / hover).
@@ -609,6 +612,7 @@ impl Default for SidebarState {
             file_tree: vec![],
             diagnostics: 0,
             mcp_status: vec![],
+            file_tree_generation: u64::MAX,
             preview: SidebarPreview::None,
             tab_hits: [crate::hit_area::HitArea::default(); SidebarTab::ALL.len()],
         }

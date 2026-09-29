@@ -27,7 +27,7 @@ pub mod walk;
 mod watch;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread::JoinHandle;
@@ -107,6 +107,10 @@ struct RootState {
 struct Shared {
     roots: Vec<PathBuf>,
     states: Vec<RootState>,
+    /// Bumped after every store mutation (scan, rescan, watcher batch).
+    /// Consumers that snapshot the tree compare this instead of cloning
+    /// every entry on each poll.
+    generation: AtomicU64,
     scanned: AtomicUsize,
     state: AtomicU8,
     truncated: AtomicBool,
@@ -171,6 +175,7 @@ impl WorkspaceIndex {
         let shared = Arc::new(Shared {
             roots,
             states,
+            generation: AtomicU64::new(0),
             scanned: AtomicUsize::new(0),
             state: AtomicU8::new(STATE_SCANNING),
             truncated: AtomicBool::new(false),
@@ -426,6 +431,12 @@ impl WorkspaceIndex {
         Some(())
     }
 
+    /// Monotonic store generation. Changes when a scan, rescan, or watcher
+    /// batch mutates the entry store — not on fuzzy-match updates.
+    pub fn generation(&self) -> u64 {
+        self.shared.generation.load(Ordering::Acquire)
+    }
+
     /// Clone of all primary-root entries (tools that need owned data).
     pub fn entries(&self) -> Vec<Entry> {
         self.shared
@@ -594,6 +605,10 @@ pub(crate) fn log_unwatch_spawn(result: std::io::Result<std::thread::JoinHandle<
 
 /// Full (re)scan of every root: streams entries into the fuzzy engines
 /// (queries stay live during the scan) and fills the stores.
+fn bump_generation(shared: &Shared) {
+    shared.generation.fetch_add(1, Ordering::Release);
+}
+
 fn full_scan(shared: &Arc<Shared>) {
     shared.scanned.store(0, Ordering::Relaxed);
     shared.truncated.store(false, Ordering::Relaxed);
@@ -601,7 +616,7 @@ fn full_scan(shared: &Arc<Shared>) {
 
     for (i, state) in shared.states.iter().enumerate() {
         if shared.cancel.load(Ordering::Relaxed) {
-            return;
+            break;
         }
         write(&state.store).clear();
         write(&state.content).clear();
@@ -647,6 +662,7 @@ fn full_scan(shared: &Arc<Shared>) {
             break;
         }
     }
+    bump_generation(shared);
 }
 
 /// Apply one debounced watcher batch: upserts push into nucleo; removals
@@ -715,6 +731,7 @@ pub(crate) fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
             }
         }
     }
+    bump_generation(shared);
 }
 
 #[cfg(test)]

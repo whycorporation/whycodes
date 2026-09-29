@@ -5243,26 +5243,34 @@ fn after_turn_events_drain(
 }
 
 /// Refresh sidebar lists from the workspace index, config, and session todos.
+///
+/// The file tree is rebuilt only when the index generation moved. Streaming
+/// text used to clone every indexed path on each delta even when nothing
+/// on disk had changed.
 fn refresh_sidebar(
     app: &mut TuiApp,
     config: &whycodes_config::Config,
     file_index: &std::sync::Arc<whycodes_index::WorkspaceIndex>,
 ) {
     const FILE_CAP: usize = 80;
-    let mut files: Vec<String> = file_index
-        .entries()
-        .into_iter()
-        .map(|e| {
-            if e.is_dir {
-                format!("{}/", e.rel)
-            } else {
-                e.rel.to_string()
-            }
-        })
-        .collect();
-    files.sort();
-    files.truncate(FILE_CAP);
-    app.sidebar.file_tree = files;
+    let generation = file_index.generation();
+    if app.sidebar.file_tree_generation != generation {
+        let mut files: Vec<String> = file_index
+            .entries()
+            .into_iter()
+            .map(|e| {
+                if e.is_dir {
+                    format!("{}/", e.rel)
+                } else {
+                    e.rel.to_string()
+                }
+            })
+            .collect();
+        files.sort();
+        files.truncate(FILE_CAP);
+        app.sidebar.file_tree = files;
+        app.sidebar.file_tree_generation = generation;
+    }
 
     let mut mcp: Vec<String> = config
         .mcp_servers

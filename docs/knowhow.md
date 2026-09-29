@@ -144,6 +144,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-29 — sidebar cloned the whole file index on every stream delta
+
+**Symptom:** With the sidebar open, each assistant text/thinking delta rebuilt the file tree. `WorkspaceIndex::entries()` clones every path under the write lock, then the sidebar sorts and keeps 80.
+
+**JSONL / crash:** none.
+
+**Root cause:** `after_turn_events_drain` called `refresh_sidebar` whenever any turn event arrived. The index has no cheap “did the tree change?” signal, so a token and a new file looked the same.
+
+**Fix:** The index bumps an atomic generation on scan and watcher batches. The sidebar stores that generation and skips the clone when it matches.
+
+**Prevention:** Do not call `entries()` from the turn-event drain unless `generation()` moved. A new store mutation must `bump_generation` or the sidebar stays stale.
+
 ### 2026-09-25 — llvm-cov wrapper treats its own baked path as missing
 
 **Symptom:** `cargo llvm-cov report` exits 1 with

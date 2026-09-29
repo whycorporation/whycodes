@@ -1202,6 +1202,16 @@ fn refresh_sidebar_and_dashboard() {
         "directories must be tagged with a trailing slash: {:?}",
         app.sidebar.file_tree
     );
+    assert_eq!(app.sidebar.file_tree_generation, idx.generation());
+    let tree = app.sidebar.file_tree.clone();
+    app.sidebar.file_tree = vec!["stale".into()];
+    refresh_sidebar(&mut app, &config, &idx);
+    assert_eq!(
+        app.sidebar.file_tree,
+        vec!["stale".to_string()],
+        "an unchanged index generation must not rebuild the file tree"
+    );
+    app.sidebar.file_tree = tree;
     assert!(
         app.sidebar.mcp_status.iter().any(|s| s.contains("demo")),
         "{:?}",

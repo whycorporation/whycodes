@@ -39,6 +39,10 @@ fn end_to_end_scan_query_browse() {
         },
     );
     assert!(idx.wait_ready(Duration::from_secs(10)));
+    assert!(
+        idx.generation() > 0,
+        "a finished scan must bump the store generation"
+    );
     match idx.status() {
         ScanStatus::Ready { total, truncated } => {
             assert!(total >= 5, "total={total}");
@@ -503,6 +507,7 @@ fn apply_changes_upsert_and_remove() {
         },
     );
     assert!(idx.wait_ready(Duration::from_secs(10)));
+    let before_changes = idx.generation();
     let new = dir.path().join("src/extra.rs");
     fs::write(&new, "fn extra() {}").unwrap();
     idx.apply_test_changes(vec![Change {
@@ -516,6 +521,10 @@ fn apply_changes_upsert_and_remove() {
         true
     });
     assert!(found, "upsert must land in the store");
+    assert!(
+        idx.generation() > before_changes,
+        "a watcher batch must bump the store generation"
+    );
 
     fs::remove_file(&new).unwrap();
     idx.apply_test_changes(vec![Change {
