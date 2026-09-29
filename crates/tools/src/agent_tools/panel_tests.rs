@@ -185,3 +185,15 @@ async fn git_diff_success_and_mermaid_missing_file() {
         empty_diff.content
     );
 }
+
+#[tokio::test]
+async fn show_file_rejects_invalid_utf8() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("bad.bin"), [0xff, 0xfe, b'a']).unwrap();
+    let ctx = ToolContext::unsandboxed(dir.path().to_string_lossy().to_string());
+    let bad = PanelTool::new()
+        .execute(json!({"action": "show_file", "path": "bad.bin"}), &ctx)
+        .await;
+    assert!(bad.is_error, "{}", bad.content);
+    assert!(bad.content.contains("not valid UTF-8"), "{}", bad.content);
+}

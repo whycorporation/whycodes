@@ -103,6 +103,12 @@ fn urlencoding_and_plain_markup() {
     assert!(empty.content.contains("No results"));
     let hits = search_html_result(Ok("<div class=\"result__snippet\">alpha</div>".into()), 3);
     assert!(hits.content.contains("alpha"));
+    let collapsed = search_html_result(Ok("<div class=\"result__snippet\"></div>".into()), 3);
+    assert!(
+        collapsed.content.contains("No results"),
+        "{}",
+        collapsed.content
+    );
 }
 
 #[tokio::test]

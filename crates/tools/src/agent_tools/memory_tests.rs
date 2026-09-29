@@ -388,3 +388,66 @@ async fn write_records_session_and_blocked_home_fails_open() {
         opened.content
     );
 }
+
+#[tokio::test]
+async fn store_errors_after_open_cover_every_action() {
+    let home = IsolatedHome::new();
+    let ctx = ToolContext::new(home.dir.path().to_string_lossy());
+    let tool = MemoryTool::new();
+
+    let first = tool
+        .execute(
+            serde_json::json!({"action": "write", "text": "coverage fact"}),
+            &ctx,
+        )
+        .await;
+    assert!(!first.is_error, "{}", first.content);
+    let again = tool
+        .execute(
+            serde_json::json!({"action": "write", "text": "coverage fact"}),
+            &ctx,
+        )
+        .await;
+    assert!(again.is_error, "{}", again.content);
+    assert!(
+        again.content.contains("duplicate memory"),
+        "{}",
+        again.content
+    );
+
+    let db = whycodes_core::paths::data_dir().join("whycodes.db");
+    std::fs::remove_file(&db).unwrap();
+    std::fs::create_dir(&db).unwrap();
+
+    for (action, args) in [
+        ("list", serde_json::json!({"action": "list"})),
+        (
+            "search",
+            serde_json::json!({"action": "search", "text": "coverage"}),
+        ),
+        (
+            "delete",
+            serde_json::json!({"action": "delete", "id": "deadbeef"}),
+        ),
+        (
+            "code_search",
+            serde_json::json!({"action": "code_search", "text": "fn"}),
+        ),
+        ("index", serde_json::json!({"action": "index"})),
+        (
+            "learn",
+            serde_json::json!({"action": "learn", "text": "a reusable lesson"}),
+        ),
+        (
+            "write",
+            serde_json::json!({"action": "write", "text": "another fact"}),
+        ),
+    ] {
+        let failed = tool.execute(args, &ctx).await;
+        assert!(failed.is_error, "{action}: {}", failed.content);
+        assert!(
+            !failed.content.is_empty(),
+            "{action} returned an empty error"
+        );
+    }
+}

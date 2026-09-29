@@ -406,6 +406,80 @@ fn validate_answers_covers_remaining_rules() {
 }
 
 #[test]
+fn validate_answers_whitespace_free_text_is_empty() {
+    let multi = parse_questions(&json!({
+        "question": "Pick many",
+        "choices": ["A"],
+        "multi_select": true
+    }))
+    .unwrap();
+    assert!(
+        validate_answers(
+            &multi,
+            &[QuestionAnswer {
+                selected: vec![],
+                free_text: Some("  ".into()),
+                auto_picked: false,
+            }]
+        )
+        .unwrap_err()
+        .contains("at least one option")
+    );
+
+    let single = parse_questions(&json!({
+        "question": "Pick one",
+        "choices": ["A"]
+    }))
+    .unwrap();
+    assert!(
+        validate_answers(
+            &single,
+            &[QuestionAnswer {
+                selected: vec![],
+                free_text: Some("\t".into()),
+                auto_picked: false,
+            }]
+        )
+        .unwrap_err()
+        .contains("empty selection")
+    );
+}
+
+#[test]
+fn stdin_questionnaire_numbers_questions_and_skips_blank_descriptions() {
+    let _g = STDIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let questions = parse_questions(&json!({
+        "questions": [
+            {"question": "First?", "options": [{"label": "Yes"}]},
+            {"question": "Second?", "options": [{"label": "No", "description": ""}]}
+        ]
+    }))
+    .unwrap();
+    assert!(questions[0].options[0].description.is_empty());
+    queue_stdin(&["1", "1"]);
+    let answers = stdin_questionnaire(&questions).unwrap();
+    assert_eq!(answers.len(), 2);
+    assert_eq!(answers[0].selected, vec!["Yes".to_string()]);
+    assert_eq!(answers[1].selected, vec!["No".to_string()]);
+}
+
+#[test]
+fn poisoned_test_stdin_still_returns_a_line() {
+    let _g = STDIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    {
+        let mut q = TEST_STDIN.lock().unwrap_or_else(|e| e.into_inner());
+        q.clear();
+        q.push_back("kept".into());
+    }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = TEST_STDIN.lock().unwrap_or_else(|e| e.into_inner());
+        panic!("poison test stdin");
+    }));
+    assert!(TEST_STDIN.lock().is_err());
+    assert_eq!(read_line_stdin().unwrap(), "kept");
+}
+
+#[test]
 fn stdin_questionnaire_covers_free_form_and_options() {
     let _g = STDIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let questions = parse_questions(&fixture(WAVE4_QUESTIONNAIRE)).unwrap();

@@ -123,6 +123,12 @@ impl ToolExecutor {
             .clear();
     }
 
+    #[cfg(test)]
+    fn poison_defs_cache_for_test(&self) {
+        let _guard = self.defs_cache.lock().unwrap_or_else(|e| e.into_inner());
+        panic!("poison defs cache");
+    }
+
     /// Get a tool by name
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
         self.tools.get(name).map(|t| t.as_ref())

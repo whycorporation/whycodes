@@ -109,6 +109,18 @@ fn skill_format_helpers_cover_empty_and_loaded() {
         Ok(_) => {}
         Err(e) => assert!(e.is_error),
     }
+    let broken = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(broken.path().join(".skills").join("demo")).unwrap();
+    std::fs::write(
+        broken.path().join(".skills").join("demo").join("SKILL.md"),
+        "this is not a skill file\n",
+    )
+    .unwrap();
+    let loaded = load_skill_registry(broken.path());
+    assert!(
+        loaded.is_err() || loaded.unwrap().get_ignore_ascii_case("demo").is_none(),
+        "a skill without front matter must not register"
+    );
     assert!(take_skill_registry(Err(skill_load_error("boom"))).is_err());
     assert!(registry_load_failed(skill_load_error("boom")).is_error);
     assert!(skill_registry_or_err(Err(skill_load_error("boom"))).is_err());
