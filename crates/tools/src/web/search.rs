@@ -65,103 +65,128 @@ impl Tool for WebSearchTool {
             }
 
             // Try SerpAPI first
-            if let Ok(api_key) = std::env::var("SERPAPI_API_KEY") {
-                let url = format!(
-                    "{}/search?q={}&api_key={}&num={}&engine=google",
-                    search_host("WHYCODES_SERPAPI_BASE", "https://serpapi.com"),
-                    urlencoding(query),
-                    api_key,
-                    num_results
-                );
-                if let Err(msg) = ctx.network.check_url(&url) {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: msg,
-                        is_error: true,
-                    };
-                }
-
-                match http_client().get(&url).send().await {
-                    Ok(response) => match response.json::<serde_json::Value>().await {
-                        Ok(data) => {
-                            let mut results = String::new();
-                            if let Some(organic) = data["organic_results"].as_array() {
-                                for (i, result) in organic.iter().enumerate() {
-                                    let title = strip_markup(
-                                        result["title"].as_str().unwrap_or("No title"),
-                                    );
-                                    let link = result["link"].as_str().unwrap_or("No link");
-                                    let snippet =
-                                        strip_markup(result["snippet"].as_str().unwrap_or(""));
-                                    results.push_str(&format!(
-                                        "{}. {}\n   {}\n   {}\n\n",
-                                        i + 1,
-                                        title,
-                                        link,
-                                        snippet
-                                    ));
-                                }
-                            }
-
-                            return ToolResult {
-                                tool_call_id: String::new(),
-                                content: if results.is_empty() {
-                                    "No results found.".to_string()
-                                } else {
-                                    results
-                                },
-                                is_error: false,
-                            };
-                        }
-                        Err(e) => {
-                            return ToolResult {
-                                tool_call_id: String::new(),
-                                content: format!("Error parsing search results: {}", e),
-                                is_error: true,
-                            };
-                        }
-                    },
-                    Err(e) => {
-                        return ToolResult {
-                            tool_call_id: String::new(),
-                            content: format!("Error performing search: {}", e),
-                            is_error: true,
-                        };
-                    }
-                }
+            match std::env::var("SERPAPI_API_KEY") {
+                Ok(api_key) => return serpapi_search(ctx, query, num_results, &api_key).await,
+                Err(err) => note_no_serpapi(&err),
             }
 
-            // Fallback: try DuckDuckGo HTML search
-            let url = format!(
-                "{}/html/?q={}",
-                search_host("WHYCODES_DDG_BASE", "https://html.duckduckgo.com"),
-                urlencoding(query)
-            );
-
-            if let Err(msg) = ctx.network.check_url(&url) {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: msg,
-                    is_error: true,
-                };
-            }
-
-            match http_client().get(&url).send().await {
-                Ok(response) => search_html_result(
-                    response.text().await.map_err(|e| e.to_string()),
-                    num_results as usize,
-                ),
-                Err(e) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Error performing search: {}", e),
-                    is_error: true,
-                },
-            }
+            ddg_search(ctx, query, num_results).await
         })
     }
 }
 
+fn note_no_serpapi(_err: &std::env::VarError) {}
+
+async fn serpapi_search(
+    ctx: &ToolContext,
+    query: &str,
+    num_results: u64,
+    api_key: &str,
+) -> ToolResult {
+    let url = format!(
+        "{}/search?q={}&api_key={}&num={}&engine=google",
+        search_host("WHYCODES_SERPAPI_BASE", "https://serpapi.com"),
+        urlencoding(query),
+        api_key,
+        num_results
+    );
+    match ctx.network.check_url(&url) {
+        Ok(()) => note_search_url_ok(),
+        Err(msg) => return search_blocked(&msg),
+    }
+    match http_client().get(&url).send().await {
+        Ok(response) => match response.json::<serde_json::Value>().await {
+            Ok(data) => organic_results(&data),
+            Err(e) => search_parse_error(&e.to_string()),
+        },
+        Err(e) => search_request_error(&e.to_string()),
+    }
+}
+
+fn note_search_url_ok() {}
+
+fn search_blocked(msg: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: msg.to_string(),
+        is_error: true,
+    }
+}
+
+fn organic_results(data: &serde_json::Value) -> ToolResult {
+    let mut results = String::new();
+    match data["organic_results"].as_array() {
+        Some(organic) => append_organic(&mut results, organic),
+        None => note_no_organic(),
+    }
+    ToolResult {
+        tool_call_id: String::new(),
+        content: if results.is_empty() {
+            "No results found.".to_string()
+        } else {
+            results
+        },
+        is_error: false,
+    }
+}
+
+fn note_no_organic() {}
+
+fn append_organic(results: &mut String, organic: &[serde_json::Value]) {
+    for (i, result) in organic.iter().enumerate() {
+        let title = strip_markup(result["title"].as_str().unwrap_or("No title"));
+        let link = result["link"].as_str().unwrap_or("No link");
+        let snippet = strip_markup(result["snippet"].as_str().unwrap_or(""));
+        results.push_str(&format!(
+            "{}. {}\n   {}\n   {}\n\n",
+            i + 1,
+            title,
+            link,
+            snippet
+        ));
+    }
+}
+
+fn search_parse_error(e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Error parsing search results: {e}"),
+        is_error: true,
+    }
+}
+
+fn search_request_error(e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Error performing search: {e}"),
+        is_error: true,
+    }
+}
+
+async fn ddg_search(ctx: &ToolContext, query: &str, num_results: u64) -> ToolResult {
+    let url = format!(
+        "{}/html/?q={}",
+        search_host("WHYCODES_DDG_BASE", "https://html.duckduckgo.com"),
+        urlencoding(query)
+    );
+    match ctx.network.check_url(&url) {
+        Ok(()) => note_search_url_ok(),
+        Err(msg) => return search_blocked(&msg),
+    }
+    match http_client().get(&url).send().await {
+        Ok(response) => search_html_result(
+            response.text().await.map_err(search_body_error),
+            num_results as usize,
+        ),
+        Err(e) => search_request_error(&e.to_string()),
+    }
+}
+
 /// Strip residual HTML tags/entities from SERP snippets.
+fn search_body_error(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
 fn search_text_failed(e: &str) -> ToolResult {
     search_read_error(e)
 }

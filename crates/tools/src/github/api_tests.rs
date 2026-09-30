@@ -459,12 +459,21 @@ fn git_credential_fill_parses_password_from_helper() {
 
 #[test]
 fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
+    let saved = set_github_auth_test_env();
+    assert_github_auth_test_tokens();
+    assert_github_spawn_and_wait_helpers();
+    restore_github_auth_test_env(saved);
+}
+
+fn set_github_auth_test_env() -> [Option<std::ffi::OsString>; 5] {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let prev_skip = std::env::var_os("WHYCODES_TEST_SKIP_GH_AUTH");
-    let prev_mock = std::env::var_os("WHYCODES_TEST_GH_AUTH_TOKEN");
-    let prev_hosts = std::env::var_os("WHYCODES_TEST_GH_HOSTS_TOKEN");
-    let prev_skip_git = std::env::var_os("WHYCODES_TEST_SKIP_GIT_CREDENTIAL");
-    let prev_git = std::env::var_os("WHYCODES_TEST_GIT_CREDENTIAL_TOKEN");
+    let saved = [
+        std::env::var_os("WHYCODES_TEST_SKIP_GH_AUTH"),
+        std::env::var_os("WHYCODES_TEST_GH_AUTH_TOKEN"),
+        std::env::var_os("WHYCODES_TEST_GH_HOSTS_TOKEN"),
+        std::env::var_os("WHYCODES_TEST_SKIP_GIT_CREDENTIAL"),
+        std::env::var_os("WHYCODES_TEST_GIT_CREDENTIAL_TOKEN"),
+    ];
     unsafe {
         std::env::remove_var("WHYCODES_TEST_SKIP_GH_AUTH");
         std::env::set_var("WHYCODES_TEST_GH_AUTH_TOKEN", "from-cli");
@@ -472,6 +481,10 @@ fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
         std::env::remove_var("WHYCODES_TEST_SKIP_GIT_CREDENTIAL");
         std::env::set_var("WHYCODES_TEST_GIT_CREDENTIAL_TOKEN", "from-git");
     }
+    saved
+}
+
+fn assert_github_auth_test_tokens() {
     assert_eq!(gh_auth_token_with(true).as_deref(), Some("from-cli"));
     assert_eq!(
         gh_hosts_file_token_with(true).as_deref(),
@@ -481,6 +494,14 @@ fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
     let _ = gh_auth_token_with(false);
     let _ = gh_hosts_file_token_with(false);
     let _ = git_credential_token_with(false);
+}
+
+fn assert_github_spawn_and_wait_helpers() {
+    assert_github_spawn_helpers();
+    assert_github_wait_helpers();
+}
+
+fn assert_github_spawn_helpers() {
     assert!(spawn_gh_from_paths(Vec::new()).is_none());
     if let Some(mut child) = spawn_gh_from_paths(vec![std::env::current_exe().unwrap()]) {
         let _ = child.kill();
@@ -540,6 +561,9 @@ fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
     assert!(take_stdout_text(Err(std::io::Error::other("eof")), "printf").is_none());
     let _ = hanging.kill();
     let _ = hanging.wait();
+}
+
+fn assert_github_wait_helpers() {
     let mut hanging = hang_cmd(true)
         .stdout(Stdio::piped())
         .stdin(Stdio::piped())
@@ -625,11 +649,14 @@ fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
         .spawn()
         .expect("spawn hang");
     assert!(wait_timeout_kill(&mut hanging, "sleep").is_none());
-    restore_var("WHYCODES_TEST_SKIP_GH_AUTH", prev_skip);
-    restore_var("WHYCODES_TEST_GH_AUTH_TOKEN", prev_mock);
-    restore_var("WHYCODES_TEST_GH_HOSTS_TOKEN", prev_hosts);
-    restore_var("WHYCODES_TEST_SKIP_GIT_CREDENTIAL", prev_skip_git);
-    restore_var("WHYCODES_TEST_GIT_CREDENTIAL_TOKEN", prev_git);
+}
+
+fn restore_github_auth_test_env(saved: [Option<std::ffi::OsString>; 5]) {
+    restore_var("WHYCODES_TEST_SKIP_GH_AUTH", saved[0].clone());
+    restore_var("WHYCODES_TEST_GH_AUTH_TOKEN", saved[1].clone());
+    restore_var("WHYCODES_TEST_GH_HOSTS_TOKEN", saved[2].clone());
+    restore_var("WHYCODES_TEST_SKIP_GIT_CREDENTIAL", saved[3].clone());
+    restore_var("WHYCODES_TEST_GIT_CREDENTIAL_TOKEN", saved[4].clone());
 }
 
 #[tokio::test]
@@ -675,6 +702,58 @@ async fn make_request_hits_loopback_with_and_without_body() {
     .await
     .expect("post");
     assert_eq!(status.as_u16(), 201);
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var("WHYCODES_GITHUB_API_BASE", v),
+            None => std::env::remove_var("WHYCODES_GITHUB_API_BASE"),
+        }
+    }
+}
+
+#[test]
+fn api_error_helpers_format_transport_failures() {
+    assert_eq!(invalid_token_error("nl"), "Invalid token: nl");
+    assert_eq!(
+        github_api_request_error("connect"),
+        "GitHub API request failed: connect"
+    );
+    assert_eq!(
+        github_api_response_error("eof"),
+        "Failed to read GitHub API response: eof"
+    );
+}
+
+#[tokio::test]
+async fn make_request_surfaces_truncated_response_body() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\nConnection: close\r\n\r\n");
+        }
+    });
+    let prev = std::env::var_os("WHYCODES_GITHUB_API_BASE");
+    unsafe {
+        std::env::set_var("WHYCODES_GITHUB_API_BASE", format!("http://{addr}"));
+    }
+    let err = make_request(
+        &reqwest::Client::new(),
+        reqwest::Method::GET,
+        "repos/o/r",
+        "token",
+        None,
+    )
+    .await
+    .expect_err("truncated body");
+    assert!(err.contains("Failed to read GitHub API response"), "{err}");
     unsafe {
         match prev {
             Some(v) => std::env::set_var("WHYCODES_GITHUB_API_BASE", v),

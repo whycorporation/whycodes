@@ -203,6 +203,10 @@ impl EditTool {
     }
 }
 
+fn io_error_string(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
 fn write_edit(
     full_path: &str,
     shown: &str,
@@ -214,7 +218,7 @@ fn write_edit(
 ) -> ToolResult {
     write_edit_result(
         crate::file::atomic::write_atomic(std::path::Path::new(full_path), modified)
-            .map_err(|e| e.to_string()),
+            .map_err(io_error_string),
         shown,
         matched,
         new_string,

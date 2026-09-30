@@ -28,6 +28,7 @@ fn hang_command() -> &'static str {
 #[test]
 fn shell_module_loads() {
     assert!(!module_path!().is_empty());
+    assert_eq!(join_error_string("boom"), "boom");
     let join = shell_join_error("boom");
     assert!(join.is_error);
     assert!(join.content.contains("Task join error"));

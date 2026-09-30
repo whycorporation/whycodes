@@ -305,10 +305,10 @@ fn listed_entries_failed(e: ToolResult) -> ToolResult {
     e
 }
 
-fn list_entries_error(e: String) -> ToolResult {
+fn list_entries_error(e: impl std::fmt::Display) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
-        content: e,
+        content: e.to_string(),
         is_error: true,
     }
 }

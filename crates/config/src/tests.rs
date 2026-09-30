@@ -74,6 +74,11 @@ fn make_model(provider: &str, model: &str) -> ModelConfig {
 #[test]
 fn test_default_config() {
     let cfg = Config::default();
+    assert_default_session(&cfg);
+    assert_default_agents(&cfg);
+}
+
+fn assert_default_session(cfg: &Config) {
     assert_eq!(cfg.agents.len(), 6, "default config should have 6 agents");
     assert_eq!(cfg.default_agent, "build");
     assert!(cfg.default_model.is_none());
@@ -88,7 +93,9 @@ fn test_default_config() {
     assert!(cfg.session.magic_keywords.ultrathink);
     assert!(cfg.session.magic_keywords.orchestrate);
     assert!(cfg.session.headless_ask.is_none());
+}
 
+fn assert_default_agents(cfg: &Config) {
     // Primary: build / plan / ask; subagents: general / explore / scout
     let names: Vec<&str> = cfg.agents.iter().map(|a| a.name.as_str()).collect();
     assert!(names.contains(&"build"));
@@ -824,6 +831,31 @@ hint = "Don't use Box::leak"
 #[test]
 fn merge_with_general_security_memory_swarm() {
     let base = Config::default();
+    let mut overlay = overlay_general_security();
+    assert_merged_general_security(&base.merge_with(&overlay));
+    overlay.general.auto_update = false;
+    overlay.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+    overlay.session.headless_ask = Some(crate::HeadlessAskMode::Allow);
+    overlay.tui.skip_openrouter_key_prompt = true;
+    let merged = base.merge_with(&overlay);
+    assert!(!merged.general.auto_update);
+    assert!(merged.tui.skip_openrouter_key_prompt);
+    assert_eq!(
+        merged.general.approval_mode,
+        Some(whycodes_core::types::ApprovalMode::Manual)
+    );
+    assert_eq!(
+        merged.session.headless_ask,
+        Some(crate::HeadlessAskMode::Allow)
+    );
+    overlay.slop.verbosity = 0.3;
+    overlay.slop.delta_loc = 100;
+    let merged = base.merge_with(&overlay);
+    assert!((merged.slop.verbosity - 0.3).abs() < f64::EPSILON);
+    assert_eq!(merged.slop.delta_loc, 100);
+}
+
+fn overlay_general_security() -> Config {
     let mut overlay = Config::default();
     overlay.general.project_path = Some(PathBuf::from("/proj"));
     overlay.general.log_level = Some("debug".into());
@@ -849,8 +881,10 @@ fn merge_with_general_security_memory_swarm() {
     overlay.automation.max_background_jobs = 3;
     overlay.tools.bash.auto_background = false;
     overlay.tools.bash.auto_background_after_secs = 5;
+    overlay
+}
 
-    let merged = base.merge_with(&overlay);
+fn assert_merged_general_security(merged: &Config) {
     assert_eq!(
         merged.general.project_path.as_deref(),
         Some(Path::new("/proj"))
@@ -861,21 +895,6 @@ fn merge_with_general_security_memory_swarm() {
         Some("gcp-proj")
     );
     assert_eq!(merged.schema_version, CONFIG_SCHEMA_VERSION + 1);
-    overlay.general.auto_update = false;
-    overlay.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
-    overlay.session.headless_ask = Some(crate::HeadlessAskMode::Allow);
-    overlay.tui.skip_openrouter_key_prompt = true;
-    let merged = base.merge_with(&overlay);
-    assert!(!merged.general.auto_update);
-    assert!(merged.tui.skip_openrouter_key_prompt);
-    assert_eq!(
-        merged.general.approval_mode,
-        Some(whycodes_core::types::ApprovalMode::Manual)
-    );
-    assert_eq!(
-        merged.session.headless_ask,
-        Some(crate::HeadlessAskMode::Allow)
-    );
     assert_eq!(merged.security.bash_risk_threshold, "caution");
     assert_eq!(merged.security.sandbox, "off");
     assert!(!merged.security.sandbox_network);
@@ -894,15 +913,16 @@ fn merge_with_general_security_memory_swarm() {
     assert!(!merged.swarm.worktrees);
     assert_eq!(merged.swarm.isolation.as_deref(), Some("checkout"));
     assert_eq!(merged.automation.max_background_jobs, 3);
-    overlay.slop.verbosity = 0.3;
-    overlay.slop.delta_loc = 100;
-    let merged = base.merge_with(&overlay);
-    assert!((merged.slop.verbosity - 0.3).abs() < f64::EPSILON);
-    assert_eq!(merged.slop.delta_loc, 100);
 }
 
 #[test]
 fn slop_config_merge_and_validate() {
+    assert_slop_merge();
+    assert_slop_validation();
+    assert_slop_toml();
+}
+
+fn assert_slop_merge() {
     let d = SlopConfig::default();
     assert!((d.verbosity - 0.25).abs() < f64::EPSILON);
     assert_eq!(d.hotspots, 8);
@@ -925,7 +945,9 @@ fn slop_config_merge_and_validate() {
     assert!((keep.block_verbosity - 0.5).abs() < f64::EPSILON);
     assert!((keep.block_erosion - 0.8).abs() < f64::EPSILON);
     assert_eq!(keep.block_delta_loc, 9_000);
+}
 
+fn assert_slop_validation() {
     let mut cfg = Config::default();
     cfg.providers
         .insert("openai".into(), make_provider("openai"));
@@ -939,7 +961,9 @@ fn slop_config_merge_and_validate() {
     assert!(cfg.validate().is_err());
     cfg.slop.hotspots = 8;
     assert!(cfg.validate().is_ok());
+}
 
+fn assert_slop_toml() {
     let toml = r#"
 verbosity = 0.31
 erosion = 0.61
@@ -2210,6 +2234,13 @@ fn apply_env_overrides_cover_every_knob() {
     unsafe { std::env::set_var("WHYCODES_AUTO_UPDATE", "maybe") };
     cfg.apply_env_overrides();
     assert!(!cfg.general.auto_update);
+    apply_approval_env_knobs(&mut cfg);
+    apply_swarm_env_knobs(&mut cfg);
+
+    restore_env(&names, prev);
+}
+
+fn apply_approval_env_knobs(cfg: &mut Config) {
     assert_eq!(cfg.general.approval_mode, None);
     unsafe { std::env::set_var("WHYCODES_APPROVAL_MODE", "manual") };
     cfg.apply_env_overrides();
@@ -2244,7 +2275,9 @@ fn apply_env_overrides_cover_every_knob() {
     assert_eq!(cfg.session.headless_ask, Some(crate::HeadlessAskMode::Deny));
     unsafe { std::env::set_var("WHYCODES_MEMORY", "maybe") };
     cfg.apply_env_overrides();
+}
 
+fn apply_swarm_env_knobs(cfg: &mut Config) {
     unsafe { std::env::set_var("WHYCODES_SWARM", "1") };
     cfg.apply_env_overrides();
     assert!(cfg.swarm.enabled);
@@ -2256,12 +2289,16 @@ fn apply_env_overrides_cover_every_knob() {
     unsafe { std::env::set_var("WHYCODES_SWARM_WORKTREES", "maybe") };
     cfg.apply_env_overrides();
     assert!(cfg.swarm.worktrees);
-
-    restore_env(&names, prev);
 }
 
 #[test]
 fn merge_with_covers_provider_model_memory_tools() {
+    let (base, other) = provider_model_overlay();
+    let merged = base.merge_with(&other);
+    assert_merged_provider_model(&merged);
+}
+
+fn provider_model_overlay() -> (Config, Config) {
     let mut base = Config::default();
     base.providers.insert("p".into(), make_provider("p"));
     let mut other = Config::default();
@@ -2415,7 +2452,15 @@ fn merge_with_covers_provider_model_memory_tools() {
         },
     );
 
-    let merged = base.merge_with(&other);
+    (base, other)
+}
+
+fn assert_merged_provider_model(merged: &Config) {
+    assert_merged_provider_tools(merged);
+    assert_merged_tui_commands(merged);
+}
+
+fn assert_merged_provider_tools(merged: &Config) {
     assert_eq!(merged.providers["p"].api_key.as_deref(), Some("new"));
     assert_eq!(merged.providers["p"].api_base.as_deref(), Some("http://a"));
     assert_eq!(
@@ -2438,6 +2483,9 @@ fn merge_with_covers_provider_model_memory_tools() {
     assert_eq!(merged.tools.disabled_tools, vec!["x".to_string()]);
     assert_eq!(merged.tools.custom_tools["c"].command, "keep");
     assert_eq!(merged.tools.custom_tools["fresh"].command, "true");
+}
+
+fn assert_merged_tui_commands(merged: &Config) {
     assert_eq!(merged.command_configs["fresh-cmd"].max_turns, Some(1));
     assert_eq!(
         merged
@@ -2465,9 +2513,10 @@ fn merge_with_covers_provider_model_memory_tools() {
 fn command_markdown_render_and_load_dir() {
     let no_fm = parse_command_markdown("just body").unwrap();
     assert_eq!(no_fm.template, "just body");
-    let with = parse_command_markdown(
-        "---\ndescription: d\nagent: plan\nmodel: m\nsubtask: true\nextra: x\n---\nHello $1 !`printf hi`\n",
-    )
+    let with = parse_command_markdown(&format!(
+        "---\ndescription: d\nagent: plan\nmodel: m\nsubtask: true\nextra: x\n---\nHello $1 !`{}`\n",
+        echo_token("hi")
+    ))
     .unwrap();
     assert_eq!(with.description.as_deref(), Some("d"));
     assert_eq!(with.agent.as_deref(), Some("plan"));
@@ -2561,6 +2610,15 @@ fn ensure_parent_dir_and_toml_err() {
     assert!(ensure_parent_dir(&blocker.join("child.toml")).is_err());
 }
 
+/// Print `token` on stdout and `token-err` on stderr, on Windows and Unix shells.
+fn echo_token(token: &str) -> String {
+    if cfg!(windows) {
+        format!("echo {token}& echo {token}-err 1>&2")
+    } else {
+        format!("printf {token}; printf {token}-err >&2")
+    }
+}
+
 #[test]
 fn project_path_falls_back_when_cwd_gone() {
     let _guard = lock_env();
@@ -2568,17 +2626,23 @@ fn project_path_falls_back_when_cwd_gone() {
     let dir = tempfile::tempdir().unwrap();
     std::env::set_current_dir(dir.path()).unwrap();
     drop(dir);
+    // Windows keeps a deleted cwd readable; Unix makes current_dir() fail.
+    let cwd_gone = std::env::current_dir().is_err();
     let cfg = Config::default();
     let p = cfg.project_path();
     let _ = std::env::set_current_dir(&prev);
-    assert_eq!(p, PathBuf::from("."));
+    if cwd_gone {
+        assert_eq!(p, PathBuf::from("."));
+    } else {
+        assert!(p.is_absolute(), "{p:?}");
+    }
 }
 
 #[test]
 fn render_inline_shell_stdout_and_stderr() {
     let _guard = lock_env();
     let cmd = CustomCommandConfig {
-        template: "out=!`printf hi; printf err >&2`".into(),
+        template: format!("out=!`{}`", echo_token("hi")),
         description: None,
         agent: None,
         model: None,
@@ -2586,7 +2650,7 @@ fn render_inline_shell_stdout_and_stderr() {
     };
     let rendered = cmd.render("");
     assert!(rendered.contains("hi"), "{rendered}");
-    assert!(rendered.contains("err"), "{rendered}");
+    assert!(rendered.contains("hi-err"), "{rendered}");
 }
 
 #[test]

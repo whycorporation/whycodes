@@ -216,6 +216,14 @@ fn resolve_answer_tracks_single_multi_and_free_text_state() {
             auto_picked: false,
         }
     );
+    assert_eq!(
+        resolve_stdin_answer(&questions[1], "3", 3),
+        QuestionAnswer {
+            selected: vec![],
+            free_text: None,
+            auto_picked: false,
+        }
+    );
 }
 
 #[tokio::test]
@@ -547,10 +555,14 @@ fn remaining_stdin_and_parse_arms() {
 
     queue_stdin(&["3", ""]);
     let empty_other = stdin_questionnaire(&multi).unwrap();
+    assert!(empty_other[0].free_text.is_none(), "{:?}", empty_other[0]);
+    assert!(empty_other[0].selected.is_empty(), "{:?}", empty_other[0]);
     assert!(
-        empty_other[0].free_text.is_none() || empty_other[0].selected.is_empty(),
-        "{:?}",
-        empty_other[0]
+        TEST_STDIN
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty(),
+        "empty Other line must be consumed"
     );
 
     let mut cursor = std::io::Cursor::new("hello\n");
@@ -606,4 +618,20 @@ async fn execute_reads_queued_stdin() {
         .await;
     assert!(empty.is_error, "{}", empty.content);
     assert!(empty.content.contains("empty input"), "{}", empty.content);
+    let bad_item = parse_questions(&json!({
+        "questions": [{}, {"question": "ok"}]
+    }));
+    let bad_item_err = bad_item.as_ref().err().map(ToString::to_string);
+    assert!(
+        bad_item_err
+            .as_deref()
+            .is_some_and(|err| err.contains("questions[0]")),
+        "{bad_item:?}"
+    );
+    note_no_free_text();
+    note_legacy_question();
+    note_no_options_array();
+    note_no_choices_array();
+    note_non_string_choice();
+    note_typed_stdin();
 }

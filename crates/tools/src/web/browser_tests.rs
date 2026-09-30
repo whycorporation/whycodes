@@ -1,5 +1,6 @@
 use super::*;
 use std::net::TcpListener;
+use std::path::Path;
 use std::process::Stdio;
 use std::thread;
 
@@ -298,6 +299,13 @@ fn clamp_wait_ms_caps_at_fifteen_seconds() {
 
 #[test]
 fn find_browser_and_http_get_without_slash() {
+    assert_find_browser_env();
+    assert_browser_lookup_and_status();
+    assert_page_action_results();
+    assert_browser_session_helpers();
+}
+
+fn assert_find_browser_env() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let prev = std::env::var_os("WHYCODES_BROWSER");
     let missing = std::env::temp_dir().join("whycodes-missing-browser-bin");
@@ -319,6 +327,9 @@ fn find_browser_and_http_get_without_slash() {
             None => std::env::remove_var("WHYCODES_BROWSER"),
         }
     }
+}
+
+fn assert_browser_lookup_and_status() {
     let _ = user_data_dir();
     let _ = pick_port();
     assert!(http_get("http://127.0.0.1:1").is_err());
@@ -368,6 +379,9 @@ fn find_browser_and_http_get_without_slash() {
     assert_eq!(decode_screenshot("aGVsbG8=").unwrap(), b"hello");
     assert_eq!(screenshot_data(&json!({"data": "abc"})), Some("abc"));
     assert!(screenshot_data(&json!({})).is_none());
+}
+
+fn assert_page_action_results() {
     assert!(existing_session_port(Ok(SESSION.lock().unwrap_or_else(|e| e.into_inner()))).is_none());
     mkdir_browser_profile(&std::env::temp_dir().join("whycodes-browser-profile-test"));
     let snap_ok = snapshot_from_eval(Ok(json!({"title": "t"})));
@@ -399,11 +413,41 @@ fn find_browser_and_http_get_without_slash() {
     assert!(js_exception_from(&json!({"text": "boom"})).is_err());
     let nav_err = navigate_opened(1, "http://example.test");
     assert!(nav_err.is_error);
+    mkdir_browser_profile_result(Ok(()));
     mkdir_browser_profile_result(Err(std::io::Error::other("mkdir")));
+    page_enable_result(Ok(json!({})));
     page_enable_result(Err("boom".into()));
+    kill_child_debug(Ok(()), "browser kill");
     kill_child_debug(Err(std::io::Error::other("kill")), "browser kill");
+    set_timeout_debug(Ok(()), "http get timeout");
     set_timeout_debug(Err(std::io::Error::other("timeout")), "http get timeout");
+    note_browser_launch();
+    note_browser_profile_ok();
+    note_page_enable_ok();
+    note_screenshot_dir_ok();
+    note_browser_child_ok();
+    note_timeout_ok();
+    let launch_msg = browser_launch_error(Path::new("chrome"))(std::io::Error::other("spawn"));
+    assert!(launch_msg.contains("failed to launch"), "{launch_msg}");
+    assert_eq!(io_err("x"), "x");
+    assert!(cdp_connect_error("x").contains("cdp connect"));
+}
+
+fn assert_browser_session_helpers() {
+    assert_browser_error_helpers();
+    assert_browser_session_poll();
+}
+
+fn assert_browser_error_helpers() {
+    assert!(screenshot_decode_error("x").contains("screenshot decode"));
+    assert_eq!(utf8_frame_error("x"), "x");
+    assert_eq!(cdp_json_error("x"), "x");
+    assert!(screenshot_mkdir_error("denied").is_error);
     assert!(screenshot_mkdir_failed("denied").is_error);
+    let reply = cdp_reply("Page.enable", &json!({"result": {"ok": true}}));
+    assert_eq!(reply.ok(), Some(json!({"ok": true})));
+    let reply_err = cdp_reply("Page.enable", &json!({"error": {"message": "nope"}}));
+    assert!(reply_err.unwrap_err().contains("cdp Page.enable"));
     assert!(screenshot_write_failed("denied").is_error);
     assert_eq!(pick_bound_port(Err(std::io::Error::other("bind"))), 9222);
     assert_eq!(port_from_addr(Err(std::io::Error::other("addr"))), 9222);
@@ -420,6 +464,9 @@ fn find_browser_and_http_get_without_slash() {
     }));
     let recovered = recover_lock(lock.lock());
     assert_eq!(*recovered, 0);
+}
+
+fn assert_browser_session_poll() {
     let not_ready = take_ready_session(false, hang_browser_child(), 1, PathBuf::from("/tmp"));
     match not_ready {
         Err((mut child, _)) => {
@@ -934,13 +981,19 @@ fn uncovered_io_error_arms() {
     assert_eq!(stored.ok(), Some(17));
     drop(close_browser());
 
-    // A shut-down socket fails the masked WebSocket write. Dropping the peer
-    // is not enough on Windows: the kernel still accepts a small buffered write.
+    // A shut-down socket fails the masked WebSocket write. A small blocking
+    // write still succeeds on Windows (the kernel buffers it). A non-blocking
+    // write larger than the send buffer returns WouldBlock / connection reset.
     let (mut writer, reader) = connected_streams();
     drop(reader);
-    writer
-        .shutdown(std::net::Shutdown::Both)
-        .expect("shutdown writer");
-    let wrote = write_ws_text(&mut writer, b"late");
+    writer.set_nonblocking(true).expect("nonblocking writer");
+    let payload = vec![b'x'; 256 * 1024];
+    let mut wrote = Ok(());
+    for _ in 0..8 {
+        wrote = write_ws_text(&mut writer, &payload);
+        if wrote.is_err() {
+            break;
+        }
+    }
     assert!(wrote.is_err(), "write to a closed socket should fail");
 }

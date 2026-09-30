@@ -178,6 +178,12 @@ fn rank_prefers_src_over_tests() {
 
 #[test]
 fn signature_line_covers_remaining_languages() {
+    assert_script_and_jvm_signatures();
+    assert_c_family_and_markup_signatures();
+    assert_source_path_and_truncate();
+}
+
+fn assert_script_and_jvm_signatures() {
     assert!(is_signature_line("def foo():", "py"));
     assert!(is_signature_line("async def bar():", "py"));
     assert!(is_signature_line("class C:", "py"));
@@ -191,7 +197,9 @@ fn signature_line_covers_remaining_languages() {
     assert!(is_signature_line("interface Bar {", "kt"));
     assert!(is_signature_line("enum Kind {", "cs"));
     assert!(is_signature_line("fun baz() {", "kts"));
+}
 
+fn assert_c_family_and_markup_signatures() {
     assert!(is_signature_line("struct Foo(int x) {", "c"));
     assert!(is_signature_line("class Bar(int x) {", "cpp"));
     assert!(!is_signature_line("int x;", "h"));
@@ -205,7 +213,9 @@ fn signature_line_covers_remaining_languages() {
     assert!(!is_signature_line("#NoSpace", "md"));
     assert!(!is_signature_line("anything", "xyz"));
     assert!(is_signature_line("export Foo", "swift"));
+}
 
+fn assert_source_path_and_truncate() {
     assert!(!is_source_path(Path::new("README")));
     assert!(is_source_path(Path::new("src/lib.rs")));
     assert!(!is_source_path(Path::new("blob.bin")));

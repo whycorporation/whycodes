@@ -8,6 +8,10 @@
 
 use whycodes_core::types::ToolResult;
 
+fn background_task_error(e: impl std::fmt::Display) -> String {
+    format!("background task failed: {e}")
+}
+
 /// Run `f` on the blocking pool. `Err` is a join failure (panic / cancel).
 pub async fn run<F, T>(f: F) -> Result<T, String>
 where
@@ -16,7 +20,7 @@ where
 {
     tokio::task::spawn_blocking(f)
         .await
-        .map_err(|e| format!("background task failed: {e}"))
+        .map_err(background_task_error)
 }
 
 /// Like [`run`] but maps join failure onto an error [`ToolResult`].

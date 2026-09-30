@@ -284,7 +284,6 @@ async fn remaining_execute_and_search_edges() {
         "{}",
         failed.content
     );
-    assert!(invalid_regex("bad").contains("invalid regex"));
     let join = grep_join_error("boom");
     assert!(join.is_error);
     assert!(join.content.contains("grep task failed"));
@@ -344,6 +343,14 @@ async fn remaining_execute_and_search_edges() {
     assert!(from_err.is_error);
     let from_join = grep_from_blocking(Err("boom".into()));
     assert!(from_join.content.contains("grep task failed"));
+    let bad_glob = GrepTool::search("x", dir.path(), Some("["), false, 0, 10, "/", None);
+    let bad_glob_err = bad_glob.as_ref().err().map(ToString::to_string);
+    assert!(
+        bad_glob_err
+            .as_deref()
+            .is_some_and(|err| err.contains("invalid glob")),
+        "{bad_glob:?}"
+    );
     let stop = AtomicBool::new(false);
     let remaining = AtomicUsize::new(0);
     assert!(grep_should_stop(&stop, &remaining));
@@ -485,4 +492,14 @@ fn search_index_prunes_files_without_trigrams() {
     .unwrap();
     assert!(ci.contains("src/Case.rs"), "{ci}");
     assert!(ci.contains("in 1 file"), "{ci}");
+    note_search_ok();
+    assert_eq!(join_error_string("boom"), "boom");
+    assert!(regex_build_error("bad").contains("invalid regex"));
+    assert!(glob_build_error("bad").contains("invalid glob"));
+    assert_eq!(search_path_error("boom"), "boom");
+    handle_search_err(dir.path(), Ok(()));
+    handle_search_err(dir.path(), Err("unreadable".into()));
+    skip_search_at_cap();
+    assert!(search_file_at_cap(2, 2));
+    assert!(!search_file_at_cap(1, 2));
 }

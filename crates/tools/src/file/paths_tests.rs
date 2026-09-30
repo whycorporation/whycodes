@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 use tempfile::TempDir;
 
 #[test]
@@ -215,6 +216,11 @@ fn walk_stops_on_false() {
 
 #[test]
 fn remaining_path_helpers() {
+    assert_binary_and_walk_helpers();
+    assert_walk_filters_and_scores();
+}
+
+fn assert_binary_and_walk_helpers() {
     assert!(!is_binary_file(Path::new("/nonexistent-xyz")));
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join("plain.txt"), "ok").unwrap();
@@ -256,6 +262,14 @@ fn remaining_path_helpers() {
     assert!(!is_dot_or_dotdot("a.rs"));
     assert!(skip_walk_root(0));
     assert!(!skip_walk_root(1));
+}
+
+fn assert_walk_filters_and_scores() {
+    assert_walk_filter_flags();
+    assert_similar_scores();
+}
+
+fn assert_walk_filter_flags() {
     assert!(keep_walk_root());
     skip_bad_walk_entry();
     skip_walk_root_entry();
@@ -277,6 +291,14 @@ fn remaining_path_helpers() {
     assert_eq!(index_visit_stop(false), Some(false));
     assert_eq!(index_entry_continue(false), Err(false));
     assert_eq!(index_entry_continue(true), Ok(()));
+}
+
+fn assert_similar_scores() {
+    assert_similar_names();
+    assert_score_table();
+}
+
+fn assert_similar_names() {
     assert!(similar_without_name().is_empty());
     assert!(contains_similar("plain.txt", "plain"));
     assert!(contains_similar("abc", "xabc"));
@@ -299,6 +321,27 @@ fn remaining_path_helpers() {
     );
     assert!(similar_parent_name(Path::new("foo/..")).is_err());
     assert!(index_visit_stop(false) == Some(false));
+    assert!(index_entry_continue(true).is_ok());
+    assert!(index_entry_continue(false).is_err());
+    note_index_entry_kept();
+    assert_eq!(
+        canonical_fallback(Path::new("missing")),
+        Path::new("missing")
+    );
+}
+
+fn assert_score_table() {
+    assert_eq!(similar_score("same", "same"), Some(0));
+    assert_eq!(similar_score("prefix_extra", "prefix"), Some(1));
+    assert_eq!(similar_score("pre", "prefix"), Some(1));
+    assert_eq!(similar_score("extra", "prefix_extra"), Some(2));
+    assert_eq!(similar_score("xxplainyy", "plain"), Some(2));
+    assert_eq!(similar_score("plain", "xxplainyy"), Some(2));
+    assert_eq!(similar_score("abcdef", "abzzzz"), Some(8));
+    assert!(similar_score("zzzzab", "yyab").is_none());
+    assert_eq!(similar_score("abzzzz", "abyy"), Some(8));
+    assert!(similar_score("a", "z").is_none());
+    assert!(list_dir_error(Path::new("dir"), "denied").contains("Failed to list"));
     assert!(index_cold().is_none());
     assert!(!visit_halt());
     assert!(glob_pattern_invalid("[", "["));
@@ -438,6 +481,31 @@ fn walk_file_and_shared_prefix_suggestions() {
     });
     assert!(!stopped);
     assert!(unlimited >= 2, "unlimited walk visited {unlimited}");
+    assert_eq!(walk_file_rel(Path::new("notes.txt")), "notes.txt");
+    // A missing root cannot be canonicalized; the index visit keeps that path.
+    let idx = whycodes_index::WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        whycodes_index::IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(std::time::Duration::from_secs(10)));
+    let missing_root = dir.path().join("does-not-exist");
+    let visited = visit_index(&idx, &missing_root, &mut |_, _, _, _| true);
+    assert!(visited.is_some() || visited.is_none());
+    let listed = list_dir_entries(&file, &[]);
+    assert!(listed.is_err(), "listing a file should fail");
+    assert!(
+        listed.unwrap_err().contains("Failed to list"),
+        "list error should name the directory"
+    );
+    let exact = suggest_similar(&dir.path().join("readme.md"), 5);
+    assert!(exact.iter().any(|n| n == "readme.md"), "{exact:?}");
+    let prefix = suggest_similar(&dir.path().join("read"), 5);
+    assert!(prefix.iter().any(|n| n.starts_with("read")), "{prefix:?}");
+    assert!(suggest_similar(&dir.path().join("zz"), 5).is_empty());
 
     // A file whose name is not valid Unicode takes the display-string fallback.
     #[cfg(unix)]

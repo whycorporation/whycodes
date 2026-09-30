@@ -203,6 +203,10 @@ fn parse_choices_or_options(item: &serde_json::Value) -> Result<Vec<QuestionOpti
     Ok(Vec::new())
 }
 
+fn question_item_error(i: usize, e: &str) -> String {
+    format!("questions[{i}]: {e}")
+}
+
 fn note_legacy_question() {}
 
 fn note_no_options_array() {}
@@ -221,7 +225,7 @@ fn parse_questions_array(arr: &[serde_json::Value]) -> Result<Vec<QuestionSpec>,
     }
     let mut out = Vec::with_capacity(arr.len());
     for (i, item) in arr.iter().enumerate() {
-        out.push(parse_one_question(item).map_err(|e| format!("questions[{i}]: {e}"))?);
+        out.push(parse_one_question(item).map_err(|e| question_item_error(i, &e))?);
     }
     Ok(out)
 }
@@ -349,9 +353,15 @@ fn apply_multi_number(
     }
 }
 
+fn flush_prompt() {
+    if let Err(e) = io::stderr().flush() {
+        tracing::debug!(error = %e, "question prompt flush skipped");
+    }
+}
+
 fn other_stdin_answer() -> QuestionAnswer {
     eprint!("   Other text: ");
-    let _ = io::stderr().flush();
+    flush_prompt();
     let t = read_line_stdin().unwrap_or_default();
     QuestionAnswer {
         selected: vec![],
@@ -532,7 +542,7 @@ pub fn stdin_questionnaire(questions: &[QuestionSpec]) -> Result<Vec<QuestionAns
         eprintln!("❓ {}", q.prompt);
         if q.options.is_empty() {
             eprint!("   Your answer: ");
-            let _ = io::stderr().flush();
+            flush_prompt();
             let line = read_line_stdin()?;
             if line.is_empty() {
                 return Err("No answer received (empty input).".into());
@@ -559,7 +569,7 @@ pub fn stdin_questionnaire(questions: &[QuestionSpec]) -> Result<Vec<QuestionAns
         } else {
             eprint!("   Enter number or type your answer: ");
         }
-        let _ = io::stderr().flush();
+        flush_prompt();
         let line = read_line_stdin()?;
         if line.is_empty() {
             return Err("No answer received (empty input).".into());
@@ -583,12 +593,16 @@ fn resolve_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> Questio
                 Err(err) => free = free_text_part(part, &err),
             }
         }
-        if free.as_ref().is_some_and(|s| s.is_empty()) {
+        let other_requested = free.as_ref().is_some_and(|s| s.is_empty());
+        if other_requested {
             eprint!("   Other text: ");
-            let _ = io::stderr().flush();
-            free = read_line_stdin().ok().filter(|s| !s.is_empty());
+            flush_prompt();
+            // Always consume the follow-up line so an empty Other does not
+            // leak into the next question. Store only non-empty text.
+            let t = read_line_stdin().unwrap_or_default();
+            free = if t.is_empty() { None } else { Some(t) };
         }
-        if selected.is_empty() && free.is_none() {
+        if selected.is_empty() && free.is_none() && !other_requested {
             free = Some(line.to_string());
         }
         return QuestionAnswer {
@@ -635,11 +649,13 @@ fn take_test_stdin() -> Option<String> {
         .pop_front()
 }
 
+fn stdin_read_error(e: impl std::fmt::Display) -> String {
+    format!("Failed to read input: {e}")
+}
+
 fn read_line_from(reader: &mut impl io::BufRead) -> Result<String, String> {
     let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|e| format!("Failed to read input: {e}"))?;
+    reader.read_line(&mut line).map_err(stdin_read_error)?;
     Ok(line.trim().to_string())
 }
 

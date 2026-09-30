@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::json;
 use whycodes_core::types::{PermissionAction, ToolResult};
+use whycodes_skill::PluginConfig;
 
 /// Minimal fake tool for registration/definition tests.
 struct FakeTool {
@@ -548,6 +549,43 @@ fn fingerprint_hashes_every_rule_and_poisoned_cache_still_serves() {
     let recovered = ex.get_definitions(&perms);
     assert!(recovered.iter().any(|d| d.name == "read"));
     assert!(recovered.iter().all(|d| d.name != "bash"));
+    note_defs_cache_miss();
+    note_plugin_cfg_skipped();
+    note_plugin_spec_skipped();
+    assert!(
+        keep_plugin_cfg(PluginConfig {
+            name: "  ".into(),
+            command: "echo".into(),
+            description: String::new(),
+            parameters: None,
+            working_dir: None,
+        })
+        .is_none()
+    );
+    assert!(
+        keep_plugin_spec(
+            String::new(),
+            "echo".into(),
+            String::new(),
+            None,
+            std::path::PathBuf::from("."),
+        )
+        .is_none()
+    );
+    let mut by_name = std::collections::BTreeMap::new();
+    insert_plugin(
+        &mut by_name,
+        PluginConfig {
+            name: "echo-tool".into(),
+            command: "echo".into(),
+            description: "prints".into(),
+            parameters: None,
+            working_dir: None,
+        },
+    );
+    assert!(by_name.contains_key("echo-tool"));
+    let empty = skipped_plugin_toml("boom", "plugins.toml load skipped");
+    assert!(empty.plugins.is_empty());
 }
 
 #[test]

@@ -123,6 +123,7 @@ fn skill_format_helpers_cover_empty_and_loaded() {
     );
     assert!(take_skill_registry(Err(skill_load_error("boom"))).is_err());
     assert!(registry_load_failed(skill_load_error("boom")).is_error);
+    assert!(skill_registry_error("boom").is_error);
     assert!(skill_registry_or_err(Err(skill_load_error("boom"))).is_err());
     assert!(skill_registry_or_err(Ok(whycodes_skill::SkillRegistry::new())).is_ok());
     assert!(listed_skills(Err(skill_load_error("boom"))).is_error);

@@ -229,6 +229,12 @@ async fn remaining_read_branches() {
     assert!(win_from.content.contains("Error reading"));
     note_large_default_window(MAX_FULL_READ_BYTES + 1, 1, DEFAULT_LIMIT);
     note_large_default_window(1, 1, DEFAULT_LIMIT);
+    note_disk_read();
+    note_text_read();
+    note_fresh_read();
+    let mut stale = String::new();
+    note_stale_read(&mut stale, "a.txt", "writer");
+    assert!(stale.contains("stale"), "{stale}");
     assert!(!refuse_binary(Path::new("/nonexistent-xyz"), "gone"));
     assert!(!sniff_opened(Err(std::io::Error::other("gone"))));
     assert!(!sniff_read(Err(std::io::Error::other("eof")), &[]));

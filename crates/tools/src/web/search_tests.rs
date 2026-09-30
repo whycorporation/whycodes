@@ -93,6 +93,10 @@ fn urlencoding_and_plain_markup() {
         search_host_with("MISSING_SEARCH_HOST", "default.host", false),
         "default.host"
     );
+    note_no_serpapi(&std::env::VarError::NotPresent);
+    note_search_url_ok();
+    note_no_organic();
+    assert_eq!(search_body_error("eof"), "eof");
     let read_err = search_read_error("eof");
     assert!(read_err.is_error);
     assert!(read_err.content.contains("Error reading response"));

@@ -220,9 +220,33 @@ fn ensure_session_with_browser(bin: Option<PathBuf>) -> Result<u16, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("failed to launch {}: {e}", bin.display()))?;
+        .map_err(browser_launch_error(&bin))?;
 
     poll_session_ready(child, port, dir)
+}
+
+fn browser_launch_error(bin: &Path) -> impl FnOnce(std::io::Error) -> String + '_ {
+    move |e| format!("failed to launch {}: {e}", bin.display())
+}
+
+fn io_err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+fn cdp_connect_error(e: impl std::fmt::Display) -> String {
+    format!("cdp connect: {e}")
+}
+
+fn screenshot_decode_error(e: impl std::fmt::Display) -> String {
+    format!("screenshot decode: {e}")
+}
+
+fn utf8_frame_error(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+fn cdp_json_error(e: impl std::fmt::Display) -> String {
+    e.to_string()
 }
 
 fn browser_found_status(path: &Path, running: bool, port: Option<u16>) -> ToolResult {
@@ -585,6 +609,10 @@ fn screenshot_mkdir_failed(e: &str) -> ToolResult {
     err(&format!("mkdir: {e}"))
 }
 
+fn screenshot_mkdir_error(e: impl std::fmt::Display) -> ToolResult {
+    screenshot_mkdir_failed(&e.to_string())
+}
+
 fn screenshot_write_failed(e: &str) -> ToolResult {
     err(&format!("write screenshot: {e}"))
 }
@@ -604,7 +632,7 @@ fn write_screenshot_bytes(ctx: &ToolContext, bytes: &[u8]) -> ToolResult {
 }
 
 fn mkdir_screenshot_dir(dir: &Path) -> Result<(), ToolResult> {
-    std::fs::create_dir_all(dir).map_err(|e| screenshot_mkdir_failed(&e.to_string()))
+    std::fs::create_dir_all(dir).map_err(screenshot_mkdir_error)
 }
 
 fn write_screenshot_file(path: &Path, bytes: &[u8]) -> ToolResult {
@@ -640,7 +668,7 @@ fn decode_screenshot(b64: &str) -> Result<Vec<u8>, String> {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|e| format!("screenshot decode: {e}"))
+        .map_err(screenshot_decode_error)
 }
 
 fn evaluate_js_exception(ex: &Value) -> Result<Value, String> {
@@ -732,59 +760,98 @@ fn cdp(port: u16, method: &str, params: Value) -> Result<Value, String> {
 
 fn http_get(url: &str) -> Result<String, String> {
     // Tiny blocking GET so we don't need an async runtime in this helper.
+    let (hostport, path) = http_target(url)?;
+    let mut stream = TcpStream::connect(hostport).map_err(io_err)?;
+    set_http_read_timeout(&stream);
+    stream
+        .write_all(http_request(hostport, &path).as_bytes())
+        .map_err(io_err)?;
+    http_body(&mut stream)
+}
+
+fn http_target(url: &str) -> Result<(&str, String), String> {
     let url = url
         .strip_prefix("http://")
         .ok_or_else(|| format!("bad url {url}"))?;
     let (hostport, path) = url.split_once('/').unwrap_or((url, ""));
-    let path = format!("/{path}");
-    let mut stream = TcpStream::connect(hostport).map_err(|e| e.to_string())?;
-    set_http_read_timeout(&stream);
-    let req = format!("GET {path} HTTP/1.0\r\nHost: {hostport}\r\nConnection: close\r\n\r\n");
-    stream
-        .write_all(req.as_bytes())
-        .map_err(|e| e.to_string())?;
+    Ok((hostport, format!("/{path}")))
+}
+
+fn http_request(hostport: &str, path: &str) -> String {
+    format!("GET {path} HTTP/1.0\r\nHost: {hostport}\r\nConnection: close\r\n\r\n")
+}
+
+fn http_body(stream: &mut TcpStream) -> Result<String, String> {
     let mut buf = String::new();
-    stream.read_to_string(&mut buf).map_err(|e| e.to_string())?;
-    let body = buf.split("\r\n\r\n").nth(1).unwrap_or(&buf);
-    Ok(body.to_string())
+    stream.read_to_string(&mut buf).map_err(io_err)?;
+    Ok(buf.split("\r\n\r\n").nth(1).unwrap_or(&buf).to_string())
 }
 
 /// Minimal client WebSocket + one CDP request/response.
 fn ws_cdp_call(ws_url: &str, method: &str, params: Value) -> Result<Value, String> {
-    let url = ws_url
-        .strip_prefix("ws://")
-        .ok_or_else(|| format!("need ws:// url, got {ws_url}"))?;
-    let (hostport, path) = url.split_once('/').unwrap_or((url, ""));
-    let path = format!("/{path}");
-    let mut stream = TcpStream::connect(hostport).map_err(|e| format!("cdp connect: {e}"))?;
-    set_cdp_timeouts(&stream);
-    let key = base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        *b"whycodes-cdp-key!!",
-    );
-    let hs = format!(
-        "GET {path} HTTP/1.1\r\nHost: {hostport}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
-    );
-    stream.write_all(hs.as_bytes()).map_err(|e| e.to_string())?;
-    let mut hdr = [0u8; 1024];
-    let n = stream.read(&mut hdr).map_err(|e| e.to_string())?;
-    let head = String::from_utf8_lossy(&hdr[..n]);
-    if !head.contains("101") {
-        return Err(format!(
-            "ws handshake failed: {}",
-            head.lines().next().unwrap_or("")
-        ));
-    }
+    let mut stream = ws_handshake(ws_url)?;
     let id = 1u64;
-    let payload = json!({"id": id, "method": method, "params": params}).to_string();
-    write_ws_text(&mut stream, payload.as_bytes())?;
+    write_ws_text(&mut stream, cdp_command(id, method, params).as_bytes())?;
+    cdp_response(&mut stream, method, id)
+}
+
+fn cdp_command(id: u64, method: &str, params: Value) -> String {
+    json!({"id": id, "method": method, "params": params}).to_string()
+}
+
+fn cdp_response(stream: &mut TcpStream, method: &str, id: u64) -> Result<Value, String> {
     loop {
-        let msg = read_ws_text(&mut stream)?;
-        let v: Value = serde_json::from_str(&msg).map_err(|e| e.to_string())?;
+        let v = cdp_message(stream)?;
         if v.get("id").and_then(|i| i.as_u64()) == Some(id) {
             return cdp_reply(method, &v);
         }
     }
+}
+
+fn cdp_message(stream: &mut TcpStream) -> Result<Value, String> {
+    serde_json::from_str(&read_ws_text(stream)?).map_err(cdp_json_error)
+}
+
+fn ws_handshake(ws_url: &str) -> Result<TcpStream, String> {
+    let (hostport, path) = ws_target(ws_url)?;
+    let mut stream = TcpStream::connect(hostport).map_err(cdp_connect_error)?;
+    set_cdp_timeouts(&stream);
+    stream
+        .write_all(ws_upgrade(hostport, &path).as_bytes())
+        .map_err(io_err)?;
+    ws_accept(&mut stream)?;
+    Ok(stream)
+}
+
+fn ws_target(ws_url: &str) -> Result<(&str, String), String> {
+    let url = ws_url
+        .strip_prefix("ws://")
+        .ok_or_else(|| format!("need ws:// url, got {ws_url}"))?;
+    let (hostport, path) = url.split_once('/').unwrap_or((url, ""));
+    Ok((hostport, format!("/{path}")))
+}
+
+fn ws_upgrade(hostport: &str, path: &str) -> String {
+    let key = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        *b"whycodes-cdp-key!!",
+    );
+    format!(
+        "GET {path} HTTP/1.1\r\nHost: {hostport}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    )
+}
+
+fn ws_accept(stream: &mut TcpStream) -> Result<(), String> {
+    let mut hdr = [0u8; 1024];
+    let n = stream.read(&mut hdr).map_err(io_err)?;
+    let head = String::from_utf8_lossy(&hdr[..n]);
+    if head.contains("101") {
+        return Ok(());
+    }
+    Err(format!(
+        "ws handshake failed: {}",
+        head.lines().next().unwrap_or("")
+    ))
 }
 
 fn cdp_reply(method: &str, v: &Value) -> Result<Value, String> {
@@ -807,10 +874,20 @@ fn note_browser_child_ok() {}
 fn note_timeout_ok() {}
 
 fn write_ws_text(stream: &mut TcpStream, payload: &[u8]) -> Result<(), String> {
+    stream.write_all(&ws_text_frame(payload)).map_err(io_err)
+}
+
+fn ws_text_frame(payload: &[u8]) -> Vec<u8> {
+    let mask = [0x11, 0x22, 0x33, 0x44];
     let mut frame = Vec::with_capacity(payload.len() + 14);
     frame.push(0x81);
-    let mask = [0x11, 0x22, 0x33, 0x44];
-    let len = payload.len();
+    push_ws_length(&mut frame, payload.len());
+    frame.extend_from_slice(&mask);
+    frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+    frame
+}
+
+fn push_ws_length(frame: &mut Vec<u8>, len: usize) {
     if len < 126 {
         frame.push(0x80 | len as u8);
     } else if len < 65536 {
@@ -820,43 +897,57 @@ fn write_ws_text(stream: &mut TcpStream, payload: &[u8]) -> Result<(), String> {
         frame.push(0x80 | 127);
         frame.extend_from_slice(&(len as u64).to_be_bytes());
     }
-    frame.extend_from_slice(&mask);
-    for (i, b) in payload.iter().enumerate() {
-        frame.push(b ^ mask[i % 4]);
-    }
-    stream.write_all(&frame).map_err(|e| e.to_string())
 }
 
 fn read_ws_text(stream: &mut TcpStream) -> Result<String, String> {
-    let mut hdr = [0u8; 2];
-    stream.read_exact(&mut hdr).map_err(|e| e.to_string())?;
-    let opcode = hdr[0] & 0x0f;
-    let mut len = (hdr[1] & 0x7f) as usize;
-    if len == 126 {
-        let mut ext = [0u8; 2];
-        stream.read_exact(&mut ext).map_err(|e| e.to_string())?;
-        len = u16::from_be_bytes(ext) as usize;
-    } else if len == 127 {
-        let mut ext = [0u8; 8];
-        stream.read_exact(&mut ext).map_err(|e| e.to_string())?;
-        len = u64::from_be_bytes(ext) as usize;
-    }
-    if hdr[1] & 0x80 != 0 {
-        let mut mask = [0u8; 4];
-        stream.read_exact(&mut mask).map_err(|e| e.to_string())?;
-        let mut data = vec![0u8; len];
-        stream.read_exact(&mut data).map_err(|e| e.to_string())?;
-        for (i, b) in data.iter_mut().enumerate() {
-            *b ^= mask[i % 4];
-        }
-        return String::from_utf8(data).map_err(|e| e.to_string());
-    }
-    let mut data = vec![0u8; len];
-    stream.read_exact(&mut data).map_err(|e| e.to_string())?;
+    let (opcode, masked, len) = ws_frame_header(stream)?;
+    let data = ws_frame_payload(stream, masked, len)?;
     if opcode == 0x8 {
         return Err("cdp websocket closed".into());
     }
-    String::from_utf8(data).map_err(|e| e.to_string())
+    String::from_utf8(data).map_err(utf8_frame_error)
+}
+
+fn ws_frame_header(stream: &mut TcpStream) -> Result<(u8, bool, usize), String> {
+    let mut hdr = [0u8; 2];
+    stream.read_exact(&mut hdr).map_err(io_err)?;
+    Ok((
+        hdr[0] & 0x0f,
+        hdr[1] & 0x80 != 0,
+        ws_payload_len(stream, hdr[1] & 0x7f)?,
+    ))
+}
+
+fn ws_payload_len(stream: &mut TcpStream, marker: u8) -> Result<usize, String> {
+    match marker {
+        126 => read_exact_bytes::<2>(stream).map(|b| u16::from_be_bytes(b) as usize),
+        127 => read_exact_bytes::<8>(stream).map(|b| u64::from_be_bytes(b) as usize),
+        len => Ok(len as usize),
+    }
+}
+
+fn read_exact_bytes<const N: usize>(stream: &mut TcpStream) -> Result<[u8; N], String> {
+    let mut bytes = [0u8; N];
+    stream.read_exact(&mut bytes).map_err(io_err)?;
+    Ok(bytes)
+}
+
+fn ws_frame_payload(stream: &mut TcpStream, masked: bool, len: usize) -> Result<Vec<u8>, String> {
+    let mask = masked.then(|| ws_mask(stream)).transpose()?;
+    let mut data = vec![0u8; len];
+    stream.read_exact(&mut data).map_err(io_err)?;
+    if let Some(mask) = mask {
+        for (i, b) in data.iter_mut().enumerate() {
+            *b ^= mask[i % 4];
+        }
+    }
+    Ok(data)
+}
+
+fn ws_mask(stream: &mut TcpStream) -> Result<[u8; 4], String> {
+    let mut mask = [0u8; 4];
+    stream.read_exact(&mut mask).map_err(io_err)?;
+    Ok(mask)
 }
 
 #[cfg(test)]

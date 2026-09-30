@@ -162,6 +162,14 @@ impl Tool for GithubIssueTool {
     }
 }
 
+fn github_request_error(e: impl std::fmt::Display) -> String {
+    format!("GitHub API request failed: {e}")
+}
+
+fn github_response_error(e: impl std::fmt::Display) -> String {
+    format!("Failed to read response: {e}")
+}
+
 async fn request(
     client: &reqwest::Client,
     headers: &reqwest::header::HeaderMap,
@@ -175,16 +183,10 @@ async fn request(
         req = req.json(&b);
     }
 
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("GitHub API request failed: {e}"))?;
+    let resp = req.send().await.map_err(github_request_error)?;
 
     let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read response: {e}"))?;
+    let text = resp.text().await.map_err(github_response_error)?;
 
     if status.is_success() {
         Ok(text)

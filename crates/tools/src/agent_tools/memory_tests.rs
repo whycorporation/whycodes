@@ -449,5 +449,17 @@ async fn store_errors_after_open_cover_every_action() {
             !failed.content.is_empty(),
             "{action} returned an empty error"
         );
+        assert!(
+            failed.content.contains("open memory store")
+                || failed.content.contains("unable to open database"),
+            "{action}: {}",
+            failed.content
+        );
     }
+    assert!(!memory_env_missing(&std::env::VarError::NotPresent));
+    assert!(!memory_disabled(Err(std::env::VarError::NotPresent)));
+    assert!(memory_disabled(Ok("TRUE".into())));
+    assert!(!memory_disabled(Ok("off".into())));
+    assert!(open_memory_error("disk").contains("open memory store"));
+    assert_eq!(memory_err_string("x"), "x");
 }
