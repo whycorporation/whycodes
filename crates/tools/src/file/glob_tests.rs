@@ -206,6 +206,21 @@ async fn remaining_glob_edges() {
     assert_eq!(results.len(), 1);
     assert!(hit_cap);
     assert_eq!(total, 2);
+
+    let mut outside = Vec::new();
+    let mut outside_total = 0usize;
+    let mut outside_cap = false;
+    collect_fallback_glob(
+        vec![Ok(PathBuf::from("elsewhere.rs"))],
+        Path::new(r"C:\no\such\root"),
+        5,
+        &mut outside,
+        &mut outside_total,
+        &mut outside_cap,
+    );
+    assert_eq!(outside, vec!["elsewhere.rs".to_string()]);
+    assert_eq!(outside_total, 1);
+    assert!(!outside_cap);
 }
 
 #[tokio::test]

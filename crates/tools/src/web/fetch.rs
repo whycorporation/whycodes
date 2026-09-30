@@ -9,14 +9,19 @@ use whycodes_core::types::ToolResult;
 pub(crate) fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .user_agent(concat!("whycodes-webfetch/", env!("CARGO_PKG_VERSION")))
-            .pool_max_idle_per_host(4)
-            .tcp_nodelay(true)
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
+        client_or_fallback(
+            reqwest::Client::builder()
+                .user_agent(concat!("whycodes-webfetch/", env!("CARGO_PKG_VERSION")))
+                .pool_max_idle_per_host(4)
+                .tcp_nodelay(true)
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build(),
+        )
     })
+}
+
+fn client_or_fallback<E>(built: Result<reqwest::Client, E>) -> reqwest::Client {
+    built.unwrap_or_else(|_| reqwest::Client::new())
 }
 
 pub struct WebFetchTool;
@@ -111,7 +116,7 @@ impl Tool for WebFetchTool {
                             .bytes()
                             .await
                             .map(|b| b.to_vec())
-                            .map_err(|e| e.to_string()),
+                            .map_err(fetch_body_error),
                     )
                 }
                 Err(e) => ToolResult {
@@ -122,6 +127,10 @@ impl Tool for WebFetchTool {
             }
         })
     }
+}
+
+fn fetch_body_error(e: impl std::fmt::Display) -> String {
+    e.to_string()
 }
 
 fn fetch_bytes_failed(e: &str) -> ToolResult {

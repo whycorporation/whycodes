@@ -33,6 +33,7 @@ async fn clear_without_sink_is_ok() {
         .await;
     assert!(!result.is_error);
     assert!(result.content.contains("no TUI panel"));
+    note_panel_unsunk();
 }
 
 #[tokio::test]
@@ -201,4 +202,28 @@ async fn show_file_rejects_invalid_utf8() {
         .await;
     assert!(bad.is_error, "{}", bad.content);
     assert!(bad.content.contains("not valid UTF-8"), "{}", bad.content);
+}
+
+#[tokio::test]
+async fn show_diff_reports_git_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    // A `.git` file stops parent-repo discovery and is not a valid gitdir.
+    std::fs::write(dir.path().join(".git"), "not-a-gitdir\n").unwrap();
+    std::fs::write(dir.path().join("a.txt"), "x\n").unwrap();
+    let ctx = ToolContext::unsandboxed(dir.path().to_string_lossy().to_string());
+    let failed = PanelTool::new()
+        .execute(json!({"action": "show_diff", "path": "a.txt"}), &ctx)
+        .await;
+    assert!(failed.is_error, "{}", failed.content);
+    assert!(
+        failed.content.contains("git diff failed"),
+        "{}",
+        failed.content
+    );
+
+    let missing = dir.path().join("no-such-workdir");
+    let missing_ctx = ToolContext::unsandboxed(missing.to_string_lossy().to_string());
+    let spawn = git_diff(&missing_ctx, "a.txt").unwrap_err();
+    assert!(spawn.starts_with("git diff:"), "{spawn}");
+    assert_eq!(git_diff_error("cwd missing"), "git diff: cwd missing");
 }

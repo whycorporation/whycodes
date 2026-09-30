@@ -66,6 +66,9 @@ fn json_pretty_printed() {
     assert!(out.contains("\n"));
     assert!(out.contains("\"version\": \"4.5.1\"") || out.contains("\"version\":\"4.5.1\""));
     assert!(out.contains("4.5.1"));
+    assert_eq!(fetch_body_error("eof"), "eof");
+    let fallback = pretty_json_or_raw("not-json", "not-json");
+    assert_eq!(fallback, "not-json");
 }
 
 #[test]
@@ -157,6 +160,8 @@ fn remaining_format_and_html_helpers() {
     assert_eq!(short, "abc");
     let _ = http_client();
     let _ = http_client();
+    let fallback = client_or_fallback::<&str>(Err("builder failed"));
+    let _ = fallback.get("http://127.0.0.1/");
 }
 
 #[tokio::test]
