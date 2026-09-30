@@ -264,8 +264,7 @@ fn write_patched_file(
     modified: &str,
 ) -> ToolResult {
     write_patched_result(
-        crate::file::atomic::write_atomic(Path::new(full_path), modified)
-            .map_err(|e| e.to_string()),
+        crate::file::atomic::write_atomic(Path::new(full_path), modified).map_err(io_error_string),
         shown,
         patch_content,
     )
@@ -414,6 +413,14 @@ fn parse_hunks(patch: &str) -> Result<Vec<Hunk>, String> {
     Ok(hunks)
 }
 
+fn io_error_string(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+fn malformed_hunk_header(line: &str) -> String {
+    format!("malformed hunk header: {line}")
+}
+
 fn parse_hunk_header(line: &str) -> Result<usize, String> {
     // @@ -old_start,old_count +new_start,new_count @@
     let rest = line
@@ -426,7 +433,7 @@ fn parse_hunk_header(line: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("malformed hunk header: {line}"))?;
     let num = old.trim_start_matches('-').split(',').next().unwrap_or("0");
     num.parse::<usize>()
-        .map_err(|_| format!("malformed hunk header: {line}"))
+        .map_err(|_| malformed_hunk_header(line))
 }
 
 fn apply_hunk(file: &mut Vec<(String, bool)>, hunk: &Hunk) -> Result<(), String> {

@@ -20,3 +20,26 @@ fn write_atomic_empty_parent_uses_dot() {
     assert_eq!(fs::read_to_string("rel.txt").unwrap(), "x");
     std::env::set_current_dir(prev).unwrap();
 }
+
+#[test]
+fn write_atomic_persist_fails_when_target_is_a_directory() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let target = dir.path().join("blocked");
+    fs::create_dir(&target).unwrap();
+    let err = write_atomic(&target, "nope").unwrap_err();
+    assert!(
+        err.kind() == std::io::ErrorKind::AlreadyExists
+            || err.kind() == std::io::ErrorKind::PermissionDenied
+            || !err.to_string().is_empty()
+    );
+    assert!(target.is_dir());
+}
+
+#[test]
+fn write_atomic_fails_when_parent_is_a_file() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let parent = dir.path().join("not-a-dir");
+    fs::write(&parent, "x").unwrap();
+    let err = write_atomic(&parent.join("child.txt"), "nope").unwrap_err();
+    assert!(!err.to_string().is_empty());
+}

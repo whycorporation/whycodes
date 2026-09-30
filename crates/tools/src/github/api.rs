@@ -543,13 +543,24 @@ fn wait_poll_sleep() {
     std::thread::sleep(Duration::from_millis(20));
 }
 
+fn invalid_token_error(e: impl std::fmt::Display) -> String {
+    format!("Invalid token: {e}")
+}
+
+fn github_api_request_error(e: impl std::fmt::Display) -> String {
+    format!("GitHub API request failed: {e}")
+}
+
+fn github_api_response_error(e: impl std::fmt::Display) -> String {
+    format!("Failed to read GitHub API response: {e}")
+}
+
 /// Build common headers for GitHub API requests (auth, accept, user-agent).
 pub fn github_headers(token: &str) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     headers.insert(
         "Authorization",
-        HeaderValue::from_str(&format!("Bearer {token}"))
-            .map_err(|e| format!("Invalid token: {e}"))?,
+        HeaderValue::from_str(&format!("Bearer {token}")).map_err(invalid_token_error)?,
     );
     headers.insert(
         "Accept",
@@ -615,15 +626,9 @@ pub async fn make_request_with_policy(
         req = req.json(&b);
     }
 
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("GitHub API request failed: {e}"))?;
+    let resp = req.send().await.map_err(github_api_request_error)?;
     let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read GitHub API response: {e}"))?;
+    let text = resp.text().await.map_err(github_api_response_error)?;
 
     Ok((status, text))
 }

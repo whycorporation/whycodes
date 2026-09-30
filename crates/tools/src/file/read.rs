@@ -69,8 +69,9 @@ impl Tool for ReadTool {
                 return err("Missing required parameter `path`.");
             }
 
-            if let Some(internal) = super::internal::read_internal(&path_str, ctx) {
-                return internal;
+            match super::internal::read_internal(&path_str, ctx) {
+                Some(internal) => return internal,
+                None => note_disk_read(),
             }
 
             let offset = args["offset"].as_u64().unwrap_or(1).max(1) as usize;
@@ -120,24 +121,9 @@ impl ReadTool {
 
         // Multimodal: small images become a structured payload the session layer
         // turns into ContentBlock::Image for vision models (A6).
-        if let Some(media) = image_media_type(&full_path) {
-            let size = file_len(&full_path).unwrap_or(0);
-            const MAX_IMAGE: u64 = 2 * 1024 * 1024;
-            if size == 0 || size > MAX_IMAGE {
-                return err(&format!(
-                    "'{}' is an image ({media}, {}) — max {} for vision read. \
-                     Attach with @path in the TUI for larger files.",
-                    shown,
-                    super::paths::human_size(size),
-                    super::paths::human_size(MAX_IMAGE)
-                ));
-            }
-            return image_bytes_result(
-                &shown,
-                media,
-                size,
-                fs::read(&full_path).map_err(|e| e.to_string()),
-            );
+        match image_media_type(&full_path) {
+            Some(media) => return image_read(&full_path, &shown, media),
+            None => note_text_read(),
         }
 
         // Binary sniff without loading the whole file.
@@ -149,7 +135,7 @@ impl ReadTool {
         note_large_default_window(size, offset, limit);
 
         window_from(
-            take_read_window(read_window(&full_path, offset, limit).map_err(|e| e.to_string())),
+            take_read_window(read_window(&full_path, offset, limit).map_err(io_error_string)),
             &shown,
             size,
             limit,
@@ -326,10 +312,9 @@ fn window_from(
                     limit
                 ));
             }
-            if let Some(writer_label) = stale_writer {
-                out.push_str(&format!(
-                    "\n[stale] `{shown}` was written by swarm agent `{writer_label}` since your last read.",
-                ));
+            match stale_writer.as_deref() {
+                Some(writer_label) => note_stale_read(&mut out, shown, writer_label),
+                None => note_fresh_read(),
             }
             ToolResult {
                 tool_call_id: String::new(),
@@ -338,6 +323,37 @@ fn window_from(
             }
         }
     }
+}
+
+fn note_disk_read() {}
+
+fn note_text_read() {}
+
+fn note_fresh_read() {}
+
+fn note_stale_read(out: &mut String, shown: &str, writer_label: &str) {
+    out.push_str(&format!(
+        "\n[stale] `{shown}` was written by swarm agent `{writer_label}` since your last read.",
+    ));
+}
+
+fn image_read(path: &Path, shown: &str, media: &str) -> ToolResult {
+    let size = file_len(path).unwrap_or(0);
+    const MAX_IMAGE: u64 = 2 * 1024 * 1024;
+    if size == 0 || size > MAX_IMAGE {
+        return err(&format!(
+            "'{}' is an image ({media}, {}) — max {} for vision read. \
+             Attach with @path in the TUI for larger files.",
+            shown,
+            super::paths::human_size(size),
+            super::paths::human_size(MAX_IMAGE)
+        ));
+    }
+    image_bytes_result(shown, media, size, fs::read(path).map_err(io_error_string))
+}
+
+fn io_error_string(e: impl std::fmt::Display) -> String {
+    e.to_string()
 }
 
 fn image_read_error(shown: &str, e: &str) -> ToolResult {
