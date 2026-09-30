@@ -194,8 +194,9 @@ fn ensure_session() -> Result<u16, String> {
 }
 
 fn ensure_session_with_browser(bin: Option<PathBuf>) -> Result<u16, String> {
-    if let Some(port) = existing_session_port(SESSION.lock()) {
-        return Ok(port);
+    match existing_session_port(SESSION.lock()) {
+        Some(port) => return Ok(port),
+        None => note_browser_launch(),
     }
     let bin = bin.ok_or_else(|| {
         "No Chromium/Chrome on PATH. Install Chromium or set WHYCODES_BROWSER.".to_string()
@@ -256,20 +257,29 @@ fn mkdir_browser_profile(dir: &Path) {
 }
 
 fn mkdir_browser_profile_result(result: std::io::Result<()>) {
-    if let Err(e) = result {
-        tracing::debug!(error = %e, "browser profile mkdir");
+    match result {
+        Ok(()) => note_browser_profile_ok(),
+        Err(e) => tracing::debug!(error = %e, "browser profile mkdir"),
     }
 }
 
 fn store_session(child: Child, port: u16, dir: PathBuf) -> Result<u16, String> {
-    if let Ok(mut g) = SESSION.lock() {
-        *g = Some(BrowserSession {
-            child,
-            port,
-            _user_data: dir,
-        });
-    }
+    let mut g = SESSION.lock().unwrap_or_else(|p| p.into_inner());
+    store_locked_session(&mut g, child, port, dir);
     Ok(port)
+}
+
+fn store_locked_session(
+    g: &mut std::sync::MutexGuard<'static, Option<BrowserSession>>,
+    child: Child,
+    port: u16,
+    dir: PathBuf,
+) {
+    **g = Some(BrowserSession {
+        child,
+        port,
+        _user_data: dir,
+    });
 }
 
 fn poll_session_ready(mut child: Child, port: u16, mut dir: PathBuf) -> Result<u16, String> {
@@ -457,8 +467,9 @@ fn page_enable_best_effort(port: u16) {
 }
 
 fn page_enable_result(result: Result<Value, String>) {
-    if let Err(e) = result {
-        tracing::debug!(error = %e, "Page.enable");
+    match result {
+        Ok(_) => note_page_enable_ok(),
+        Err(e) => tracing::debug!(error = %e, "Page.enable"),
     }
 }
 
@@ -580,8 +591,9 @@ fn screenshot_write_failed(e: &str) -> ToolResult {
 
 fn write_screenshot_bytes(ctx: &ToolContext, bytes: &[u8]) -> ToolResult {
     let dir = whycodes_core::project_dir(Path::new(&ctx.working_dir)).join("browser");
-    if let Err(e) = mkdir_screenshot_dir(&dir) {
-        return e;
+    match mkdir_screenshot_dir(&dir) {
+        Ok(()) => note_screenshot_dir_ok(),
+        Err(e) => return e,
     }
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -604,12 +616,16 @@ fn write_screenshot_file(path: &Path, bytes: &[u8]) -> ToolResult {
 
 fn close_browser() -> ToolResult {
     let mut g = SESSION.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(mut s) = g.take() {
-        kill_browser_child(&mut s.child);
-        wait_browser_child(&mut s.child);
-        return ok("browser closed");
+    match g.take() {
+        Some(mut s) => close_taken_session(&mut s),
+        None => ok("no browser session"),
     }
-    ok("no browser session")
+}
+
+fn close_taken_session(s: &mut BrowserSession) -> ToolResult {
+    kill_browser_child(&mut s.child);
+    wait_browser_child(&mut s.child);
+    ok("browser closed")
 }
 
 fn current_port() -> Option<u16> {
@@ -662,14 +678,16 @@ fn set_cdp_timeouts(stream: &TcpStream) {
 }
 
 fn kill_child_debug(result: std::io::Result<()>, msg: &'static str) {
-    if let Err(e) = result {
-        tracing::debug!(error = %e, "{msg}");
+    match result {
+        Ok(()) => note_browser_child_ok(),
+        Err(e) => tracing::debug!(error = %e, "{msg}"),
     }
 }
 
 fn set_timeout_debug(result: std::io::Result<()>, msg: &'static str) {
-    if let Err(e) = result {
-        tracing::debug!(error = %e, "{msg}");
+    match result {
+        Ok(()) => note_timeout_ok(),
+        Err(e) => tracing::debug!(error = %e, "{msg}"),
     }
 }
 
@@ -687,9 +705,13 @@ fn evaluate(port: u16, expression: &str) -> Result<Value, String> {
 
 fn evaluate_cdp_result(result: Result<Value, String>) -> Result<Value, String> {
     let v = result?;
-    if let Some(ex) = v.get("exceptionDetails") {
-        return js_exception_from(ex);
+    match v.get("exceptionDetails") {
+        Some(ex) => js_exception_from(ex),
+        None => cdp_eval_value(&v),
     }
+}
+
+fn cdp_eval_value(v: &Value) -> Result<Value, String> {
     Ok(v.get("result")
         .and_then(|r| r.get("value"))
         .cloned()
@@ -760,13 +782,29 @@ fn ws_cdp_call(ws_url: &str, method: &str, params: Value) -> Result<Value, Strin
         let msg = read_ws_text(&mut stream)?;
         let v: Value = serde_json::from_str(&msg).map_err(|e| e.to_string())?;
         if v.get("id").and_then(|i| i.as_u64()) == Some(id) {
-            if let Some(err) = v.get("error") {
-                return Err(format!("cdp {method}: {err}"));
-            }
-            return Ok(v.get("result").cloned().unwrap_or(Value::Null));
+            return cdp_reply(method, &v);
         }
     }
 }
+
+fn cdp_reply(method: &str, v: &Value) -> Result<Value, String> {
+    match v.get("error") {
+        Some(err) => Err(format!("cdp {method}: {err}")),
+        None => Ok(v.get("result").cloned().unwrap_or(Value::Null)),
+    }
+}
+
+fn note_browser_launch() {}
+
+fn note_browser_profile_ok() {}
+
+fn note_page_enable_ok() {}
+
+fn note_screenshot_dir_ok() {}
+
+fn note_browser_child_ok() {}
+
+fn note_timeout_ok() {}
 
 fn write_ws_text(stream: &mut TcpStream, payload: &[u8]) -> Result<(), String> {
     let mut frame = Vec::with_capacity(payload.len() + 14);

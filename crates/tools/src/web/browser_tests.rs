@@ -933,4 +933,14 @@ fn uncovered_io_error_arms() {
     );
     assert_eq!(stored.ok(), Some(17));
     drop(close_browser());
+
+    // A shut-down socket fails the masked WebSocket write. Dropping the peer
+    // is not enough on Windows: the kernel still accepts a small buffered write.
+    let (mut writer, reader) = connected_streams();
+    drop(reader);
+    writer
+        .shutdown(std::net::Shutdown::Both)
+        .expect("shutdown writer");
+    let wrote = write_ws_text(&mut writer, b"late");
+    assert!(wrote.is_err(), "write to a closed socket should fail");
 }

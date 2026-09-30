@@ -429,4 +429,28 @@ fn walk_file_and_shared_prefix_suggestions() {
     fs::write(dir.path().join("readme_extra.md"), "x").unwrap();
     let hits = suggest_similar(&dir.path().join("readme"), 5);
     assert!(hits.iter().any(|n| n.starts_with("readme")), "{hits:?}");
+
+    // `usize::MAX` depth is the unlimited walk (`walk_files` uses this).
+    let mut unlimited = 0usize;
+    let stopped = walk_entries(dir.path(), usize::MAX, usize::MAX, &mut |_, _, _, _| {
+        unlimited += 1;
+        true
+    });
+    assert!(!stopped);
+    assert!(unlimited >= 2, "unlimited walk visited {unlimited}");
+
+    // A file whose name is not valid Unicode takes the display-string fallback.
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let weird = dir.path().join(std::ffi::OsStr::from_bytes(&[0xff, 0xfe]));
+        fs::write(&weird, "z").unwrap();
+        let mut rels = Vec::new();
+        walk_entries(&weird, 1, 4, &mut |_, rel, _, _| {
+            rels.push(rel.to_string());
+            true
+        });
+        assert_eq!(rels.len(), 1);
+        assert!(!rels[0].is_empty());
+    }
 }

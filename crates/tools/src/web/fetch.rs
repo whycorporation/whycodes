@@ -153,6 +153,17 @@ fn fetch_bytes_result(
     }
 }
 
+fn pretty_json_or_raw(trimmed: &str, raw: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_else(|_| raw.to_string()),
+        Err(err) => json_parse_fallback(raw, &err),
+    }
+}
+
+fn json_parse_fallback(raw: &str, _err: &serde_json::Error) -> String {
+    raw.to_string()
+}
+
 fn fetch_read_error(e: &str) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
@@ -168,10 +179,7 @@ fn format_body(content_type: &str, raw: &str) -> String {
 
     // JSON: pretty-print when possible; never HTML-strip.
     if ct.contains("json") || looks_like_json(trimmed) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            return serde_json::to_string_pretty(&value).unwrap_or_else(|_| raw.to_string());
-        }
-        return raw.to_string();
+        return pretty_json_or_raw(trimmed, raw);
     }
 
     // Markdown / plain: return as-is (collapse only extreme blank runs later if needed).

@@ -25,11 +25,19 @@ fn data_dir() -> PathBuf {
     whycodes_core::paths::data_dir()
 }
 
+fn memory_disabled(value: Result<String, std::env::VarError>) -> bool {
+    match value {
+        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Err(err) => memory_env_missing(&err),
+    }
+}
+
+fn memory_env_missing(_err: &std::env::VarError) -> bool {
+    false
+}
+
 fn service_for(ctx: &ToolContext) -> Result<MemoryService, String> {
-    if std::env::var("WHYCODES_NO_MEMORY")
-        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
-    {
+    if memory_disabled(std::env::var("WHYCODES_NO_MEMORY")) {
         return Err("memory is disabled (WHYCODES_NO_MEMORY)".into());
     }
     let project = PathBuf::from(&ctx.working_dir);

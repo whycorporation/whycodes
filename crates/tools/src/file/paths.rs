@@ -78,8 +78,9 @@ pub fn visit_index(
     let prefix = prefix.trim_matches('/').to_string();
     let mut keep = true;
     index.visit(&mut |e| {
-        if let Err(stop) = index_entry_continue(keep) {
-            return stop;
+        match index_entry_continue(keep) {
+            Err(stop) => return stop,
+            Ok(()) => note_index_entry_kept(),
         }
         let in_scope = entry_in_scope(&prefix, &e.rel);
         if in_scope {
@@ -194,6 +195,8 @@ fn index_entry_continue(keep: bool) -> Result<(), bool> {
         None => Ok(()),
     }
 }
+
+fn note_index_entry_kept() {}
 
 fn entry_in_scope(prefix: &str, rel: &str) -> bool {
     prefix.is_empty()

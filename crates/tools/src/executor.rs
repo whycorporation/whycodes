@@ -176,8 +176,9 @@ impl ToolExecutor {
         };
         {
             let cache = self.defs_cache.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(hit) = cache.get(&key) {
-                return Arc::clone(hit);
+            match cache.get(&key) {
+                Some(hit) => return Arc::clone(hit),
+                None => note_defs_cache_miss(),
             }
         }
         let mut defs: Vec<_> = self
@@ -232,22 +233,24 @@ impl ToolExecutor {
 
         let toml = load_plugin_toml(project_dir);
         for cfg in toml.plugins {
-            if let Some(cfg) = keep_plugin_cfg(cfg) {
-                by_name.insert(cfg.name.clone(), cfg);
+            match keep_plugin_cfg(cfg) {
+                Some(cfg) => insert_plugin(&mut by_name, cfg),
+                None => note_plugin_cfg_skipped(),
             }
         }
 
         let mut mgr = whycodes_plugin::PluginManager::new();
         mgr.discover_standard(project_dir);
         for spec in mgr.shell_specs() {
-            if let Some(cfg) = keep_plugin_spec(
+            match keep_plugin_spec(
                 spec.name,
                 spec.command,
                 spec.description,
                 spec.parameters,
                 spec.working_dir,
             ) {
-                by_name.insert(cfg.name.clone(), cfg);
+                Some(cfg) => insert_plugin(&mut by_name, cfg),
+                None => note_plugin_spec_skipped(),
             }
         }
 
@@ -320,6 +323,19 @@ fn skipped_plugin_toml(e: &str, msg: &'static str) -> whycodes_skill::PluginRegi
 
 fn skip_empty_plugin_cfg(name: &str, command: &str) -> bool {
     name.trim().is_empty() || command.trim().is_empty()
+}
+
+fn note_defs_cache_miss() {}
+
+fn note_plugin_cfg_skipped() {}
+
+fn note_plugin_spec_skipped() {}
+
+fn insert_plugin(
+    by_name: &mut std::collections::BTreeMap<String, whycodes_skill::PluginConfig>,
+    cfg: whycodes_skill::PluginConfig,
+) {
+    by_name.insert(cfg.name.clone(), cfg);
 }
 
 fn keep_plugin_cfg(cfg: whycodes_skill::PluginConfig) -> Option<whycodes_skill::PluginConfig> {

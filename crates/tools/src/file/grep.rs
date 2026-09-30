@@ -510,9 +510,12 @@ fn search_file_at_cap(matches: usize, max_results: usize) -> bool {
 
 fn skip_search_at_cap() {}
 
+fn note_search_ok() {}
+
 fn handle_search_err(file: &Path, result: Result<(), String>) {
-    if let Err(err) = result {
-        skip_unsearchable(file, &err);
+    match result {
+        Ok(()) => note_search_ok(),
+        Err(err) => skip_unsearchable(file, &err),
     }
 }
 

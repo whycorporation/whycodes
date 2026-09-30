@@ -55,17 +55,24 @@ pub struct QuestionAnswer {
 impl QuestionAnswer {
     pub fn summary(&self) -> String {
         let mut parts = self.selected.clone();
-        if let Some(ref t) = self.free_text {
-            let t = t.trim();
-            if !t.is_empty() {
-                parts.push(format!("Other: {t}"));
-            }
+        match self.free_text.as_ref() {
+            Some(t) => push_other_summary(&mut parts, t),
+            None => note_no_free_text(),
         }
         if parts.is_empty() {
             "(no selection)".into()
         } else {
             parts.join("; ")
         }
+    }
+}
+
+fn note_no_free_text() {}
+
+fn push_other_summary(parts: &mut Vec<String>, text: &str) {
+    let t = text.trim();
+    if !t.is_empty() {
+        parts.push(format!("Other: {t}"));
     }
 }
 
@@ -123,21 +130,9 @@ fn too_many_single_select(selected: &[String]) -> bool {
 /// - Grok-style: `{ "questions": [ { "question", "options": [{label,description}], "multi_select" } ] }`
 /// - Legacy: `{ "question": "...", "choices": ["a","b"] }`
 pub fn parse_questions(args: &serde_json::Value) -> Result<Vec<QuestionSpec>, String> {
-    if let Some(arr) = args.get("questions").and_then(|v| v.as_array()) {
-        if arr.is_empty() {
-            return Err("questions array must not be empty".into());
-        }
-        if arr.len() > MAX_QUESTIONS {
-            return Err(format!(
-                "at most {MAX_QUESTIONS} questions (got {})",
-                arr.len()
-            ));
-        }
-        let mut out = Vec::with_capacity(arr.len());
-        for (i, item) in arr.iter().enumerate() {
-            out.push(parse_one_question(item).map_err(|e| format!("questions[{i}]: {e}"))?);
-        }
-        return Ok(out);
+    match args.get("questions").and_then(|v| v.as_array()) {
+        Some(arr) => return parse_questions_array(arr),
+        None => note_legacy_question(),
     }
 
     let prompt = args
@@ -194,74 +189,178 @@ fn parse_one_question(item: &serde_json::Value) -> Result<QuestionSpec, String> 
 }
 
 fn parse_choices_or_options(item: &serde_json::Value) -> Result<Vec<QuestionOption>, String> {
-    if let Some(opts) = item.get("options").and_then(|v| v.as_array()) {
-        let mut out = Vec::new();
-        for (i, o) in opts.iter().enumerate() {
-            if let Some(s) = o.as_str() {
-                let s = s.trim();
-                if s.is_empty() {
-                    continue;
-                }
-                out.push(QuestionOption {
-                    label: s.to_string(),
-                    description: String::new(),
-                    preview: None,
-                });
-                continue;
-            }
-            let label = o
-                .get("label")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| format!("options[{i}]: missing label"))?
-                .to_string();
-            let description = o
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            let preview = o
-                .get("preview")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            out.push(QuestionOption {
-                label,
-                description,
-                preview,
-            });
-        }
-        if out.is_empty() {
-            // Models often emit `"options": []` for free-form; treat like omitted.
-            return Ok(Vec::new());
-        }
-        return Ok(out);
+    match item.get("options").and_then(|v| v.as_array()) {
+        Some(opts) => return parse_option_values(opts),
+        None => note_no_options_array(),
     }
 
-    if let Some(choices) = item.get("choices").and_then(|v| v.as_array()) {
-        let mut out = Vec::new();
-        for c in choices {
-            if let Some(s) = c.as_str() {
-                let s = s.trim();
-                if !s.is_empty() {
-                    out.push(QuestionOption {
-                        label: s.to_string(),
-                        description: String::new(),
-                        preview: None,
-                    });
-                }
-            }
-        }
-        if out.is_empty() {
-            return Err("choices must contain at least one non-empty string".into());
-        }
-        return Ok(out);
+    match item.get("choices").and_then(|v| v.as_array()) {
+        Some(choices) => return parse_choice_values(choices),
+        None => note_no_choices_array(),
     }
 
     // Free-form only (no options) — UI will offer Other / free text.
     Ok(Vec::new())
 }
+
+fn note_legacy_question() {}
+
+fn note_no_options_array() {}
+
+fn note_no_choices_array() {}
+
+fn parse_questions_array(arr: &[serde_json::Value]) -> Result<Vec<QuestionSpec>, String> {
+    if arr.is_empty() {
+        return Err("questions array must not be empty".into());
+    }
+    if arr.len() > MAX_QUESTIONS {
+        return Err(format!(
+            "at most {MAX_QUESTIONS} questions (got {})",
+            arr.len()
+        ));
+    }
+    let mut out = Vec::with_capacity(arr.len());
+    for (i, item) in arr.iter().enumerate() {
+        out.push(parse_one_question(item).map_err(|e| format!("questions[{i}]: {e}"))?);
+    }
+    Ok(out)
+}
+
+fn parse_option_values(opts: &[serde_json::Value]) -> Result<Vec<QuestionOption>, String> {
+    let mut out = Vec::new();
+    for (i, o) in opts.iter().enumerate() {
+        match o.as_str() {
+            Some(s) => push_string_option(&mut out, s),
+            None => out.push(parse_option_object(o, i)?),
+        }
+    }
+    if out.is_empty() {
+        // Models often emit `"options": []` for free-form; treat like omitted.
+        return Ok(Vec::new());
+    }
+    Ok(out)
+}
+
+fn push_string_option(out: &mut Vec<QuestionOption>, raw: &str) {
+    let s = raw.trim();
+    if s.is_empty() {
+        return;
+    }
+    out.push(QuestionOption {
+        label: s.to_string(),
+        description: String::new(),
+        preview: None,
+    });
+}
+
+fn parse_option_object(o: &serde_json::Value, i: usize) -> Result<QuestionOption, String> {
+    let label = o
+        .get("label")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("options[{i}]: missing label"))?
+        .to_string();
+    let description = o
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let preview = o
+        .get("preview")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Ok(QuestionOption {
+        label,
+        description,
+        preview,
+    })
+}
+
+fn parse_choice_values(choices: &[serde_json::Value]) -> Result<Vec<QuestionOption>, String> {
+    let mut out = Vec::new();
+    for c in choices {
+        match c.as_str() {
+            Some(s) => push_string_option(&mut out, s),
+            None => note_non_string_choice(),
+        }
+    }
+    if out.is_empty() {
+        return Err("choices must contain at least one non-empty string".into());
+    }
+    Ok(out)
+}
+
+fn note_non_string_choice() {}
+
+fn free_text_part(part: &str, _err: &std::num::ParseIntError) -> Option<String> {
+    Some(part.to_string())
+}
+
+fn numbered_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> Option<QuestionAnswer> {
+    match line.parse::<usize>() {
+        Ok(n) => option_for_number(q, other_n, n),
+        Err(err) => typed_not_a_number(&err),
+    }
+}
+
+fn typed_not_a_number(_err: &std::num::ParseIntError) -> Option<QuestionAnswer> {
+    None
+}
+
+fn option_for_number(q: &QuestionSpec, other_n: usize, n: usize) -> Option<QuestionAnswer> {
+    match n_in_options(n, q.options.len()) {
+        true => Some(labeled_stdin_answer(&q.options[n - 1].label)),
+        false => other_or_none(n == other_n),
+    }
+}
+
+fn n_in_options(n: usize, len: usize) -> bool {
+    n >= 1 && n <= len
+}
+
+fn labeled_stdin_answer(label: &str) -> QuestionAnswer {
+    QuestionAnswer {
+        selected: vec![label.to_string()],
+        free_text: None,
+        auto_picked: false,
+    }
+}
+
+fn other_or_none(is_other: bool) -> Option<QuestionAnswer> {
+    match is_other {
+        true => Some(other_stdin_answer()),
+        false => None,
+    }
+}
+
+fn apply_multi_number(
+    selected: &mut Vec<String>,
+    free: &mut Option<String>,
+    q: &QuestionSpec,
+    other_n: usize,
+    n: usize,
+) {
+    if n >= 1 && n <= q.options.len() {
+        selected.push(q.options[n - 1].label.clone());
+    } else if n == other_n {
+        *free = Some(String::new());
+    }
+}
+
+fn other_stdin_answer() -> QuestionAnswer {
+    eprint!("   Other text: ");
+    let _ = io::stderr().flush();
+    let t = read_line_stdin().unwrap_or_default();
+    QuestionAnswer {
+        selected: vec![],
+        free_text: if t.is_empty() { None } else { Some(t) },
+        auto_picked: false,
+    }
+}
+
+fn note_typed_stdin() {}
 
 /// Format answers for the model (tool result body).
 pub fn format_question_result(questions: &[QuestionSpec], answers: &[QuestionAnswer]) -> String {
@@ -479,14 +578,9 @@ fn resolve_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> Questio
             if part.is_empty() {
                 continue;
             }
-            if let Ok(n) = part.parse::<usize>() {
-                if n >= 1 && n <= q.options.len() {
-                    selected.push(q.options[n - 1].label.clone());
-                } else if n == other_n {
-                    free = Some(String::new());
-                }
-            } else {
-                free = Some(part.to_string());
+            match part.parse::<usize>() {
+                Ok(n) => apply_multi_number(&mut selected, &mut free, q, other_n, n),
+                Err(err) => free = free_text_part(part, &err),
             }
         }
         if free.as_ref().is_some_and(|s| s.is_empty()) {
@@ -504,24 +598,9 @@ fn resolve_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> Questio
         };
     }
 
-    if let Ok(n) = line.parse::<usize>() {
-        if n >= 1 && n <= q.options.len() {
-            return QuestionAnswer {
-                selected: vec![q.options[n - 1].label.clone()],
-                free_text: None,
-                auto_picked: false,
-            };
-        }
-        if n == other_n {
-            eprint!("   Other text: ");
-            let _ = io::stderr().flush();
-            let t = read_line_stdin().unwrap_or_default();
-            return QuestionAnswer {
-                selected: vec![],
-                free_text: if t.is_empty() { None } else { Some(t) },
-                auto_picked: false,
-            };
-        }
+    match numbered_stdin_answer(q, line, other_n) {
+        Some(answer) => return answer,
+        None => note_typed_stdin(),
     }
     // Typed answer: match label case-insensitively or treat as free text
     for opt in &q.options {

@@ -166,6 +166,11 @@ async fn git_diff_success_and_mermaid_missing_file() {
 
     let git_fail = git_diff(&ctx, "nope.txt");
     assert!(git_fail.is_ok() || git_fail.unwrap_err().contains("git"));
+    // A huge unified diff is truncated at the preview cap.
+    let huge_diff = format!("+{}\n", "y".repeat(MAX_PREVIEW_BYTES + 32));
+    let capped = cap_text(&huge_diff);
+    assert!(capped.len() > MAX_PREVIEW_BYTES);
+    assert!(capped.ends_with("\n…"));
 
     let clean = t
         .execute(json!({"action": "show_diff", "path": "a.txt"}), &ctx)
