@@ -521,6 +521,12 @@ fn register_config_plugins_invalid_toml_and_empty_json_name() {
         r#"{"name":"","command":"echo"}"#,
     )
     .unwrap();
+    std::fs::create_dir_all(why.join("plugins").join("empty-cmd")).unwrap();
+    std::fs::write(
+        why.join("plugins").join("empty-cmd").join("plugin.json"),
+        r#"{"name":"empty-cmd","command":""}"#,
+    )
+    .unwrap();
     let mut ex = ToolExecutor::new();
     let _ = ex.register_config_plugins(Some(dir.path()));
     let n = ex.register_config_plugins(None);
@@ -551,7 +557,17 @@ fn fingerprint_hashes_every_rule_and_poisoned_cache_still_serves() {
     assert!(recovered.iter().all(|d| d.name != "bash"));
     note_defs_cache_miss();
     note_plugin_cfg_skipped();
-    note_plugin_spec_skipped();
+    note_plugin_spec_skipped("", "echo");
+    assert!(
+        keep_plugin_spec(
+            "empty-cmd".into(),
+            String::new(),
+            String::new(),
+            None,
+            std::path::PathBuf::from("."),
+        )
+        .is_none()
+    );
     assert!(
         keep_plugin_cfg(PluginConfig {
             name: "  ".into(),

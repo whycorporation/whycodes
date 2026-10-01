@@ -100,11 +100,7 @@ impl RepoMapTool {
             .map(|n| n as usize)
             .unwrap_or(DEFAULT_MAX_TOKENS)
             .clamp(MIN_TOKENS, HARD_MAX_TOKENS);
-        let max_files = args["max_files"]
-            .as_u64()
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_MAX_FILES)
-            .clamp(1, HARD_MAX_FILES);
+        let max_files = file_budget(args["max_files"].as_u64());
 
         let mut files: Vec<(PathBuf, String)> = Vec::new();
         collect_repomap_files(
@@ -233,6 +229,13 @@ fn file_block_from(path: &Path, rel: String) -> Option<FileBlock> {
         None
     } else {
         Some(FileBlock { rel, sigs })
+    }
+}
+
+fn file_budget(max_files: Option<u64>) -> usize {
+    match max_files {
+        Some(n) => (n as usize).clamp(1, HARD_MAX_FILES),
+        None => DEFAULT_MAX_FILES,
     }
 }
 

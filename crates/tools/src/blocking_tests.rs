@@ -17,6 +17,12 @@ async fn run_and_tool_ok() {
     .await;
     assert!(!r.is_error);
     assert_eq!(r.content, "ok");
+    let echoed = finished_tool(ToolResult {
+        tool_call_id: String::new(),
+        content: "done".into(),
+        is_error: false,
+    });
+    assert_eq!(echoed.content, "done");
 }
 
 #[tokio::test]

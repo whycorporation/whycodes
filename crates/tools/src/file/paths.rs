@@ -377,10 +377,7 @@ pub fn walk_entries(
     visit: &mut VisitEntryFn<'_>,
 ) -> bool {
     if root.is_file() {
-        let rel = root
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| walk_file_rel(root));
+        let rel = file_name_or_rel(root);
         let size = file_len(root);
         let _ = visit(root, &rel, false, size);
         return false;
@@ -421,10 +418,7 @@ pub fn walk_entries(
         };
         let is_dir = ft.is_dir();
         let path = entry.path();
-        let rel = path
-            .strip_prefix(root)
-            .map(|p| p.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|_| path.display().to_string());
+        let rel = relative_walk_path(root, path);
         let size = if is_dir {
             None
         } else {
@@ -446,6 +440,20 @@ pub fn walk_entries(
 /// Seek-friendly check: file size via metadata.
 pub fn file_len(path: &Path) -> Option<u64> {
     fs::metadata(path).ok().map(|m| m.len())
+}
+
+fn file_name_or_rel(root: &Path) -> String {
+    match root.file_name() {
+        Some(name) => name.to_string_lossy().into_owned(),
+        None => walk_file_rel(root),
+    }
+}
+
+fn relative_walk_path(root: &Path, path: &Path) -> String {
+    match path.strip_prefix(root) {
+        Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+        Err(_) => path.display().to_string(),
+    }
 }
 
 fn walk_file_rel(root: &Path) -> String {

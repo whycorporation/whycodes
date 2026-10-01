@@ -482,6 +482,12 @@ fn walk_file_and_shared_prefix_suggestions() {
     assert!(!stopped);
     assert!(unlimited >= 2, "unlimited walk visited {unlimited}");
     assert_eq!(walk_file_rel(Path::new("notes.txt")), "notes.txt");
+    assert_eq!(file_name_or_rel(Path::new("")), "");
+    assert_eq!(file_name_or_rel(Path::new("notes.txt")), "notes.txt");
+    let outside = relative_walk_path(Path::new("no-such-root"), Path::new("elsewhere.txt"));
+    assert!(outside.contains("elsewhere.txt"), "{outside}");
+    let nested = dir.path().join("src").join("lib.rs");
+    assert_eq!(relative_walk_path(dir.path(), &nested), "src/lib.rs");
     // A missing root cannot be canonicalized; the index visit keeps that path.
     let idx = whycodes_index::WorkspaceIndex::start_with(
         vec![dir.path().to_path_buf()],

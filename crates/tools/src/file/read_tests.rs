@@ -362,3 +362,8 @@ async fn execute_skill_url_loads_project_skill() {
         .await;
     assert!(!agent.is_error, "{}", agent.content);
 }
+
+#[test]
+fn image_io_error_string_is_named() {
+    assert_eq!(display_error(&"unreadable"), "unreadable");
+}

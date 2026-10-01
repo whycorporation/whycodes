@@ -125,6 +125,9 @@ fn pack_blocks_stops_at_budget() {
             sigs: vec!["fn quite_a_long_function_name_for_budget()".into(); 12],
         })
         .collect();
+    assert_eq!(file_budget(None), 80);
+    assert_eq!(file_budget(Some(1)), 1);
+    assert_eq!(file_budget(Some(9_999)), 400);
     let (body, used, omitted) = pack_blocks(&blocks, 500);
     assert!(!body.is_empty());
     assert!(used < 20, "used={used}");

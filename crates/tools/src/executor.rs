@@ -117,15 +117,12 @@ impl ToolExecutor {
     }
 
     fn invalidate_defs_cache(&self) {
-        self.defs_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
+        recover_defs_cache(&self.defs_cache).clear();
     }
 
     #[cfg(test)]
     fn poison_defs_cache_for_test(&self) {
-        let _guard = self.defs_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = recover_defs_cache(&self.defs_cache);
         panic!("poison defs cache");
     }
 
@@ -175,7 +172,7 @@ impl ToolExecutor {
             extra: extra_key.into_boxed_slice(),
         };
         {
-            let cache = self.defs_cache.lock().unwrap_or_else(|e| e.into_inner());
+            let cache = recover_defs_cache(&self.defs_cache);
             match cache.get(&key) {
                 Some(hit) => return Arc::clone(hit),
                 None => note_defs_cache_miss(),
@@ -192,7 +189,7 @@ impl ToolExecutor {
             .collect();
         defs.sort_by(|a, b| a.name.cmp(&b.name));
         let arc: Arc<[ToolDefinition]> = defs.into();
-        let mut cache = self.defs_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = recover_defs_cache(&self.defs_cache);
         cache.insert(key, Arc::clone(&arc));
         arc
     }
@@ -242,6 +239,8 @@ impl ToolExecutor {
         let mut mgr = whycodes_plugin::PluginManager::new();
         mgr.discover_standard(project_dir);
         for spec in mgr.shell_specs() {
+            let name = spec.name.clone();
+            let command = spec.command.clone();
             match keep_plugin_spec(
                 spec.name,
                 spec.command,
@@ -250,7 +249,7 @@ impl ToolExecutor {
                 spec.working_dir,
             ) {
                 Some(cfg) => insert_plugin(&mut by_name, cfg),
-                None => note_plugin_spec_skipped(),
+                None => note_plugin_spec_skipped(&name, &command),
             }
         }
 
@@ -329,7 +328,22 @@ fn note_defs_cache_miss() {}
 
 fn note_plugin_cfg_skipped() {}
 
-fn note_plugin_spec_skipped() {}
+fn note_plugin_spec_skipped(name: &str, command: &str) {
+    tracing::debug!(
+        plugin = name,
+        command,
+        "plugin spec skipped: empty name or command"
+    );
+}
+
+fn recover_defs_cache(
+    cache: &Mutex<FxHashMap<DefsCacheKey, Arc<[ToolDefinition]>>>,
+) -> std::sync::MutexGuard<'_, FxHashMap<DefsCacheKey, Arc<[ToolDefinition]>>> {
+    match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
 
 fn insert_plugin(
     by_name: &mut std::collections::BTreeMap<String, whycodes_skill::PluginConfig>,

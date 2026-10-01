@@ -29,13 +29,17 @@ where
     F: FnOnce() -> ToolResult + Send + 'static,
 {
     match run(f).await {
-        Ok(result) => result,
+        Ok(result) => finished_tool(result),
         Err(e) => ToolResult {
             tool_call_id: String::new(),
             content: format!("Error: {e}"),
             is_error: true,
         },
     }
+}
+
+fn finished_tool(result: ToolResult) -> ToolResult {
+    result
 }
 
 #[cfg(test)]

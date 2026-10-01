@@ -204,6 +204,10 @@ impl EditTool {
 }
 
 fn io_error_string(e: impl std::fmt::Display) -> String {
+    display_error(&e)
+}
+
+fn display_error(e: &impl std::fmt::Display) -> String {
     e.to_string()
 }
 
@@ -312,8 +316,7 @@ fn apply_tagged(
         return Ok((String::new(), modified, Some(i + 2)));
     }
 
-    let from_tag =
-        from.ok_or_else(|| "from is required when insert_after is not set.".to_string())?;
+    let from_tag = require_from_tag(from)?;
     let start_i = resolve(from_tag, "from")?;
     let end_i = if let Some(to_tag) = to {
         let j = resolve(to_tag, "to")?;
@@ -329,6 +332,13 @@ fn apply_tagged(
     let matched = original[byte_start..byte_end].to_string();
     let modified = apply_spans(original, &[(byte_start, byte_end)], new_string);
     Ok((matched, modified, Some(start_i + 1)))
+}
+
+fn require_from_tag(from: Option<&str>) -> Result<&str, String> {
+    match from {
+        Some(tag) => Ok(tag),
+        None => Err("from is required when insert_after is not set.".to_string()),
+    }
 }
 
 fn miss_with_snippet(original: &str, old: &str) -> String {

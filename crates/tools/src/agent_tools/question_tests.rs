@@ -634,4 +634,6 @@ async fn execute_reads_queued_stdin() {
     note_no_choices_array();
     note_non_string_choice();
     note_typed_stdin();
+    flush_prompt_result(Ok(()));
+    flush_prompt_result(Err(std::io::Error::other("flush")));
 }

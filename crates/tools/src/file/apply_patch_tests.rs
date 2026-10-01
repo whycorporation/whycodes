@@ -492,4 +492,9 @@ fn apply_unified_diff_pops_empty_last_split() {
             .is_some_and(|err| err.contains("malformed hunk header")),
         "{bad_header:?}"
     );
+    assert_eq!(display_error(&"disk full"), "disk full");
+    assert!(hunk_body("not a hunk").is_err());
+    assert!(hunk_body("@@ -1 @@").is_ok());
+    assert!(old_hunk_token(" +1 ", "@@ +1 @@").is_err());
+    assert_eq!(old_hunk_token(" -3,1 +3,1 ", "@@").unwrap(), "-3,1");
 }

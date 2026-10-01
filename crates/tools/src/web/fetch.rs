@@ -164,9 +164,21 @@ fn fetch_bytes_result(
 
 fn pretty_json_or_raw(trimmed: &str, raw: &str) -> String {
     match serde_json::from_str::<serde_json::Value>(trimmed) {
-        Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_else(|_| raw.to_string()),
+        Ok(value) => pretty_json_value(&value, raw),
         Err(err) => json_parse_fallback(raw, &err),
     }
+}
+
+fn pretty_json_value(value: &impl serde::Serialize, raw: &str) -> String {
+    match serde_json::to_string_pretty(value) {
+        Ok(pretty) => pretty,
+        Err(err) => json_pretty_fallback(raw, &err),
+    }
+}
+
+fn json_pretty_fallback(raw: &str, err: &serde_json::Error) -> String {
+    tracing::debug!(error = %err, "json pretty-print fell back");
+    raw.to_string()
 }
 
 fn json_parse_fallback(raw: &str, _err: &serde_json::Error) -> String {

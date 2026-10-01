@@ -368,6 +368,17 @@ fn well_known_gh_paths_include_install_layouts() {
     );
     assert!(joined.contains("/home/me/.local/bin/gh"), "{joined}");
     assert!(joined.contains("/opt/homebrew/bin/gh"), "{joined}");
+    let from_home = well_known_gh_paths_from(None, None, None, Some(PathBuf::from("/home/me")));
+    let home_joined = from_home
+        .iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        home_joined.contains("/home/me/scoop/shims/gh.exe"),
+        "{home_joined}"
+    );
+    assert!(scoop_profile(None, None).is_none());
 }
 
 #[test]
@@ -592,6 +603,7 @@ fn assert_github_wait_helpers() {
         }
     }
     assert!(write_git_credential_payload(&mut hanging, &mut FailWrite, "github.com").is_none());
+    assert!(credential_stdin_written(&mut hanging, Ok(())).is_some());
     assert!(
         write_git_credential_payload(&mut hanging, &mut BrokenPipeWrite, "github.com").is_some()
     );

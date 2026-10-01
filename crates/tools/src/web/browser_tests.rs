@@ -4,6 +4,14 @@ use std::path::Path;
 use std::process::Stdio;
 use std::thread;
 
+struct FailSerde;
+
+impl serde::Serialize for FailSerde {
+    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom("nope"))
+    }
+}
+
 fn dir_as_file(name: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("temp dir");
     std::fs::write(dir.path().join(name), b"not-a-directory").expect("blocker file");
@@ -464,6 +472,11 @@ fn assert_browser_error_helpers() {
     }));
     let recovered = recover_lock(lock.lock());
     assert_eq!(*recovered, 0);
+    drop(recovered);
+    assert_eq!(*poisoned_lock(lock.lock().expect_err("poisoned")), 0);
+    let snap = pretty_snapshot(&json!({"title": "t"}));
+    assert!(snap.contains("title"), "{snap}");
+    assert_eq!(pretty_json(&FailSerde, "raw"), "raw");
 }
 
 fn assert_browser_session_poll() {

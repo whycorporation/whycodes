@@ -354,7 +354,11 @@ fn apply_multi_number(
 }
 
 fn flush_prompt() {
-    if let Err(e) = io::stderr().flush() {
+    flush_prompt_result(io::stderr().flush());
+}
+
+fn flush_prompt_result(result: std::io::Result<()>) {
+    if let Err(e) = result {
         tracing::debug!(error = %e, "question prompt flush skipped");
     }
 }

@@ -353,6 +353,10 @@ fn image_read(path: &Path, shown: &str, media: &str) -> ToolResult {
 }
 
 fn io_error_string(e: impl std::fmt::Display) -> String {
+    display_error(&e)
+}
+
+fn display_error(e: &impl std::fmt::Display) -> String {
     e.to_string()
 }
 

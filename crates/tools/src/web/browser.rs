@@ -424,9 +424,13 @@ fn unlock_session_result(
 
 fn recover_lock<T>(result: Result<T, std::sync::PoisonError<T>>) -> T {
     match result {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned_lock(poisoned),
     }
+}
+
+fn poisoned_lock<T>(poisoned: std::sync::PoisonError<T>) -> T {
+    poisoned.into_inner()
 }
 
 fn session_from_unlocked(
@@ -521,9 +525,25 @@ fn snapshot() -> ToolResult {
 
 fn snapshot_from_eval(result: Result<Value, String>) -> ToolResult {
     match result {
-        Ok(v) => ok(&serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string())),
+        Ok(v) => ok(&pretty_snapshot(&v)),
         Err(e) => err(&e),
     }
+}
+
+fn pretty_snapshot(value: &Value) -> String {
+    pretty_json(value, &value.to_string())
+}
+
+fn pretty_json(value: &impl serde::Serialize, fallback: &str) -> String {
+    match serde_json::to_string_pretty(value) {
+        Ok(pretty) => pretty,
+        Err(err) => json_pretty_fallback(fallback, &err),
+    }
+}
+
+fn json_pretty_fallback(fallback: &str, err: &serde_json::Error) -> String {
+    tracing::debug!(error = %err, "snapshot pretty-print fell back");
+    fallback.to_string()
 }
 
 fn click(selector: &str) -> ToolResult {
