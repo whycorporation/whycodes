@@ -429,8 +429,8 @@ fn assert_page_action_results() {
     note_timeout_ok();
     let launch_msg = browser_launch_error(Path::new("chrome"))(std::io::Error::other("spawn"));
     assert!(launch_msg.contains("failed to launch"), "{launch_msg}");
-    assert_eq!(io_err("x"), "x");
-    assert!(cdp_connect_error("x").contains("cdp connect"));
+    assert_eq!(io_err(std::io::Error::other("x")), "x");
+    assert!(cdp_connect_error(std::io::Error::other("x")).contains("cdp connect"));
 }
 
 fn assert_browser_session_helpers() {
@@ -439,10 +439,18 @@ fn assert_browser_session_helpers() {
 }
 
 fn assert_browser_error_helpers() {
-    assert!(screenshot_decode_error("x").contains("screenshot decode"));
-    assert_eq!(utf8_frame_error("x"), "x");
-    assert_eq!(cdp_json_error("x"), "x");
-    assert!(screenshot_mkdir_error("denied").is_error);
+    assert!(
+        screenshot_decode_error(base64::DecodeError::InvalidLength(1))
+            .contains("screenshot decode")
+    );
+    assert!(
+        utf8_frame_error(String::from_utf8(vec![0xff]).unwrap_err()).contains("utf-8"),
+        "expected a utf-8 error"
+    );
+    assert!(
+        cdp_json_error(serde_json::from_str::<serde_json::Value>("").unwrap_err()).contains("EOF")
+    );
+    assert!(screenshot_mkdir_error(std::io::Error::other("denied")).is_error);
     assert!(screenshot_mkdir_failed("denied").is_error);
     let reply = cdp_reply("Page.enable", &json!({"result": {"ok": true}}));
     assert_eq!(reply.ok(), Some(json!({"ok": true})));
@@ -778,6 +786,10 @@ fn pick_port_env_and_status_poison_paths() {
     let prev = std::env::var_os("WHYCODES_BROWSER_PORT");
     unsafe { std::env::set_var("WHYCODES_BROWSER_PORT", "9229") };
     assert_eq!(pick_port(), 9229);
+    assert_eq!(pinned_browser_port(None), None);
+    assert_eq!(pinned_browser_port(Some("nope".into())), None);
+    assert_eq!(pinned_browser_port(Some("0".into())), None);
+    assert_eq!(pinned_browser_port(Some("9229".into())), Some(9229));
     unsafe {
         match prev {
             Some(v) => std::env::set_var("WHYCODES_BROWSER_PORT", v),

@@ -61,9 +61,9 @@ WORKSPACE_FLOOR = float(os.environ.get("FAIL_UNDER", "82"))
 # Floors as (crate, min_percent)
 FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
     # Linux skip-expansions on PR #147 (run 36978047637, 2026-10-02) is
-    # 8647/8654 = 99.9. The 7 regions are generic `impl` bodies that only
-    # tests.rs calls; those files are ignored, so the regions never count.
-    # Raise to 100 once a run prints 8654/8654. Issue #82.
+    # 8645/8657 = 99.9. Remaining misses are generic `impl` bodies and
+    # let-chains that only tests.rs instantiates. Raise to 100 once a run
+    # prints 8657/8657. Issue #82.
     ("whycodes-tools", 99.2),
 ]
 

@@ -18,9 +18,10 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| background_task_error(&e.to_string()))
+    match tokio::task::spawn_blocking(f).await {
+        Ok(value) => Ok(value),
+        Err(e) => Err(background_task_error(&e.to_string())),
+    }
 }
 
 /// Like [`run`] but maps join failure onto an error [`ToolResult`].
@@ -29,17 +30,17 @@ where
     F: FnOnce() -> ToolResult + Send + 'static,
 {
     match run(f).await {
-        Ok(result) => finished_tool(result),
-        Err(e) => ToolResult {
-            tool_call_id: String::new(),
-            content: format!("Error: {e}"),
-            is_error: true,
-        },
+        Ok(result) => result,
+        Err(e) => tool_join_error(&e),
     }
 }
 
-fn finished_tool(result: ToolResult) -> ToolResult {
-    result
+fn tool_join_error(e: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Error: {e}"),
+        is_error: true,
+    }
 }
 
 #[cfg(test)]

@@ -81,7 +81,7 @@ skip-expansions run prints `OK` at 100% for those crates.
 |---|---|---|
 | Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
 | `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, `slop` | **100%** lines | Production files only (`tests.rs` ignored) |
-| `tools` | **99.2%** lines | Production files. Last Linux run was 99.9% (`8647/8654`); floor stays 99.2 until a run is 100% |
+| `tools` | **99.2%** lines | Production files. Last Linux run was 99.9% (`8645/8657`); floor stays 99.2 until a run is 100% |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
 comfortably above it, raise `--fail-under-lines` in
@@ -92,8 +92,9 @@ comfortably above it, raise `--fail-under-lines` in
 Linux x86_64, 2026-10-02, CI Coverage job on PR #147
 ([run 36978047637](https://github.com/whycorporation/whycodes/actions/runs/36978047637)).
 Workspace **98.5%** (`78968/80176`). Every `FULL_COVER_CRATES` entry printed
-`OK` at 100%. `tools` printed **99.9%** (`8647/8654`, floor 99.2); the seven
-regions are generic `impl` bodies hit only from ignored `tests.rs` files.
+`OK` at 100%. `tools` printed **99.9%** (`8645/8657`, floor 99.2); the twelve
+regions are generic `impl` bodies and a let-chain that only tests.rs
+instantiates (`browser.rs` 6, `fetch.rs` 5, `blocking.rs` 1).
 `tui` is **96.4%** (`22626/23478`) and `cli` is **93.7%** (`5144/5491`);
 neither has a floor. The checker prints their uncovered files on every run.
 
@@ -114,7 +115,7 @@ informational.
 |---|---|
 | function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, index | **100%** |
 | session, memory, llm, auth, agent, lsp, mcp, sdk, server, format, import, slop | **100%** |
-| tools | **99.9%** (`8647/8654`, floor 99.2) |
+| tools | **99.9%** (`8645/8657`, floor 99.2) |
 | tui | no floor (**96.4%**, `22626/23478`) |
 | cli | no floor (**93.7%**, `5144/5491`) |
 

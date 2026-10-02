@@ -69,8 +69,13 @@ fn json_pretty_printed() {
     assert_eq!(fetch_body_error("eof"), "eof");
     let fallback = pretty_json_or_raw("not-json", "not-json");
     assert_eq!(fallback, "not-json");
-    let pretty = pretty_json_value(&serde_json::json!({"a": 1}), "raw");
+    let pretty = pretty_json_text(Ok(r#"{"a":1}"#.into()), "raw");
     assert!(pretty.contains("\"a\""), "{pretty}");
+    let fell_back = pretty_json_text(
+        Err(serde_json::from_str::<serde_json::Value>("").unwrap_err()),
+        "raw",
+    );
+    assert_eq!(fell_back, "raw");
 }
 
 #[test]
@@ -162,7 +167,7 @@ fn remaining_format_and_html_helpers() {
     assert_eq!(short, "abc");
     let _ = http_client();
     let _ = http_client();
-    let fallback = client_or_fallback::<&str>(Err("builder failed"));
+    let fallback = client_from_build(None);
     let _ = fallback.get("http://127.0.0.1/");
 }
 

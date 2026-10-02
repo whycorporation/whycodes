@@ -182,6 +182,24 @@ the test harness ORs. A lone filter does not get a trailing `--`.
 **Prevention:** Do not pass more than one filter before `--`.
 `cargo test -p whycodes-config --lib load:: -- merge::` is the shape that works.
 
+### 2026-10-02 — tools floor still misses generic impls and a let-chain
+
+**Symptom:** Coverage on PR #147 prints `whycodes-tools: 8645/8657` (99.9%).
+The gap list is `browser.rs` 6, `fetch.rs` 5, `blocking.rs` 1. Floor stays 99.2.
+
+**JSONL / crash:** none.
+
+**Root cause:** `-skip-expansions` drops a generic `impl Display` body when the
+only monomorphization comes from an ignored `*_tests.rs` call. The same run
+also drops the `if let && let` chain in `pick_port`.
+
+**Fix:** Those helpers take the concrete error (`std::io::Error`,
+`reqwest::Error`, `DecodeError`) and are called from production. `pick_port`
+is nested `match` arms. `blocking::tool` returns the `ToolResult` directly.
+
+**Prevention:** Do not add `fn f(e: impl Display)` whose only caller is a
+`*_tests.rs` file. Do not put a `let`-chain on a 100% path.
+
 ### 2026-09-25 — llvm-cov wrapper treats its own baked path as missing
 
 **Symptom:** `cargo llvm-cov report` exits 1 with

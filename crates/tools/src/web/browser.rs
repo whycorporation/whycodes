@@ -229,23 +229,23 @@ fn browser_launch_error(bin: &Path) -> impl FnOnce(std::io::Error) -> String + '
     move |e| format!("failed to launch {}: {e}", bin.display())
 }
 
-fn io_err(e: impl std::fmt::Display) -> String {
+fn io_err(e: std::io::Error) -> String {
     e.to_string()
 }
 
-fn cdp_connect_error(e: impl std::fmt::Display) -> String {
+fn cdp_connect_error(e: std::io::Error) -> String {
     format!("cdp connect: {e}")
 }
 
-fn screenshot_decode_error(e: impl std::fmt::Display) -> String {
+fn screenshot_decode_error(e: base64::DecodeError) -> String {
     format!("screenshot decode: {e}")
 }
 
-fn utf8_frame_error(e: impl std::fmt::Display) -> String {
+fn utf8_frame_error(e: std::string::FromUtf8Error) -> String {
     e.to_string()
 }
 
-fn cdp_json_error(e: impl std::fmt::Display) -> String {
+fn cdp_json_error(e: serde_json::Error) -> String {
     e.to_string()
 }
 
@@ -463,14 +463,45 @@ fn port_from_addr(result: std::io::Result<std::net::SocketAddr>) -> u16 {
 }
 
 fn pick_port() -> u16 {
-    #[cfg(test)]
-    if let Ok(p) = std::env::var("WHYCODES_BROWSER_PORT")
-        && let Ok(n) = p.parse::<u16>()
-        && n != 0
-    {
-        return n;
+    match pinned_browser_port(read_browser_port_env()) {
+        Some(port) => port,
+        None => pick_bound_port(std::net::TcpListener::bind("127.0.0.1:0")),
     }
-    pick_bound_port(std::net::TcpListener::bind("127.0.0.1:0"))
+}
+
+fn read_browser_port_env() -> Option<String> {
+    #[cfg(test)]
+    {
+        std::env::var("WHYCODES_BROWSER_PORT").ok()
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
+
+fn pinned_browser_port(raw: Option<String>) -> Option<u16> {
+    let text = raw?;
+    keep_nonzero_port(parsed_port(&text))
+}
+
+fn parsed_port(text: &str) -> Option<u16> {
+    match text.parse::<u16>() {
+        Ok(port) => Some(port),
+        Err(e) => skip_bad_port(&e.to_string()),
+    }
+}
+
+fn skip_bad_port(err: &str) -> Option<u16> {
+    tracing::debug!(error = %err, "browser port parse skipped");
+    None
+}
+
+fn keep_nonzero_port(port: Option<u16>) -> Option<u16> {
+    match port {
+        Some(0) | None => None,
+        Some(port) => Some(port),
+    }
 }
 
 fn open_url(url: &str) -> ToolResult {
@@ -629,7 +660,7 @@ fn screenshot_mkdir_failed(e: &str) -> ToolResult {
     err(&format!("mkdir: {e}"))
 }
 
-fn screenshot_mkdir_error(e: impl std::fmt::Display) -> ToolResult {
+fn screenshot_mkdir_error(e: std::io::Error) -> ToolResult {
     screenshot_mkdir_failed(&e.to_string())
 }
 

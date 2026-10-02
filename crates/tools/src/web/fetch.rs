@@ -8,20 +8,28 @@ use whycodes_core::types::ToolResult;
 /// Process-wide client so TLS/connection pool stays warm across fetches.
 pub(crate) fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        client_or_fallback(
-            reqwest::Client::builder()
-                .user_agent(concat!("whycodes-webfetch/", env!("CARGO_PKG_VERSION")))
-                .pool_max_idle_per_host(4)
-                .tcp_nodelay(true)
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build(),
-        )
-    })
+    CLIENT.get_or_init(|| client_from_build(build_http_client()))
 }
 
-fn client_or_fallback<E>(built: Result<reqwest::Client, E>) -> reqwest::Client {
-    built.unwrap_or_else(|_| reqwest::Client::new())
+fn build_http_client() -> Option<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(concat!("whycodes-webfetch/", env!("CARGO_PKG_VERSION")))
+        .pool_max_idle_per_host(4)
+        .tcp_nodelay(true)
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()
+}
+
+fn client_from_build(built: Option<reqwest::Client>) -> reqwest::Client {
+    match built {
+        Some(client) => client,
+        None => fallback_http_client(),
+    }
+}
+
+fn fallback_http_client() -> reqwest::Client {
+    reqwest::Client::new()
 }
 
 pub struct WebFetchTool;
@@ -112,11 +120,7 @@ impl Tool for WebFetchTool {
                         !status.is_success(),
                         &content_type,
                         max_length,
-                        response
-                            .bytes()
-                            .await
-                            .map(|b| b.to_vec())
-                            .map_err(fetch_body_error),
+                        read_fetch_body(response).await,
                     )
                 }
                 Err(e) => ToolResult {
@@ -129,7 +133,14 @@ impl Tool for WebFetchTool {
     }
 }
 
-fn fetch_body_error(e: impl std::fmt::Display) -> String {
+async fn read_fetch_body(response: reqwest::Response) -> Result<Vec<u8>, String> {
+    match response.bytes().await {
+        Ok(body) => Ok(body.to_vec()),
+        Err(e) => Err(fetch_body_error(&e.to_string())),
+    }
+}
+
+fn fetch_body_error(e: &str) -> String {
     e.to_string()
 }
 
@@ -170,7 +181,11 @@ fn pretty_json_or_raw(trimmed: &str, raw: &str) -> String {
 }
 
 fn pretty_json_value(value: &serde_json::Value, raw: &str) -> String {
-    match serde_json::to_string_pretty(value) {
+    pretty_json_text(serde_json::to_string_pretty(value), raw)
+}
+
+fn pretty_json_text(pretty: Result<String, serde_json::Error>, raw: &str) -> String {
+    match pretty {
         Ok(pretty) => pretty,
         Err(err) => json_pretty_fallback(raw, &err),
     }
@@ -266,33 +281,71 @@ fn strip_tag_blocks(html: &str, tags: &[&str]) -> String {
     let lower = html.to_ascii_lowercase();
     let mut out = String::with_capacity(html.len());
     let mut i = 0;
-    let len = html.len();
-    while i < len {
-        let mut skipped = false;
-        for tag in tags {
-            let open = format!("<{tag}");
-            if lower[i..].starts_with(&open)
-                && let Some(rel) = lower[i..].find('>')
-            {
-                let after_open = i + rel + 1;
-                let close = format!("</{tag}>");
-                if let Some(rel_close) = lower[after_open..].find(&close) {
-                    i = after_open + rel_close + close.len();
-                    skipped = true;
-                    break;
-                }
-            }
-        }
-        if skipped {
-            skip_closed_tag();
-            continue;
-        }
-        let ch = next_html_char(&html[i..]).unwrap_or_else(html_exhausted);
-        out.push(ch);
-        i += ch.len_utf8();
+    while i < html.len() {
+        i = push_html_unit(&mut out, html, &lower, i, tags);
     }
     out
 }
+
+fn push_html_unit(out: &mut String, html: &str, lower: &str, i: usize, tags: &[&str]) -> usize {
+    match closed_tag_end(lower, i, tags) {
+        Some(next) => {
+            skip_closed_tag();
+            next
+        }
+        None => push_html_char(out, html, i),
+    }
+}
+
+fn push_html_char(out: &mut String, html: &str, i: usize) -> usize {
+    skip_open_tag();
+    let ch = next_html_char(&html[i..]).unwrap_or_else(html_exhausted);
+    out.push(ch);
+    i + ch.len_utf8()
+}
+
+fn closed_tag_end(lower: &str, i: usize, tags: &[&str]) -> Option<usize> {
+    let mut found = None;
+    for tag in tags {
+        found = take_closed_tag(found, one_closed_tag(lower, i, tag));
+    }
+    found
+}
+
+fn take_closed_tag(found: Option<usize>, next: Option<usize>) -> Option<usize> {
+    match found {
+        Some(end) => Some(end),
+        None => next,
+    }
+}
+
+fn one_closed_tag(lower: &str, i: usize, tag: &str) -> Option<usize> {
+    let open = format!("<{tag}");
+    let rest = slice_from(lower, i)?;
+    let rel = open_end(&open, rest)?;
+    let after_open = i + rel + 1;
+    let close = format!("</{tag}>");
+    close_end(slice_from(lower, after_open)?, &close, after_open)
+}
+
+fn open_end(open: &str, rest: &str) -> Option<usize> {
+    if rest.starts_with(open) {
+        rest.find('>')
+    } else {
+        None
+    }
+}
+
+fn close_end(tail: &str, close: &str, after_open: usize) -> Option<usize> {
+    tail.find(close)
+        .map(|rel_close| after_open + rel_close + close.len())
+}
+
+fn slice_from(text: &str, i: usize) -> Option<&str> {
+    text.get(i..)
+}
+
+fn skip_open_tag() {}
 
 fn skip_closed_tag() {}
 
