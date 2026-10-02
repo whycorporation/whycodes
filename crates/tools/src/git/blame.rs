@@ -69,7 +69,7 @@ impl Tool for GitBlameTool {
             };
 
             let working_dir = ctx.working_dir.clone();
-            crate::blocking::tool(move || {
+            crate::blocking::tool(Box::new(move || {
                 let mut cmd = Command::new("git");
                 cmd.arg("blame");
 
@@ -112,7 +112,7 @@ impl Tool for GitBlameTool {
                     content,
                     is_error: false,
                 }
-            })
+            }))
             .await
         })
     }

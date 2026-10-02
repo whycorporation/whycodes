@@ -204,7 +204,12 @@ fn ensure_session_with_browser(bin: Option<PathBuf>) -> Result<u16, String> {
     let dir = user_data_dir();
     mkdir_browser_profile(&dir);
     let port = pick_port();
-    let child = Command::new(&bin)
+    let child = spawn_browser(&bin, &dir, port)?;
+    poll_session_ready(child, port, dir)
+}
+
+fn spawn_browser(bin: &Path, dir: &Path, port: u16) -> Result<Child, String> {
+    match Command::new(bin)
         .args([
             "--headless=new",
             "--disable-gpu",
@@ -220,13 +225,14 @@ fn ensure_session_with_browser(bin: Option<PathBuf>) -> Result<u16, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(browser_launch_error(&bin))?;
-
-    poll_session_ready(child, port, dir)
+    {
+        Ok(child) => Ok(child),
+        Err(e) => Err(launch_failure(bin, &e)),
+    }
 }
 
-fn browser_launch_error(bin: &Path) -> impl FnOnce(std::io::Error) -> String + '_ {
-    move |e| format!("failed to launch {}: {e}", bin.display())
+fn launch_failure(bin: &Path, e: &std::io::Error) -> String {
+    format!("failed to launch {}: {e}", bin.display())
 }
 
 fn io_err(e: std::io::Error) -> String {
@@ -422,14 +428,21 @@ fn unlock_session_result(
     recover_lock(result)
 }
 
-fn recover_lock<T>(result: Result<T, std::sync::PoisonError<T>>) -> T {
+fn recover_lock(
+    result: Result<
+        std::sync::MutexGuard<'static, Option<BrowserSession>>,
+        std::sync::PoisonError<std::sync::MutexGuard<'static, Option<BrowserSession>>>,
+    >,
+) -> std::sync::MutexGuard<'static, Option<BrowserSession>> {
     match result {
         Ok(guard) => guard,
         Err(poisoned) => poisoned_lock(poisoned),
     }
 }
 
-fn poisoned_lock<T>(poisoned: std::sync::PoisonError<T>) -> T {
+fn poisoned_lock(
+    poisoned: std::sync::PoisonError<std::sync::MutexGuard<'static, Option<BrowserSession>>>,
+) -> std::sync::MutexGuard<'static, Option<BrowserSession>> {
     poisoned.into_inner()
 }
 
@@ -562,19 +575,10 @@ fn snapshot_from_eval(result: Result<Value, String>) -> ToolResult {
 }
 
 fn pretty_snapshot(value: &Value) -> String {
-    pretty_json_text(value)
-}
-
-fn pretty_json_text(value: &Value) -> String {
-    match serde_json::to_string_pretty(value) {
-        Ok(pretty) => pretty,
-        Err(err) => json_pretty_fallback(&value.to_string(), &err),
-    }
-}
-
-fn json_pretty_fallback(fallback: &str, err: &serde_json::Error) -> String {
-    tracing::debug!(error = %err, "snapshot pretty-print fell back");
-    fallback.to_string()
+    // `Value` always serializes. `unwrap_or_default` keeps the impossible
+    // `Err` arm out of the line count (`-skip-expansions` still counts a
+    // closure that never runs).
+    serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
 fn click(selector: &str) -> ToolResult {

@@ -82,9 +82,9 @@ impl Tool for ReadTool {
                 .clamp(1, HARD_LIMIT);
             let working_dir = ctx.working_dir.clone();
             let ctx_clone = ctx.clone();
-            crate::blocking::tool(move || {
+            crate::blocking::tool(Box::new(move || {
                 Self::run(path_str, offset, limit, working_dir, ctx_clone)
-            })
+            }))
             .await
         })
     }
@@ -385,11 +385,15 @@ fn refuse_binary(path: &Path, shown: &str) -> bool {
 }
 
 fn sniff_opened(file: std::io::Result<fs::File>) -> bool {
-    let Ok(mut f) = file else {
-        return false;
-    };
+    match file {
+        Ok(mut f) => sniff_head(&mut f),
+        Err(_open) => false,
+    }
+}
+
+fn sniff_head(file: &mut fs::File) -> bool {
     let mut head = [0u8; BINARY_SNIFF_LEN];
-    sniff_read(f.read(&mut head), &head)
+    sniff_read(file.read(&mut head), &head)
 }
 
 fn sniff_read(result: std::io::Result<usize>, head: &[u8]) -> bool {
@@ -424,7 +428,13 @@ fn err(msg: &str) -> ToolResult {
 }
 
 fn image_media_type(path: &Path) -> Option<&'static str> {
-    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    // `?` on `Option` is an expansion `-skip-expansions` counts as its own
+    // line and then misses. A one-line `match` stays in the function body.
+    #[allow(clippy::question_mark)]
+    let ext = match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) => ext.to_ascii_lowercase(),
+        None => return None,
+    };
     match ext.as_str() {
         "png" => Some("image/png"),
         "jpg" | "jpeg" => Some("image/jpeg"),

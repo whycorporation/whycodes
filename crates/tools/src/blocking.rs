@@ -12,27 +12,25 @@ fn background_task_error(e: &str) -> String {
     format!("background task failed: {e}")
 }
 
-/// Run `f` on the blocking pool. `Err` is a join failure (panic / cancel).
-pub async fn run<F, T>(f: F) -> Result<T, String>
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    match tokio::task::spawn_blocking(f).await {
-        Ok(value) => Ok(value),
-        Err(e) => Err(background_task_error(&e.to_string())),
+fn join_value(result: Result<ToolResult, tokio::task::JoinError>) -> ToolResult {
+    match result {
+        Ok(value) => value,
+        Err(e) => tool_join_error(&background_task_error(&e.to_string())),
     }
 }
 
-/// Like [`run`] but maps join failure onto an error [`ToolResult`].
-pub async fn tool<F>(f: F) -> ToolResult
-where
-    F: FnOnce() -> ToolResult + Send + 'static,
-{
-    match run(f).await {
-        Ok(result) => result,
-        Err(e) => tool_join_error(&e),
-    }
+/// Run `f` on the blocking pool and map a join failure onto an error [`ToolResult`].
+///
+/// The job is a trait object so this body is one concrete function. A generic
+/// `impl FnOnce` is dropped by `llvm-cov -skip-expansions` when the kept
+/// monomorphization comes from an ignored `*_tests.rs` call.
+pub async fn tool(f: Box<dyn FnOnce() -> ToolResult + Send>) -> ToolResult {
+    // `f` is already `FnOnce`. Clippy wants `spawn_blocking(f)`; that form
+    // is a generic monomorphization `-skip-expansions` drops when the only
+    // other instantiation lives in an ignored `*_tests.rs`.
+    #[allow(clippy::redundant_closure)]
+    let joined = tokio::task::spawn_blocking(move || f()).await;
+    join_value(joined)
 }
 
 fn tool_join_error(e: &str) -> ToolResult {

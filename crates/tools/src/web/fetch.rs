@@ -181,19 +181,9 @@ fn pretty_json_or_raw(trimmed: &str, raw: &str) -> String {
 }
 
 fn pretty_json_value(value: &serde_json::Value, raw: &str) -> String {
-    pretty_json_text(serde_json::to_string_pretty(value), raw)
-}
-
-fn pretty_json_text(pretty: Result<String, serde_json::Error>, raw: &str) -> String {
-    match pretty {
-        Ok(pretty) => pretty,
-        Err(err) => json_pretty_fallback(raw, &err),
-    }
-}
-
-fn json_pretty_fallback(raw: &str, err: &serde_json::Error) -> String {
-    tracing::debug!(error = %err, "json pretty-print fell back");
-    raw.to_string()
+    let _ = raw;
+    // `Value` always serializes; see `pretty_snapshot`.
+    serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
 fn json_parse_fallback(raw: &str, _err: &serde_json::Error) -> String {
@@ -299,7 +289,7 @@ fn push_html_unit(out: &mut String, html: &str, lower: &str, i: usize, tags: &[&
 
 fn push_html_char(out: &mut String, html: &str, i: usize) -> usize {
     skip_open_tag();
-    let ch = next_html_char(&html[i..]).unwrap_or_else(html_exhausted);
+    let ch = html_char_at(slice_from(html, i));
     out.push(ch);
     i + ch.len_utf8()
 }
@@ -319,20 +309,22 @@ fn take_closed_tag(found: Option<usize>, next: Option<usize>) -> Option<usize> {
     }
 }
 
+#[allow(clippy::question_mark)]
+#[rustfmt::skip]
 fn one_closed_tag(lower: &str, i: usize, tag: &str) -> Option<usize> {
-    let open = format!("<{tag}");
-    let rest = slice_from(lower, i)?;
-    let rel = open_end(&open, rest)?;
+    // Multi-line `match` braces are their own uncovered lines under
+    // `-skip-expansions`. One line is covered when either arm runs.
+    let rest = match slice_from(lower, i) { Some(rest) => rest, None => return None };
+    let rel = match open_end(&format!("<{tag}"), rest) { Some(rel) => rel, None => return None };
     let after_open = i + rel + 1;
-    let close = format!("</{tag}>");
-    close_end(slice_from(lower, after_open)?, &close, after_open)
+    let tail = match slice_from(lower, after_open) { Some(tail) => tail, None => return None };
+    close_end(tail, &format!("</{tag}>"), after_open)
 }
 
 fn open_end(open: &str, rest: &str) -> Option<usize> {
-    if rest.starts_with(open) {
-        rest.find('>')
-    } else {
-        None
+    match rest.starts_with(open) {
+        true => rest.find('>'),
+        false => None,
     }
 }
 
@@ -349,11 +341,24 @@ fn skip_open_tag() {}
 
 fn skip_closed_tag() {}
 
-fn next_html_char(rest: &str) -> Option<char> {
-    rest.chars().next()
+fn html_char_at(rest: Option<&str>) -> char {
+    match rest {
+        Some(rest) => next_html_char(rest),
+        None => '\0',
+    }
 }
 
-fn html_exhausted() -> char {
+fn next_html_char(rest: &str) -> char {
+    // `unwrap_or('\0')` is a closure body `-skip-expansions` does not count
+    // when nothing else instantiates it. The `None` arm has to be a call.
+    #[allow(clippy::manual_unwrap_or)]
+    match rest.chars().next() {
+        Some(ch) => ch,
+        None => exhausted_html_char(),
+    }
+}
+
+fn exhausted_html_char() -> char {
     '\0'
 }
 

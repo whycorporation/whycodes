@@ -72,7 +72,7 @@ impl Tool for RepoMapTool {
         Box::pin(async move {
             let working_dir = ctx.working_dir.clone();
             let file_index = ctx.file_index.clone();
-            crate::blocking::tool(move || Self::run(args, working_dir, file_index)).await
+            crate::blocking::tool(Box::new(move || Self::run(args, working_dir, file_index))).await
         })
     }
 }

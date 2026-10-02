@@ -46,7 +46,7 @@ impl Tool for GitStatusTool {
     ) -> whycodes_core::ToolFuture<'a> {
         Box::pin(async move {
             let working_dir = ctx.working_dir.clone();
-            crate::blocking::tool(move || {
+            crate::blocking::tool(Box::new(move || {
                 let path_filter = args["path"].as_str();
 
                 let mut cmd = Command::new("git");
@@ -89,7 +89,7 @@ impl Tool for GitStatusTool {
                     content,
                     is_error: false,
                 }
-            })
+            }))
             .await
         })
     }

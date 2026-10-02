@@ -109,7 +109,7 @@ impl Tool for EditTool {
             }
 
             let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
-            crate::blocking::tool(move || {
+            crate::blocking::tool(Box::new(move || {
                 Self::run(
                     full_path,
                     shown,
@@ -120,7 +120,7 @@ impl Tool for EditTool {
                     to,
                     insert_after,
                 )
-            })
+            }))
             .await
         })
     }

@@ -427,7 +427,7 @@ fn assert_page_action_results() {
     note_screenshot_dir_ok();
     note_browser_child_ok();
     note_timeout_ok();
-    let launch_msg = browser_launch_error(Path::new("chrome"))(std::io::Error::other("spawn"));
+    let launch_msg = launch_failure(Path::new("chrome"), &std::io::Error::other("spawn"));
     assert!(launch_msg.contains("failed to launch"), "{launch_msg}");
     assert_eq!(io_err(std::io::Error::other("x")), "x");
     assert!(cdp_connect_error(std::io::Error::other("x")).contains("cdp connect"));
@@ -465,15 +465,17 @@ fn assert_browser_error_helpers() {
     drop(unlock_session_result(Ok(SESSION
         .lock()
         .unwrap_or_else(|e| e.into_inner()))));
-    let lock: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _g = lock.lock().unwrap();
-        panic!("poison");
+        let _guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+        panic!("poison session");
     }));
-    let recovered = recover_lock(lock.lock());
-    assert_eq!(*recovered, 0);
+    let recovered = recover_lock(SESSION.lock());
     drop(recovered);
-    assert_eq!(*poisoned_lock(lock.lock().expect_err("poisoned")), 0);
+    let poisoned = match SESSION.lock() {
+        Err(err) => err,
+        Ok(_) => panic!("session lock should stay poisoned"),
+    };
+    drop(poisoned_lock(poisoned));
     let snap = pretty_snapshot(&json!({"title": "t"}));
     assert!(snap.contains("title"), "{snap}");
 }

@@ -58,7 +58,7 @@ impl Tool for GitLogTool {
     ) -> whycodes_core::ToolFuture<'a> {
         Box::pin(async move {
             let working_dir = ctx.working_dir.clone();
-            crate::blocking::tool(move || {
+            crate::blocking::tool(Box::new(move || {
                 let count = args["count"].as_u64().unwrap_or(10);
                 let argv = git_log_argv(
                     count,
@@ -102,7 +102,7 @@ impl Tool for GitLogTool {
                     content,
                     is_error: false,
                 }
-            })
+            }))
             .await
         })
     }

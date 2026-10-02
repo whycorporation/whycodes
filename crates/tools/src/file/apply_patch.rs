@@ -90,8 +90,10 @@ impl Tool for ApplyPatchTool {
 
             let working_dir = ctx.working_dir.clone();
             let ctx_clone = ctx.clone();
-            crate::blocking::tool(move || apply_files(&working_dir, &path_str, files, &ctx_clone))
-                .await
+            crate::blocking::tool(Box::new(move || {
+                apply_files(&working_dir, &path_str, files, &ctx_clone)
+            }))
+            .await
         })
     }
 }

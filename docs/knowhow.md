@@ -182,23 +182,31 @@ the test harness ORs. A lone filter does not get a trailing `--`.
 **Prevention:** Do not pass more than one filter before `--`.
 `cargo test -p whycodes-config --lib load:: -- merge::` is the shape that works.
 
-### 2026-10-02 — tools floor still misses generic impls and a let-chain
+### 2026-10-02 — tools floor misses a trait-object body and match braces
 
-**Symptom:** Coverage on PR #147 prints `whycodes-tools: 8645/8657` (99.9%).
-The gap list is `browser.rs` 6, `fetch.rs` 5, `blocking.rs` 1. Floor stays 99.2.
+**Symptom:** A Linux `-skip-expansions` run of `whycodes-tools` printed
+`8709/8710`. The only gap was `web/fetch.rs` `291/292`. The follow-up
+full-crate run printed `8716/8716`, so the floor is 100%.
 
 **JSONL / crash:** none.
 
-**Root cause:** `-skip-expansions` drops a generic `impl Display` body when the
-only monomorphization comes from an ignored `*_tests.rs` call. The same run
-also drops the `if let && let` chain in `pick_port`.
+**Root cause:** `blocking::tool(f: impl FnOnce …)` is a generic body.
+`-skip-expansions` keeps the monomorphization from an ignored `*_tests.rs`
+call and drops the one production instantiations share. The same flag
+counts a multi-line `match` closing brace and an `Option` `?` as their
+own lines, then misses them. `unwrap_or_else` on `to_string_pretty(&Value)`
+is a closure that never runs and is still a line.
 
-**Fix:** Those helpers take the concrete error (`std::io::Error`,
-`reqwest::Error`, `DecodeError`) and are called from production. `pick_port`
-is nested `match` arms. `blocking::tool` returns the `ToolResult` directly.
+**Fix:** `tool` takes `Box<dyn FnOnce() -> ToolResult + Send>`, so the body
+is one concrete function. `pretty_snapshot` / `pretty_json_value` use
+`unwrap_or_default`. `one_closed_tag` is three one-line `match`es
+(`#[rustfmt::skip]`, `#[allow(clippy::question_mark)]`). A loopback that
+advertises `Content-Length` and then closes covers `read_fetch_body`'s
+`Err` arm. After that, `fetch.rs` printed `298/298`.
 
-**Prevention:** Do not add `fn f(e: impl Display)` whose only caller is a
-`*_tests.rs` file. Do not put a `let`-chain on a 100% path.
+**Prevention:** Do not add `fn f(impl Trait)` on a 100% path. Do not leave
+a multi-line `match` or `?` whose `None` arm nothing reaches. A closure
+passed to `unwrap_or_else` counts even when the `Ok` arm always runs.
 
 ### 2026-09-25 — llvm-cov wrapper treats its own baked path as missing
 
