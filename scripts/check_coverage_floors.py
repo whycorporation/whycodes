@@ -60,10 +60,10 @@ WORKSPACE_FLOOR = float(os.environ.get("FAIL_UNDER", "82"))
 
 # Floors as (crate, min_percent)
 FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
-    # Linux skip-expansions still misses host-only tools lines (browser
-    # poll, memory formatters, path/executor helpers). 8323/8387 = 99.2
-    # on the 2026-09-29 Coverage job (run 36516045996). Raise back to 100
-    # once those hit. Issue #82.
+    # Linux skip-expansions on PR #147 (run 36978047637, 2026-10-02) is
+    # 8647/8654 = 99.9. The 7 regions are generic `impl` bodies that only
+    # tests.rs calls; those files are ignored, so the regions never count.
+    # Raise to 100 once a run prints 8654/8654. Issue #82.
     ("whycodes-tools", 99.2),
 ]
 

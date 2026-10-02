@@ -73,6 +73,24 @@ class AffectedTests(unittest.TestCase):
     def test_docs_select_nothing(self) -> None:
         self.assertEqual(commands(["docs/knowhow.md", "README.md"]), [])
 
+    def test_several_lib_filters_are_one_testname_plus_harness_args(self) -> None:
+        # cargo test takes a single TESTNAME. A second filter before `--`
+        # is rejected (`unexpected argument 'merge::'`).
+        lines = commands(
+            [
+                "crates/config/src/load.rs",
+                "crates/config/src/merge.rs",
+                "crates/config/src/types.rs",
+            ]
+        )
+        self.assertEqual(len(lines), 1)
+        line = lines[0]
+        self.assertTrue(line.startswith("cargo test -p whycodes-config --lib "))
+        self.assertIn(" -- ", line)
+        before, after = line.split(" -- ", 1)
+        self.assertEqual(before.count("::"), 1)
+        self.assertEqual(after.split(), ["merge::", "types::"])
+
     def test_mod_rs_is_a_module_not_the_crate(self) -> None:
         lines = commands(["crates/tui/src/ui/mod.rs"])
         self.assertEqual(lines, ["cargo test -p whycodes-tui --lib ui::"])

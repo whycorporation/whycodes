@@ -531,13 +531,13 @@ fn snapshot_from_eval(result: Result<Value, String>) -> ToolResult {
 }
 
 fn pretty_snapshot(value: &Value) -> String {
-    pretty_json(value, &value.to_string())
+    pretty_json_text(value)
 }
 
-fn pretty_json(value: &impl serde::Serialize, fallback: &str) -> String {
+fn pretty_json_text(value: &Value) -> String {
     match serde_json::to_string_pretty(value) {
         Ok(pretty) => pretty,
-        Err(err) => json_pretty_fallback(fallback, &err),
+        Err(err) => json_pretty_fallback(&value.to_string(), &err),
     }
 }
 

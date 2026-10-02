@@ -81,7 +81,7 @@ skip-expansions run prints `OK` at 100% for those crates.
 |---|---|---|
 | Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
 | `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, `slop` | **100%** lines | Production files only (`tests.rs` ignored) |
-| `tools` | **99.2%** lines | Production files; Linux skip-expansions still misses host-only helpers |
+| `tools` | **99.2%** lines | Production files. Last Linux run was 99.9% (`8647/8654`); floor stays 99.2 until a run is 100% |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
 comfortably above it, raise `--fail-under-lines` in
@@ -89,13 +89,13 @@ comfortably above it, raise `--fail-under-lines` in
 
 ## Last measurement
 
-Linux x86_64, 2026-09-29, CI Coverage job on `main`
-([run 36516045996](https://github.com/whycorporation/whycodes/actions/runs/36516045996)).
-Workspace **98.4%** (`78556/79821`). Every `FULL_COVER_CRATES` entry printed
-`OK` at 100%. `tools` is locked at **99.2%** (`8323/8387`, floor 99.2) until
-the remaining host-only helpers are hit. `tui` and `cli` have no floor; the
-checker now prints their percents and uncovered files on every run so the
-next #82 slice does not have to guess from a Windows unique-line dump.
+Linux x86_64, 2026-10-02, CI Coverage job on PR #147
+([run 36978047637](https://github.com/whycorporation/whycodes/actions/runs/36978047637)).
+Workspace **98.5%** (`78968/80176`). Every `FULL_COVER_CRATES` entry printed
+`OK` at 100%. `tools` printed **99.9%** (`8647/8654`, floor 99.2); the seven
+regions are generic `impl` bodies hit only from ignored `tests.rs` files.
+`tui` is **96.4%** (`22626/23478`) and `cli` is **93.7%** (`5144/5491`);
+neither has a floor. The checker prints their uncovered files on every run.
 
 `core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
 (#48). Production modules also have local `#[cfg(test)]` next to the code (`error`,
@@ -114,9 +114,9 @@ informational.
 |---|---|
 | function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, index | **100%** |
 | session, memory, llm, auth, agent, lsp, mcp, sdk, server, format, import, slop | **100%** |
-| tools | **99.2%** (`8323/8387`, floor 99.2) |
-| tui | no floor (percent printed by the checker; not yet 100%) |
-| cli | no floor (percent printed by the checker; not yet 100%) |
+| tools | **99.9%** (`8647/8654`, floor 99.2) |
+| tui | no floor (**96.4%**, `22626/23478`) |
+| cli | no floor (**93.7%**, `5144/5491`) |
 
 When re-measuring, update this breakdown and the dated workspace total here,
 then copy only the workspace percent into any README claim if it is mentioned.

@@ -1,14 +1,6 @@
 use super::*;
 use whycodes_core::NetworkPolicy;
 
-struct FailSerde;
-
-impl serde::Serialize for FailSerde {
-    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
-        Err(serde::ser::Error::custom("nope"))
-    }
-}
-
 #[tokio::test]
 async fn network_allowlist_blocks_disallowed_host() {
     let tool = WebFetchTool::new();
@@ -79,7 +71,6 @@ fn json_pretty_printed() {
     assert_eq!(fallback, "not-json");
     let pretty = pretty_json_value(&serde_json::json!({"a": 1}), "raw");
     assert!(pretty.contains("\"a\""), "{pretty}");
-    assert_eq!(pretty_json_value(&FailSerde, "raw"), "raw");
 }
 
 #[test]

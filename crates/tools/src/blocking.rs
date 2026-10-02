@@ -8,7 +8,7 @@
 
 use whycodes_core::types::ToolResult;
 
-fn background_task_error(e: impl std::fmt::Display) -> String {
+fn background_task_error(e: &str) -> String {
     format!("background task failed: {e}")
 }
 
@@ -20,7 +20,7 @@ where
 {
     tokio::task::spawn_blocking(f)
         .await
-        .map_err(background_task_error)
+        .map_err(|e| background_task_error(&e.to_string()))
 }
 
 /// Like [`run`] but maps join failure onto an error [`ToolResult`].

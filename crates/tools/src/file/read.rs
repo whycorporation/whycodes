@@ -352,11 +352,7 @@ fn image_read(path: &Path, shown: &str, media: &str) -> ToolResult {
     image_bytes_result(shown, media, size, fs::read(path).map_err(io_error_string))
 }
 
-fn io_error_string(e: impl std::fmt::Display) -> String {
-    display_error(&e)
-}
-
-fn display_error(e: &impl std::fmt::Display) -> String {
+fn io_error_string(e: std::io::Error) -> String {
     e.to_string()
 }
 
@@ -369,11 +365,19 @@ fn window_read_error(shown: &str, e: &str) -> ToolResult {
 }
 
 fn note_large_default_window(size: u64, offset: usize, limit: usize) {
-    if size > MAX_FULL_READ_BYTES && offset == 1 && limit >= DEFAULT_LIMIT {
-        // Still allow windowed reads of huge files — stream below.
-        // Warn when the default window is used so the model knows to page.
+    match (
+        size > MAX_FULL_READ_BYTES,
+        offset == 1,
+        limit >= DEFAULT_LIMIT,
+    ) {
+        (true, true, true) => note_paged_read(),
+        _ => note_small_window(),
     }
 }
+
+fn note_paged_read() {}
+
+fn note_small_window() {}
 
 fn refuse_binary(path: &Path, shown: &str) -> bool {
     let _ = shown;

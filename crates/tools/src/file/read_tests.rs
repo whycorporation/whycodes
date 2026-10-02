@@ -365,5 +365,8 @@ async fn execute_skill_url_loads_project_skill() {
 
 #[test]
 fn image_io_error_string_is_named() {
-    assert_eq!(display_error(&"unreadable"), "unreadable");
+    assert_eq!(
+        io_error_string(std::io::Error::other("unreadable")),
+        "unreadable"
+    );
 }

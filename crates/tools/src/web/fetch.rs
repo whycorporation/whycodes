@@ -169,7 +169,7 @@ fn pretty_json_or_raw(trimmed: &str, raw: &str) -> String {
     }
 }
 
-fn pretty_json_value(value: &impl serde::Serialize, raw: &str) -> String {
+fn pretty_json_value(value: &serde_json::Value, raw: &str) -> String {
     match serde_json::to_string_pretty(value) {
         Ok(pretty) => pretty,
         Err(err) => json_pretty_fallback(raw, &err),

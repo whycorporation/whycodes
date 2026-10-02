@@ -144,6 +144,23 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-10-02 — `cargo test` takes one TESTNAME
+
+**Symptom:** Test (linux) on PR #147 exits in about a second:
+`error: unexpected argument 'merge::' found`. Coverage still runs and is green.
+
+**JSONL / crash:** none.
+
+**Root cause:** `scripts/affected_tests.py` joined several `--lib` filters
+before `--` (`cargo test --lib load:: merge::`). Rustc 1.99 accepts a single
+`TESTNAME`. Extra filters are unexpected arguments.
+
+**Fix:** The first filter stays the `TESTNAME`. The rest follow `--`, which
+the test harness ORs. A lone filter does not get a trailing `--`.
+
+**Prevention:** Do not pass more than one filter before `--`.
+`cargo test -p whycodes-config --lib load:: -- merge::` is the shape that works.
+
 ### 2026-09-25 — llvm-cov wrapper treats its own baked path as missing
 
 **Symptom:** `cargo llvm-cov report` exits 1 with

@@ -356,8 +356,12 @@ def cargo_lines(plan: Plan, *, locked: bool, features: str) -> list[str]:
         if whole_lib or (not filters and not targets):
             lines.append(_cargo(locked, features, ["-p", pkg, "--lib"]))
         elif filters:
-            # One cargo process, several substring filters: cargo ORs them.
-            lines.append(_cargo(locked, features, ["-p", pkg, "--lib", *filters]))
+            # Cargo accepts one TESTNAME. Extra filters must follow `--` so
+            # the test harness ORs them (`cargo test --lib a:: -- b::` is
+            # "unexpected argument" on rustc 1.99). A lone filter stays
+            # before `--`; a trailing `--` with nothing after it is noise.
+            extra = ["--", *filters[1:]] if len(filters) > 1 else []
+            lines.append(_cargo(locked, features, ["-p", pkg, "--lib", filters[0], *extra]))
         for target in targets:
             lines.append(_cargo(locked, features, ["-p", pkg, "--test", target]))
     return lines
