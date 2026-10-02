@@ -73,6 +73,53 @@ class AffectedTests(unittest.TestCase):
     def test_docs_select_nothing(self) -> None:
         self.assertEqual(commands(["docs/knowhow.md", "README.md"]), [])
 
+    def test_storage_bundled_feature_follows_who_can_activate_it(self) -> None:
+        # `cargo test -p whycodes-config --features whycodes-storage/bundled`
+        # is "does not contain this feature". Config never links sqlite.
+        # Tools reaches storage through memory's bundled-sqlite alias.
+        graph = affected.direct_deps()
+        config = affected.cargo_lines(
+            affected.plan_for(["crates/config/src/load.rs"], graph),
+            locked=True,
+            features="whycodes-storage/bundled",
+        )
+        self.assertEqual(len(config), 1)
+        self.assertNotIn("--features", config[0])
+        self.assertIn("-p whycodes-config", config[0])
+
+        tools = affected.cargo_lines(
+            affected.plan_for(["crates/tools/src/blocking.rs"], graph),
+            locked=True,
+            features="whycodes-storage/bundled",
+        )
+        self.assertEqual(len(tools), 1)
+        self.assertIn("--features bundled-sqlite", tools[0])
+        self.assertNotIn("whycodes-storage/bundled", tools[0])
+
+        memory = affected.cargo_lines(
+            affected.plan_for(["crates/memory/src/lib.rs"], graph),
+            locked=True,
+            features="whycodes-storage/bundled",
+        )
+        memory_line = next(line for line in memory if "-p whycodes-memory" in line)
+        self.assertIn("--features whycodes-storage/bundled", memory_line)
+
+        agent = affected.cargo_lines(
+            affected.plan_for(["crates/agent/src/agent/turn.rs"], graph),
+            locked=True,
+            features="whycodes-storage/bundled",
+        )
+        agent_line = next(line for line in agent if "-p whycodes-agent" in line)
+        self.assertIn("--features whycodes-memory/bundled-sqlite", agent_line)
+
+        workspace = affected.cargo_lines(
+            affected.plan_for(["Cargo.toml"], graph),
+            locked=True,
+            features="whycodes-storage/bundled",
+        )
+        self.assertIn("--workspace", workspace[0])
+        self.assertIn("--features whycodes-storage/bundled", workspace[0])
+
     def test_several_lib_filters_are_one_testname_plus_harness_args(self) -> None:
         # cargo test takes a single TESTNAME. A second filter before `--`
         # is rejected (`unexpected argument 'merge::'`).

@@ -144,6 +144,27 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-10-02 — `-p` rejects another package's feature
+
+**Symptom:** Test (linux) on PR #147 exits in about a second:
+`error: the package 'whycodes-config' does not contain this feature: whycodes-storage/bundled`.
+No test runs. The selector had just started passing a single `TESTNAME`.
+
+**JSONL / crash:** none.
+
+**Root cause:** CI passes `--features whycodes-storage/bundled` on every
+`cargo test -p` line. Cargo accepts `pkg/feat` on `-p` only when that
+package is the feature owner or a direct dependency. `whycodes-config`
+does not link sqlite. `whycodes-tools` only reaches it through
+`bundled-sqlite`.
+
+**Fix:** `--workspace` still passes the spec through. A `-p` line keeps
+it, rewrites it to the crate's alias (`bundled-sqlite`, or
+`whycodes-memory/bundled-sqlite`), or drops `--features`.
+
+**Prevention:** Do not copy a workspace `--features` value onto `-p`
+unchanged. `scripts/test_affected_tests.py` locks the three shapes.
+
 ### 2026-10-02 — `cargo test` takes one TESTNAME
 
 **Symptom:** Test (linux) on PR #147 exits in about a second:
