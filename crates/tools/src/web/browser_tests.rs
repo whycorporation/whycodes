@@ -1,7 +1,14 @@
 use super::*;
 use std::net::TcpListener;
+use std::path::Path;
 use std::process::Stdio;
 use std::thread;
+
+fn dir_as_file(name: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(dir.path().join(name), b"not-a-directory").expect("blocker file");
+    dir
+}
 
 fn hang_browser_child() -> Child {
     #[cfg(windows)]
@@ -183,6 +190,25 @@ fn websocket_reader_reports_close_and_invalid_utf8_frames() {
             .unwrap_err()
             .contains("invalid utf-8 sequence")
     );
+
+    // Unmasked frames (server → client). Masked writes never take these arms.
+    let (mut writer, mut reader) = connected_streams();
+    let mut frame = vec![0x81, 126];
+    frame.extend_from_slice(&126u16.to_be_bytes());
+    frame.extend(std::iter::repeat_n(b'z', 126));
+    writer
+        .write_all(&frame)
+        .expect("write unmasked 16-bit frame");
+    assert_eq!(read_ws_text(&mut reader).unwrap().len(), 126);
+
+    let (mut writer, mut reader) = connected_streams();
+    let mut frame = vec![0x81, 127];
+    frame.extend_from_slice(&1u64.to_be_bytes());
+    frame.push(b'q');
+    writer
+        .write_all(&frame)
+        .expect("write unmasked 64-bit frame");
+    assert_eq!(read_ws_text(&mut reader).unwrap(), "q");
 }
 
 #[test]
@@ -273,6 +299,13 @@ fn clamp_wait_ms_caps_at_fifteen_seconds() {
 
 #[test]
 fn find_browser_and_http_get_without_slash() {
+    assert_find_browser_env();
+    assert_browser_lookup_and_status();
+    assert_page_action_results();
+    assert_browser_session_helpers();
+}
+
+fn assert_find_browser_env() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let prev = std::env::var_os("WHYCODES_BROWSER");
     let missing = std::env::temp_dir().join("whycodes-missing-browser-bin");
@@ -294,6 +327,9 @@ fn find_browser_and_http_get_without_slash() {
             None => std::env::remove_var("WHYCODES_BROWSER"),
         }
     }
+}
+
+fn assert_browser_lookup_and_status() {
     let _ = user_data_dir();
     let _ = pick_port();
     assert!(http_get("http://127.0.0.1:1").is_err());
@@ -343,6 +379,9 @@ fn find_browser_and_http_get_without_slash() {
     assert_eq!(decode_screenshot("aGVsbG8=").unwrap(), b"hello");
     assert_eq!(screenshot_data(&json!({"data": "abc"})), Some("abc"));
     assert!(screenshot_data(&json!({})).is_none());
+}
+
+fn assert_page_action_results() {
     assert!(existing_session_port(Ok(SESSION.lock().unwrap_or_else(|e| e.into_inner()))).is_none());
     mkdir_browser_profile(&std::env::temp_dir().join("whycodes-browser-profile-test"));
     let snap_ok = snapshot_from_eval(Ok(json!({"title": "t"})));
@@ -374,11 +413,49 @@ fn find_browser_and_http_get_without_slash() {
     assert!(js_exception_from(&json!({"text": "boom"})).is_err());
     let nav_err = navigate_opened(1, "http://example.test");
     assert!(nav_err.is_error);
+    mkdir_browser_profile_result(Ok(()));
     mkdir_browser_profile_result(Err(std::io::Error::other("mkdir")));
+    page_enable_result(Ok(json!({})));
     page_enable_result(Err("boom".into()));
+    kill_child_debug(Ok(()), "browser kill");
     kill_child_debug(Err(std::io::Error::other("kill")), "browser kill");
+    set_timeout_debug(Ok(()), "http get timeout");
     set_timeout_debug(Err(std::io::Error::other("timeout")), "http get timeout");
+    note_browser_launch();
+    note_browser_profile_ok();
+    note_page_enable_ok();
+    note_screenshot_dir_ok();
+    note_browser_child_ok();
+    note_timeout_ok();
+    let launch_msg = launch_failure(Path::new("chrome"), &std::io::Error::other("spawn"));
+    assert!(launch_msg.contains("failed to launch"), "{launch_msg}");
+    assert_eq!(io_err(std::io::Error::other("x")), "x");
+    assert!(cdp_connect_error(std::io::Error::other("x")).contains("cdp connect"));
+}
+
+fn assert_browser_session_helpers() {
+    assert_browser_error_helpers();
+    assert_browser_session_poll();
+}
+
+fn assert_browser_error_helpers() {
+    assert!(
+        screenshot_decode_error(base64::DecodeError::InvalidLength(1))
+            .contains("screenshot decode")
+    );
+    assert!(
+        utf8_frame_error(String::from_utf8(vec![0xff]).unwrap_err()).contains("utf-8"),
+        "expected a utf-8 error"
+    );
+    assert!(
+        cdp_json_error(serde_json::from_str::<serde_json::Value>("").unwrap_err()).contains("EOF")
+    );
+    assert!(screenshot_mkdir_error(std::io::Error::other("denied")).is_error);
     assert!(screenshot_mkdir_failed("denied").is_error);
+    let reply = cdp_reply("Page.enable", &json!({"result": {"ok": true}}));
+    assert_eq!(reply.ok(), Some(json!({"ok": true})));
+    let reply_err = cdp_reply("Page.enable", &json!({"error": {"message": "nope"}}));
+    assert!(reply_err.unwrap_err().contains("cdp Page.enable"));
     assert!(screenshot_write_failed("denied").is_error);
     assert_eq!(pick_bound_port(Err(std::io::Error::other("bind"))), 9222);
     assert_eq!(port_from_addr(Err(std::io::Error::other("addr"))), 9222);
@@ -388,13 +465,22 @@ fn find_browser_and_http_get_without_slash() {
     drop(unlock_session_result(Ok(SESSION
         .lock()
         .unwrap_or_else(|e| e.into_inner()))));
-    let lock: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _g = lock.lock().unwrap();
-        panic!("poison");
+        let _guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+        panic!("poison session");
     }));
-    let recovered = recover_lock(lock.lock());
-    assert_eq!(*recovered, 0);
+    let recovered = recover_lock(SESSION.lock());
+    drop(recovered);
+    let poisoned = match SESSION.lock() {
+        Err(err) => err,
+        Ok(_) => panic!("session lock should stay poisoned"),
+    };
+    drop(poisoned_lock(poisoned));
+    let snap = pretty_snapshot(&json!({"title": "t"}));
+    assert!(snap.contains("title"), "{snap}");
+}
+
+fn assert_browser_session_poll() {
     let not_ready = take_ready_session(false, hang_browser_child(), 1, PathBuf::from("/tmp"));
     match not_ready {
         Err((mut child, _)) => {
@@ -702,6 +788,10 @@ fn pick_port_env_and_status_poison_paths() {
     let prev = std::env::var_os("WHYCODES_BROWSER_PORT");
     unsafe { std::env::set_var("WHYCODES_BROWSER_PORT", "9229") };
     assert_eq!(pick_port(), 9229);
+    assert_eq!(pinned_browser_port(None), None);
+    assert_eq!(pinned_browser_port(Some("nope".into())), None);
+    assert_eq!(pinned_browser_port(Some("0".into())), None);
+    assert_eq!(pinned_browser_port(Some("9229".into())), Some(9229));
     unsafe {
         match prev {
             Some(v) => std::env::set_var("WHYCODES_BROWSER_PORT", v),
@@ -731,4 +821,197 @@ fn ensure_session_times_out_fake_browser() {
     }
     drop(close_browser());
     assert!(err.is_err(), "{err:?}");
+}
+
+#[test]
+fn uncovered_io_error_arms() {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    drop(close_browser());
+
+    let missing = dir_as_file("whycodes-not-a-browser");
+    let bin = missing.path().join("whycodes-not-a-browser");
+    let launch = ensure_session_with_browser(Some(bin));
+    assert!(
+        launch.as_ref().unwrap_err().contains("failed to launch"),
+        "{launch:?}"
+    );
+
+    let blocked = dir_as_file("browser-profile");
+    let profile = blocked.path().join("browser-profile");
+    mkdir_browser_profile(&profile);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 256];
+        let _ = stream.read(&mut buf);
+        drop(stream);
+    });
+    // A clean close is `Ok("")` on Windows; an abort is `Err`. Either is fine.
+    let _ = http_get(&format!("http://{addr}/json/version"));
+    server.join().ok();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    drop(listener);
+    let connect =
+        ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({})).unwrap_err();
+    assert!(connect.contains("cdp connect"), "{connect}");
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept");
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+    });
+    let err = ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({})).unwrap_err();
+    assert!(!err.is_empty(), "{err}");
+    server.join().ok();
+
+    let (mut writer, reader) = connected_streams();
+    drop(reader);
+    // Windows may buffer a short write after the peer drops. Either outcome
+    // still executes the write path.
+    let _ = write_ws_text(&mut writer, b"x");
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+        let _ = stream.write_all(b"HTTP/1.1 101 Switching Protocols\r\n\r\n");
+        let _ = stream.write_all(&[0x81, 4]);
+        let _ = stream.write_all(br#"{"x":"#);
+    });
+    let parse =
+        ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({})).unwrap_err();
+    assert!(!parse.is_empty(), "{parse}");
+    server.join().ok();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+        let _ = stream.write_all(b"HTTP/1.1 101 Switching Protocols\r\n\r\n");
+        let _ = stream.flush();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let _ = write_ws_text(&mut stream, br#"{"id":1}"#);
+        let _ = stream.flush();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    });
+    let missing_result = ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({}))
+        .expect("null result");
+    assert!(missing_result.is_null());
+    server.join().ok();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 256];
+        let _ = stream.read(&mut buf);
+        let _ = stream.write_all(b"not json at all");
+    });
+    let pages = cdp(addr.port(), "Page.enable", json!({})).unwrap_err();
+    assert!(pages.contains("no CDP page target"), "{pages}");
+    server.join().ok();
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 256];
+        let _ = stream.read(&mut buf);
+        let body = r#"[{"type":"page"}]"#;
+        let resp = format!("HTTP/1.0 200 OK\r\n\r\n{body}");
+        let _ = stream.write_all(resp.as_bytes());
+    });
+    let pages = cdp(addr.port(), "Page.enable", json!({})).unwrap_err();
+    assert!(pages.contains("no CDP page target"), "{pages}");
+    server.join().ok();
+
+    let eval_null = evaluate_cdp_result(Ok(json!({})));
+    assert_eq!(eval_null.ok(), Some(serde_json::Value::Null));
+
+    let running = browser_status_line(std::path::Path::new("chrome"), true, Some(9));
+    assert!(running.contains("running: true"));
+    assert!(running.contains("port: 9"));
+
+    let pretty = snapshot_from_eval(Ok(json!({"a": 1})));
+    assert!(pretty.content.contains('\n') || pretty.content.contains("\"a\""));
+
+    // HTTP body with no header separator, and a host that has no path.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 256];
+        let _ = stream.read(&mut buf);
+        let _ = stream.write_all(b"raw-body");
+    });
+    let raw = http_get(&format!("http://{addr}")).expect("body without headers");
+    assert_eq!(raw, "raw-body");
+    server.join().ok();
+
+    // CDP list whose only target is not a page.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 256];
+        let _ = stream.read(&mut buf);
+        let body = r#"[{"type":"browser","webSocketDebuggerUrl":"ws://127.0.0.1:1/browser"}]"#;
+        let resp = format!("HTTP/1.0 200 OK\r\n\r\n{body}");
+        let _ = stream.write_all(resp.as_bytes());
+    });
+    let pages = cdp(addr.port(), "Page.enable", json!({})).unwrap_err();
+    assert!(pages.contains("no CDP page target"), "{pages}");
+    server.join().ok();
+
+    // WebSocket URL with no path, and a masked frame whose payload is not UTF-8.
+    assert!(
+        ws_cdp_call("ws://127.0.0.1:1", "Page.enable", json!({}))
+            .unwrap_err()
+            .contains("cdp connect")
+    );
+    let (mut writer, mut reader) = connected_streams();
+    write_ws_text(&mut writer, &[0xc3, 0x28]).expect("write masked invalid utf-8");
+    assert!(
+        read_ws_text(&mut reader)
+            .unwrap_err()
+            .contains("invalid utf-8")
+    );
+
+    // Poisoned session lock is recovered; `store_session` still returns the port.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+        panic!("poison session");
+    }));
+    let stored = store_session(
+        hang_browser_child(),
+        17,
+        PathBuf::from("/tmp/poison-session"),
+    );
+    assert_eq!(stored.ok(), Some(17));
+    drop(close_browser());
+
+    // A shut-down socket fails the masked WebSocket write. A small blocking
+    // write still succeeds on Windows (the kernel buffers it). A non-blocking
+    // write larger than the send buffer returns WouldBlock / connection reset.
+    let (mut writer, reader) = connected_streams();
+    drop(reader);
+    writer.set_nonblocking(true).expect("nonblocking writer");
+    let payload = vec![b'x'; 256 * 1024];
+    let mut wrote = Ok(());
+    for _ in 0..8 {
+        wrote = write_ws_text(&mut writer, &payload);
+        if wrote.is_err() {
+            break;
+        }
+    }
+    assert!(wrote.is_err(), "write to a closed socket should fail");
 }

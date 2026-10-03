@@ -28,6 +28,7 @@ fn hang_command() -> &'static str {
 #[test]
 fn shell_module_loads() {
     assert!(!module_path!().is_empty());
+    assert_eq!(join_error_string("boom"), "boom");
     let join = shell_join_error("boom");
     assert!(join.is_error);
     assert!(join.content.contains("Task join error"));
@@ -35,6 +36,17 @@ fn shell_module_loads() {
     let from_join = shell_from_join(Err("boom".into()));
     assert!(from_join.is_error);
     assert!(from_join.content.contains("Task join error"));
+
+    let timed = shell_from_join(Ok(Err(whycodes_sandbox::SandboxError::TimedOut(3))));
+    assert!(timed.is_error);
+    assert!(timed.content.contains("timed out after 3"));
+
+    let sandbox = shell_from_join(Ok(Err(whycodes_sandbox::SandboxError::Unavailable(
+        "no bwrap".into(),
+    ))));
+    assert!(sandbox.is_error);
+    assert!(sandbox.content.contains("Sandbox error"));
+    assert!(sandbox.content.contains("no bwrap"));
 }
 
 #[test]

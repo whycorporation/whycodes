@@ -71,7 +71,7 @@ impl Tool for WriteTool {
             }
 
             let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
-            crate::blocking::tool(move || Self::run(full_path, shown, content)).await
+            crate::blocking::tool(Box::new(move || Self::run(full_path, shown, content))).await
         })
     }
 }

@@ -79,10 +79,14 @@ impl Tool for ShellTool {
             shell_from_join(
                 tokio::task::spawn_blocking(move || sandbox_run(&request, Some(timeout)))
                     .await
-                    .map_err(|e| e.to_string()),
+                    .map_err(join_error_string),
             )
         })
     }
+}
+
+fn join_error_string(e: impl std::fmt::Display) -> String {
+    e.to_string()
 }
 
 fn shell_from_join(

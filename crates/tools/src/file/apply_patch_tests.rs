@@ -484,4 +484,18 @@ fn apply_unified_diff_pops_empty_last_split() {
     let out = apply_unified_diff(original, "@@ -1,2 +1,2 @@\n alpha\n-\n+\n")
         .unwrap_or_else(|_| original.to_string());
     assert!(!out.is_empty() || out.is_empty());
+    let bad_header = apply_unified_diff("alpha\n", "@@ -x @@\n-alpha\n+beta\n");
+    let bad_header_err = bad_header.as_ref().err().map(ToString::to_string);
+    assert!(
+        bad_header_err
+            .as_deref()
+            .is_some_and(|err| err.contains("malformed hunk header")),
+        "{bad_header:?}"
+    );
+    assert_eq!(io_error_string("disk full"), "disk full");
+    assert_eq!(display_error("disk full"), "disk full");
+    assert!(hunk_body("not a hunk").is_err());
+    assert!(hunk_body("@@ -1 @@").is_ok());
+    assert!(old_hunk_token(" +1 ", "@@ +1 @@").is_err());
+    assert_eq!(old_hunk_token(" -3,1 +3,1 ", "@@").unwrap(), "-3,1");
 }

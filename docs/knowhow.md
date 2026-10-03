@@ -144,6 +144,89 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-10-03 — binary crate has no `--lib`
+
+**Symptom:** Test (linux) on PR #147 exits in about a second:
+`error: no library targets found in package `whycodes-cli``.
+Coverage stays green. Config and tools lines in the same plan are fine.
+
+**JSONL / crash:** none.
+
+**Root cause:** `whycodes-cli` is binary-only (`src/main.rs`, no `lib.rs`).
+Its unit tests live on the `whycodes` bin. The selector still printed
+`cargo test -p whycodes-cli --lib …`.
+
+**Fix:** A crate with `lib.rs` keeps `--lib`. A crate without one uses
+`--bin <name>` from `[[bin]]` (or the package name when `src/main.rs`
+is implicit).
+
+**Prevention:** Do not emit `--lib` for a package that has no library
+target. `scripts/test_affected_tests.py` locks the `whycodes` bin shape.
+
+### 2026-10-02 — `-p` rejects another package's feature
+
+**Symptom:** Test (linux) on PR #147 exits in about a second:
+`error: the package 'whycodes-config' does not contain this feature: whycodes-storage/bundled`.
+No test runs. The selector had just started passing a single `TESTNAME`.
+
+**JSONL / crash:** none.
+
+**Root cause:** CI passes `--features whycodes-storage/bundled` on every
+`cargo test -p` line. Cargo accepts `pkg/feat` on `-p` only when that
+package is the feature owner or a direct dependency. `whycodes-config`
+does not link sqlite. `whycodes-tools` only reaches it through
+`bundled-sqlite`.
+
+**Fix:** `--workspace` still passes the spec through. A `-p` line keeps
+it, rewrites it to the crate's alias (`bundled-sqlite`, or
+`whycodes-memory/bundled-sqlite`), or drops `--features`.
+
+**Prevention:** Do not copy a workspace `--features` value onto `-p`
+unchanged. `scripts/test_affected_tests.py` locks the three shapes.
+
+### 2026-10-02 — `cargo test` takes one TESTNAME
+
+**Symptom:** Test (linux) on PR #147 exits in about a second:
+`error: unexpected argument 'merge::' found`. Coverage still runs and is green.
+
+**JSONL / crash:** none.
+
+**Root cause:** `scripts/affected_tests.py` joined several `--lib` filters
+before `--` (`cargo test --lib load:: merge::`). Rustc 1.99 accepts a single
+`TESTNAME`. Extra filters are unexpected arguments.
+
+**Fix:** The first filter stays the `TESTNAME`. The rest follow `--`, which
+the test harness ORs. A lone filter does not get a trailing `--`.
+
+**Prevention:** Do not pass more than one filter before `--`.
+`cargo test -p whycodes-config --lib load:: -- merge::` is the shape that works.
+
+### 2026-10-02 — tools floor misses a trait-object body and match braces
+
+**Symptom:** A Linux `-skip-expansions` run of `whycodes-tools` printed
+`8709/8710`. The only gap was `web/fetch.rs` `291/292`. The follow-up
+full-crate run printed `8716/8716`, so the floor is 100%.
+
+**JSONL / crash:** none.
+
+**Root cause:** `blocking::tool(f: impl FnOnce …)` is a generic body.
+`-skip-expansions` keeps the monomorphization from an ignored `*_tests.rs`
+call and drops the one production instantiations share. The same flag
+counts a multi-line `match` closing brace and an `Option` `?` as their
+own lines, then misses them. `unwrap_or_else` on `to_string_pretty(&Value)`
+is a closure that never runs and is still a line.
+
+**Fix:** `tool` takes `Box<dyn FnOnce() -> ToolResult + Send>`, so the body
+is one concrete function. `pretty_snapshot` / `pretty_json_value` use
+`unwrap_or_default`. `one_closed_tag` is three one-line `match`es
+(`#[rustfmt::skip]`, `#[allow(clippy::question_mark)]`). A loopback that
+advertises `Content-Length` and then closes covers `read_fetch_body`'s
+`Err` arm. After that, `fetch.rs` printed `298/298`.
+
+**Prevention:** Do not add `fn f(impl Trait)` on a 100% path. Do not leave
+a multi-line `match` or `?` whose `None` arm nothing reaches. A closure
+passed to `unwrap_or_else` counts even when the `Ok` arm always runs.
+
 ### 2026-09-25 — llvm-cov wrapper treats its own baked path as missing
 
 **Symptom:** `cargo llvm-cov report` exits 1 with

@@ -189,6 +189,19 @@ async fn execute_image_returns_b64() {
 }
 
 #[tokio::test]
+async fn oversized_image_is_refused() {
+    let dir = TempDir::new().unwrap();
+    let big = vec![0u8; (2 * 1024 * 1024) + 1];
+    fs::write(dir.path().join("big.png"), big).unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let result = ReadTool::new()
+        .execute(serde_json::json!({"path": "big.png"}), &ctx)
+        .await;
+    assert!(result.is_error, "{}", result.content);
+    assert!(result.content.contains("max"), "{}", result.content);
+}
+
+#[tokio::test]
 async fn execute_missing_path_param() {
     let ctx = ToolContext::new("/");
     let result = ReadTool::new().execute(serde_json::json!({}), &ctx).await;
@@ -216,6 +229,12 @@ async fn remaining_read_branches() {
     assert!(win_from.content.contains("Error reading"));
     note_large_default_window(MAX_FULL_READ_BYTES + 1, 1, DEFAULT_LIMIT);
     note_large_default_window(1, 1, DEFAULT_LIMIT);
+    note_disk_read();
+    note_text_read();
+    note_fresh_read();
+    let mut stale = String::new();
+    note_stale_read(&mut stale, "a.txt", "writer");
+    assert!(stale.contains("stale"), "{stale}");
     assert!(!refuse_binary(Path::new("/nonexistent-xyz"), "gone"));
     assert!(!sniff_opened(Err(std::io::Error::other("gone"))));
     assert!(!sniff_read(Err(std::io::Error::other("eof")), &[]));
@@ -342,4 +361,12 @@ async fn execute_skill_url_loads_project_skill() {
         .execute(serde_json::json!({"path": "agent://"}), &ctx)
         .await;
     assert!(!agent.is_error, "{}", agent.content);
+}
+
+#[test]
+fn image_io_error_string_is_named() {
+    assert_eq!(
+        io_error_string(std::io::Error::other("unreadable")),
+        "unreadable"
+    );
 }

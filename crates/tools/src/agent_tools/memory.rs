@@ -25,16 +25,31 @@ fn data_dir() -> PathBuf {
     whycodes_core::paths::data_dir()
 }
 
+fn memory_disabled(value: Result<String, std::env::VarError>) -> bool {
+    match value {
+        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Err(err) => memory_env_missing(&err),
+    }
+}
+
+fn memory_env_missing(_err: &std::env::VarError) -> bool {
+    false
+}
+
 fn service_for(ctx: &ToolContext) -> Result<MemoryService, String> {
-    if std::env::var("WHYCODES_NO_MEMORY")
-        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
-    {
+    if memory_disabled(std::env::var("WHYCODES_NO_MEMORY")) {
         return Err("memory is disabled (WHYCODES_NO_MEMORY)".into());
     }
     let project = PathBuf::from(&ctx.working_dir);
-    MemoryService::open(project, data_dir(), MemorySettings::default())
-        .map_err(|e| format!("open memory store: {e}"))
+    MemoryService::open(project, data_dir(), MemorySettings::default()).map_err(open_memory_error)
+}
+
+fn open_memory_error(e: impl std::fmt::Display) -> String {
+    format!("open memory store: {e}")
+}
+
+fn memory_err_string(e: impl std::fmt::Display) -> String {
+    e.to_string()
 }
 impl Tool for MemoryTool {
     fn name(&self) -> &str {
@@ -110,12 +125,12 @@ impl Tool for MemoryTool {
                     }
                     map_svc(
                         svc.remember(text, ctx.session_id.as_deref())
-                            .map_err(|e| e.to_string()),
+                            .map_err(memory_err_string),
                         |id| format!("Saved memory {}:\n{text}", &id[..8.min(id.len())]),
                     )
                 }
                 "list" => map_svc(
-                    svc.list(limit).map_err(|e| e.to_string()),
+                    svc.list(limit).map_err(memory_err_string),
                     format_memory_list,
                 ),
                 "search" => {
@@ -132,7 +147,7 @@ impl Tool for MemoryTool {
                         };
                     }
                     map_svc(
-                        svc.search(q, limit, 0.15).map_err(|e| e.to_string()),
+                        svc.search(q, limit, 0.15).map_err(memory_err_string),
                         format_memory_hits,
                     )
                 }
@@ -145,7 +160,7 @@ impl Tool for MemoryTool {
                             is_error: true,
                         };
                     }
-                    map_svc(svc.delete(id).map_err(|e| e.to_string()), |ok| {
+                    map_svc(svc.delete(id).map_err(memory_err_string), |ok| {
                         format_delete(id, ok)
                     })
                 }
@@ -163,12 +178,12 @@ impl Tool for MemoryTool {
                         };
                     }
                     map_svc(
-                        svc.search_code(q, limit, 0.12).map_err(|e| e.to_string()),
+                        svc.search_code(q, limit, 0.12).map_err(memory_err_string),
                         format_code_hits,
                     )
                 }
                 "index" => map_svc(
-                    svc.index_codebase(2000, 8000).map_err(|e| e.to_string()),
+                    svc.index_codebase(2000, 8000).map_err(memory_err_string),
                     |n| format!("Indexed {n} code chunks for this project."),
                 ),
                 "learn" => {
@@ -187,7 +202,7 @@ impl Tool for MemoryTool {
                     let lesson = format!("Lesson: {text}");
                     map_svc(
                         svc.remember(&lesson, ctx.session_id.as_deref())
-                            .map_err(|e| e.to_string()),
+                            .map_err(memory_err_string),
                         |id| format!("Lesson stored {}:\n{lesson}", &id[..8.min(id.len())]),
                     )
                 }

@@ -53,9 +53,19 @@ pub(crate) fn is_short_command(cli: &crate::Cli) -> bool {
 pub(crate) fn shutdown_runtime(rt: tokio::runtime::Runtime) {
     let start = Instant::now();
     rt.shutdown_timeout(SHUTDOWN_WAIT);
-    if start.elapsed() >= SHUTDOWN_WAIT {
+    if shutdown_ran_long(start.elapsed()) {
         eprintln!("{}", hang_message());
     }
+}
+
+/// True when `shutdown_timeout` used the full budget.
+///
+/// A few milliseconds of scheduler slack still counts: the diagnostic is
+/// "work outlived the wait", not a stopwatch. Without the slack, a task
+/// that sleeps past the budget can return at 79ms against an 80ms wait and
+/// skip the warning.
+fn shutdown_ran_long(elapsed: Duration) -> bool {
+    elapsed + Duration::from_millis(20) >= SHUTDOWN_WAIT && elapsed > Duration::from_millis(1)
 }
 
 pub(crate) fn hang_message() -> String {

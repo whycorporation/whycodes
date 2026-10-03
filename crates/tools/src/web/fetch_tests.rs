@@ -58,6 +58,28 @@ async fn execute_requires_url_and_fetches_loopback() {
     assert!(!out.is_error, "{}", out.content);
     assert!(out.content.contains("hello-fetch"), "{}", out.content);
     assert!(out.content.contains("200"), "{}", out.content);
+
+    // Headers only, then the socket closes: `response.bytes()` returns Err.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\n",
+            );
+        }
+    });
+    let cut = WebFetchTool::new()
+        .execute(json!({ "url": format!("http://{addr}/cut") }), &ctx)
+        .await;
+    assert!(cut.is_error, "{}", cut.content);
+    assert!(
+        cut.content.contains("Error reading response"),
+        "{}",
+        cut.content
+    );
 }
 
 #[test]
@@ -66,6 +88,11 @@ fn json_pretty_printed() {
     assert!(out.contains("\n"));
     assert!(out.contains("\"version\": \"4.5.1\"") || out.contains("\"version\":\"4.5.1\""));
     assert!(out.contains("4.5.1"));
+    assert_eq!(fetch_body_error("eof"), "eof");
+    let fallback = pretty_json_or_raw("not-json", "not-json");
+    assert_eq!(fallback, "not-json");
+    let pretty = pretty_json_value(&json!({"a": 1}), "raw");
+    assert!(pretty.contains("\"a\""), "{pretty}");
 }
 
 #[test]
@@ -136,9 +163,10 @@ fn remaining_format_and_html_helpers() {
     );
     assert!(fetch_bytes_failed("eof").is_error);
     skip_closed_tag();
-    assert!(next_html_char("").is_none());
-    assert_eq!(next_html_char("ab"), Some('a'));
-    assert_eq!(html_exhausted(), '\0');
+    assert_eq!(next_html_char(""), '\0');
+    assert_eq!(next_html_char("ab"), 'a');
+    assert_eq!(html_char_at(None), '\0');
+    assert_eq!(exhausted_html_char(), '\0');
     assert!(
         fetch_bytes_result("http://x", 200, false, "text/plain", 100, Err("eof".into())).is_error
     );
@@ -157,6 +185,8 @@ fn remaining_format_and_html_helpers() {
     assert_eq!(short, "abc");
     let _ = http_client();
     let _ = http_client();
+    let fallback = client_from_build(None);
+    let _ = fallback.get("http://127.0.0.1/");
 }
 
 #[tokio::test]

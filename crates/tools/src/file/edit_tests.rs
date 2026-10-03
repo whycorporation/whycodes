@@ -543,3 +543,12 @@ async fn write_error_on_readonly_parent() {
         out.content
     );
 }
+
+#[test]
+fn io_and_missing_from_tag_are_named() {
+    assert_eq!(io_error_string("disk full"), "disk full");
+    assert_eq!(display_error("disk full"), "disk full");
+    let missing = require_from_tag(None).unwrap_err();
+    assert!(missing.contains("from is required"), "{missing}");
+    assert_eq!(require_from_tag(Some("abc")).unwrap(), "abc");
+}

@@ -9,7 +9,15 @@ impl Config {
     /// Checks required fields and emits warnings for common misconfigurations.
     pub fn validate(&self) -> Result<()> {
         let mut issues: Vec<String> = Vec::new();
+        self.collect_provider_issues(&mut issues);
+        self.collect_notify_issues(&mut issues);
+        self.collect_slop_issues(&mut issues);
+        self.collect_session_issues(&mut issues);
+        self.collect_agent_issues(&mut issues);
+        report_issues(issues)
+    }
 
+    fn collect_provider_issues(&self, issues: &mut Vec<String>) {
         // Check that at least one provider is configured or default model exists
         if self.providers.is_empty() && self.default_model.is_none() {
             issues.push(
@@ -64,7 +72,9 @@ impl Config {
                 ));
             }
         }
+    }
 
+    fn collect_notify_issues(&self, issues: &mut Vec<String>) {
         if let Some(url) = self.notify.discord_webhook.as_deref()
             && !url.trim().is_empty()
             && !is_discord_webhook_url(url)
@@ -105,7 +115,9 @@ impl Config {
                 ));
             }
         }
+    }
 
+    fn collect_slop_issues(&self, issues: &mut Vec<String>) {
         if self.slop.verbosity < 0.0 || self.slop.verbosity > 1.0 {
             issues.push(format!(
                 "slop.verbosity is {} (expected 0–1).",
@@ -121,7 +133,9 @@ impl Config {
         if self.slop.hotspots == 0 {
             issues.push("slop.hotspots is 0 (expected ≥ 1).".to_string());
         }
+    }
 
+    fn collect_session_issues(&self, issues: &mut Vec<String>) {
         // Check session config
         if self.session.max_context_tokens == 0 {
             issues.push(
@@ -144,7 +158,9 @@ impl Config {
                 self.session.response_cache
             ));
         }
+    }
 
+    fn collect_agent_issues(&self, issues: &mut Vec<String>) {
         // Check agents
         if self.agents.is_empty() {
             issues.push(
@@ -162,39 +178,41 @@ impl Config {
                 self.default_agent
             ));
         }
+    }
+}
 
-        // Report issues
-        if issues.is_empty() {
-            tracing::info!("Configuration validated successfully.");
-            Ok(())
-        } else {
-            for issue in &issues {
-                if issue.contains("localhost") || issue.contains("127.0.0.1") {
-                    tracing::warn!("{}", issue);
-                } else {
-                    tracing::warn!("Config issue: {}", issue);
-                }
-            }
-            // Return the first real error if any; otherwise it's just warnings
-            let errors: Vec<&String> = issues
-                .iter()
-                .filter(|i| !i.contains("localhost") && !i.contains("127.0.0.1"))
-                .collect();
-
-            if errors.is_empty() {
-                // Only localhost warnings — still ok
-                Ok(())
-            } else if errors.len() == 1 {
-                Err(Error::Config(errors[0].clone()))
+fn report_issues(issues: Vec<String>) -> Result<()> {
+    // Report issues
+    if issues.is_empty() {
+        tracing::info!("Configuration validated successfully.");
+        Ok(())
+    } else {
+        for issue in &issues {
+            if issue.contains("localhost") || issue.contains("127.0.0.1") {
+                tracing::warn!("{}", issue);
             } else {
-                Err(Error::Config(
-                    errors
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join("; "),
-                ))
+                tracing::warn!("Config issue: {}", issue);
             }
+        }
+        // Return the first real error if any; otherwise it's just warnings
+        let errors: Vec<&String> = issues
+            .iter()
+            .filter(|i| !i.contains("localhost") && !i.contains("127.0.0.1"))
+            .collect();
+
+        if errors.is_empty() {
+            // Only localhost warnings — still ok
+            Ok(())
+        } else if errors.len() == 1 {
+            Err(Error::Config(errors[0].clone()))
+        } else {
+            Err(Error::Config(
+                errors
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            ))
         }
     }
 }

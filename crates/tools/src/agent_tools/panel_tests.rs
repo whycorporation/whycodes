@@ -33,6 +33,7 @@ async fn clear_without_sink_is_ok() {
         .await;
     assert!(!result.is_error);
     assert!(result.content.contains("no TUI panel"));
+    note_panel_unsunk();
 }
 
 #[tokio::test]
@@ -166,6 +167,11 @@ async fn git_diff_success_and_mermaid_missing_file() {
 
     let git_fail = git_diff(&ctx, "nope.txt");
     assert!(git_fail.is_ok() || git_fail.unwrap_err().contains("git"));
+    // A huge unified diff is truncated at the preview cap.
+    let huge_diff = format!("+{}\n", "y".repeat(MAX_PREVIEW_BYTES + 32));
+    let capped = cap_text(&huge_diff);
+    assert!(capped.len() > MAX_PREVIEW_BYTES);
+    assert!(capped.ends_with("\n…"));
 
     let clean = t
         .execute(json!({"action": "show_diff", "path": "a.txt"}), &ctx)
@@ -184,4 +190,40 @@ async fn git_diff_success_and_mermaid_missing_file() {
         "{}",
         empty_diff.content
     );
+}
+
+#[tokio::test]
+async fn show_file_rejects_invalid_utf8() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("bad.bin"), [0xff, 0xfe, b'a']).unwrap();
+    let ctx = ToolContext::unsandboxed(dir.path().to_string_lossy().to_string());
+    let bad = PanelTool::new()
+        .execute(json!({"action": "show_file", "path": "bad.bin"}), &ctx)
+        .await;
+    assert!(bad.is_error, "{}", bad.content);
+    assert!(bad.content.contains("not valid UTF-8"), "{}", bad.content);
+}
+
+#[tokio::test]
+async fn show_diff_reports_git_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    // A `.git` file stops parent-repo discovery and is not a valid gitdir.
+    std::fs::write(dir.path().join(".git"), "not-a-gitdir\n").unwrap();
+    std::fs::write(dir.path().join("a.txt"), "x\n").unwrap();
+    let ctx = ToolContext::unsandboxed(dir.path().to_string_lossy().to_string());
+    let failed = PanelTool::new()
+        .execute(json!({"action": "show_diff", "path": "a.txt"}), &ctx)
+        .await;
+    assert!(failed.is_error, "{}", failed.content);
+    assert!(
+        failed.content.contains("git diff failed"),
+        "{}",
+        failed.content
+    );
+
+    let missing = dir.path().join("no-such-workdir");
+    let missing_ctx = ToolContext::unsandboxed(missing.to_string_lossy().to_string());
+    let spawn = git_diff(&missing_ctx, "a.txt").unwrap_err();
+    assert!(spawn.starts_with("git diff:"), "{spawn}");
+    assert_eq!(git_diff_error("cwd missing"), "git diff: cwd missing");
 }

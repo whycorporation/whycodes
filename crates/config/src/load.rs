@@ -353,6 +353,15 @@ impl Config {
 
     /// Apply environment variable overrides to this config in-place.
     pub fn apply_env_overrides(&mut self) {
+        self.apply_provider_model_env();
+        self.apply_session_env();
+        self.apply_security_env();
+        self.apply_feature_env();
+        self.apply_swarm_env();
+        self.apply_notify_env();
+    }
+
+    fn apply_provider_model_env(&mut self) {
         // WHYCODES_PROVIDER — set as the default provider (first entry) and
         // also populate a basic ProviderConfig if one doesn't exist.
         if let Ok(provider_name) = std::env::var("WHYCODES_PROVIDER") {
@@ -414,7 +423,9 @@ impl Config {
                 });
             }
         }
+    }
 
+    fn apply_session_env(&mut self) {
         // WHYCODES_MAX_TURNS
         if let Ok(val) = std::env::var("WHYCODES_MAX_TURNS")
             && let Ok(n) = val.parse::<usize>()
@@ -431,7 +442,9 @@ impl Config {
         if let Ok(val) = std::env::var("WHYCODES_PROJECT_DIR") {
             self.general.project_path = Some(PathBuf::from(val));
         }
+    }
 
+    fn apply_security_env(&mut self) {
         if let Ok(val) = std::env::var("WHYCODES_SANDBOX") {
             self.security.sandbox = val;
         }
@@ -450,7 +463,9 @@ impl Config {
         if let Ok(val) = std::env::var("WHYCODES_NETWORK_DENYLIST") {
             self.security.network_denylist = network::parse_domain_list(&val);
         }
+    }
 
+    fn apply_feature_env(&mut self) {
         // WHYCODES_NO_MEMORY=1 disables cross-session memory inject/write.
         if let Ok(val) = std::env::var("WHYCODES_NO_MEMORY")
             && matches!(
@@ -492,7 +507,9 @@ impl Config {
                 _ => {}
             }
         }
+    }
 
+    fn apply_swarm_env(&mut self) {
         // WHYCODES_SWARM=0/1 toggles parallel multi-agent.
         if let Ok(val) = std::env::var("WHYCODES_SWARM") {
             match val.to_ascii_lowercase().as_str() {
@@ -513,7 +530,9 @@ impl Config {
                 _ => {}
             }
         }
+    }
 
+    fn apply_notify_env(&mut self) {
         if let Ok(val) = std::env::var("WHYCODES_NOTIFY_ON") {
             self.notify.on = parse_notify_on_csv(&val);
         }

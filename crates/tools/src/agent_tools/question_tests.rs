@@ -216,6 +216,14 @@ fn resolve_answer_tracks_single_multi_and_free_text_state() {
             auto_picked: false,
         }
     );
+    assert_eq!(
+        resolve_stdin_answer(&questions[1], "3", 3),
+        QuestionAnswer {
+            selected: vec![],
+            free_text: None,
+            auto_picked: false,
+        }
+    );
 }
 
 #[tokio::test]
@@ -406,6 +414,80 @@ fn validate_answers_covers_remaining_rules() {
 }
 
 #[test]
+fn validate_answers_whitespace_free_text_is_empty() {
+    let multi = parse_questions(&json!({
+        "question": "Pick many",
+        "choices": ["A"],
+        "multi_select": true
+    }))
+    .unwrap();
+    assert!(
+        validate_answers(
+            &multi,
+            &[QuestionAnswer {
+                selected: vec![],
+                free_text: Some("  ".into()),
+                auto_picked: false,
+            }]
+        )
+        .unwrap_err()
+        .contains("at least one option")
+    );
+
+    let single = parse_questions(&json!({
+        "question": "Pick one",
+        "choices": ["A"]
+    }))
+    .unwrap();
+    assert!(
+        validate_answers(
+            &single,
+            &[QuestionAnswer {
+                selected: vec![],
+                free_text: Some("\t".into()),
+                auto_picked: false,
+            }]
+        )
+        .unwrap_err()
+        .contains("empty selection")
+    );
+}
+
+#[test]
+fn stdin_questionnaire_numbers_questions_and_skips_blank_descriptions() {
+    let _g = STDIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let questions = parse_questions(&json!({
+        "questions": [
+            {"question": "First?", "options": [{"label": "Yes"}]},
+            {"question": "Second?", "options": [{"label": "No", "description": ""}]}
+        ]
+    }))
+    .unwrap();
+    assert!(questions[0].options[0].description.is_empty());
+    queue_stdin(&["1", "1"]);
+    let answers = stdin_questionnaire(&questions).unwrap();
+    assert_eq!(answers.len(), 2);
+    assert_eq!(answers[0].selected, vec!["Yes".to_string()]);
+    assert_eq!(answers[1].selected, vec!["No".to_string()]);
+}
+
+#[test]
+fn poisoned_test_stdin_still_returns_a_line() {
+    let _g = STDIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    {
+        let mut q = TEST_STDIN.lock().unwrap_or_else(|e| e.into_inner());
+        q.clear();
+        q.push_back("kept".into());
+    }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = TEST_STDIN.lock().unwrap_or_else(|e| e.into_inner());
+        panic!("poison test stdin");
+    }));
+    assert!(TEST_STDIN.lock().is_err());
+    assert_eq!(read_line_stdin().unwrap(), "kept");
+}
+
+#[test]
 fn stdin_questionnaire_covers_free_form_and_options() {
     let _g = STDIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let questions = parse_questions(&fixture(WAVE4_QUESTIONNAIRE)).unwrap();
@@ -473,10 +555,14 @@ fn remaining_stdin_and_parse_arms() {
 
     queue_stdin(&["3", ""]);
     let empty_other = stdin_questionnaire(&multi).unwrap();
+    assert!(empty_other[0].free_text.is_none(), "{:?}", empty_other[0]);
+    assert!(empty_other[0].selected.is_empty(), "{:?}", empty_other[0]);
     assert!(
-        empty_other[0].free_text.is_none() || empty_other[0].selected.is_empty(),
-        "{:?}",
-        empty_other[0]
+        TEST_STDIN
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty(),
+        "empty Other line must be consumed"
     );
 
     let mut cursor = std::io::Cursor::new("hello\n");
@@ -532,4 +618,22 @@ async fn execute_reads_queued_stdin() {
         .await;
     assert!(empty.is_error, "{}", empty.content);
     assert!(empty.content.contains("empty input"), "{}", empty.content);
+    let bad_item = parse_questions(&json!({
+        "questions": [{}, {"question": "ok"}]
+    }));
+    let bad_item_err = bad_item.as_ref().err().map(ToString::to_string);
+    assert!(
+        bad_item_err
+            .as_deref()
+            .is_some_and(|err| err.contains("questions[0]")),
+        "{bad_item:?}"
+    );
+    note_no_free_text();
+    note_legacy_question();
+    note_no_options_array();
+    note_no_choices_array();
+    note_non_string_choice();
+    note_typed_stdin();
+    flush_prompt_result(Ok(()));
+    flush_prompt_result(Err(std::io::Error::other("flush")));
 }

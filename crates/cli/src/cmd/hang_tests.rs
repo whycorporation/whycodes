@@ -117,3 +117,11 @@ fn shutdown_runtime_warns_when_work_outlives_budget() {
     });
     shutdown_runtime(rt);
 }
+
+#[test]
+fn shutdown_ran_long_allows_scheduler_slack() {
+    assert!(!shutdown_ran_long(Duration::ZERO));
+    assert!(!shutdown_ran_long(Duration::from_millis(1)));
+    assert!(shutdown_ran_long(SHUTDOWN_WAIT - Duration::from_millis(15)));
+    assert!(shutdown_ran_long(SHUTDOWN_WAIT));
+}

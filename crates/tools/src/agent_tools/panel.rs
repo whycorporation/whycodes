@@ -88,16 +88,16 @@ impl Tool for PanelTool {
                 }
                 "show_diff" => {
                     let label = path.unwrap_or("diff").to_string();
-                    let unified = if let Some(src) = source.filter(|s| !s.is_empty()) {
-                        cap_text(src)
-                    } else if let Some(p) = path.filter(|s| !s.is_empty()) {
-                        match git_diff(ctx, p) {
-                            Ok(s) if !s.trim().is_empty() => s,
-                            Ok(_) => return empty_git_diff(),
-                            Err(e) => return err(&e),
-                        }
-                    } else {
-                        return err("show_diff requires `path` or `source`");
+                    let unified = match source.filter(|s| !s.is_empty()) {
+                        Some(src) => cap_text(src),
+                        None => match path.filter(|s| !s.is_empty()) {
+                            Some(p) => match git_diff(ctx, p) {
+                                Ok(s) if !s.trim().is_empty() => s,
+                                Ok(_) => return empty_git_diff(),
+                                Err(e) => return err(&e),
+                            },
+                            None => return err("show_diff requires `path` or `source`"),
+                        },
                     };
                     PanelUpdate::Diff {
                         path: label,
@@ -105,23 +105,24 @@ impl Tool for PanelTool {
                     }
                 }
                 "show_mermaid" => {
-                    let src = if let Some(s) = source.filter(|s| !s.is_empty()) {
-                        cap_text(s)
-                    } else if let Some(p) = path.filter(|s| !s.is_empty()) {
-                        match read_capped(&resolve(ctx, p)) {
-                            Ok(t) => t,
-                            Err(e) => return err(&e),
-                        }
-                    } else {
-                        return err("show_mermaid requires `source` or `path`");
+                    let src = match source.filter(|s| !s.is_empty()) {
+                        Some(s) => cap_text(s),
+                        None => match path.filter(|s| !s.is_empty()) {
+                            Some(p) => match read_capped(&resolve(ctx, p)) {
+                                Ok(t) => t,
+                                Err(e) => return err(&e),
+                            },
+                            None => return err("show_mermaid requires `source` or `path`"),
+                        },
                     };
                     PanelUpdate::Mermaid { source: src }
                 }
                 _ => return err("action must be show_file, show_diff, show_mermaid, or clear"),
             };
 
-            if let Some(sink) = ctx.panel.as_ref() {
-                sink(update.clone());
+            match ctx.panel.as_ref() {
+                Some(sink) => sink(update.clone()),
+                None => note_panel_unsunk(),
             }
 
             let msg = match &update {
@@ -164,6 +165,8 @@ fn ok(msg: String) -> ToolResult {
     }
 }
 
+fn note_panel_unsunk() {}
+
 fn resolve(ctx: &ToolContext, path: &str) -> PathBuf {
     let p = Path::new(path);
     if p.is_absolute() {
@@ -173,15 +176,27 @@ fn resolve(ctx: &ToolContext, path: &str) -> PathBuf {
     }
 }
 
+fn read_path_error(path: &Path, e: impl std::fmt::Display) -> String {
+    format!("read {}: {e}", path.display())
+}
+
+fn utf8_file_error(_e: impl std::fmt::Display) -> String {
+    "file is not valid UTF-8".to_string()
+}
+
+fn git_diff_error(e: impl std::fmt::Display) -> String {
+    format!("git diff: {e}")
+}
+
 fn read_capped(path: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let bytes = std::fs::read(path).map_err(|e| read_path_error(path, e))?;
     if bytes.len() > MAX_PREVIEW_BYTES {
         return Err(format!(
             "file is {} bytes (limit {MAX_PREVIEW_BYTES}); pick a smaller file",
             bytes.len()
         ));
     }
-    String::from_utf8(bytes).map_err(|_| "file is not valid UTF-8".to_string())
+    String::from_utf8(bytes).map_err(utf8_file_error)
 }
 
 fn cap_text(s: &str) -> String {
@@ -199,7 +214,7 @@ fn git_diff(ctx: &ToolContext, path: &str) -> Result<String, String> {
         .args(["diff", "--", path])
         .current_dir(&ctx.working_dir)
         .output()
-        .map_err(|e| format!("git diff: {e}"))?;
+        .map_err(git_diff_error)?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(format!("git diff failed: {}", stderr.trim()));

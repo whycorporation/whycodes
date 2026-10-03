@@ -165,6 +165,10 @@ fn registry_load_failed(e: ToolResult) -> ToolResult {
     e
 }
 
+fn skill_registry_error(e: impl std::fmt::Display) -> ToolResult {
+    skill_load_error(&e.to_string())
+}
+
 fn skill_load_error(e: &str) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
@@ -174,7 +178,7 @@ fn skill_load_error(e: &str) -> ToolResult {
 }
 
 fn load_skill_registry(project: &std::path::Path) -> Result<SkillRegistry, ToolResult> {
-    SkillRegistry::load_for_project(project).map_err(|e| skill_load_error(&e.to_string()))
+    SkillRegistry::load_for_project(project).map_err(skill_registry_error)
 }
 
 #[cfg(test)]

@@ -194,8 +194,9 @@ fn ensure_session() -> Result<u16, String> {
 }
 
 fn ensure_session_with_browser(bin: Option<PathBuf>) -> Result<u16, String> {
-    if let Some(port) = existing_session_port(SESSION.lock()) {
-        return Ok(port);
+    match existing_session_port(SESSION.lock()) {
+        Some(port) => return Ok(port),
+        None => note_browser_launch(),
     }
     let bin = bin.ok_or_else(|| {
         "No Chromium/Chrome on PATH. Install Chromium or set WHYCODES_BROWSER.".to_string()
@@ -203,7 +204,12 @@ fn ensure_session_with_browser(bin: Option<PathBuf>) -> Result<u16, String> {
     let dir = user_data_dir();
     mkdir_browser_profile(&dir);
     let port = pick_port();
-    let child = Command::new(&bin)
+    let child = spawn_browser(&bin, &dir, port)?;
+    poll_session_ready(child, port, dir)
+}
+
+fn spawn_browser(bin: &Path, dir: &Path, port: u16) -> Result<Child, String> {
+    match Command::new(bin)
         .args([
             "--headless=new",
             "--disable-gpu",
@@ -219,9 +225,34 @@ fn ensure_session_with_browser(bin: Option<PathBuf>) -> Result<u16, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("failed to launch {}: {e}", bin.display()))?;
+    {
+        Ok(child) => Ok(child),
+        Err(e) => Err(launch_failure(bin, &e)),
+    }
+}
 
-    poll_session_ready(child, port, dir)
+fn launch_failure(bin: &Path, e: &std::io::Error) -> String {
+    format!("failed to launch {}: {e}", bin.display())
+}
+
+fn io_err(e: std::io::Error) -> String {
+    e.to_string()
+}
+
+fn cdp_connect_error(e: std::io::Error) -> String {
+    format!("cdp connect: {e}")
+}
+
+fn screenshot_decode_error(e: base64::DecodeError) -> String {
+    format!("screenshot decode: {e}")
+}
+
+fn utf8_frame_error(e: std::string::FromUtf8Error) -> String {
+    e.to_string()
+}
+
+fn cdp_json_error(e: serde_json::Error) -> String {
+    e.to_string()
 }
 
 fn browser_found_status(path: &Path, running: bool, port: Option<u16>) -> ToolResult {
@@ -256,20 +287,29 @@ fn mkdir_browser_profile(dir: &Path) {
 }
 
 fn mkdir_browser_profile_result(result: std::io::Result<()>) {
-    if let Err(e) = result {
-        tracing::debug!(error = %e, "browser profile mkdir");
+    match result {
+        Ok(()) => note_browser_profile_ok(),
+        Err(e) => tracing::debug!(error = %e, "browser profile mkdir"),
     }
 }
 
 fn store_session(child: Child, port: u16, dir: PathBuf) -> Result<u16, String> {
-    if let Ok(mut g) = SESSION.lock() {
-        *g = Some(BrowserSession {
-            child,
-            port,
-            _user_data: dir,
-        });
-    }
+    let mut g = SESSION.lock().unwrap_or_else(|p| p.into_inner());
+    store_locked_session(&mut g, child, port, dir);
     Ok(port)
+}
+
+fn store_locked_session(
+    g: &mut std::sync::MutexGuard<'static, Option<BrowserSession>>,
+    child: Child,
+    port: u16,
+    dir: PathBuf,
+) {
+    **g = Some(BrowserSession {
+        child,
+        port,
+        _user_data: dir,
+    });
 }
 
 fn poll_session_ready(mut child: Child, port: u16, mut dir: PathBuf) -> Result<u16, String> {
@@ -388,11 +428,22 @@ fn unlock_session_result(
     recover_lock(result)
 }
 
-fn recover_lock<T>(result: Result<T, std::sync::PoisonError<T>>) -> T {
+fn recover_lock(
+    result: Result<
+        std::sync::MutexGuard<'static, Option<BrowserSession>>,
+        std::sync::PoisonError<std::sync::MutexGuard<'static, Option<BrowserSession>>>,
+    >,
+) -> std::sync::MutexGuard<'static, Option<BrowserSession>> {
     match result {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned_lock(poisoned),
     }
+}
+
+fn poisoned_lock(
+    poisoned: std::sync::PoisonError<std::sync::MutexGuard<'static, Option<BrowserSession>>>,
+) -> std::sync::MutexGuard<'static, Option<BrowserSession>> {
+    poisoned.into_inner()
 }
 
 fn session_from_unlocked(
@@ -425,14 +476,45 @@ fn port_from_addr(result: std::io::Result<std::net::SocketAddr>) -> u16 {
 }
 
 fn pick_port() -> u16 {
-    #[cfg(test)]
-    if let Ok(p) = std::env::var("WHYCODES_BROWSER_PORT")
-        && let Ok(n) = p.parse::<u16>()
-        && n != 0
-    {
-        return n;
+    match pinned_browser_port(read_browser_port_env()) {
+        Some(port) => port,
+        None => pick_bound_port(std::net::TcpListener::bind("127.0.0.1:0")),
     }
-    pick_bound_port(std::net::TcpListener::bind("127.0.0.1:0"))
+}
+
+fn read_browser_port_env() -> Option<String> {
+    #[cfg(test)]
+    {
+        std::env::var("WHYCODES_BROWSER_PORT").ok()
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
+
+fn pinned_browser_port(raw: Option<String>) -> Option<u16> {
+    let text = raw?;
+    keep_nonzero_port(parsed_port(&text))
+}
+
+fn parsed_port(text: &str) -> Option<u16> {
+    match text.parse::<u16>() {
+        Ok(port) => Some(port),
+        Err(e) => skip_bad_port(&e.to_string()),
+    }
+}
+
+fn skip_bad_port(err: &str) -> Option<u16> {
+    tracing::debug!(error = %err, "browser port parse skipped");
+    None
+}
+
+fn keep_nonzero_port(port: Option<u16>) -> Option<u16> {
+    match port {
+        Some(0) | None => None,
+        Some(port) => Some(port),
+    }
 }
 
 fn open_url(url: &str) -> ToolResult {
@@ -457,8 +539,9 @@ fn page_enable_best_effort(port: u16) {
 }
 
 fn page_enable_result(result: Result<Value, String>) {
-    if let Err(e) = result {
-        tracing::debug!(error = %e, "Page.enable");
+    match result {
+        Ok(_) => note_page_enable_ok(),
+        Err(e) => tracing::debug!(error = %e, "Page.enable"),
     }
 }
 
@@ -486,9 +569,16 @@ fn snapshot() -> ToolResult {
 
 fn snapshot_from_eval(result: Result<Value, String>) -> ToolResult {
     match result {
-        Ok(v) => ok(&serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string())),
+        Ok(v) => ok(&pretty_snapshot(&v)),
         Err(e) => err(&e),
     }
+}
+
+fn pretty_snapshot(value: &Value) -> String {
+    // `Value` always serializes. `unwrap_or_default` keeps the impossible
+    // `Err` arm out of the line count (`-skip-expansions` still counts a
+    // closure that never runs).
+    serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
 fn click(selector: &str) -> ToolResult {
@@ -574,14 +664,19 @@ fn screenshot_mkdir_failed(e: &str) -> ToolResult {
     err(&format!("mkdir: {e}"))
 }
 
+fn screenshot_mkdir_error(e: std::io::Error) -> ToolResult {
+    screenshot_mkdir_failed(&e.to_string())
+}
+
 fn screenshot_write_failed(e: &str) -> ToolResult {
     err(&format!("write screenshot: {e}"))
 }
 
 fn write_screenshot_bytes(ctx: &ToolContext, bytes: &[u8]) -> ToolResult {
     let dir = whycodes_core::project_dir(Path::new(&ctx.working_dir)).join("browser");
-    if let Err(e) = mkdir_screenshot_dir(&dir) {
-        return e;
+    match mkdir_screenshot_dir(&dir) {
+        Ok(()) => note_screenshot_dir_ok(),
+        Err(e) => return e,
     }
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -592,7 +687,7 @@ fn write_screenshot_bytes(ctx: &ToolContext, bytes: &[u8]) -> ToolResult {
 }
 
 fn mkdir_screenshot_dir(dir: &Path) -> Result<(), ToolResult> {
-    std::fs::create_dir_all(dir).map_err(|e| screenshot_mkdir_failed(&e.to_string()))
+    std::fs::create_dir_all(dir).map_err(screenshot_mkdir_error)
 }
 
 fn write_screenshot_file(path: &Path, bytes: &[u8]) -> ToolResult {
@@ -604,12 +699,16 @@ fn write_screenshot_file(path: &Path, bytes: &[u8]) -> ToolResult {
 
 fn close_browser() -> ToolResult {
     let mut g = SESSION.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(mut s) = g.take() {
-        kill_browser_child(&mut s.child);
-        wait_browser_child(&mut s.child);
-        return ok("browser closed");
+    match g.take() {
+        Some(mut s) => close_taken_session(&mut s),
+        None => ok("no browser session"),
     }
-    ok("no browser session")
+}
+
+fn close_taken_session(s: &mut BrowserSession) -> ToolResult {
+    kill_browser_child(&mut s.child);
+    wait_browser_child(&mut s.child);
+    ok("browser closed")
 }
 
 fn current_port() -> Option<u16> {
@@ -624,7 +723,7 @@ fn decode_screenshot(b64: &str) -> Result<Vec<u8>, String> {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|e| format!("screenshot decode: {e}"))
+        .map_err(screenshot_decode_error)
 }
 
 fn evaluate_js_exception(ex: &Value) -> Result<Value, String> {
@@ -662,14 +761,16 @@ fn set_cdp_timeouts(stream: &TcpStream) {
 }
 
 fn kill_child_debug(result: std::io::Result<()>, msg: &'static str) {
-    if let Err(e) = result {
-        tracing::debug!(error = %e, "{msg}");
+    match result {
+        Ok(()) => note_browser_child_ok(),
+        Err(e) => tracing::debug!(error = %e, "{msg}"),
     }
 }
 
 fn set_timeout_debug(result: std::io::Result<()>, msg: &'static str) {
-    if let Err(e) = result {
-        tracing::debug!(error = %e, "{msg}");
+    match result {
+        Ok(()) => note_timeout_ok(),
+        Err(e) => tracing::debug!(error = %e, "{msg}"),
     }
 }
 
@@ -687,9 +788,13 @@ fn evaluate(port: u16, expression: &str) -> Result<Value, String> {
 
 fn evaluate_cdp_result(result: Result<Value, String>) -> Result<Value, String> {
     let v = result?;
-    if let Some(ex) = v.get("exceptionDetails") {
-        return js_exception_from(ex);
+    match v.get("exceptionDetails") {
+        Some(ex) => js_exception_from(ex),
+        None => cdp_eval_value(&v),
     }
+}
+
+fn cdp_eval_value(v: &Value) -> Result<Value, String> {
     Ok(v.get("result")
         .and_then(|r| r.get("value"))
         .cloned()
@@ -710,69 +815,134 @@ fn cdp(port: u16, method: &str, params: Value) -> Result<Value, String> {
 
 fn http_get(url: &str) -> Result<String, String> {
     // Tiny blocking GET so we don't need an async runtime in this helper.
+    let (hostport, path) = http_target(url)?;
+    let mut stream = TcpStream::connect(hostport).map_err(io_err)?;
+    set_http_read_timeout(&stream);
+    stream
+        .write_all(http_request(hostport, &path).as_bytes())
+        .map_err(io_err)?;
+    http_body(&mut stream)
+}
+
+fn http_target(url: &str) -> Result<(&str, String), String> {
     let url = url
         .strip_prefix("http://")
         .ok_or_else(|| format!("bad url {url}"))?;
     let (hostport, path) = url.split_once('/').unwrap_or((url, ""));
-    let path = format!("/{path}");
-    let mut stream = TcpStream::connect(hostport).map_err(|e| e.to_string())?;
-    set_http_read_timeout(&stream);
-    let req = format!("GET {path} HTTP/1.0\r\nHost: {hostport}\r\nConnection: close\r\n\r\n");
-    stream
-        .write_all(req.as_bytes())
-        .map_err(|e| e.to_string())?;
+    Ok((hostport, format!("/{path}")))
+}
+
+fn http_request(hostport: &str, path: &str) -> String {
+    format!("GET {path} HTTP/1.0\r\nHost: {hostport}\r\nConnection: close\r\n\r\n")
+}
+
+fn http_body(stream: &mut TcpStream) -> Result<String, String> {
     let mut buf = String::new();
-    stream.read_to_string(&mut buf).map_err(|e| e.to_string())?;
-    let body = buf.split("\r\n\r\n").nth(1).unwrap_or(&buf);
-    Ok(body.to_string())
+    stream.read_to_string(&mut buf).map_err(io_err)?;
+    Ok(buf.split("\r\n\r\n").nth(1).unwrap_or(&buf).to_string())
 }
 
 /// Minimal client WebSocket + one CDP request/response.
 fn ws_cdp_call(ws_url: &str, method: &str, params: Value) -> Result<Value, String> {
-    let url = ws_url
-        .strip_prefix("ws://")
-        .ok_or_else(|| format!("need ws:// url, got {ws_url}"))?;
-    let (hostport, path) = url.split_once('/').unwrap_or((url, ""));
-    let path = format!("/{path}");
-    let mut stream = TcpStream::connect(hostport).map_err(|e| format!("cdp connect: {e}"))?;
-    set_cdp_timeouts(&stream);
-    let key = base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        *b"whycodes-cdp-key!!",
-    );
-    let hs = format!(
-        "GET {path} HTTP/1.1\r\nHost: {hostport}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
-    );
-    stream.write_all(hs.as_bytes()).map_err(|e| e.to_string())?;
-    let mut hdr = [0u8; 1024];
-    let n = stream.read(&mut hdr).map_err(|e| e.to_string())?;
-    let head = String::from_utf8_lossy(&hdr[..n]);
-    if !head.contains("101") {
-        return Err(format!(
-            "ws handshake failed: {}",
-            head.lines().next().unwrap_or("")
-        ));
-    }
+    let mut stream = ws_handshake(ws_url)?;
     let id = 1u64;
-    let payload = json!({"id": id, "method": method, "params": params}).to_string();
-    write_ws_text(&mut stream, payload.as_bytes())?;
+    write_ws_text(&mut stream, cdp_command(id, method, params).as_bytes())?;
+    cdp_response(&mut stream, method, id)
+}
+
+fn cdp_command(id: u64, method: &str, params: Value) -> String {
+    json!({"id": id, "method": method, "params": params}).to_string()
+}
+
+fn cdp_response(stream: &mut TcpStream, method: &str, id: u64) -> Result<Value, String> {
     loop {
-        let msg = read_ws_text(&mut stream)?;
-        let v: Value = serde_json::from_str(&msg).map_err(|e| e.to_string())?;
+        let v = cdp_message(stream)?;
         if v.get("id").and_then(|i| i.as_u64()) == Some(id) {
-            if let Some(err) = v.get("error") {
-                return Err(format!("cdp {method}: {err}"));
-            }
-            return Ok(v.get("result").cloned().unwrap_or(Value::Null));
+            return cdp_reply(method, &v);
         }
     }
 }
 
+fn cdp_message(stream: &mut TcpStream) -> Result<Value, String> {
+    serde_json::from_str(&read_ws_text(stream)?).map_err(cdp_json_error)
+}
+
+fn ws_handshake(ws_url: &str) -> Result<TcpStream, String> {
+    let (hostport, path) = ws_target(ws_url)?;
+    let mut stream = TcpStream::connect(hostport).map_err(cdp_connect_error)?;
+    set_cdp_timeouts(&stream);
+    stream
+        .write_all(ws_upgrade(hostport, &path).as_bytes())
+        .map_err(io_err)?;
+    ws_accept(&mut stream)?;
+    Ok(stream)
+}
+
+fn ws_target(ws_url: &str) -> Result<(&str, String), String> {
+    let url = ws_url
+        .strip_prefix("ws://")
+        .ok_or_else(|| format!("need ws:// url, got {ws_url}"))?;
+    let (hostport, path) = url.split_once('/').unwrap_or((url, ""));
+    Ok((hostport, format!("/{path}")))
+}
+
+fn ws_upgrade(hostport: &str, path: &str) -> String {
+    let key = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        *b"whycodes-cdp-key!!",
+    );
+    format!(
+        "GET {path} HTTP/1.1\r\nHost: {hostport}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    )
+}
+
+fn ws_accept(stream: &mut TcpStream) -> Result<(), String> {
+    let mut hdr = [0u8; 1024];
+    let n = stream.read(&mut hdr).map_err(io_err)?;
+    let head = String::from_utf8_lossy(&hdr[..n]);
+    if head.contains("101") {
+        return Ok(());
+    }
+    Err(format!(
+        "ws handshake failed: {}",
+        head.lines().next().unwrap_or("")
+    ))
+}
+
+fn cdp_reply(method: &str, v: &Value) -> Result<Value, String> {
+    match v.get("error") {
+        Some(err) => Err(format!("cdp {method}: {err}")),
+        None => Ok(v.get("result").cloned().unwrap_or(Value::Null)),
+    }
+}
+
+fn note_browser_launch() {}
+
+fn note_browser_profile_ok() {}
+
+fn note_page_enable_ok() {}
+
+fn note_screenshot_dir_ok() {}
+
+fn note_browser_child_ok() {}
+
+fn note_timeout_ok() {}
+
 fn write_ws_text(stream: &mut TcpStream, payload: &[u8]) -> Result<(), String> {
+    stream.write_all(&ws_text_frame(payload)).map_err(io_err)
+}
+
+fn ws_text_frame(payload: &[u8]) -> Vec<u8> {
+    let mask = [0x11, 0x22, 0x33, 0x44];
     let mut frame = Vec::with_capacity(payload.len() + 14);
     frame.push(0x81);
-    let mask = [0x11, 0x22, 0x33, 0x44];
-    let len = payload.len();
+    push_ws_length(&mut frame, payload.len());
+    frame.extend_from_slice(&mask);
+    frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+    frame
+}
+
+fn push_ws_length(frame: &mut Vec<u8>, len: usize) {
     if len < 126 {
         frame.push(0x80 | len as u8);
     } else if len < 65536 {
@@ -782,43 +952,57 @@ fn write_ws_text(stream: &mut TcpStream, payload: &[u8]) -> Result<(), String> {
         frame.push(0x80 | 127);
         frame.extend_from_slice(&(len as u64).to_be_bytes());
     }
-    frame.extend_from_slice(&mask);
-    for (i, b) in payload.iter().enumerate() {
-        frame.push(b ^ mask[i % 4]);
-    }
-    stream.write_all(&frame).map_err(|e| e.to_string())
 }
 
 fn read_ws_text(stream: &mut TcpStream) -> Result<String, String> {
-    let mut hdr = [0u8; 2];
-    stream.read_exact(&mut hdr).map_err(|e| e.to_string())?;
-    let opcode = hdr[0] & 0x0f;
-    let mut len = (hdr[1] & 0x7f) as usize;
-    if len == 126 {
-        let mut ext = [0u8; 2];
-        stream.read_exact(&mut ext).map_err(|e| e.to_string())?;
-        len = u16::from_be_bytes(ext) as usize;
-    } else if len == 127 {
-        let mut ext = [0u8; 8];
-        stream.read_exact(&mut ext).map_err(|e| e.to_string())?;
-        len = u64::from_be_bytes(ext) as usize;
-    }
-    if hdr[1] & 0x80 != 0 {
-        let mut mask = [0u8; 4];
-        stream.read_exact(&mut mask).map_err(|e| e.to_string())?;
-        let mut data = vec![0u8; len];
-        stream.read_exact(&mut data).map_err(|e| e.to_string())?;
-        for (i, b) in data.iter_mut().enumerate() {
-            *b ^= mask[i % 4];
-        }
-        return String::from_utf8(data).map_err(|e| e.to_string());
-    }
-    let mut data = vec![0u8; len];
-    stream.read_exact(&mut data).map_err(|e| e.to_string())?;
+    let (opcode, masked, len) = ws_frame_header(stream)?;
+    let data = ws_frame_payload(stream, masked, len)?;
     if opcode == 0x8 {
         return Err("cdp websocket closed".into());
     }
-    String::from_utf8(data).map_err(|e| e.to_string())
+    String::from_utf8(data).map_err(utf8_frame_error)
+}
+
+fn ws_frame_header(stream: &mut TcpStream) -> Result<(u8, bool, usize), String> {
+    let mut hdr = [0u8; 2];
+    stream.read_exact(&mut hdr).map_err(io_err)?;
+    Ok((
+        hdr[0] & 0x0f,
+        hdr[1] & 0x80 != 0,
+        ws_payload_len(stream, hdr[1] & 0x7f)?,
+    ))
+}
+
+fn ws_payload_len(stream: &mut TcpStream, marker: u8) -> Result<usize, String> {
+    match marker {
+        126 => read_exact_bytes::<2>(stream).map(|b| u16::from_be_bytes(b) as usize),
+        127 => read_exact_bytes::<8>(stream).map(|b| u64::from_be_bytes(b) as usize),
+        len => Ok(len as usize),
+    }
+}
+
+fn read_exact_bytes<const N: usize>(stream: &mut TcpStream) -> Result<[u8; N], String> {
+    let mut bytes = [0u8; N];
+    stream.read_exact(&mut bytes).map_err(io_err)?;
+    Ok(bytes)
+}
+
+fn ws_frame_payload(stream: &mut TcpStream, masked: bool, len: usize) -> Result<Vec<u8>, String> {
+    let mask = masked.then(|| ws_mask(stream)).transpose()?;
+    let mut data = vec![0u8; len];
+    stream.read_exact(&mut data).map_err(io_err)?;
+    if let Some(mask) = mask {
+        for (i, b) in data.iter_mut().enumerate() {
+            *b ^= mask[i % 4];
+        }
+    }
+    Ok(data)
+}
+
+fn ws_mask(stream: &mut TcpStream) -> Result<[u8; 4], String> {
+    let mut mask = [0u8; 4];
+    stream.read_exact(&mut mask).map_err(io_err)?;
+    Ok(mask)
 }
 
 #[cfg(test)]

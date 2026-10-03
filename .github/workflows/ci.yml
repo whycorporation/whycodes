@@ -194,6 +194,9 @@ jobs:
         env:
           AFFECTED_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD' }}
         run: |
+          # `-p` lines keep whycodes-storage/bundled only when that package
+          # can activate it. Others get their bundled-sqlite alias, or no
+          # --features (whycodes-config has neither).
           python3 scripts/affected_tests.py --base "$AFFECTED_BASE" \
             --locked --features whycodes-storage/bundled --execute
 

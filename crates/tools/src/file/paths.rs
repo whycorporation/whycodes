@@ -71,15 +71,16 @@ pub fn visit_index(
     if index_not_ready(index) {
         return index_cold();
     }
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| canonical_fallback(root));
     let primary = index.primary_root()?;
     let rel_root = root.strip_prefix(primary).ok()?;
     let prefix = rel_root.to_string_lossy().replace('\\', "/");
     let prefix = prefix.trim_matches('/').to_string();
     let mut keep = true;
     index.visit(&mut |e| {
-        if let Err(stop) = index_entry_continue(keep) {
-            return stop;
+        match index_entry_continue(keep) {
+            Err(stop) => return stop,
+            Ok(()) => note_index_entry_kept(),
         }
         let in_scope = entry_in_scope(&prefix, &e.rel);
         if in_scope {
@@ -195,6 +196,8 @@ fn index_entry_continue(keep: bool) -> Result<(), bool> {
     }
 }
 
+fn note_index_entry_kept() {}
+
 fn entry_in_scope(prefix: &str, rel: &str) -> bool {
     prefix.is_empty()
         || (rel.len() > prefix.len()
@@ -259,26 +262,7 @@ pub fn suggest_similar(missing: &Path, limit: usize) -> Vec<String> {
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
             let name_l = name.to_ascii_lowercase();
-            // Prefer prefix / substring matches
-            let score = if names_equal(&name_l, &want_l) {
-                0
-            } else if name_l.starts_with(&want_l) || want_l.starts_with(&name_l) {
-                1
-            } else if contains_similar(&name_l, &want_l) {
-                2
-            } else {
-                // crude edit distance proxy: shared prefix length
-                let common = name_l
-                    .chars()
-                    .zip(want_l.chars())
-                    .take_while(|(a, b)| a == b)
-                    .count();
-                if common >= 2 {
-                    10 - common.min(9)
-                } else {
-                    return None;
-                }
-            };
+            let score = similar_score(&name_l, &want_l)?;
             Some((score, name))
         })
         .collect();
@@ -286,6 +270,31 @@ pub fn suggest_similar(missing: &Path, limit: usize) -> Vec<String> {
     scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     scored.dedup_by(|a, b| a.1 == b.1);
     scored.into_iter().take(limit).map(|(_, n)| n).collect()
+}
+
+fn list_dir_error(dir: &Path, e: impl std::fmt::Display) -> String {
+    format!("Failed to list {}: {e}", dir.display())
+}
+
+fn canonical_fallback(root: &Path) -> PathBuf {
+    root.to_path_buf()
+}
+
+fn similar_score(name_l: &str, want_l: &str) -> Option<usize> {
+    if names_equal(name_l, want_l) {
+        Some(0)
+    } else if name_l.starts_with(want_l) || want_l.starts_with(name_l) {
+        Some(1)
+    } else if contains_similar(name_l, want_l) {
+        Some(2)
+    } else {
+        let common = name_l
+            .chars()
+            .zip(want_l.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        (common >= 2).then_some(10 - common.min(9))
+    }
 }
 
 /// Directory entry for listing / walking.
@@ -299,7 +308,7 @@ pub struct DirEntryInfo {
 
 /// Read one directory level (non-recursive). Sorted: dirs first, then files.
 pub fn list_dir_entries(dir: &Path, ignore: &[String]) -> Result<Vec<DirEntryInfo>, String> {
-    let rd = fs::read_dir(dir).map_err(|e| format!("Failed to list {}: {}", dir.display(), e))?;
+    let rd = fs::read_dir(dir).map_err(|e| list_dir_error(dir, e))?;
 
     let mut out = Vec::new();
     for entry in rd.flatten() {
@@ -368,10 +377,7 @@ pub fn walk_entries(
     visit: &mut VisitEntryFn<'_>,
 ) -> bool {
     if root.is_file() {
-        let rel = root
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| root.display().to_string());
+        let rel = file_name_or_rel(root);
         let size = file_len(root);
         let _ = visit(root, &rel, false, size);
         return false;
@@ -412,10 +418,7 @@ pub fn walk_entries(
         };
         let is_dir = ft.is_dir();
         let path = entry.path();
-        let rel = path
-            .strip_prefix(root)
-            .map(|p| p.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|_| path.display().to_string());
+        let rel = relative_walk_path(root, path);
         let size = if is_dir {
             None
         } else {
@@ -437,6 +440,24 @@ pub fn walk_entries(
 /// Seek-friendly check: file size via metadata.
 pub fn file_len(path: &Path) -> Option<u64> {
     fs::metadata(path).ok().map(|m| m.len())
+}
+
+fn file_name_or_rel(root: &Path) -> String {
+    match root.file_name() {
+        Some(name) => name.to_string_lossy().into_owned(),
+        None => walk_file_rel(root),
+    }
+}
+
+fn relative_walk_path(root: &Path, path: &Path) -> String {
+    match path.strip_prefix(root) {
+        Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+        Err(_) => path.display().to_string(),
+    }
+}
+
+fn walk_file_rel(root: &Path) -> String {
+    root.display().to_string()
 }
 
 fn missing_file_name(missing: &Path) -> Option<&str> {

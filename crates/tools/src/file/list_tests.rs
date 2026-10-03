@@ -401,20 +401,30 @@ async fn malformed_ignore_entries_are_skipped() {
 #[tokio::test]
 async fn default_constructs() {
     assert_eq!(ListTool::default().name(), "list");
-    let listed = list_entries_error("cannot list".into());
+    let listed = list_entries_error("cannot list");
     assert!(listed.is_error);
     assert_eq!(listed.content, "cannot list");
     let missing = listed_entries(Path::new("/nonexistent-xyz"), &[], 10);
     assert!(missing.is_err());
-    let failed = listed_entries_failed(list_entries_error("cannot list".into()));
+    let failed = listed_entries_failed(list_entries_error("cannot list"));
     assert!(failed.is_error);
-    assert!(take_listed(Err(list_entries_error("cannot list".into()))).is_err());
+    assert!(take_listed(Err(list_entries_error("cannot list"))).is_err());
     assert!(take_listed(listed_entries(Path::new("/nonexistent-xyz"), &[], 10)).is_err());
-    let from_err = listing_from(Err(list_entries_error("cannot list".into())), ".", false, 1);
+    let from_err = listing_from(Err(list_entries_error("cannot list")), ".", false, 1);
     assert!(from_err.is_error);
     let from_ok = listing_from(Ok((Vec::new(), false, 0, 0)), ".", false, 1);
     assert!(!from_ok.is_error);
     assert!(from_ok.content.contains("(empty)"));
+    let unknown = listing_ok(
+        ".",
+        vec![("gone.txt".into(), false, None)],
+        false,
+        0,
+        1,
+        false,
+        1,
+    );
+    assert!(unknown.content.contains('?'), "{}", unknown.content);
 }
 
 #[tokio::test]

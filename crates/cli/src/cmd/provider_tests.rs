@@ -52,3 +52,49 @@ fn provider_printer_helpers() {
     assert!(plugins_header(2).contains("2"));
     assert!(no_agents_configured_line().contains("no agents"));
 }
+
+fn model(id: &str, max_tokens: Option<u32>) -> whycodes_core::types::ModelConfig {
+    whycodes_core::types::ModelConfig {
+        model_id: id.into(),
+        provider_id: "baseonly".into(),
+        max_tokens,
+        context_window: None,
+        temperature: None,
+        top_p: None,
+        thinking: None,
+        supports_tools: None,
+        supports_images: None,
+    }
+}
+
+/// `api_base` without `base_url`, a model that prints `max_tokens`, and an
+/// empty agent table. The printer helpers do not walk these arms.
+#[tokio::test]
+async fn provider_list_api_base_model_cap_and_empty_agents() {
+    let _home = IsolatedHome::new();
+    let mut cfg = whycodes_config::Config::default();
+    cfg.providers.insert(
+        "baseonly".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "baseonly".into(),
+            api_key: None,
+            api_base: Some("https://api.example".into()),
+            base_url: None,
+            headers: None,
+            models: vec![String::new(), "listed-model".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: Default::default(),
+        },
+    );
+    cfg.models
+        .insert("alias".into(), model("m-with-cap", Some(64)));
+    cfg.models.insert("blank-id".into(), model("", None));
+    cfg.agents.clear();
+    cfg.save().unwrap();
+
+    cmd_provider(&ProviderCmd::List).await.unwrap();
+    cmd_model(&ModelCmd::List).await.unwrap();
+    cmd_agent(None).await.unwrap();
+    cmd_agent(Some("missing")).await.unwrap();
+}
