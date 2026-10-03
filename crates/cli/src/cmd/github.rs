@@ -4,19 +4,19 @@ use crate::args::*;
 use colored::*;
 
 pub(crate) fn acp_stub_lines() -> Vec<String> {
-    vec![
-        format!("{} ACP mode — not yet implemented.", "ℹ".cyan()),
-        "Agent Client Protocol (editor ↔ agent) is planned after product launch.".into(),
-    ]
+    let mut lines = Vec::new();
+    lines.push(format!("{} ACP mode — not yet implemented.", "ℹ".cyan()));
+    lines.push("Agent Client Protocol (editor ↔ agent) is planned after product launch.".into());
+    lines
 }
 
 pub(crate) fn pr_create_header_lines(title: &str, base: &str) -> Vec<String> {
-    vec![
-        format!("{} Creating pull request...", "🔀".bold()),
-        format!("  Title: {}", title.cyan()),
-        format!("  Base:  {}", base.cyan()),
-        String::new(),
-    ]
+    let mut lines = Vec::new();
+    lines.push(format!("{} Creating pull request...", "🔀".bold()));
+    lines.push(format!("  Title: {}", title.cyan()));
+    lines.push(format!("  Base:  {}", base.cyan()));
+    lines.push(String::new());
+    lines
 }
 
 pub(crate) fn pr_created_line() -> String {
@@ -28,17 +28,17 @@ pub(crate) fn pr_created_short_line() -> String {
 }
 
 pub(crate) fn pr_create_failed_lines(title: &str, base: &str) -> Vec<String> {
-    vec![
-        format!(
-            "{} Could not create PR. Install GitHub CLI: {}",
-            "⚠".yellow(),
-            "https://cli.github.com/".cyan()
-        ),
-        format!(
-            "  Or run: gh pr create --title \"{}\" --base \"{}\"",
-            title, base
-        ),
-    ]
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "{} Could not create PR. Install GitHub CLI: {}",
+        "⚠".yellow(),
+        "https://cli.github.com/".cyan()
+    ));
+    lines.push(format!(
+        "  Or run: gh pr create --title \"{}\" --base \"{}\"",
+        title, base
+    ));
+    lines
 }
 
 pub(crate) fn pr_list_header_line() -> String {
@@ -80,7 +80,7 @@ pub(crate) fn gh_status_ok(status: Result<std::process::ExitStatus, std::io::Err
 /// GitHub CLI binary. Production always uses `gh`. Tests may point this at a
 /// stub on the current thread so success and spawn-failure arms run without a
 /// real `gh` install (and without leaking the override to other tests).
-fn gh_program() -> String {
+pub(crate) fn gh_program() -> String {
     #[cfg(test)]
     {
         if let Some(path) = TEST_GH.with(|slot| slot.borrow().clone()) {
