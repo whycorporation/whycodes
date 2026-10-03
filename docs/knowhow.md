@@ -144,6 +144,25 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-10-03 — binary crate has no `--lib`
+
+**Symptom:** Test (linux) on PR #147 exits in about a second:
+`error: no library targets found in package `whycodes-cli``.
+Coverage stays green. Config and tools lines in the same plan are fine.
+
+**JSONL / crash:** none.
+
+**Root cause:** `whycodes-cli` is binary-only (`src/main.rs`, no `lib.rs`).
+Its unit tests live on the `whycodes` bin. The selector still printed
+`cargo test -p whycodes-cli --lib …`.
+
+**Fix:** A crate with `lib.rs` keeps `--lib`. A crate without one uses
+`--bin <name>` from `[[bin]]` (or the package name when `src/main.rs`
+is implicit).
+
+**Prevention:** Do not emit `--lib` for a package that has no library
+target. `scripts/test_affected_tests.py` locks the `whycodes` bin shape.
+
 ### 2026-10-02 — `-p` rejects another package's feature
 
 **Symptom:** Test (linux) on PR #147 exits in about a second:

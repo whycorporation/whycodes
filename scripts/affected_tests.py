@@ -10,6 +10,7 @@ maps each Rust file to the narrowest cargo filter that still compiles its
 tests:
 
 - a library module        -> that crate's `--lib <module>::`
+- a binary-only module    -> `--bin <name> <module>::` (no lib target)
 - a `#[path]` test file   -> the module that includes it
 - `crates/<c>/tests/<t>`  -> `--test <t>` on that crate only
 - a public surface        -> the changed crate, plus direct dependents' `--lib`
@@ -56,6 +57,48 @@ WORKSPACE_ROOTS = {
 
 PATH_ATTR = "#[path"
 MOD_LINE = re.compile(r"^\s*(?:pub\s+)?mod\s+([A-Za-z0-9_]+)\s*;")
+
+
+def has_lib_target(crate: str) -> bool:
+    """True when `cargo test -p` can take `--lib`. Binary-only crates cannot."""
+    return (CRATES / crate / "src" / "lib.rs").is_file()
+
+
+def bin_names(crate: str) -> list[str]:
+    """Binary target names. Explicit `[[bin]]` wins; otherwise `src/main.rs`."""
+    text = (CRATES / crate / "Cargo.toml").read_text(encoding="utf-8")
+    names: list[str] = []
+    in_bin = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[[") and stripped.endswith("]]"):
+            in_bin = stripped == "[[bin]]"
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_bin = False
+            continue
+        if not in_bin or not stripped.startswith("name") or "=" not in stripped:
+            continue
+        match = re.search(r'"([^"]+)"', stripped)
+        if match and match.group(1) not in names:
+            names.append(match.group(1))
+    if names:
+        return names
+    if (CRATES / crate / "src" / "main.rs").is_file():
+        return [package_name(crate)]
+    return []
+
+
+def unit_selectors(crate: str) -> list[list[str]]:
+    """Cargo args that select this crate's unit tests.
+
+    Library crates use `--lib`. A package with no library (`whycodes-cli`)
+    keeps its `#[cfg(test)]` modules on the binary, so `--lib` is
+    `no library targets found`.
+    """
+    if has_lib_target(crate):
+        return [["--lib"]]
+    return [["--bin", name] for name in bin_names(crate)]
 
 
 def package_name(crate_dir: str) -> str:
@@ -264,8 +307,9 @@ class Plan:
         if crate in self.full:
             return
         self.lib_filters[crate].add(filt)
-        label = filt if filt else "(whole lib)"
-        self.reasons.append(f"{package_name(crate)} --lib {label}: {why}")
+        label = filt if filt else "(whole unit tests)"
+        kind = "--lib" if has_lib_target(crate) else "--bin"
+        self.reasons.append(f"{package_name(crate)} {kind} {label}: {why}")
 
     def add_integration(self, crate: str, target: str, why: str) -> None:
         if crate in self.full:
@@ -358,15 +402,27 @@ def cargo_lines(plan: Plan, *, locked: bool, features: str) -> list[str]:
         filters = sorted(f for f in plan.lib_filters.get(crate, set()) if f)
         whole_lib = "" in plan.lib_filters.get(crate, set())
         targets = sorted(plan.integration.get(crate, set()))
+        selectors = unit_selectors(crate)
+        if not selectors and (whole_lib or filters or not targets):
+            # No lib and no bin: still name the package so cargo reports it.
+            selectors = [[]]
         if whole_lib or (not filters and not targets):
-            lines.append(_cargo(locked, pkg_features, ["-p", pkg, "--lib"]))
+            for selector in selectors:
+                lines.append(_cargo(locked, pkg_features, ["-p", pkg, *selector]))
         elif filters:
             # Cargo accepts one TESTNAME. Extra filters must follow `--` so
             # the test harness ORs them (`cargo test --lib a:: -- b::` is
             # "unexpected argument" on rustc 1.99). A lone filter stays
             # before `--`; a trailing `--` with nothing after it is noise.
             extra = ["--", *filters[1:]] if len(filters) > 1 else []
-            lines.append(_cargo(locked, pkg_features, ["-p", pkg, "--lib", filters[0], *extra]))
+            for selector in selectors:
+                lines.append(
+                    _cargo(
+                        locked,
+                        pkg_features,
+                        ["-p", pkg, *selector, filters[0], *extra],
+                    )
+                )
         for target in targets:
             lines.append(_cargo(locked, pkg_features, ["-p", pkg, "--test", target]))
     return lines

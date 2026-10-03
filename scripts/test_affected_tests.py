@@ -60,7 +60,8 @@ class AffectedTests(unittest.TestCase):
         lines = commands(["crates/auth/src/lib.rs"])
         joined = "\n".join(lines)
         self.assertTrue(any(line == "cargo test -p whycodes-auth" for line in lines))
-        self.assertIn("whycodes-cli --lib", joined)
+        self.assertIn("whycodes-cli --bin", joined)
+        self.assertNotIn("whycodes-cli --lib", joined)
         self.assertNotIn("whycodes-storage", joined)
         self.assertNotIn("--workspace", joined)
 
@@ -137,6 +138,25 @@ class AffectedTests(unittest.TestCase):
         before, after = line.split(" -- ", 1)
         self.assertEqual(before.count("::"), 1)
         self.assertEqual(after.split(), ["merge::", "types::"])
+
+    def test_binary_only_crate_uses_bin_not_lib(self) -> None:
+        # whycodes-cli has `src/main.rs` and no lib.rs. `--lib` is
+        # `no library targets found` and Test (linux) exits before any test.
+        lines = commands(["crates/cli/src/cmd/hang.rs"])
+        self.assertEqual(len(lines), 1)
+        self.assertIn("-p whycodes-cli --bin whycodes", lines[0])
+        self.assertIn("cmd::hang::", lines[0])
+        self.assertNotIn("--lib", lines[0])
+
+        several = commands(
+            [
+                "crates/cli/src/cmd/hang.rs",
+                "crates/cli/src/cmd/github.rs",
+            ]
+        )
+        self.assertEqual(len(several), 1)
+        self.assertIn("--bin whycodes cmd::github:: -- cmd::hang::", several[0])
+        self.assertNotIn("--lib", several[0])
 
     def test_mod_rs_is_a_module_not_the_crate(self) -> None:
         lines = commands(["crates/tui/src/ui/mod.rs"])
