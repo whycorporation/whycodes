@@ -84,7 +84,8 @@ static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct IsolatedCwd {
     _guard: std::sync::MutexGuard<'static, ()>,
-    _dir: tempfile::TempDir,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    dir: tempfile::TempDir,
     prev: PathBuf,
 }
 
@@ -96,7 +97,7 @@ impl IsolatedCwd {
         std::env::set_current_dir(dir.path()).expect("chdir");
         Self {
             _guard: guard,
-            _dir: dir,
+            dir,
             prev,
         }
     }
@@ -5370,6 +5371,54 @@ async fn cmd_mcp_serve_returns_on_eof_stdin() {
     )
     .await;
     result.expect("mcp serve cwd-none hung").unwrap();
+}
+
+/// Linux lets a process delete its own cwd; `current_dir` then fails and
+/// `mcp serve` falls back to `.`. Windows refuses to remove the cwd, so
+/// this arm is host-only (the coverage job is Linux).
+#[cfg(unix)]
+#[tokio::test]
+async fn mcp_serve_uses_dot_when_cwd_is_unreadable() {
+    let _home = IsolatedHome::new();
+    let _cwd = IsolatedCwd::new();
+    let gone = _cwd.dir.path().join("missing-cwd");
+    std::fs::create_dir(&gone).unwrap();
+    std::env::set_current_dir(&gone).unwrap();
+    std::fs::remove_dir(&gone).unwrap();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        cmd_mcp(&McpCmd::Serve {
+            tools: "core".into(),
+            cwd: None,
+        }),
+    )
+    .await;
+    result.expect("mcp serve missing cwd hung").unwrap();
+}
+
+#[tokio::test]
+async fn mcp_list_empty_and_stdio_without_command() {
+    let home = IsolatedHome::new();
+    cmd_mcp(&McpCmd::List).await.unwrap();
+    let path = home.path().join("config.toml");
+    let mut raw = std::fs::read_to_string(&path).unwrap();
+    raw.push_str(
+        "\n[mcp_servers.bare]\nargs = [\"--help\"]\n\n[mcp_servers.stdio_only]\ntype = \"stdio\"\n",
+    );
+    std::fs::write(&path, raw).unwrap();
+    cmd_mcp(&McpCmd::List).await.unwrap();
+    let err = cmd_mcp(&McpCmd::Add {
+        name: "stdio-no-cmd".into(),
+        command: None,
+        args: None,
+        url: Some("https://example.com/mcp".into()),
+        transport: Some("stdio".into()),
+        headers: vec![],
+    })
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("stdio") && err.contains("command"), "{err}");
 }
 
 #[tokio::test]

@@ -77,6 +77,42 @@ pub(crate) fn gh_status_ok(status: Result<std::process::ExitStatus, std::io::Err
     matches!(status, Ok(s) if s.success())
 }
 
+/// GitHub CLI binary. Production always uses `gh`. Tests may point this at a
+/// stub on the current thread so success and spawn-failure arms run without a
+/// real `gh` install (and without leaking the override to other tests).
+fn gh_program() -> String {
+    #[cfg(test)]
+    {
+        if let Some(path) = TEST_GH.with(|slot| slot.borrow().clone()) {
+            return path;
+        }
+    }
+    "gh".into()
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_GH: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct TestGhGuard(Option<String>);
+
+#[cfg(test)]
+impl TestGhGuard {
+    fn set(program: Option<String>) -> Self {
+        let prev = TEST_GH.with(|slot| slot.replace(program));
+        Self(prev)
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestGhGuard {
+    fn drop(&mut self) {
+        TEST_GH.with(|slot| *slot.borrow_mut() = self.0.take());
+    }
+}
+
 pub(crate) async fn cmd_acp(_cli: &Cli) -> anyhow::Result<()> {
     for line in acp_stub_lines() {
         println!("{line}");
@@ -98,7 +134,7 @@ pub(crate) async fn cmd_pr(
     }
 
     // Try to use gh CLI if available
-    let status = std::process::Command::new("gh")
+    let status = std::process::Command::new(gh_program())
         .args(["pr", "create", "--title", title, "--base", base, "--fill"])
         .status();
 
@@ -119,7 +155,7 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
         GithubCmd::Pr { action } => match action {
             Some(PrAction::List) | None => {
                 println!("{}", pr_list_header_line());
-                let status = std::process::Command::new("gh")
+                let status = std::process::Command::new(gh_program())
                     .args(["pr", "list"])
                     .status();
                 if !gh_status_ok(status) {
@@ -128,7 +164,7 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
             }
             Some(PrAction::View { number }) => {
                 println!("{}", pr_view_header_line(*number));
-                let status = std::process::Command::new("gh")
+                let status = std::process::Command::new(gh_program())
                     .args(["pr", "view", &number.to_string()])
                     .status();
                 if !gh_status_ok(status) {
@@ -138,7 +174,7 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
             Some(PrAction::Create { title, base }) => {
                 let title = title.as_deref().unwrap_or("Auto PR");
                 let base = base.as_deref().unwrap_or("main");
-                let status = std::process::Command::new("gh")
+                let status = std::process::Command::new(gh_program())
                     .args(["pr", "create", "--title", title, "--base", base, "--fill"])
                     .status();
                 if gh_status_ok(status) {
@@ -151,7 +187,7 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
         GithubCmd::Issue { number } => {
             if let Some(n) = number {
                 println!("{}", issue_view_header_line(*n));
-                match std::process::Command::new("gh")
+                match std::process::Command::new(gh_program())
                     .args(["issue", "view", &n.to_string()])
                     .status()
                 {
@@ -161,7 +197,7 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
                 }
             } else {
                 println!("{}", issue_list_header_line());
-                match std::process::Command::new("gh")
+                match std::process::Command::new(gh_program())
                     .args(["issue", "list"])
                     .status()
                 {
