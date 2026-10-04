@@ -331,12 +331,18 @@ pub(crate) fn resume_session_into(
     *session = loaded;
     session.system_prompt = system_prompt;
     // Legacy `New session - …` / placeholder titles: name from first user msg.
-    if session.maybe_upgrade_title_from_history()
-        && let Err(err) = session.save_to_db(&db)
-    {
-        tracing::warn!(error = %err, "failed to persist backfilled session title");
+    if session.maybe_upgrade_title_from_history() {
+        note_backfill_persist(session.save_to_db(&db));
     }
     Ok(true)
+}
+
+/// Persist a title upgraded from history. A write failure is logged, not fatal:
+/// the in-memory title is already updated and the next save can retry.
+pub(crate) fn note_backfill_persist(result: Result<(), impl std::fmt::Display>) {
+    if let Err(err) = result {
+        tracing::warn!(error = %err, "failed to persist backfilled session title");
+    }
 }
 
 pub(crate) fn open_db() -> anyhow::Result<whycodes_storage::db::Database> {

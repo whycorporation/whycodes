@@ -3542,6 +3542,10 @@ async fn cmd_run_plain_resume_existing_session() {
     let sessions = db.list_sessions().unwrap();
     assert!(!sessions.is_empty());
     let id = sessions[0].id.clone();
+    // Import stores a manual title. A default placeholder with a real user
+    // message is what resume upgrades from history.
+    db.update_title(&id, "New session - imported").unwrap();
+    drop(db);
 
     install_test_repl_lines([
         format!("/resume {id}"),
@@ -3906,11 +3910,39 @@ async fn cmd_stats_with_usage_and_session_list_backfill() {
         &usage,
     )
     .unwrap();
+    let backfill = whycodes_core::types::Message {
+        role: whycodes_core::types::Role::User,
+        content: whycodes_core::types::MessageContent::Text(
+            "please backfill this session title".into(),
+        ),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    };
     db.insert_message(
         "m1",
         "sess-long-id-abcdef",
         "user",
-        "please backfill this title",
+        &serde_json::to_string(&backfill).unwrap(),
+        None,
+        None,
+    )
+    .unwrap();
+    // Invalid JSON still counts as a message, so list hits the load-failure arm.
+    db.upsert_session(
+        "sess-broken-json",
+        "New session - y",
+        "/tmp/proj",
+        &now,
+        &now,
+        &whycodes_core::types::Usage::default(),
+    )
+    .unwrap();
+    db.insert_message(
+        "m-broken",
+        "sess-broken-json",
+        "user",
+        "{not json}",
         None,
         None,
     )
@@ -3930,6 +3962,9 @@ async fn cmd_stats_with_usage_and_session_list_backfill() {
     )
     .unwrap();
     cmd_session(&SessionCmd::List).await.unwrap();
+    let listed = db.get_session("sess-long-id-abcdef").unwrap().unwrap();
+    assert_ne!(listed.title, "New session - x", "{}", listed.title);
+    assert!(listed.title.to_ascii_lowercase().contains("backfill"));
     cmd_session(&SessionCmd::Rename {
         id: "sess-long-id-abcdef".into(),
         name: "   ".into(),
@@ -3942,6 +3977,53 @@ async fn cmd_stats_with_usage_and_session_list_backfill() {
         prefixes.iter().any(|p| p == "sess-long-id" || p == "short"),
         "{prefixes:?}"
     );
+}
+
+/// Placeholder title that cannot be upgraded (blank user text), a blank
+/// project path, and a database whose sessions recorded no provider usage.
+#[tokio::test]
+async fn cmd_session_list_blank_path_and_stats_without_usage() {
+    let _home = IsolatedHome::new();
+    let db = open_db().unwrap();
+    let now = chrono::Utc::now().to_rfc3339();
+    db.upsert_session(
+        "blank-path",
+        "New session - blank",
+        "",
+        &now,
+        &now,
+        &whycodes_core::types::Usage::default(),
+    )
+    .unwrap();
+    let blank = whycodes_core::types::Message {
+        role: whycodes_core::types::Role::User,
+        content: whycodes_core::types::MessageContent::Text("   ".into()),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    };
+    db.insert_message(
+        "m-blank",
+        "blank-path",
+        "user",
+        &serde_json::to_string(&blank).unwrap(),
+        None,
+        None,
+    )
+    .unwrap();
+    db.upsert_session(
+        "no-msgs",
+        "New session - idle",
+        "",
+        &now,
+        &now,
+        &whycodes_core::types::Usage::default(),
+    )
+    .unwrap();
+    cmd_session(&SessionCmd::List).await.unwrap();
+    let listed = db.get_session("blank-path").unwrap().unwrap();
+    assert_eq!(listed.title, "New session - blank");
+    cmd_stats().await.unwrap();
 }
 
 #[tokio::test]
@@ -4713,6 +4795,117 @@ async fn memory_search_hits_after_add_and_delete() {
     let rows = svc.list(10).unwrap();
     let id = rows[0].id.clone();
     cmd_memory(&c, &MemoryCmd::Delete { id }).await.unwrap();
+}
+
+#[tokio::test]
+async fn memory_search_prints_fact_session_and_code_hits() {
+    let home = IsolatedHome::new();
+    let project = home.path().join("proj");
+    std::fs::create_dir_all(project.join(".whycodes")).unwrap();
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    // Hash embeddings score below the CLI's 0.15/0.1 caps, so the hit printers
+    // stay dead unless the layered config pulls every floor under those caps.
+    std::fs::write(
+        project.join(".whycodes/config.toml"),
+        "[memory]\nrecall_min_score = -1.0\ncode_min_score = -1.0\nsession_min_score = -1.0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/lib.rs"),
+        "/// Memory service for semantic recall of durable facts.\npub fn remember_fact(s: &str) {}\n",
+    )
+    .unwrap();
+    let mut c = cli(None);
+    c.dir = Some(project.to_string_lossy().into_owned());
+    let config = Config::load_layered(&project).unwrap();
+    assert!(config.memory.recall_min_score < 0.0);
+    assert!(config.memory.code_min_score < 0.0);
+    assert!(config.memory.session_min_score < 0.0);
+
+    cmd_memory(
+        &c,
+        &MemoryCmd::Add {
+            text: vec!["unique-coverage-fact-xyz".into()],
+        },
+    )
+    .await
+    .unwrap();
+    open_memory_service(&c, &config)
+        .unwrap()
+        .index_session_turn(
+            "session-1",
+            2,
+            "unique-coverage-fact-xyz",
+            "stored the durable fact",
+        )
+        .unwrap();
+    cmd_memory(
+        &c,
+        &MemoryCmd::Index {
+            max_files: 4,
+            max_chunks: 8,
+        },
+    )
+    .await
+    .unwrap();
+
+    let svc = open_memory_service(&c, &config).unwrap();
+    assert!(
+        !svc.search(
+            "unique-coverage-fact-xyz",
+            5,
+            config.memory.recall_min_score.min(0.15)
+        )
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        !svc.search_sessions(
+            "unique-coverage-fact-xyz",
+            5,
+            config.memory.session_min_score.min(0.1)
+        )
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        !svc.search_code(
+            "remember_fact semantic recall",
+            5,
+            config.memory.code_min_score.min(0.1)
+        )
+        .unwrap()
+        .is_empty()
+    );
+    drop(svc);
+
+    cmd_memory(
+        &c,
+        &MemoryCmd::Search {
+            query: "unique-coverage-fact-xyz".into(),
+            limit: 5,
+        },
+    )
+    .await
+    .unwrap();
+    cmd_memory(
+        &c,
+        &MemoryCmd::SessionSearch {
+            query: "unique-coverage-fact-xyz".into(),
+            limit: 5,
+        },
+    )
+    .await
+    .unwrap();
+    cmd_memory(
+        &c,
+        &MemoryCmd::CodeSearch {
+            query: "remember_fact semantic recall".into(),
+            limit: 5,
+        },
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
