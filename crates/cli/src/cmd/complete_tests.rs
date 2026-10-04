@@ -147,4 +147,35 @@ provider_id = "custom"
     std::fs::write(plug.join("plugin.json"), AUTH_PLUGIN).unwrap();
     let names = auth_provider_ids();
     assert!(names.iter().any(|n| n == "cov-auth-demo"), "{names:?}");
+
+    // A file named `whycodes.db` that is not a database makes the read-only
+    // open fail. Drop the WAL sidecars first or SQLite recovers the sessions
+    // written above and the error arm never runs.
+    drop(std::fs::remove_file(format!("{}-wal", db_path.display())));
+    drop(std::fs::remove_file(format!("{}-shm", db_path.display())));
+    std::fs::write(&db_path, b"not a sqlite database").unwrap();
+    assert!(session_id_prefixes().is_empty());
+}
+
+/// Linux lets a process delete its own cwd; `current_dir` then fails and
+/// completion falls back to `.`. Windows refuses to remove the cwd, so
+/// this arm is host-only (the coverage job is Linux).
+#[cfg(unix)]
+#[test]
+fn auth_completion_uses_dot_when_cwd_is_gone() {
+    let _home = crate::cmd::helpers::IsolatedHome::new();
+    let prev = std::env::current_dir().expect("cwd");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let gone = dir.path().join("missing-cwd");
+    std::fs::create_dir(&gone).unwrap();
+    std::env::set_current_dir(&gone).unwrap();
+    std::fs::remove_dir(&gone).unwrap();
+    let names = auth_provider_ids();
+    if let Err(err) = std::env::set_current_dir(&prev) {
+        panic!("restore cwd: {err}");
+    }
+    assert!(
+        names.iter().any(|n| n == "openai" || n == "anthropic"),
+        "{names:?}"
+    );
 }

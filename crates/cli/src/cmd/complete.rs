@@ -106,9 +106,8 @@ impl TypedValueParser for SessionIdValueParser {
 }
 
 fn load_config_readonly() -> whycodes_config::Config {
-    let Ok(path) = whycodes_config::Config::default_path() else {
-        return whycodes_config::Config::default();
-    };
+    // `default_path` only wraps `paths::config_file()`; it does not fail.
+    let path = whycodes_config::Config::default_path().unwrap_or_default();
     if !path.exists() {
         return whycodes_config::Config::default();
     }
@@ -179,9 +178,8 @@ pub(crate) fn auth_provider_ids() -> Vec<String> {
 }
 
 pub(crate) fn session_id_prefixes() -> Vec<String> {
-    let Ok(data_dir) = whycodes_config::Config::data_dir() else {
-        return Vec::new();
-    };
+    // `data_dir` only wraps `paths::data_dir()`; it does not fail.
+    let data_dir = whycodes_config::Config::data_dir().unwrap_or_default();
     let db_path = data_dir.join("whycodes.db");
     let Ok(Some(db)) =
         whycodes_storage::db::Database::open_existing_readonly(&db_path.to_string_lossy())

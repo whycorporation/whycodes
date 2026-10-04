@@ -63,9 +63,10 @@ pub(crate) fn shutdown_runtime(rt: tokio::runtime::Runtime) {
 /// A few milliseconds of scheduler slack still counts: the diagnostic is
 /// "work outlived the wait", not a stopwatch. Without the slack, a task
 /// that sleeps past the budget can return at 79ms against an 80ms wait and
-/// skip the warning.
+/// skip the warning. Idle shutdown returns in well under a millisecond, so
+/// that case stays quiet without a second comparison.
 fn shutdown_ran_long(elapsed: Duration) -> bool {
-    elapsed + Duration::from_millis(20) >= SHUTDOWN_WAIT && elapsed > Duration::from_millis(1)
+    elapsed + Duration::from_millis(20) >= SHUTDOWN_WAIT
 }
 
 pub(crate) fn hang_message() -> String {

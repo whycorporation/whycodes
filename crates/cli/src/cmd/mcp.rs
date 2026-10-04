@@ -189,14 +189,10 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
 
             if let Some(url) = url {
                 println!("{}", mcp_saved_remote_line(name, url));
-            } else {
+            } else if let Some(command) = command.as_deref() {
                 println!(
                     "{}",
-                    mcp_saved_stdio_line(
-                        name,
-                        command.as_deref().unwrap_or("?"),
-                        &arg_vec.join(" ")
-                    )
+                    mcp_saved_stdio_line(name, command, &arg_vec.join(" "))
                 );
             }
         }
