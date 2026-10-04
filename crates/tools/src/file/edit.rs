@@ -203,11 +203,11 @@ impl EditTool {
     }
 }
 
-fn io_error_string(e: impl std::fmt::Display) -> String {
+fn io_error_string(e: std::io::Error) -> String {
     display_error(e)
 }
 
-fn display_error(e: impl std::fmt::Display) -> String {
+fn display_error(e: std::io::Error) -> String {
     e.to_string()
 }
 

@@ -139,10 +139,13 @@ fn command_stdout_not_found_and_timeout() {
     }
 }
 
-#[cfg(target_os = "windows")]
 #[test]
 fn command_status_and_cleanup_temp() {
-    assert!(command_status("cmd", &["/C", "exit 0"], TIMEOUT).is_ok());
+    #[cfg(windows)]
+    let ok = command_status("cmd", &["/C", "exit 0"], TIMEOUT);
+    #[cfg(not(windows))]
+    let ok = command_status("true", &[], TIMEOUT);
+    assert!(ok.is_ok(), "{ok:?}");
     match command_status("whycodes-no-such-clipboard-bin", &[], TIMEOUT) {
         Err(RunErr::NotFound) => {}
         other => panic!("expected NotFound, got {other:?}"),
@@ -271,6 +274,8 @@ fn sniff_covers_remaining_headers() {
         first_image_mime(["image/jpeg"].into_iter()),
         Some("image/jpeg")
     );
+    note_clipboard_dir_lock(&std::io::Error::other("chmod"));
+    assert!(clipboard_dir_mode(std::path::Path::new(".")).is_ok());
 }
 
 #[test]
@@ -341,7 +346,6 @@ fn classify_command_output_maps_spawn_and_stdout() {
     }
 }
 
-#[cfg(target_os = "windows")]
 #[test]
 fn finish_windows_clipboard_covers_temp_read_and_run_errs() {
     let missing = std::env::temp_dir().join("whycodes-clip-no-such-file.png");
@@ -399,15 +403,298 @@ fn windows_clipboard_script_embeds_the_dest_path() {
     assert!(script.contains("GetImage()"));
     assert!(script.contains(r"C:\tmp\clip.png"));
     assert!(script.contains("ImageFormat]::Png"));
+
+    let empty = with_windows_run(Err(RunErr::Exit), read_windows_image).unwrap();
+    assert!(matches!(empty, PromptClipboard::Empty));
+    let missing = with_windows_run(Err(RunErr::NotFound), read_windows_image).unwrap_err();
+    assert!(missing.contains("PowerShell"), "{missing}");
+    assert!(matches!(host_clipboard_os(), HostClipboard::Windows));
+    assert!(matches!(host_from_name("macos"), HostClipboard::Macos));
+    assert!(matches!(host_from_name("linux"), HostClipboard::Linux));
+    assert!(matches!(host_from_name("windows"), HostClipboard::Windows));
 }
 
-#[cfg(target_os = "windows")]
 #[test]
 fn command_stdout_echo_and_missing_bin() {
+    #[cfg(windows)]
     let out = command_stdout("cmd", &["/C", "echo hi"], TIMEOUT).expect("echo");
+    #[cfg(not(windows))]
+    let out = command_stdout("echo", &["hi"], TIMEOUT).expect("echo");
     assert!(!out.is_empty());
     match command_stdout("whycodes-no-such-clipboard-bin", &[], TIMEOUT) {
         Err(RunErr::NotFound) => {}
         other => panic!("expected NotFound, got {other:?}"),
     }
+}
+
+fn png_bytes() -> Vec<u8> {
+    b"\x89PNG\r\n\x1a\nhello-png".to_vec()
+}
+
+#[test]
+fn linux_clipboard_covers_wayland_xclip_and_errors() {
+    let png = png_bytes();
+    let png_hit = png.clone();
+    let got = with_cmd_stub(
+        move |bin, args| {
+            if bin == "wl-paste" && args == ["--list-types"] {
+                return Ok(b"text/plain\nimage/png\n".to_vec());
+            }
+            if bin == "wl-paste" && args.len() == 2 && args[1] == "image/png" {
+                return Ok(png_hit.clone());
+            }
+            Err(RunErr::NotFound)
+        },
+        read_linux_image,
+    )
+    .unwrap();
+    assert!(matches!(got, PromptClipboard::ImagePaths(p) if p.len() == 1));
+
+    let empty = with_cmd_stub(
+        |bin, args| {
+            if bin == "wl-paste" && args == ["--list-types"] {
+                return Ok(b"text/plain\n".to_vec());
+            }
+            Err(RunErr::NotFound)
+        },
+        read_linux_image,
+    )
+    .unwrap();
+    assert!(matches!(empty, PromptClipboard::Empty));
+
+    let too_large = with_cmd_stub(|_, _| Err(RunErr::TooLarge), read_linux_image).unwrap_err();
+    assert!(too_large.contains("too large"), "{too_large}");
+
+    let io_err = with_cmd_stub(
+        |_, _| Err(RunErr::Io("wayland down".into())),
+        read_linux_image,
+    )
+    .unwrap_err();
+    assert!(io_err.contains("wayland"), "{io_err}");
+
+    let dir = tempfile::tempdir().unwrap();
+    let img = dir.path().join("shot.png");
+    std::fs::write(&img, b"\x89PNG\r\n\x1a\n").unwrap();
+    let list = format!("{}\n", img.display());
+    let list_hit = list.clone();
+    let uris = with_cmd_stub(
+        move |bin, args| {
+            if bin == "wl-paste" && args == ["--list-types"] {
+                return Ok(b"text/uri-list\n".to_vec());
+            }
+            if bin == "wl-paste" && args.len() == 2 && args[1] == "text/uri-list" {
+                return Ok(list_hit.clone().into_bytes());
+            }
+            Err(RunErr::NotFound)
+        },
+        read_linux_image,
+    )
+    .unwrap();
+    assert!(matches!(uris, PromptClipboard::ImagePaths(p) if !p.is_empty()));
+
+    let uri_fail = with_cmd_stub(
+        |bin, args| {
+            if bin == "wl-paste" && args == ["--list-types"] {
+                return Ok(b"text/uri-list\n".to_vec());
+            }
+            if args.len() == 2 && args[1] == "text/uri-list" {
+                return Err(RunErr::Io("uri read".into()));
+            }
+            Err(RunErr::NotFound)
+        },
+        read_linux_image,
+    )
+    .unwrap_err();
+    assert!(uri_fail.contains("uri read"), "{uri_fail}");
+
+    let jpeg = png.clone();
+    let xclip = with_cmd_stub(
+        move |bin, args| {
+            if bin == "wl-paste" {
+                return Err(RunErr::NotFound);
+            }
+            if bin == "xclip" && args.contains(&"TARGETS") {
+                return Ok(b"image/jpeg text/plain\n".to_vec());
+            }
+            if bin == "xclip" && args.contains(&"image/jpeg") {
+                return Ok(jpeg.clone());
+            }
+            Err(RunErr::Exit)
+        },
+        read_linux_image,
+    )
+    .unwrap();
+    assert!(matches!(xclip, PromptClipboard::ImagePaths(p) if p.len() == 1));
+
+    let xclip_uri = list;
+    let xclip_paths = with_cmd_stub(
+        move |bin, args| {
+            if bin == "wl-paste" {
+                return Err(RunErr::Timeout);
+            }
+            if bin == "xclip" && args.contains(&"TARGETS") {
+                return Ok(b"TEXT text/uri-list\n".to_vec());
+            }
+            if bin == "xclip" && args.contains(&"text/uri-list") {
+                return Ok(xclip_uri.clone().into_bytes());
+            }
+            Err(RunErr::Exit)
+        },
+        read_linux_image,
+    )
+    .unwrap();
+    assert!(matches!(xclip_paths, PromptClipboard::ImagePaths(p) if !p.is_empty()));
+
+    let xclip_io = with_cmd_stub(
+        |bin, args| {
+            if bin == "wl-paste" {
+                return Err(RunErr::Exit);
+            }
+            if bin == "xclip" && args.contains(&"TARGETS") {
+                return Err(RunErr::Io("x11".into()));
+            }
+            Err(RunErr::NotFound)
+        },
+        read_linux_image,
+    )
+    .unwrap_err();
+    assert!(xclip_io.contains("x11"), "{xclip_io}");
+
+    let xclip_empty = with_cmd_stub(
+        |bin, args| {
+            if bin == "wl-paste" {
+                return Err(RunErr::NotFound);
+            }
+            if bin == "xclip" && args.contains(&"TARGETS") {
+                return Ok(b"STRING\n".to_vec());
+            }
+            Err(RunErr::NotFound)
+        },
+        read_linux_image,
+    )
+    .unwrap();
+    assert!(matches!(xclip_empty, PromptClipboard::Empty));
+
+    assert_eq!(
+        first_image_mime(["image/webp", "image/gif"].into_iter()),
+        Some("image/webp")
+    );
+    assert_eq!(first_image_mime(["  ", ""].into_iter()), None);
+    let dup = format!("{img}\n{img}\n", img = img.display());
+    let paths = parse_uri_list(&dup);
+    assert_eq!(paths.len(), 1, "{paths:?}");
+
+    let uri_too_large = with_cmd_stub(
+        |bin, args| {
+            if bin == "wl-paste" && args == ["--list-types"] {
+                return Ok(b"text/uri-list\n".to_vec());
+            }
+            Err(RunErr::TooLarge)
+        },
+        read_linux_image,
+    )
+    .unwrap_err();
+    assert!(uri_too_large.contains("too large"), "{uri_too_large}");
+
+    let xclip_uri_too_large = with_cmd_stub(
+        |bin, args| {
+            if bin == "wl-paste" {
+                return Err(RunErr::NotFound);
+            }
+            if bin == "xclip" && args.contains(&"TARGETS") {
+                return Ok(b"text/uri-list\n".to_vec());
+            }
+            Err(RunErr::TooLarge)
+        },
+        read_linux_image,
+    )
+    .unwrap_err();
+    assert!(
+        xclip_uri_too_large.contains("too large"),
+        "{xclip_uri_too_large}"
+    );
+}
+
+#[test]
+fn macos_clipboard_covers_pngpaste_and_osascript() {
+    let png = png_bytes();
+    let png_hit = png.clone();
+    let pasted = with_cmd_stub(
+        move |bin, _| {
+            if bin == "pngpaste" {
+                return Ok(png_hit.clone());
+            }
+            Err(RunErr::NotFound)
+        },
+        read_macos_image,
+    )
+    .unwrap();
+    assert!(matches!(pasted, PromptClipboard::ImagePaths(p) if p.len() == 1));
+
+    let empty_paste = with_cmd_stub(
+        |bin, _| {
+            if bin == "pngpaste" {
+                return Err(RunErr::Exit);
+            }
+            if bin == "osascript" {
+                return Ok(b"\n".to_vec());
+            }
+            Err(RunErr::NotFound)
+        },
+        read_macos_image,
+    )
+    .unwrap();
+    assert!(matches!(empty_paste, PromptClipboard::Empty));
+
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, png.as_slice());
+    let decoded = with_cmd_stub(
+        move |bin, _| {
+            if bin == "pngpaste" {
+                return Err(RunErr::NotFound);
+            }
+            if bin == "osascript" {
+                return Ok(b64.clone().into_bytes());
+            }
+            Err(RunErr::NotFound)
+        },
+        read_macos_image,
+    )
+    .unwrap();
+    assert!(matches!(decoded, PromptClipboard::ImagePaths(p) if p.len() == 1));
+
+    let missing = with_cmd_stub(
+        |bin, _| {
+            if bin == "pngpaste" || bin == "osascript" {
+                return Err(RunErr::NotFound);
+            }
+            Err(RunErr::Exit)
+        },
+        read_macos_image,
+    )
+    .unwrap_err();
+    assert!(missing.contains("osascript"), "{missing}");
+
+    let bad_b64 = with_cmd_stub(
+        |bin, _| {
+            if bin == "pngpaste" {
+                return Err(RunErr::Timeout);
+            }
+            if bin == "osascript" {
+                return Ok(b"!!!not-base64!!!".to_vec());
+            }
+            Err(RunErr::NotFound)
+        },
+        read_macos_image,
+    )
+    .unwrap_err();
+    assert!(bad_b64.contains("decode"), "{bad_b64}");
+
+    let huge = with_cmd_stub(|_, _| Err(RunErr::TooLarge), read_macos_image).unwrap_err();
+    assert!(huge.contains("too large"), "{huge}");
+    let io_err = with_cmd_stub(
+        |_, _| Err(RunErr::Io("pasteboard".into())),
+        read_macos_image,
+    )
+    .unwrap_err();
+    assert!(io_err.contains("pasteboard"), "{io_err}");
 }
