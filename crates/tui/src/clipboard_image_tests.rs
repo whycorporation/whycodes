@@ -408,7 +408,7 @@ fn windows_clipboard_script_embeds_the_dest_path() {
     assert!(matches!(empty, PromptClipboard::Empty));
     let missing = with_windows_run(Err(RunErr::NotFound), read_windows_image).unwrap_err();
     assert!(missing.contains("PowerShell"), "{missing}");
-    assert!(matches!(host_clipboard_os(), HostClipboard::Windows));
+    assert_eq!(host_clipboard_os(), host_from_name(std::env::consts::OS));
     assert!(matches!(host_from_name("macos"), HostClipboard::Macos));
     assert!(matches!(host_from_name("linux"), HostClipboard::Linux));
     assert!(matches!(host_from_name("windows"), HostClipboard::Windows));

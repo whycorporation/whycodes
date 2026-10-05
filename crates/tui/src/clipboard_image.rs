@@ -220,7 +220,7 @@ fn read_os_image() -> Result<PromptClipboard, String> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HostClipboard {
     Macos,
     Windows,
