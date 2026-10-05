@@ -6659,6 +6659,14 @@ async fn cmd_provider_list_with_configured() {
 }
 
 #[test]
+fn dispatch_process_runs_completions_and_stats() {
+    dispatch_process(["completions", "bash"]).unwrap();
+    let cli = parse_cli_args(["debug", "--json"]);
+    assert!(matches!(cli.command, Some(Commands::Debug { json: true })));
+    run_parsed_cli(parse_cli_args(["stats"])).unwrap();
+}
+
+#[test]
 fn resolve_dir_dot_means_cwd() {
     let mut c = cli(None);
     c.dir = Some(".".into());
