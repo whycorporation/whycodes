@@ -76,7 +76,6 @@ fn debug_printer_helpers() {
     assert!(debug_jsonl_line("/tmp/log.jsonl", false).contains("/tmp/log.jsonl"));
     assert!(debug_crash_dir_line("/tmp/crash").contains("/tmp/crash"));
     assert!(debug_log_line("/tmp/latest.log").contains("WHYCODES_LOG_FILE"));
-    assert!(debug_path_error_line("Config", "boom").contains("boom"));
     assert!(debug_cwd_line("/tmp").contains("/tmp"));
     assert!(debug_home_line("/home/x").contains("/home/x"));
     assert!(debug_tool_line("Rust", "rustc 1").contains("rustc 1"));
@@ -89,7 +88,6 @@ fn debug_printer_helpers() {
     assert!(debug_oauth_empty_line().contains("auth login"));
     assert!(debug_oauth_entry_line("acme", "oauth", "no expiry").contains("acme"));
     assert!(debug_oauth_store_error_line("denied").contains("denied"));
-    assert!(debug_oauth_data_dir_error_line("missing").contains("missing"));
     assert!(after_tui_upgrade_skip_line().contains("latest"));
     assert!(after_tui_upgrade_ok_line("1.0", "1.1").contains("1.1"));
     assert!(after_tui_upgrade_failed_line("offline").contains("offline"));

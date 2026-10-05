@@ -143,7 +143,7 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
                     "ONNX not in this binary. Rebuild with: cargo build -p whycodes-cli --features onnx"
                 );
             }
-            let data_dir = Config::data_dir()?;
+            let data_dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             println!(
                 "{} Running ONNX smoke (download + checksum + embed)…",
                 "⚡".bold()

@@ -360,4 +360,9 @@ fn slop_helpers_cover_clean_error_and_text() {
     assert_eq!(v["files_changed"], 1);
     let text = slop_report_text(dir.path(), Some("HEAD"), &cfg);
     assert!(text.contains("verdict"), "{text}");
+
+    let gone = dir.path().join("does-not-exist-slop");
+    assert!(slop_json_for(&gone, Some(&cfg)).is_none());
+    let missing = slop_report_text(&gone, None, &cfg);
+    assert!(missing.contains("error"), "{missing}");
 }
