@@ -5,7 +5,8 @@ use colored::*;
 use whycodes_config::Config;
 
 pub(crate) async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
-    let data_dir = Config::data_dir()?;
+    // `Config::data_dir` is `Ok(paths::data_dir())` — the `Result` never fails.
+    let data_dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let store = whycodes_auth::TokenStore::new(&data_dir);
     match cmd {
         AuthCmd::Login {

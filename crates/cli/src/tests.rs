@@ -3328,6 +3328,22 @@ async fn cmd_auth_import_approves_claude_code_from_home() {
 }
 
 #[tokio::test]
+async fn cmd_auth_import_subcommand_lists_denied() {
+    let home = IsolatedHome::new();
+    let creds = home.path().join(".claude");
+    std::fs::create_dir_all(&creds).unwrap();
+    std::fs::write(
+        creds.join(".credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat-test","refreshToken":"r","expiresAt":4102444800000}}"#,
+    )
+    .unwrap();
+    install_test_repl_lines(["n"]);
+    cmd_auth(&AuthCmd::Import).await.unwrap();
+    clear_test_repl_lines();
+    cmd_auth(&AuthCmd::Import).await.unwrap();
+}
+
+#[tokio::test]
 async fn cmd_run_tui_path_hits_whycodes_tui_run() {
     let _home = IsolatedHome::new();
     let _llm = TestLlmEnv;

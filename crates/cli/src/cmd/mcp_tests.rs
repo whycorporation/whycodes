@@ -66,3 +66,66 @@ fn mcp_printer_helpers() {
     );
     assert!(mcp_configured_header().contains("Configured"));
 }
+
+#[tokio::test]
+async fn cmd_mcp_list_add_remove_roundtrip() {
+    let _home = crate::cmd::helpers::IsolatedHome::new();
+    cmd_mcp(&McpCmd::List).await.unwrap();
+    let err = cmd_mcp(&McpCmd::Add {
+        name: "fs".into(),
+        command: None,
+        args: None,
+        url: None,
+        transport: None,
+        headers: vec![],
+    })
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("command") || err.to_string().contains("url"));
+    let err = cmd_mcp(&McpCmd::Add {
+        name: "fs".into(),
+        command: Some("npx".into()),
+        args: None,
+        url: Some("https://example.test/mcp".into()),
+        transport: None,
+        headers: vec![],
+    })
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("not both"));
+
+    cmd_mcp(&McpCmd::Add {
+        name: "fs".into(),
+        command: Some("npx".into()),
+        args: Some("-y pkg".into()),
+        url: None,
+        transport: Some("stdio".into()),
+        headers: vec![],
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::Add {
+        name: "remote".into(),
+        command: None,
+        args: None,
+        url: Some("https://example.test/mcp".into()),
+        transport: Some("http".into()),
+        headers: vec!["Authorization: Bearer x".into()],
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::List).await.unwrap();
+    cmd_mcp(&McpCmd::Remove {
+        name: "missing".into(),
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::Remove { name: "fs".into() })
+        .await
+        .unwrap();
+    cmd_mcp(&McpCmd::Remove {
+        name: "remote".into(),
+    })
+    .await
+    .unwrap();
+}

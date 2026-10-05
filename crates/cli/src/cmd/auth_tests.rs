@@ -16,6 +16,63 @@ fn expiry_label_none_is_none() {
 }
 
 #[test]
+fn expiry_label_derived_and_expired_and_future() {
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "derived_expires_at".into(),
+        serde_json::Value::String("2099-01-01".into()),
+    );
+    let derived = whycodes_auth::ProviderAuth {
+        method: "oauth".into(),
+        token: whycodes_auth::OAuthToken {
+            access_token: "t".into(),
+            refresh_token: None,
+            expires_at: None,
+            extra,
+        },
+    };
+    assert!(auth_expiry_label(&derived).contains("derived API token"));
+
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "copilot_expires_at".into(),
+        serde_json::Value::String("2099-01-01".into()),
+    );
+    let legacy = whycodes_auth::ProviderAuth {
+        method: "oauth".into(),
+        token: whycodes_auth::OAuthToken {
+            access_token: "t".into(),
+            refresh_token: None,
+            expires_at: None,
+            extra,
+        },
+    };
+    assert!(auth_expiry_label(&legacy).contains("derived API token"));
+
+    let expired = whycodes_auth::ProviderAuth {
+        method: "oauth".into(),
+        token: whycodes_auth::OAuthToken {
+            access_token: "t".into(),
+            refresh_token: None,
+            expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(2)),
+            extra: Default::default(),
+        },
+    };
+    assert!(auth_expiry_label(&expired).contains("expired"));
+
+    let future = whycodes_auth::ProviderAuth {
+        method: "oauth".into(),
+        token: whycodes_auth::OAuthToken {
+            access_token: "t".into(),
+            refresh_token: None,
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(2)),
+            extra: Default::default(),
+        },
+    };
+    assert!(auth_expiry_label(&future).contains("expires"));
+}
+
+#[test]
 fn auth_printer_and_prompt_helpers() {
     assert!(logged_in_line("acme", "/tmp/auth.json").contains("acme"));
     assert!(logout_removed_line("acme").contains("acme"));

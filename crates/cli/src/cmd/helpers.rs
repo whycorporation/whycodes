@@ -51,6 +51,10 @@ impl IsolatedHome {
             prev_lane,
         }
     }
+
+    pub(crate) fn dir(&self) -> &std::path::Path {
+        self._dir.path()
+    }
 }
 
 #[cfg(test)]
