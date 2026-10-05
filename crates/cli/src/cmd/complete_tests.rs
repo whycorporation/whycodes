@@ -25,14 +25,13 @@ fn parsers_expose_possible_values() {
     assert!(ModelValueParser.possible_values().is_some());
     assert!(AuthProviderValueParser.possible_values().is_some());
     assert!(SessionIdValueParser.possible_values().is_some());
-    let names = auth_provider_ids();
     // Auth plugins register process-wide. A parallel test may already have
     // loaded `cov-auth-demo`, and a non-empty registry skips the builtin
-    // fallback (`anthropic` / `openai`).
+    // fallback. Drop it so this assertion sees `anthropic` / `openai`.
+    whycodes_auth::clear_registry();
+    let names = auth_provider_ids();
     assert!(
-        names
-            .iter()
-            .any(|n| n == "anthropic" || n == "openai" || n == "cov-auth-demo"),
+        names.iter().any(|n| n == "anthropic" || n == "openai"),
         "{names:?}"
     );
 }
@@ -175,6 +174,7 @@ fn auth_completion_uses_dot_when_cwd_is_gone() {
     std::fs::create_dir(&gone).unwrap();
     std::env::set_current_dir(&gone).unwrap();
     std::fs::remove_dir(&gone).unwrap();
+    whycodes_auth::clear_registry();
     let names = auth_provider_ids();
     if let Err(err) = std::env::set_current_dir(&prev) {
         panic!("restore cwd: {err}");
