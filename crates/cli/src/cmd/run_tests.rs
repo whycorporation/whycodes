@@ -264,3 +264,64 @@ fn fast_tui_source_spawns_the_update_check() {
         "cmd_run_fast_tui must not assign update_rx: None (home-screen confirm never appears)"
     );
 }
+
+/// `WHYCODES_TEST_TUI` returns before a terminal opens, so the clap-free
+/// entry can run in CI. `WHYCODES_NO_AUTO_UPDATE` keeps the GitHub check
+/// from spawning a network task on this path.
+#[test]
+fn fast_tui_quits_and_upgrades_under_the_test_stub() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let prev_home = std::env::var_os("WHYCODES_HOME");
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_skip = std::env::var_os("WHYCODES_TEST_SKIP_UPGRADE");
+    let prev_no = std::env::var_os("WHYCODES_NO_AUTO_UPDATE");
+    let prev_bench = std::env::var_os("WHYCODES_BENCH");
+    let prev_ci = std::env::var_os("CI");
+    unsafe {
+        std::env::set_var("WHYCODES_HOME", home.path());
+        std::env::remove_var("WHYCODES_BENCH");
+        std::env::set_var("WHYCODES_NO_AUTO_UPDATE", "1");
+        std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", "1");
+        std::env::set_var("WHYCODES_TEST_TUI", "quit");
+    }
+    let dir = std::env::temp_dir();
+    cmd_run_fast_tui(dir.clone()).expect("quit stub");
+    unsafe { std::env::set_var("WHYCODES_TEST_TUI", "upgrade") };
+    cmd_run_fast_tui(dir.clone()).expect("upgrade stub");
+    // A file where the data dir should be makes `logging::init` return Err
+    // unless an earlier test already installed the process-wide subscriber.
+    let blocked = home.path().join("not-a-dir");
+    std::fs::write(&blocked, b"x").expect("block data dir");
+    unsafe { std::env::set_var("WHYCODES_HOME", &blocked) };
+    let logged = cmd_run_fast_tui(dir);
+    assert!(
+        logged.is_ok() || logged.unwrap_err().to_string().contains("runtime"),
+        "stub still returns after a logging init failure"
+    );
+    unsafe {
+        match prev_home {
+            Some(v) => std::env::set_var("WHYCODES_HOME", v),
+            None => std::env::remove_var("WHYCODES_HOME"),
+        }
+        match prev_stub {
+            Some(v) => std::env::set_var("WHYCODES_TEST_TUI", v),
+            None => std::env::remove_var("WHYCODES_TEST_TUI"),
+        }
+        match prev_skip {
+            Some(v) => std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", v),
+            None => std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE"),
+        }
+        match prev_no {
+            Some(v) => std::env::set_var("WHYCODES_NO_AUTO_UPDATE", v),
+            None => std::env::remove_var("WHYCODES_NO_AUTO_UPDATE"),
+        }
+        match prev_bench {
+            Some(v) => std::env::set_var("WHYCODES_BENCH", v),
+            None => std::env::remove_var("WHYCODES_BENCH"),
+        }
+        match prev_ci {
+            Some(v) => std::env::set_var("CI", v),
+            None => std::env::remove_var("CI"),
+        }
+    }
+}
