@@ -26,8 +26,13 @@ fn parsers_expose_possible_values() {
     assert!(AuthProviderValueParser.possible_values().is_some());
     assert!(SessionIdValueParser.possible_values().is_some());
     let names = auth_provider_ids();
+    // Auth plugins register process-wide. A parallel test may already have
+    // loaded `cov-auth-demo`, and a non-empty registry skips the builtin
+    // fallback (`anthropic` / `openai`).
     assert!(
-        names.iter().any(|n| n == "anthropic" || n == "openai"),
+        names
+            .iter()
+            .any(|n| n == "anthropic" || n == "openai" || n == "cov-auth-demo"),
         "{names:?}"
     );
 }
