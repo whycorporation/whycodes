@@ -51,6 +51,8 @@ fn provider_printer_helpers() {
     assert!(plugins.iter().any(|l| l.contains("No shell plugins")));
     assert!(plugins_header(2).contains("2"));
     assert!(no_agents_configured_line().contains("no agents"));
+    let empty = empty_provider_lines();
+    assert!(empty.iter().any(|l| l.contains("No providers")));
 }
 
 fn model(id: &str, max_tokens: Option<u32>) -> whycodes_core::types::ModelConfig {

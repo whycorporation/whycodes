@@ -54,6 +54,9 @@ fn mcp_printer_helpers() {
     assert!(mcp_saved_stdio_line("fs", "npx", "-y pkg").contains("stdio"));
     assert!(mcp_removed_line("fs").contains("removed"));
     assert!(mcp_not_found_line("fs").contains("not found"));
+    assert!(missing_mcp_endpoint(None, None));
+    assert!(!missing_mcp_endpoint(Some("https://x"), None));
+    assert!(!missing_mcp_endpoint(None, Some("npx")));
     let empty = mcp_empty_lines();
     assert!(empty.iter().any(|l| l.contains("No MCP servers")));
     assert!(

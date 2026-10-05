@@ -30,5 +30,25 @@ fn auth_printer_and_prompt_helpers() {
     assert!(!import_prompt_yes("n"));
     assert!(!import_prompt_yes(""));
     assert!(skipped_consent_line("/tmp/consent").contains("/tmp/consent"));
+    assert!(
+        import_state_label(whycodes_auth::discover::SourceState::Denied)
+            .to_string()
+            .contains("denied")
+    );
+    assert!(
+        import_state_label(whycodes_auth::discover::SourceState::New)
+            .to_string()
+            .contains("new")
+    );
+    assert!(
+        import_state_label(whycodes_auth::discover::SourceState::Approved)
+            .to_string()
+            .contains("approved")
+    );
+    assert!(
+        import_state_label(whycodes_auth::discover::SourceState::Symlink)
+            .to_string()
+            .contains("symlink")
+    );
     assert!(imported_count_line(2).contains("2"));
 }

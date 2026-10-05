@@ -310,6 +310,17 @@ fn read_lock_rejects_invalid_json() {
 }
 
 #[test]
+fn lock_json_roundtrips_and_unknown_takeover_aborts() {
+    let lock = current_lock(1);
+    let bytes = lock_json(&lock).unwrap();
+    let parsed: ServeLock = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(parsed.port, lock.port);
+    assert!(takeover_prompt_choice_from(None).is_err());
+    assert!(takeover_prompt_choice_from(Some("1")).is_err());
+    assert_eq!(takeover_prompt_choice_from(Some("0")).unwrap(), 0);
+}
+
+#[test]
 fn current_parent_pid_is_set_on_unix() {
     let lock = current_lock(9);
     assert_eq!(lock.port, 9);

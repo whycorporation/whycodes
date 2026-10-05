@@ -75,6 +75,10 @@ pub(crate) fn mcp_removed_line(name: &str) -> String {
     format!("{} MCP server '{}' removed.", "✓".green(), name.cyan())
 }
 
+fn missing_mcp_endpoint(url: Option<&str>, command: Option<&str>) -> bool {
+    url.is_none() && command.is_none()
+}
+
 pub(crate) fn mcp_not_found_line(name: &str) -> String {
     format!("{} MCP server '{}' not found.", "✗".red(), name.cyan())
 }
@@ -159,7 +163,7 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
             let transport_kind = parse_mcp_transport(transport.as_deref())?;
             let header_map = parse_mcp_headers(headers)?;
 
-            if url.is_none() && command.is_none() {
+            if missing_mcp_endpoint(url.as_deref(), command.as_deref()) {
                 anyhow::bail!("provide either a local <command> or --url <endpoint>");
             }
             if url.is_some() && command.is_some() {

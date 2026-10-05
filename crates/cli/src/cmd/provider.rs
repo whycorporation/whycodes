@@ -147,6 +147,10 @@ pub(crate) fn plugins_header(n: usize) -> String {
     format!("{} Shell plugins ({n}):", "🔌".bold())
 }
 
+fn empty_provider_lines() -> Vec<String> {
+    provider_none_lines(&whycodes_llm::ProviderRegistry::default().names().join(", "))
+}
+
 pub(crate) fn no_agents_configured_line() -> &'static str {
     "  (no agents configured)"
 }
@@ -157,9 +161,7 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
     match cmd {
         ProviderCmd::List => {
             if config.providers.is_empty() {
-                for line in provider_none_lines(
-                    &whycodes_llm::ProviderRegistry::default().names().join(", "),
-                ) {
+                for line in empty_provider_lines() {
                     println!("{line}");
                 }
             } else {

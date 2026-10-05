@@ -91,6 +91,11 @@ fn short_commands_are_debug_config_session() {
 }
 
 #[test]
+fn report_hang_prints_the_diagnostic() {
+    report_hang();
+}
+
+#[test]
 fn hang_message_is_one_line() {
     let msg = hang_message();
     assert!(msg.contains("5s"), "{msg}");

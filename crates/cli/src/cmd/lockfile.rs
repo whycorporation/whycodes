@@ -53,8 +53,7 @@ pub(crate) fn write_lock(path: &Path, lock: &ServeLock) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("lock.tmp");
-    let json = serde_json::to_vec_pretty(lock)
-        .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?;
+    let json = lock_json(lock)?;
     {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(&json)?;
@@ -63,6 +62,10 @@ pub(crate) fn write_lock(path: &Path, lock: &ServeLock) -> std::io::Result<()> {
     }
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+fn lock_json(lock: &ServeLock) -> std::io::Result<Vec<u8>> {
+    serde_json::to_vec_pretty(lock).map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))
 }
 
 pub(crate) fn remove_lock(path: &Path) {
@@ -281,12 +284,17 @@ fn prompt_takeover(path: &Path, port: u16, holder: ServeLock) -> anyhow::Result<
 }
 
 #[cfg(test)]
-fn takeover_prompt_choice(_holder: &ServeLock) -> Result<usize, ()> {
-    match std::env::var("WHYCODES_TEST_TAKEOVER").ok().as_deref() {
+fn takeover_prompt_choice_from(raw: Option<&str>) -> Result<usize, ()> {
+    match raw {
         Some("0") => Ok(0),
         Some("2") => Ok(2),
         _ => Err(()),
     }
+}
+
+#[cfg(test)]
+fn takeover_prompt_choice(_holder: &ServeLock) -> Result<usize, ()> {
+    takeover_prompt_choice_from(std::env::var("WHYCODES_TEST_TAKEOVER").ok().as_deref())
 }
 
 #[cfg(not(test))]

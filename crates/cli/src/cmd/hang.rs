@@ -54,8 +54,12 @@ pub(crate) fn shutdown_runtime(rt: tokio::runtime::Runtime) {
     let start = Instant::now();
     rt.shutdown_timeout(SHUTDOWN_WAIT);
     if shutdown_ran_long(start.elapsed()) {
-        eprintln!("{}", hang_message());
+        report_hang();
     }
+}
+
+fn report_hang() {
+    eprintln!("{}", hang_message());
 }
 
 /// True when `shutdown_timeout` used the full budget.
