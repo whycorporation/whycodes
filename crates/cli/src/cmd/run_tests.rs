@@ -265,6 +265,33 @@ fn fast_tui_source_spawns_the_update_check() {
     );
 }
 
+#[test]
+fn finish_fast_tui_bench_maps_paint_errors_and_both_exits() {
+    finish_fast_tui_bench(|| Ok(Some(whycodes_tui::TuiExit::Quit))).unwrap();
+    finish_fast_tui_bench(|| Ok(Some(whycodes_tui::TuiExit::Upgrade))).unwrap();
+    finish_fast_tui_bench(|| Ok(None)).unwrap();
+    let err = finish_fast_tui_bench(|| Err(anyhow::anyhow!("not a terminal"))).unwrap_err();
+    assert!(err.to_string().contains("whycodes --plain"));
+    let other = finish_fast_tui_bench(|| Err(anyhow::anyhow!("disk full"))).unwrap_err();
+    assert!(other.to_string().contains("disk full"));
+}
+
+#[test]
+fn reload_config_after_import_keeps_current_on_error() {
+    let dir = std::env::temp_dir();
+    let mut config = Config::default();
+    assert!(reload_config_after_import(&mut config, &dir, true, |_| Ok(
+        Config::default()
+    )));
+    assert!(!config.memory.enabled);
+    assert!(!reload_config_after_import(
+        &mut config,
+        &dir,
+        false,
+        |_| Err(anyhow::anyhow!("toml"))
+    ));
+}
+
 /// `WHYCODES_TEST_TUI` returns before a terminal opens, so the clap-free
 /// entry can run in CI. `WHYCODES_NO_AUTO_UPDATE` keeps the GitHub check
 /// from spawning a network task on this path.

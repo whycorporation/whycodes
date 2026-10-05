@@ -383,6 +383,30 @@ pub(crate) fn git_status_failed_line(stderr: &str) -> String {
     format!("{} git status: {stderr}", "✗".red())
 }
 
+/// Reload layered config after a first-run import wrote `config.toml`.
+/// A broken project file keeps the config already in hand and warns.
+pub(crate) fn reload_config_after_import(
+    config: &mut Config,
+    project_dir: &std::path::Path,
+    no_memory: bool,
+    load: impl FnOnce(&std::path::Path) -> anyhow::Result<Config>,
+) -> bool {
+    match load(project_dir) {
+        Ok(reloaded) => {
+            *config = reloaded;
+            if no_memory {
+                config.memory.enabled = false;
+            }
+            config.load_command_files(project_dir);
+            true
+        }
+        Err(e) => {
+            eprintln!("{} reloading config after import: {e}", "warning:".yellow());
+            false
+        }
+    }
+}
+
 pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     let msg = e.to_string();
     if msg.contains("No such device")
@@ -399,19 +423,27 @@ pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     }
 }
 
+/// `WHYCODES_BENCH` paints one frame and returns. Tests pass a stand-in so
+/// CI never opens a terminal.
+pub(crate) fn finish_fast_tui_bench(
+    paint: impl FnOnce() -> anyhow::Result<Option<whycodes_tui::TuiExit>>,
+) -> anyhow::Result<()> {
+    let exit = paint()
+        .map_err(map_tui_run_error)?
+        .unwrap_or(whycodes_tui::TuiExit::Quit);
+    match exit {
+        whycodes_tui::TuiExit::Quit => Ok(()),
+        whycodes_tui::TuiExit::Upgrade => Ok(()),
+    }
+}
+
 /// Clap-free TUI entry for `whycodes` / `whycodes run -d <dir>`.
 ///
 /// The first-frame harness is this argv. Building clap + a Tokio runtime
 /// before paint was tens of ms on Windows (issue #85 follow-up).
 pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
     if std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty()) {
-        let exit = whycodes_tui::paint_first_frame_sync()
-            .map_err(map_tui_run_error)?
-            .unwrap_or(whycodes_tui::TuiExit::Quit);
-        return match exit {
-            whycodes_tui::TuiExit::Quit => Ok(()),
-            whycodes_tui::TuiExit::Upgrade => Ok(()),
-        };
+        return finish_fast_tui_bench(whycodes_tui::paint_first_frame_sync);
     }
     // The fast path skips clap/async_main, but must not skip the process
     // safeguards: SIGPIPE ignore (knowhow rule 3) and always-on JSONL
@@ -543,18 +575,11 @@ pub(crate) async fn cmd_run(
     // TUI owns first-run import as a home-screen confirm (same chrome as
     // the update offer). `--plain` REPL still asks on stdin before the loop.
     match super::import::maybe_first_run_import(interactive && !use_tui) {
-        Ok(true) => match Config::load_layered(&project_dir_early) {
-            Ok(reloaded) => {
-                config = reloaded;
-                if cli.no_memory {
-                    config.memory.enabled = false;
-                }
-                config.load_command_files(&project_dir_early);
-            }
-            Err(e) => {
-                eprintln!("{} reloading config after import: {e}", "warning:".yellow());
-            }
-        },
+        Ok(true) => {
+            reload_config_after_import(&mut config, &project_dir_early, cli.no_memory, |dir| {
+                Config::load_layered(dir).map_err(|e| anyhow::anyhow!("{e}"))
+            });
+        }
         Ok(false) => {}
         Err(e) => {
             eprintln!("{} first-run import: {e}", "warning:".yellow());
