@@ -129,3 +129,22 @@ async fn cmd_mcp_list_add_remove_roundtrip() {
     .await
     .unwrap();
 }
+
+/// Linux lets a process delete its own cwd. `mcp serve` then falls back to
+/// `.` instead of panicking. Windows refuses to remove the cwd, so this arm
+/// is host-only (the coverage job is Linux).
+#[cfg(unix)]
+#[test]
+fn mcp_serve_cwd_uses_dot_when_cwd_is_gone() {
+    let prev = std::env::current_dir().expect("cwd");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let gone = dir.path().join("missing-cwd");
+    std::fs::create_dir(&gone).unwrap();
+    std::env::set_current_dir(&gone).unwrap();
+    std::fs::remove_dir(&gone).unwrap();
+    let cwd = mcp_serve_cwd();
+    if let Err(err) = std::env::set_current_dir(&prev) {
+        panic!("restore cwd: {err}");
+    }
+    assert_eq!(cwd, ".");
+}

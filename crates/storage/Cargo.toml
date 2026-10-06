@@ -14,6 +14,9 @@ repository.workspace = true
 # link. Compiling the amalgamation is ~43s cold, cached afterwards.
 default = []
 bundled = ["rusqlite/bundled"]
+# Test-only helpers (drop a table so a caller can hit a SQL error). Off
+# unless a crate's dev-dependency opts in. Never enable on the CLI binary.
+test-util = []
 
 [dependencies]
 whycodes-core = { path = "../core" }

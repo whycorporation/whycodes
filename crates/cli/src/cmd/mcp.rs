@@ -98,6 +98,14 @@ pub(crate) fn mcp_configured_header() -> String {
     format!("{} Configured MCP servers:", "🔌".bold())
 }
 
+/// Working directory for `mcp serve` when `--cwd` is omitted. A deleted cwd
+/// (Linux) falls back to `.` instead of failing the server start.
+fn mcp_serve_cwd() -> String {
+    std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".".into())
+}
+
 pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
     let mut config = Config::load_or_create()?;
 
@@ -109,11 +117,7 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
             use whycodes_tools::profile::ToolProfile;
 
             let profile = ToolProfile::parse(tools);
-            let working_dir = cwd.clone().unwrap_or_else(|| {
-                std::env::current_dir()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| ".".into())
-            });
+            let working_dir = cwd.clone().unwrap_or_else(mcp_serve_cwd);
             let permissions = PermissionSet {
                 allow_file_writes: true,
                 allow_network: true,

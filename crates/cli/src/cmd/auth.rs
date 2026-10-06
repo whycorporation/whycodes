@@ -4,9 +4,20 @@ use crate::args::*;
 use colored::*;
 use whycodes_config::Config;
 
+/// `Config::data_dir` only wraps `paths::data_dir()` and does not fail today.
+/// The `.` fallback stays so a future `Err` still has a directory to open.
+pub(crate) fn auth_data_dir_from(
+    dir: Result<std::path::PathBuf, whycodes_core::Error>,
+) -> std::path::PathBuf {
+    dir.unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+pub(crate) fn auth_data_dir() -> std::path::PathBuf {
+    auth_data_dir_from(Config::data_dir())
+}
+
 pub(crate) async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
-    // `Config::data_dir` is `Ok(paths::data_dir())` — the `Result` never fails.
-    let data_dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let data_dir = auth_data_dir();
     let store = whycodes_auth::TokenStore::new(&data_dir);
     match cmd {
         AuthCmd::Login {

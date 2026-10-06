@@ -45,6 +45,15 @@ impl Database {
         Ok(Self { conn })
     }
 
+    /// Drop the `sessions` table so a later `list_sessions` fails. Only
+    /// compiled for this crate's tests and for callers that opt into
+    /// `test-util` (completion coverage). Not part of the production API.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn drop_sessions_table_for_test(&self) -> crate::error::Result<()> {
+        self.conn.execute_batch("DROP TABLE sessions;")?;
+        Ok(())
+    }
+
     /// Open an existing database read-only. Returns `Ok(None)` when the file
     /// is missing so completion / debug paths never create `whycodes.db`.
     pub fn open_existing_readonly(path: &str) -> crate::error::Result<Option<Self>> {
@@ -981,6 +990,8 @@ mod tests {
     #[test]
     fn test_sql_error_paths_after_dropping_schema() {
         let db = test_db();
+        db.drop_sessions_table_for_test().unwrap();
+        assert!(db.list_sessions().is_err());
         db.conn
             .execute_batch(
                 "
@@ -988,7 +999,6 @@ mod tests {
                 DROP TABLE IF EXISTS code_chunks;
                 DROP TABLE IF EXISTS memories;
                 DROP TABLE IF EXISTS messages;
-                DROP TABLE IF EXISTS sessions;
                 DROP TABLE IF EXISTS state;
                 ",
             )

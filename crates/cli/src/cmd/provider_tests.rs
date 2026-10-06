@@ -95,8 +95,42 @@ async fn provider_list_api_base_model_cap_and_empty_agents() {
     cfg.agents.clear();
     cfg.save().unwrap();
 
+    cfg.agents.clear();
+    cfg.save().unwrap();
+
     cmd_provider(&ProviderCmd::List).await.unwrap();
     cmd_model(&ModelCmd::List).await.unwrap();
     cmd_agent(None).await.unwrap();
+    cmd_agent(Some("missing")).await.unwrap();
+}
+
+/// Allow/deny lists and a pinned model are printed only for a named agent.
+/// An unknown name still lists the remaining agents.
+#[tokio::test]
+async fn cmd_agent_prints_tool_lists_and_model() {
+    let _home = IsolatedHome::new();
+    let mut cfg = whycodes_config::Config::default();
+    cfg.agents.clear();
+    cfg.agents.push(whycodes_core::types::AgentInfo {
+        name: "locked".into(),
+        description: "restricted".into(),
+        mode: whycodes_core::types::AgentMode::Primary,
+        permission: whycodes_core::types::PermissionSet {
+            allowed_tools: Some(vec!["read".into()]),
+            denied_tools: Some(vec!["bash".into()]),
+            allow_file_writes: false,
+            allow_network: false,
+            allow_shell: false,
+            allowed_paths: None,
+            rules: Default::default(),
+        },
+        model: Some(model("tiny", None)),
+        system_prompt: None,
+        temperature: None,
+        top_p: None,
+    });
+    cfg.save().unwrap();
+
+    cmd_agent(Some("locked")).await.unwrap();
     cmd_agent(Some("missing")).await.unwrap();
 }

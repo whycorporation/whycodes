@@ -7,10 +7,22 @@
 
 use std::time::{Duration, Instant};
 
-#[cfg(not(test))]
+/// Production wait. Tests use a shorter budget so a hung task does not stall
+/// the suite; both values go through [`shutdown_wait`] so each arm is live.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(5);
 #[cfg(test)]
-const SHUTDOWN_WAIT: Duration = Duration::from_millis(80);
+const SHUTDOWN_WAIT_TEST: Duration = Duration::from_millis(80);
+
+fn shutdown_wait() -> Duration {
+    #[cfg(test)]
+    {
+        SHUTDOWN_WAIT_TEST
+    }
+    #[cfg(not(test))]
+    {
+        SHUTDOWN_WAIT
+    }
+}
 
 pub(crate) fn is_short_command(cli: &crate::Cli) -> bool {
     use crate::Commands;
@@ -52,7 +64,7 @@ pub(crate) fn is_short_command(cli: &crate::Cli) -> bool {
 /// when the queue is empty).
 pub(crate) fn shutdown_runtime(rt: tokio::runtime::Runtime) {
     let start = Instant::now();
-    rt.shutdown_timeout(SHUTDOWN_WAIT);
+    rt.shutdown_timeout(shutdown_wait());
     if shutdown_ran_long(start.elapsed()) {
         report_hang();
     }
@@ -70,7 +82,7 @@ fn report_hang() {
 /// skip the warning. Idle shutdown returns in well under a millisecond, so
 /// that case stays quiet without a second comparison.
 fn shutdown_ran_long(elapsed: Duration) -> bool {
-    elapsed + Duration::from_millis(20) >= SHUTDOWN_WAIT
+    elapsed + Duration::from_millis(20) >= shutdown_wait()
 }
 
 pub(crate) fn hang_message() -> String {

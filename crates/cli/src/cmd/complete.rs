@@ -106,8 +106,18 @@ impl TypedValueParser for SessionIdValueParser {
 }
 
 fn load_config_readonly() -> whycodes_config::Config {
-    // `default_path` only wraps `paths::config_file()`; it does not fail.
-    let path = whycodes_config::Config::default_path().unwrap_or_default();
+    load_config_at(whycodes_config::Config::default_path())
+}
+
+/// `default_path` only wraps `paths::config_file()` and does not fail today.
+/// A missing path, an unreadable file, or bad TOML all fall back to defaults
+/// so shell completion never errors.
+fn load_config_at(
+    path: std::result::Result<std::path::PathBuf, whycodes_core::Error>,
+) -> whycodes_config::Config {
+    let Ok(path) = path else {
+        return whycodes_config::Config::default();
+    };
     if !path.exists() {
         return whycodes_config::Config::default();
     }
@@ -178,8 +188,18 @@ pub(crate) fn auth_provider_ids() -> Vec<String> {
 }
 
 pub(crate) fn session_id_prefixes() -> Vec<String> {
-    // `data_dir` only wraps `paths::data_dir()`; it does not fail.
-    let data_dir = whycodes_config::Config::data_dir().unwrap_or_default();
+    session_prefixes_in(whycodes_config::Config::data_dir())
+}
+
+/// `data_dir` only wraps `paths::data_dir()` and does not fail today. A
+/// missing database, a read error, or a failed session query all yield no
+/// completions instead of an error on the shell.
+fn session_prefixes_in(
+    data_dir: std::result::Result<std::path::PathBuf, whycodes_core::Error>,
+) -> Vec<String> {
+    let Ok(data_dir) = data_dir else {
+        return Vec::new();
+    };
     let db_path = data_dir.join("whycodes.db");
     let Ok(Some(db)) =
         whycodes_storage::db::Database::open_existing_readonly(&db_path.to_string_lossy())

@@ -42,6 +42,11 @@ fn load_config_readonly_missing_and_invalid() {
     let _ = cfg.providers.len();
     let _ = model_ids();
     let _ = session_id_prefixes();
+    assert!(
+        load_config_at(Err(whycodes_core::Error::Config("no config path".into())))
+            .providers
+            .is_empty()
+    );
 }
 
 fn parse_value(parser: impl clap::builder::TypedValueParser<Value = String>, raw: &str) -> String {
@@ -183,4 +188,74 @@ fn auth_completion_uses_dot_when_cwd_is_gone() {
         names.iter().any(|n| n == "openai" || n == "anthropic"),
         "{names:?}"
     );
+}
+
+/// A config that exists but is not TOML takes the parse fallback. Two auth
+/// plugins with the same provider id take `dedup`. A database file whose
+/// session table is gone makes `list_sessions` fail without creating a new db.
+#[test]
+fn completion_covers_bad_toml_duplicate_auth_and_broken_sessions() {
+    let _home = crate::cmd::helpers::IsolatedHome::new();
+    let path = whycodes_config::Config::default_path().unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "this is not toml {{{").unwrap();
+    assert!(load_config_readonly().providers.is_empty());
+    std::fs::remove_file(&path).unwrap();
+
+    let data = whycodes_config::Config::data_dir().unwrap();
+    let plug = data.join("plugins").join("dup-auth");
+    std::fs::create_dir_all(&plug).unwrap();
+    std::fs::write(plug.join("plugin.json"), AUTH_PLUGIN).unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    let project = whycodes_plugin::project_plugins_dir(&cwd).join("dup-auth");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("plugin.json"), AUTH_PLUGIN).unwrap();
+    whycodes_auth::clear_registry();
+    let names = auth_provider_ids();
+    let hits = names.iter().filter(|n| *n == "cov-auth-demo").count();
+    assert_eq!(hits, 1, "{names:?}");
+    let _ = std::fs::remove_dir_all(whycodes_plugin::project_plugins_dir(&cwd));
+
+    let db_path = data.join("whycodes.db");
+    let db = whycodes_storage::db::Database::open(&db_path.to_string_lossy()).unwrap();
+    db.create_session("kept", "s", ".").unwrap();
+    db.drop_sessions_table_for_test().unwrap();
+    drop(db);
+    assert!(session_id_prefixes().is_empty());
+    assert!(
+        session_prefixes_in(Err(whycodes_core::Error::Config("no data dir".into()))).is_empty()
+    );
+}
+
+/// A config file with mode `000` cannot be read, so completion falls back to
+/// the default config. An empty sessions table is a successful query that
+/// still yields no prefixes. Linux-only: Windows ignores Unix mode bits.
+#[cfg(unix)]
+#[test]
+fn completion_unreadable_config_and_empty_sessions() {
+    let _home = crate::cmd::helpers::IsolatedHome::new();
+    let path = whycodes_config::Config::default_path().unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        r#"
+[providers.hidden]
+name = "hidden"
+"#,
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let cfg = load_config_readonly();
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
+    assert!(
+        !cfg.providers.contains_key("hidden"),
+        "unreadable config must not load providers"
+    );
+
+    let data = whycodes_config::Config::data_dir().unwrap();
+    let db_path = data.join("whycodes.db");
+    let db = whycodes_storage::db::Database::open(&db_path.to_string_lossy()).unwrap();
+    drop(db);
+    assert!(session_id_prefixes().is_empty());
 }
