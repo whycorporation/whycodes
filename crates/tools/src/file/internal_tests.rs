@@ -104,6 +104,7 @@ fn skill_load_error_is_surfaced_for_unreadable_project() {
     assert!(load_err.content.contains("Error loading skills"));
     let bounced = registry_load_failed(skill_load_error("boom"));
     assert!(bounced.is_error);
+    assert!(skill_registry_error("boom").is_error);
     assert!(
         take_skill_registry(Err(skill_load_error("boom")))
             .unwrap_err()

@@ -134,10 +134,10 @@ fn truncation_ok(
     }
 }
 
-fn list_error(e: String) -> ToolResult {
+fn list_error(e: impl std::fmt::Display) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
-        content: e,
+        content: e.to_string(),
         is_error: true,
     }
 }

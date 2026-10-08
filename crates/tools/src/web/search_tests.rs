@@ -93,6 +93,10 @@ fn urlencoding_and_plain_markup() {
         search_host_with("MISSING_SEARCH_HOST", "default.host", false),
         "default.host"
     );
+    note_no_serpapi(&std::env::VarError::NotPresent);
+    note_search_url_ok();
+    note_no_organic();
+    assert_eq!(search_body_error("eof"), "eof");
     let read_err = search_read_error("eof");
     assert!(read_err.is_error);
     assert!(read_err.content.contains("Error reading response"));
@@ -103,6 +107,12 @@ fn urlencoding_and_plain_markup() {
     assert!(empty.content.contains("No results"));
     let hits = search_html_result(Ok("<div class=\"result__snippet\">alpha</div>".into()), 3);
     assert!(hits.content.contains("alpha"));
+    let collapsed = search_html_result(Ok("<div class=\"result__snippet\"></div>".into()), 3);
+    assert!(
+        collapsed.content.contains("No results"),
+        "{}",
+        collapsed.content
+    );
 }
 
 #[tokio::test]
@@ -234,4 +244,19 @@ async fn serpapi_and_ddg_network_and_connect_errors() {
         )
         .await;
     assert!(ddg.is_error, "{}", ddg.content);
+}
+
+#[tokio::test]
+async fn duckduckgo_network_deny_without_serpapi() {
+    let _env = SearchEnv::lock();
+    unsafe { std::env::remove_var("SERPAPI_API_KEY") };
+    let mut ctx = crate::tool::ToolContext::unsandboxed("/");
+    ctx.network = whycodes_core::NetworkPolicy {
+        allowlist: vec!["example.com".into()],
+        denylist: vec![],
+    };
+    let blocked = WebSearchTool::new()
+        .execute(serde_json::json!({"query": "q"}), &ctx)
+        .await;
+    assert!(blocked.is_error, "{}", blocked.content);
 }

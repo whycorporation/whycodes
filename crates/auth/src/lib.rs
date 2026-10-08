@@ -24,8 +24,8 @@ pub mod token;
 pub use error::AuthError;
 pub use spec::{
     FlowKind, InferenceIdentity, ProviderSpec, TokenEncoding, clear_registry, inference_identity,
-    register_spec, registered_providers, spec_for, spec_get, suggested_models, supports_oauth,
-    validate,
+    lock_registry, register_spec, registered_providers, spec_for, spec_get, suggested_models,
+    supports_oauth, validate,
 };
 pub use store::TokenStore;
 pub use token::{OAuthToken, ProviderAuth};

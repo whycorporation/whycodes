@@ -16,6 +16,63 @@ fn expiry_label_none_is_none() {
 }
 
 #[test]
+fn expiry_label_derived_and_expired_and_future() {
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "derived_expires_at".into(),
+        serde_json::Value::String("2099-01-01".into()),
+    );
+    let derived = whycodes_auth::ProviderAuth {
+        method: "oauth".into(),
+        token: whycodes_auth::OAuthToken {
+            access_token: "t".into(),
+            refresh_token: None,
+            expires_at: None,
+            extra,
+        },
+    };
+    assert!(auth_expiry_label(&derived).contains("derived API token"));
+
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "copilot_expires_at".into(),
+        serde_json::Value::String("2099-01-01".into()),
+    );
+    let legacy = whycodes_auth::ProviderAuth {
+        method: "oauth".into(),
+        token: whycodes_auth::OAuthToken {
+            access_token: "t".into(),
+            refresh_token: None,
+            expires_at: None,
+            extra,
+        },
+    };
+    assert!(auth_expiry_label(&legacy).contains("derived API token"));
+
+    let expired = whycodes_auth::ProviderAuth {
+        method: "oauth".into(),
+        token: whycodes_auth::OAuthToken {
+            access_token: "t".into(),
+            refresh_token: None,
+            expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(2)),
+            extra: Default::default(),
+        },
+    };
+    assert!(auth_expiry_label(&expired).contains("expired"));
+
+    let future = whycodes_auth::ProviderAuth {
+        method: "oauth".into(),
+        token: whycodes_auth::OAuthToken {
+            access_token: "t".into(),
+            refresh_token: None,
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(2)),
+            extra: Default::default(),
+        },
+    };
+    assert!(auth_expiry_label(&future).contains("expires"));
+}
+
+#[test]
 fn auth_printer_and_prompt_helpers() {
     assert!(logged_in_line("acme", "/tmp/auth.json").contains("acme"));
     assert!(logout_removed_line("acme").contains("acme"));
@@ -30,5 +87,35 @@ fn auth_printer_and_prompt_helpers() {
     assert!(!import_prompt_yes("n"));
     assert!(!import_prompt_yes(""));
     assert!(skipped_consent_line("/tmp/consent").contains("/tmp/consent"));
+    assert!(
+        import_state_label(whycodes_auth::discover::SourceState::Denied)
+            .to_string()
+            .contains("denied")
+    );
+    assert!(
+        import_state_label(whycodes_auth::discover::SourceState::New)
+            .to_string()
+            .contains("new")
+    );
+    assert!(
+        import_state_label(whycodes_auth::discover::SourceState::Approved)
+            .to_string()
+            .contains("approved")
+    );
+    assert!(
+        import_state_label(whycodes_auth::discover::SourceState::Symlink)
+            .to_string()
+            .contains("symlink")
+    );
     assert!(imported_count_line(2).contains("2"));
+}
+
+#[test]
+fn auth_data_dir_falls_back_to_dot() {
+    let dir = auth_data_dir();
+    assert!(!dir.as_os_str().is_empty());
+    assert_eq!(
+        auth_data_dir_from(Err(whycodes_core::Error::Config("no home".into()))),
+        std::path::PathBuf::from(".")
+    );
 }

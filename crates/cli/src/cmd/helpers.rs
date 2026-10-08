@@ -51,6 +51,10 @@ impl IsolatedHome {
             prev_lane,
         }
     }
+
+    pub(crate) fn dir(&self) -> &std::path::Path {
+        self._dir.path()
+    }
 }
 
 #[cfg(test)]
@@ -331,16 +335,22 @@ pub(crate) fn resume_session_into(
     *session = loaded;
     session.system_prompt = system_prompt;
     // Legacy `New session - …` / placeholder titles: name from first user msg.
-    if session.maybe_upgrade_title_from_history()
-        && let Err(err) = session.save_to_db(&db)
-    {
-        tracing::warn!(error = %err, "failed to persist backfilled session title");
+    if session.maybe_upgrade_title_from_history() {
+        note_backfill_persist(session.save_to_db(&db));
     }
     Ok(true)
 }
 
+/// Persist a title upgraded from history. A write failure is logged, not fatal:
+/// the in-memory title is already updated and the next save can retry.
+pub(crate) fn note_backfill_persist(result: Result<(), impl std::fmt::Display>) {
+    if let Err(err) = result {
+        tracing::warn!(error = %err, "failed to persist backfilled session title");
+    }
+}
+
 pub(crate) fn open_db() -> anyhow::Result<whycodes_storage::db::Database> {
-    let data_dir = Config::data_dir()?;
+    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
     std::fs::create_dir_all(&data_dir)?;
     let db_path = data_dir.join("whycodes.db");
     whycodes_storage::db::Database::open(&db_path.to_string_lossy())
@@ -552,7 +562,7 @@ pub(crate) fn open_memory_service(
     config: &Config,
 ) -> anyhow::Result<whycodes_memory::MemoryService> {
     let project_dir = resolve_dir(cli);
-    let data_dir = Config::data_dir()?;
+    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
     Ok(whycodes_memory::MemoryService::open(
         project_dir,
         data_dir,
@@ -901,13 +911,12 @@ pub(crate) fn slop_json_for(
 ) -> Option<serde_json::Value> {
     let thresholds = match config {
         Some(c) => slop_thresholds(&c.slop),
-        None => match Config::load_layered(project_dir) {
-            Ok(c) => slop_thresholds(&c.slop),
-            Err(err) => {
+        None => Config::load_layered(project_dir)
+            .map(|c| slop_thresholds(&c.slop))
+            .unwrap_or_else(|err| {
                 tracing::debug!(error = %err, "slop: config load skipped");
                 whycodes_slop::Thresholds::default()
-            }
-        },
+            }),
     };
     match whycodes_slop::analyze(project_dir, None, &thresholds) {
         Ok(report) if report.files_changed > 0 || report.delta_loc != 0 => {

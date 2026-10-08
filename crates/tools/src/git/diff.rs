@@ -50,7 +50,7 @@ impl Tool for GitDiffTool {
     ) -> whycodes_core::ToolFuture<'a> {
         Box::pin(async move {
             let working_dir = ctx.working_dir.clone();
-            crate::blocking::tool(move || {
+            crate::blocking::tool(Box::new(move || {
                 let staged = args["staged"].as_bool().unwrap_or(false);
                 let path_filter = args["path"].as_str();
 
@@ -98,7 +98,7 @@ impl Tool for GitDiffTool {
                     content,
                     is_error: false,
                 }
-            })
+            }))
             .await
         })
     }

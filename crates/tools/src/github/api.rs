@@ -169,7 +169,7 @@ pub(crate) fn well_known_gh_paths_from(
         v.push(local.join("GitHub CLI").join("gh.exe"));
         v.push(local.join("Programs").join("GitHub CLI").join("gh.exe"));
     }
-    let profile = user_profile.or_else(|| home.clone());
+    let profile = scoop_profile(user_profile, home.as_ref());
     if let Some(profile) = profile {
         v.push(
             profile
@@ -458,6 +458,26 @@ fn spawn_git_credential(result: std::io::Result<Child>) -> Option<Child> {
     }
 }
 
+fn scoop_profile(user_profile: Option<PathBuf>, home: Option<&PathBuf>) -> Option<PathBuf> {
+    match user_profile {
+        Some(profile) => Some(profile),
+        None => home.cloned(),
+    }
+}
+
+fn credential_stdin_written(child: &mut Child, result: std::io::Result<()>) -> Option<()> {
+    match result {
+        Ok(()) => Some(()),
+        // A helper that prints and exits without reading stdin (or races
+        // the write) still has stdout we can parse.
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Some(()),
+        Err(err) => {
+            git_credential_stdin_failed(child, err);
+            None
+        }
+    }
+}
+
 fn write_git_credential_stdin(stdin: &mut impl Write, payload: &[u8]) -> std::io::Result<()> {
     stdin.write_all(payload)
 }
@@ -514,16 +534,7 @@ fn write_git_credential_payload(
     host: &str,
 ) -> Option<()> {
     let payload = format!("protocol=https\nhost={host}\n\n");
-    match write_git_credential_stdin(stdin, payload.as_bytes()) {
-        Ok(()) => Some(()),
-        // A helper that prints and exits without reading stdin (or races
-        // the write) still has stdout we can parse.
-        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Some(()),
-        Err(err) => {
-            git_credential_stdin_failed(child, err);
-            None
-        }
-    }
+    credential_stdin_written(child, write_git_credential_stdin(stdin, payload.as_bytes()))
 }
 
 fn read_child_stdout_mut(child: &mut Child, what: &'static str) -> Option<String> {
@@ -543,13 +554,24 @@ fn wait_poll_sleep() {
     std::thread::sleep(Duration::from_millis(20));
 }
 
+fn invalid_token_error(e: impl std::fmt::Display) -> String {
+    format!("Invalid token: {e}")
+}
+
+fn github_api_request_error(e: impl std::fmt::Display) -> String {
+    format!("GitHub API request failed: {e}")
+}
+
+fn github_api_response_error(e: impl std::fmt::Display) -> String {
+    format!("Failed to read GitHub API response: {e}")
+}
+
 /// Build common headers for GitHub API requests (auth, accept, user-agent).
 pub fn github_headers(token: &str) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     headers.insert(
         "Authorization",
-        HeaderValue::from_str(&format!("Bearer {token}"))
-            .map_err(|e| format!("Invalid token: {e}"))?,
+        HeaderValue::from_str(&format!("Bearer {token}")).map_err(invalid_token_error)?,
     );
     headers.insert(
         "Accept",
@@ -615,15 +637,9 @@ pub async fn make_request_with_policy(
         req = req.json(&b);
     }
 
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("GitHub API request failed: {e}"))?;
+    let resp = req.send().await.map_err(github_api_request_error)?;
     let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read GitHub API response: {e}"))?;
+    let text = resp.text().await.map_err(github_api_response_error)?;
 
     Ok((status, text))
 }

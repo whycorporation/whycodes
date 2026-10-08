@@ -54,32 +54,14 @@ struct DebugOauth {
 }
 
 fn collect_debug() -> DebugDump {
-    let config_path = match Config::default_path() {
-        Ok(p) => Some(p),
-        Err(err) => {
-            tracing::debug!(error = %err, "debug dump: config path unavailable");
-            None
-        }
-    };
-    let config_exists = config_path.as_ref().is_some_and(|p| p.exists());
-    let data_dir = match Config::data_dir() {
-        Ok(p) => Some(p),
-        Err(err) => {
-            tracing::debug!(error = %err, "debug dump: data dir unavailable");
-            None
-        }
-    };
-    let (jsonl_log, crash_dir, debug_log) = match &data_dir {
-        Some(p) => {
-            let dirs = whycodes_core::logging::LogDirs::from_data_dir(p);
-            (
-                Some(dirs.unified_jsonl().display().to_string()),
-                Some(dirs.crash.display().to_string()),
-                Some(dirs.debug.join("latest.log").display().to_string()),
-            )
-        }
-        None => (None, None, None),
-    };
+    // `default_path` / `data_dir` wrap infallible path helpers (`Ok(...)`).
+    let config_path = Config::default_path().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let config_exists = config_path.exists();
+    let data_dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let dirs = whycodes_core::logging::LogDirs::from_data_dir(&data_dir);
+    let jsonl_log = Some(dirs.unified_jsonl().display().to_string());
+    let crash_dir = Some(dirs.crash.display().to_string());
+    let debug_log = Some(dirs.debug.join("latest.log").display().to_string());
     let env = DEBUG_ENV_VARS
         .iter()
         .map(|name| DebugEnv {
@@ -87,29 +69,26 @@ fn collect_debug() -> DebugDump {
             set: std::env::var(name).is_ok(),
         })
         .collect();
-    let oauth = match &data_dir {
-        Some(dir) => match whycodes_auth::TokenStore::new(dir).list() {
-            Ok(entries) => entries
-                .into_iter()
-                .map(|(provider, auth)| DebugOauth {
-                    provider,
-                    method: auth.method.clone(),
-                    expiry: super::auth::auth_expiry_label(&auth),
-                })
-                .collect(),
-            Err(err) => {
-                tracing::debug!(error = %err, "debug dump: oauth store unread");
-                Vec::new()
-            }
-        },
-        None => Vec::new(),
+    let oauth = match whycodes_auth::TokenStore::new(&data_dir).list() {
+        Ok(entries) => entries
+            .into_iter()
+            .map(|(provider, auth)| DebugOauth {
+                provider,
+                method: auth.method.clone(),
+                expiry: super::auth::auth_expiry_label(&auth),
+            })
+            .collect(),
+        Err(err) => {
+            tracing::debug!(error = %err, "debug dump: oauth store unread");
+            Vec::new()
+        }
     };
     DebugDump {
         version: PKG_VERSION.to_string(),
         git_hash: env!("WHYCODES_GIT_HASH").to_string(),
-        config_path: config_path.map(|p| p.display().to_string()),
+        config_path: Some(config_path.display().to_string()),
         config_exists,
-        data_dir: data_dir.map(|p| p.display().to_string()),
+        data_dir: Some(data_dir.display().to_string()),
         jsonl_log,
         crash_dir,
         debug_log,
@@ -143,47 +122,46 @@ pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
     println!("{}", debug_header_line());
     println!("  Version:     {}", VERSION_LONG.cyan());
 
-    // Config path
-    match Config::default_path() {
-        Ok(p) => println!(
-            "{}",
-            debug_config_line(&p.display().to_string(), p.exists())
-        ),
-        Err(e) => println!("{}", debug_path_error_line("Config", &e.to_string())),
-    }
+    // Config path. `default_path` wraps an infallible helper.
+    let p = Config::default_path().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    println!(
+        "{}",
+        debug_config_line(&p.display().to_string(), p.exists())
+    );
 
-    // Data directory + log paths (Grok-style)
-    match Config::data_dir() {
-        Ok(p) => {
-            println!(
-                "{}",
-                debug_data_dir_line(&p.display().to_string(), p.exists())
-            );
-            let dirs = whycodes_core::logging::LogDirs::from_data_dir(&p);
-            println!(
-                "{}",
-                debug_jsonl_line(
-                    &dirs.unified_jsonl().display().to_string(),
-                    dirs.unified_jsonl().exists()
-                )
-            );
-            println!(
-                "{}",
-                debug_crash_dir_line(&dirs.crash.display().to_string())
-            );
-            println!(
-                "{}",
-                debug_log_line(&dirs.debug.join("latest.log").display().to_string())
-            );
-        }
-        Err(e) => println!("{}", debug_path_error_line("Data dir", &e.to_string())),
-    }
+    // Data directory + log paths (Grok-style). `data_dir` is the same.
+    let p = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    println!(
+        "{}",
+        debug_data_dir_line(&p.display().to_string(), p.exists())
+    );
+    let dirs = whycodes_core::logging::LogDirs::from_data_dir(&p);
+    println!(
+        "{}",
+        debug_jsonl_line(
+            &dirs.unified_jsonl().display().to_string(),
+            dirs.unified_jsonl().exists()
+        )
+    );
+    println!(
+        "{}",
+        debug_crash_dir_line(&dirs.crash.display().to_string())
+    );
+    println!(
+        "{}",
+        debug_log_line(&dirs.debug.join("latest.log").display().to_string())
+    );
 
     // Current directory
-    match std::env::current_dir() {
-        Ok(p) => println!("{}", debug_cwd_line(&p.display().to_string())),
-        Err(e) => println!("{}", debug_path_error_line("CWD", &e.to_string())),
-    }
+    println!(
+        "{}",
+        debug_cwd_line(
+            &std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .display()
+                .to_string()
+        )
+    );
 
     // Home directory
     if let Ok(home) = std::env::var("HOME") {
@@ -212,29 +190,25 @@ pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
 
     // OAuth subscription logins — method + expiry only, never token material.
     println!("  OAuth (auth.json):");
-    match Config::data_dir() {
-        Ok(dir) => {
-            let store = whycodes_auth::TokenStore::new(&dir);
-            match store.list() {
-                Ok(entries) if entries.is_empty() => {
-                    println!("{}", debug_oauth_empty_line());
-                }
-                Ok(entries) => {
-                    for (name, auth) in entries {
-                        println!(
-                            "{}",
-                            debug_oauth_entry_line(
-                                &name,
-                                &auth.method,
-                                &super::auth::auth_expiry_label(&auth)
-                            )
-                        );
-                    }
-                }
-                Err(e) => println!("{}", debug_oauth_store_error_line(&e.to_string())),
+    let dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let store = whycodes_auth::TokenStore::new(&dir);
+    match store.list() {
+        Ok(entries) if entries.is_empty() => {
+            println!("{}", debug_oauth_empty_line());
+        }
+        Ok(entries) => {
+            for (name, auth) in entries {
+                println!(
+                    "{}",
+                    debug_oauth_entry_line(
+                        &name,
+                        &auth.method,
+                        &super::auth::auth_expiry_label(&auth)
+                    )
+                );
             }
         }
-        Err(e) => println!("{}", debug_oauth_data_dir_error_line(&e.to_string())),
+        Err(e) => println!("{}", debug_oauth_store_error_line(&e.to_string())),
     }
 
     Ok(())
@@ -288,10 +262,6 @@ pub(crate) fn debug_log_line(path: &str) -> String {
     format!("  Debug log:   {path} (or WHYCODES_LOG_FILE / --debug)")
 }
 
-pub(crate) fn debug_path_error_line(label: &str, err: &str) -> String {
-    format!("  {label}:      error: {err}")
-}
-
 pub(crate) fn debug_cwd_line(path: &str) -> String {
     format!("  CWD:         {path}")
 }
@@ -322,10 +292,6 @@ pub(crate) fn debug_oauth_entry_line(name: &str, method: &str, expiry: &str) -> 
 
 pub(crate) fn debug_oauth_store_error_line(err: &str) -> String {
     format!("    error reading store: {err}")
-}
-
-pub(crate) fn debug_oauth_data_dir_error_line(err: &str) -> String {
-    format!("    data dir error: {err}")
 }
 
 pub(crate) fn after_tui_upgrade_skip_line() -> &'static str {

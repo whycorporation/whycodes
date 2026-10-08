@@ -75,6 +75,10 @@ pub(crate) fn mcp_removed_line(name: &str) -> String {
     format!("{} MCP server '{}' removed.", "✓".green(), name.cyan())
 }
 
+fn missing_mcp_endpoint(url: Option<&str>, command: Option<&str>) -> bool {
+    url.is_none() && command.is_none()
+}
+
 pub(crate) fn mcp_not_found_line(name: &str) -> String {
     format!("{} MCP server '{}' not found.", "✗".red(), name.cyan())
 }
@@ -94,6 +98,14 @@ pub(crate) fn mcp_configured_header() -> String {
     format!("{} Configured MCP servers:", "🔌".bold())
 }
 
+/// Working directory for `mcp serve` when `--cwd` is omitted. A deleted cwd
+/// (Linux) falls back to `.` instead of failing the server start.
+fn mcp_serve_cwd() -> String {
+    std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".".into())
+}
+
 pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
     let mut config = Config::load_or_create()?;
 
@@ -105,11 +117,7 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
             use whycodes_tools::profile::ToolProfile;
 
             let profile = ToolProfile::parse(tools);
-            let working_dir = cwd.clone().unwrap_or_else(|| {
-                std::env::current_dir()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| ".".into())
-            });
+            let working_dir = cwd.clone().unwrap_or_else(mcp_serve_cwd);
             let permissions = PermissionSet {
                 allow_file_writes: true,
                 allow_network: true,
@@ -159,7 +167,7 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
             let transport_kind = parse_mcp_transport(transport.as_deref())?;
             let header_map = parse_mcp_headers(headers)?;
 
-            if url.is_none() && command.is_none() {
+            if missing_mcp_endpoint(url.as_deref(), command.as_deref()) {
                 anyhow::bail!("provide either a local <command> or --url <endpoint>");
             }
             if url.is_some() && command.is_some() {
@@ -189,14 +197,10 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
 
             if let Some(url) = url {
                 println!("{}", mcp_saved_remote_line(name, url));
-            } else {
+            } else if let Some(command) = command.as_deref() {
                 println!(
                     "{}",
-                    mcp_saved_stdio_line(
-                        name,
-                        command.as_deref().unwrap_or("?"),
-                        &arg_vec.join(" ")
-                    )
+                    mcp_saved_stdio_line(name, command, &arg_vec.join(" "))
                 );
             }
         }

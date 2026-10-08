@@ -104,7 +104,7 @@ fn registry() -> &'static Mutex<HashMap<String, ProviderSpec>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(crate) fn lock_registry() -> std::sync::MutexGuard<'static, HashMap<String, ProviderSpec>> {
+pub fn lock_registry() -> std::sync::MutexGuard<'static, HashMap<String, ProviderSpec>> {
     match registry().lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),

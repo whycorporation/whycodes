@@ -4,6 +4,10 @@
 use std::io::Write;
 use std::path::Path;
 
+fn persist_error(e: tempfile::PersistError) -> std::io::Error {
+    e.error
+}
+
 /// Write `contents` to `path` via a sibling tempfile that is renamed into place.
 pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
     let parent = path
@@ -13,7 +17,7 @@ pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(contents.as_ref())?;
     tmp.flush()?;
-    tmp.persist(path).map_err(|e| e.error)?;
+    tmp.persist(path).map_err(persist_error)?;
     Ok(())
 }
 

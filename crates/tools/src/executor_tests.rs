@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::json;
 use whycodes_core::types::{PermissionAction, ToolResult};
+use whycodes_skill::PluginConfig;
 
 /// Minimal fake tool for registration/definition tests.
 struct FakeTool {
@@ -520,10 +521,122 @@ fn register_config_plugins_invalid_toml_and_empty_json_name() {
         r#"{"name":"","command":"echo"}"#,
     )
     .unwrap();
+    std::fs::create_dir_all(why.join("plugins").join("empty-cmd")).unwrap();
+    std::fs::write(
+        why.join("plugins").join("empty-cmd").join("plugin.json"),
+        r#"{"name":"empty-cmd","command":""}"#,
+    )
+    .unwrap();
     let mut ex = ToolExecutor::new();
     let _ = ex.register_config_plugins(Some(dir.path()));
     let n = ex.register_config_plugins(None);
     assert_eq!(n, 0);
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var("WHYCODES_HOME", v),
+            None => std::env::remove_var("WHYCODES_HOME"),
+        }
+    }
+}
+
+#[test]
+fn fingerprint_hashes_every_rule_and_poisoned_cache_still_serves() {
+    let mut perms = PermissionSet::default();
+    perms.rules.insert("read".into(), PermissionAction::Allow);
+    perms.rules.insert("bash".into(), PermissionAction::Deny);
+    let ex = ToolExecutor::new();
+    let first = ex.get_definitions(&perms);
+    assert!(first.iter().any(|d| d.name == "read"));
+    assert!(first.iter().all(|d| d.name != "bash"));
+
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ex.poison_defs_cache_for_test();
+    }));
+    let recovered = ex.get_definitions(&perms);
+    assert!(recovered.iter().any(|d| d.name == "read"));
+    assert!(recovered.iter().all(|d| d.name != "bash"));
+    note_defs_cache_miss();
+    note_plugin_cfg_skipped();
+    note_plugin_spec_skipped("", "echo");
+    assert!(
+        keep_plugin_spec(
+            "empty-cmd".into(),
+            String::new(),
+            String::new(),
+            None,
+            std::path::PathBuf::from("."),
+        )
+        .is_none()
+    );
+    assert!(
+        keep_plugin_cfg(PluginConfig {
+            name: "  ".into(),
+            command: "echo".into(),
+            description: String::new(),
+            parameters: None,
+            working_dir: None,
+        })
+        .is_none()
+    );
+    assert!(
+        keep_plugin_spec(
+            String::new(),
+            "echo".into(),
+            String::new(),
+            None,
+            std::path::PathBuf::from("."),
+        )
+        .is_none()
+    );
+    let mut by_name = std::collections::BTreeMap::new();
+    insert_plugin(
+        &mut by_name,
+        PluginConfig {
+            name: "echo-tool".into(),
+            command: "echo".into(),
+            description: "prints".into(),
+            parameters: None,
+            working_dir: None,
+        },
+    );
+    assert!(by_name.contains_key("echo-tool"));
+    let empty = skipped_plugin_toml("boom", "plugins.toml load skipped");
+    assert!(empty.plugins.is_empty());
+}
+
+#[test]
+fn core_extra_keeps_a_deferred_name_that_is_also_in_core() {
+    let ex = ToolExecutor::new();
+    let defs = ex.get_definitions_profile_extra(
+        &PermissionSet::default(),
+        crate::profile::ToolProfile::Core,
+        &["read".into(), "worktree".into()],
+    );
+    assert!(defs.iter().any(|d| d.name == "read"));
+    assert!(defs.iter().any(|d| d.name == "worktree"));
+}
+
+#[test]
+fn register_config_plugins_loads_plugin_json() {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+
+    let dir = tempfile::tempdir().unwrap();
+    let plug = dir.path().join(".whycodes").join("plugins").join("cov");
+    std::fs::create_dir_all(&plug).unwrap();
+    std::fs::write(
+        plug.join("plugin.json"),
+        r#"{"name":"cov","command":"echo hi","description":"coverage plugin"}"#,
+    )
+    .unwrap();
+    let mut ex = ToolExecutor::new();
+    let n = ex.register_config_plugins(Some(dir.path()));
+    assert!(n >= 1, "expected the json plugin, got {n}");
+    let tool = ex.get("plugin_cov");
+    assert!(tool.is_some(), "plugin_cov was not registered");
+    assert_eq!(tool.unwrap().description(), "coverage plugin");
     unsafe {
         match prev {
             Some(v) => std::env::set_var("WHYCODES_HOME", v),

@@ -4,8 +4,20 @@ use crate::args::*;
 use colored::*;
 use whycodes_config::Config;
 
+/// `Config::data_dir` only wraps `paths::data_dir()` and does not fail today.
+/// The `.` fallback stays so a future `Err` still has a directory to open.
+pub(crate) fn auth_data_dir_from(
+    dir: Result<std::path::PathBuf, whycodes_core::Error>,
+) -> std::path::PathBuf {
+    dir.unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+pub(crate) fn auth_data_dir() -> std::path::PathBuf {
+    auth_data_dir_from(Config::data_dir())
+}
+
 pub(crate) async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
-    let data_dir = Config::data_dir()?;
+    let data_dir = auth_data_dir();
     let store = whycodes_auth::TokenStore::new(&data_dir);
     match cmd {
         AuthCmd::Login {
@@ -97,12 +109,7 @@ pub(crate) async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Resul
         "🔍".bold()
     );
     for f in &found {
-        let state = match f.state {
-            SourceState::New => "new".yellow(),
-            SourceState::Approved => "approved".green(),
-            SourceState::Denied => "denied".dimmed(),
-            SourceState::Symlink => "symlink — refused".red(),
-        };
+        let state = import_state_label(f.state);
         println!(
             "  {:<15} {:<45} {}",
             f.source.label.cyan(),
@@ -154,10 +161,7 @@ pub(crate) async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Resul
                         Err(e) => println!("{} {}: {e}", "✗".red(), f.source.label),
                     }
                 } else {
-                    println!(
-                        "{}",
-                        skipped_consent_line(&consent.path().display().to_string())
-                    );
+                    println!("{}", skipped_import(&consent));
                 }
             }
         }
@@ -198,6 +202,20 @@ pub(crate) fn import_none_found_line(looked_for: &str) -> String {
 
 pub(crate) fn import_prompt_yes(answer: &str) -> bool {
     matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+fn import_state_label(state: whycodes_auth::discover::SourceState) -> colored::ColoredString {
+    use whycodes_auth::discover::SourceState;
+    match state {
+        SourceState::New => "new".yellow(),
+        SourceState::Approved => "approved".green(),
+        SourceState::Denied => "denied".dimmed(),
+        SourceState::Symlink => "symlink — refused".red(),
+    }
+}
+
+fn skipped_import(consent: &whycodes_auth::discover::ConsentStore) -> String {
+    skipped_consent_line(&consent.path().display().to_string())
 }
 
 pub(crate) fn skipped_consent_line(consent_path: &str) -> String {

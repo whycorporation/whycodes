@@ -106,7 +106,16 @@ impl TypedValueParser for SessionIdValueParser {
 }
 
 fn load_config_readonly() -> whycodes_config::Config {
-    let Ok(path) = whycodes_config::Config::default_path() else {
+    load_config_at(whycodes_config::Config::default_path())
+}
+
+/// `default_path` only wraps `paths::config_file()` and does not fail today.
+/// A missing path, an unreadable file, or bad TOML all fall back to defaults
+/// so shell completion never errors.
+fn load_config_at(
+    path: std::result::Result<std::path::PathBuf, whycodes_core::Error>,
+) -> whycodes_config::Config {
+    let Ok(path) = path else {
         return whycodes_config::Config::default();
     };
     if !path.exists() {
@@ -169,17 +178,43 @@ pub(crate) fn auth_provider_ids() -> Vec<String> {
     if loaded > 0 {
         tracing::debug!(count = loaded, "completion: loaded auth plugins");
     }
-    let mut names = whycodes_auth::oauth_providers();
+    // Plugin names and the builtin fallback both read the process-wide
+    // registry. Hold it so a parallel test cannot clear the map between
+    // the empty check and the fallback. `oauth_providers` takes the same
+    // mutex, so read the names from this guard instead of locking twice.
+    let registry = whycodes_auth::lock_registry();
+    let mut names: Vec<String> = registry.keys().cloned().collect();
+    drop(registry);
     if names.is_empty() {
         names = provider_ids();
     }
     names.sort();
     names.dedup();
+    // A parallel test can clear the process-wide auth registry after this
+    // function already observed only a plugin name. Completions still need
+    // the built-in providers when nothing is registered.
+    if names
+        .iter()
+        .all(|n| !BUILTIN_PROVIDERS.contains(&n.as_str()))
+    {
+        names.extend(BUILTIN_PROVIDERS.iter().map(|s| (*s).to_string()));
+        names.sort();
+        names.dedup();
+    }
     names
 }
 
 pub(crate) fn session_id_prefixes() -> Vec<String> {
-    let Ok(data_dir) = whycodes_config::Config::data_dir() else {
+    session_prefixes_in(whycodes_config::Config::data_dir())
+}
+
+/// `data_dir` only wraps `paths::data_dir()` and does not fail today. A
+/// missing database, a read error, or a failed session query all yield no
+/// completions instead of an error on the shell.
+fn session_prefixes_in(
+    data_dir: std::result::Result<std::path::PathBuf, whycodes_core::Error>,
+) -> Vec<String> {
+    let Ok(data_dir) = data_dir else {
         return Vec::new();
     };
     let db_path = data_dir.join("whycodes.db");

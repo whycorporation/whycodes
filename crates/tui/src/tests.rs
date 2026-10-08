@@ -2515,3 +2515,33 @@ fn chat_messages_from_session_covers_system_tool_image_redacted() {
             .any(|m| m.role == ChatRole::Assistant && m.content.contains("done"))
     );
 }
+
+#[test]
+fn isolated_home_pins_and_restores_whycodes_home() {
+    let outside = std::env::var_os("WHYCODES_HOME");
+    let home = crate::IsolatedHome::new();
+    assert_eq!(
+        std::env::var_os("WHYCODES_HOME").as_deref(),
+        Some(home.path().as_os_str())
+    );
+    unsafe { std::env::set_var("WHYCODES_HOME", "overwritten-by-workspace") };
+    home.pin();
+    assert_eq!(
+        std::env::var_os("WHYCODES_HOME").as_deref(),
+        Some(home.path().as_os_str())
+    );
+    drop(home);
+    assert_eq!(std::env::var_os("WHYCODES_HOME"), outside);
+
+    let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::remove_var("WHYCODES_HOME") };
+    drop(_lock);
+    let home = crate::IsolatedHome::new();
+    assert!(home.path().is_dir());
+    drop(home);
+    assert!(std::env::var_os("WHYCODES_HOME").is_none());
+    if let Some(prev) = prev {
+        unsafe { std::env::set_var("WHYCODES_HOME", prev) };
+    }
+}

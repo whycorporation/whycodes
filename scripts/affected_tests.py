@@ -10,6 +10,7 @@ maps each Rust file to the narrowest cargo filter that still compiles its
 tests:
 
 - a library module        -> that crate's `--lib <module>::`
+- a binary-only module    -> `--bin <name> <module>::` (no lib target)
 - a `#[path]` test file   -> the module that includes it
 - `crates/<c>/tests/<t>`  -> `--test <t>` on that crate only
 - a public surface        -> the changed crate, plus direct dependents' `--lib`
@@ -56,6 +57,48 @@ WORKSPACE_ROOTS = {
 
 PATH_ATTR = "#[path"
 MOD_LINE = re.compile(r"^\s*(?:pub\s+)?mod\s+([A-Za-z0-9_]+)\s*;")
+
+
+def has_lib_target(crate: str) -> bool:
+    """True when `cargo test -p` can take `--lib`. Binary-only crates cannot."""
+    return (CRATES / crate / "src" / "lib.rs").is_file()
+
+
+def bin_names(crate: str) -> list[str]:
+    """Binary target names. Explicit `[[bin]]` wins; otherwise `src/main.rs`."""
+    text = (CRATES / crate / "Cargo.toml").read_text(encoding="utf-8")
+    names: list[str] = []
+    in_bin = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[[") and stripped.endswith("]]"):
+            in_bin = stripped == "[[bin]]"
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_bin = False
+            continue
+        if not in_bin or not stripped.startswith("name") or "=" not in stripped:
+            continue
+        match = re.search(r'"([^"]+)"', stripped)
+        if match and match.group(1) not in names:
+            names.append(match.group(1))
+    if names:
+        return names
+    if (CRATES / crate / "src" / "main.rs").is_file():
+        return [package_name(crate)]
+    return []
+
+
+def unit_selectors(crate: str) -> list[list[str]]:
+    """Cargo args that select this crate's unit tests.
+
+    Library crates use `--lib`. A package with no library (`whycodes-cli`)
+    keeps its `#[cfg(test)]` modules on the binary, so `--lib` is
+    `no library targets found`.
+    """
+    if has_lib_target(crate):
+        return [["--lib"]]
+    return [["--bin", name] for name in bin_names(crate)]
 
 
 def package_name(crate_dir: str) -> str:
@@ -264,8 +307,9 @@ class Plan:
         if crate in self.full:
             return
         self.lib_filters[crate].add(filt)
-        label = filt if filt else "(whole lib)"
-        self.reasons.append(f"{package_name(crate)} --lib {label}: {why}")
+        label = filt if filt else "(whole unit tests)"
+        kind = "--lib" if has_lib_target(crate) else "--bin"
+        self.reasons.append(f"{package_name(crate)} {kind} {label}: {why}")
 
     def add_integration(self, crate: str, target: str, why: str) -> None:
         if crate in self.full:
@@ -339,28 +383,110 @@ def _direct_dependents(plan: Plan, crate: str, rev: dict[str, set[str]], path: s
 
 def cargo_lines(plan: Plan, *, locked: bool, features: str) -> list[str]:
     if plan.workspace:
+        # `--workspace` may name any member's feature (`whycodes-storage/bundled`).
+        # A `-p` line cannot: cargo requires that package to be the feature's
+        # owner or a direct dependency.
         line = _cargo(locked, features, ["--workspace"])
         skips = " ".join(f"--skip {name}" for name in WORKSPACE_SKIPS)
         return [f"{line} -- {skips}"]
 
     lines: list[str] = []
+    deps = direct_deps()
     crates = sorted(plan.full | set(plan.lib_filters) | set(plan.integration))
     for crate in crates:
         pkg = package_name(crate)
+        pkg_features = features_for_crate(crate, features, deps)
         if crate in plan.full:
-            lines.append(_cargo(locked, features, ["-p", pkg]))
+            lines.append(_cargo(locked, pkg_features, ["-p", pkg]))
             continue
         filters = sorted(f for f in plan.lib_filters.get(crate, set()) if f)
         whole_lib = "" in plan.lib_filters.get(crate, set())
         targets = sorted(plan.integration.get(crate, set()))
+        selectors = unit_selectors(crate)
+        if not selectors and (whole_lib or filters or not targets):
+            # No lib and no bin: still name the package so cargo reports it.
+            selectors = [[]]
         if whole_lib or (not filters and not targets):
-            lines.append(_cargo(locked, features, ["-p", pkg, "--lib"]))
+            for selector in selectors:
+                lines.append(_cargo(locked, pkg_features, ["-p", pkg, *selector]))
         elif filters:
-            # One cargo process, several substring filters: cargo ORs them.
-            lines.append(_cargo(locked, features, ["-p", pkg, "--lib", *filters]))
+            # Cargo accepts one TESTNAME. Extra filters must follow `--` so
+            # the test harness ORs them (`cargo test --lib a:: -- b::` is
+            # "unexpected argument" on rustc 1.99). A lone filter stays
+            # before `--`; a trailing `--` with nothing after it is noise.
+            extra = ["--", *filters[1:]] if len(filters) > 1 else []
+            for selector in selectors:
+                lines.append(
+                    _cargo(
+                        locked,
+                        pkg_features,
+                        ["-p", pkg, *selector, filters[0], *extra],
+                    )
+                )
         for target in targets:
-            lines.append(_cargo(locked, features, ["-p", pkg, "--test", target]))
+            lines.append(_cargo(locked, pkg_features, ["-p", pkg, "--test", target]))
     return lines
+
+
+def features_for_crate(crate: str, features: str, deps: dict[str, set[str]]) -> str:
+    """Feature specs `cargo test -p` will accept for this crate.
+
+    CI passes `whycodes-storage/bundled` so Linux runners without
+    libsqlite3-dev still link. That spec is legal only when the selected
+    package is `whycodes-storage` or depends on it directly. Other crates
+    keep a direct dependency's feature that turns the spec on (their own
+    alias wins: `whycodes-tools` uses `bundled-sqlite`). A crate with no
+    path to the feature, such as `whycodes-config`, gets no `--features`.
+    """
+    if not features:
+        return ""
+    kept: list[str] = []
+    for spec in re.split(r"[\s,]+", features.strip()):
+        if not spec:
+            continue
+        rewritten = _accept_feature(crate, spec, deps)
+        if rewritten and rewritten not in kept:
+            kept.append(rewritten)
+    return ",".join(kept)
+
+
+def _accept_feature(crate: str, spec: str, deps: dict[str, set[str]]) -> str | None:
+    own = _feature_map(crate)
+    if "/" not in spec:
+        return spec if spec in own else None
+    pkg, feat = spec.split("/", 1)
+    if package_name(crate) == pkg and feat in own:
+        return spec
+    dep_dir = pkg.removeprefix(PKG_PREFIX) if pkg.startswith(PKG_PREFIX) else ""
+    if dep_dir and dep_dir in deps.get(crate, ()) and feat in _feature_map(dep_dir):
+        return spec
+    for dep in sorted(deps.get(crate, ())):
+        for name, enables in _feature_map(dep).items():
+            if spec not in enables:
+                continue
+            forwarded = f"{package_name(dep)}/{name}"
+            for own_name, own_enables in own.items():
+                if forwarded in own_enables:
+                    return own_name
+            return forwarded
+    return None
+
+
+def _feature_map(crate: str) -> dict[str, tuple[str, ...]]:
+    """`[features]` names in this crate's Cargo.toml, in file order."""
+    text = (CRATES / crate / "Cargo.toml").read_text(encoding="utf-8")
+    in_features = False
+    found: dict[str, tuple[str, ...]] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_features = stripped == "[features]"
+            continue
+        if not in_features or "=" not in stripped or stripped.startswith("#"):
+            continue
+        name, _, rest = stripped.partition("=")
+        found[name.strip()] = tuple(re.findall(r'"([^"]+)"', rest))
+    return found
 
 
 def _cargo(locked: bool, features: str, args: list[str]) -> str:
@@ -383,7 +509,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--features",
         default="",
-        help="cargo --features value (CI passes whycodes-storage/bundled)",
+        help=(
+            "cargo --features value (CI passes whycodes-storage/bundled). "
+            "On -p lines the spec is kept, rewritten to a crate alias, or "
+            "dropped when that package cannot activate it"
+        ),
     )
     parser.add_argument("--quiet", action="store_true", help="print commands only, not the reasons")
     args = parser.parse_args(argv)

@@ -90,8 +90,10 @@ impl Tool for ApplyPatchTool {
 
             let working_dir = ctx.working_dir.clone();
             let ctx_clone = ctx.clone();
-            crate::blocking::tool(move || apply_files(&working_dir, &path_str, files, &ctx_clone))
-                .await
+            crate::blocking::tool(Box::new(move || {
+                apply_files(&working_dir, &path_str, files, &ctx_clone)
+            }))
+            .await
         })
     }
 }
@@ -264,8 +266,7 @@ fn write_patched_file(
     modified: &str,
 ) -> ToolResult {
     write_patched_result(
-        crate::file::atomic::write_atomic(Path::new(full_path), modified)
-            .map_err(|e| e.to_string()),
+        crate::file::atomic::write_atomic(Path::new(full_path), modified).map_err(io_error_string),
         shown,
         patch_content,
     )
@@ -414,19 +415,39 @@ fn parse_hunks(patch: &str) -> Result<Vec<Hunk>, String> {
     Ok(hunks)
 }
 
+fn io_error_string(e: std::io::Error) -> String {
+    display_error(e)
+}
+
+fn display_error(e: std::io::Error) -> String {
+    e.to_string()
+}
+
+fn malformed_hunk_header(line: &str) -> String {
+    format!("malformed hunk header: {line}")
+}
+
+fn hunk_body(line: &str) -> Result<&str, String> {
+    match line.strip_prefix("@@").and_then(|s| s.split("@@").next()) {
+        Some(rest) => Ok(rest),
+        None => Err(malformed_hunk_header(line)),
+    }
+}
+
+fn old_hunk_token<'a>(rest: &'a str, line: &str) -> Result<&'a str, String> {
+    match rest.split_whitespace().find(|t| t.starts_with('-')) {
+        Some(old) => Ok(old),
+        None => Err(malformed_hunk_header(line)),
+    }
+}
+
 fn parse_hunk_header(line: &str) -> Result<usize, String> {
     // @@ -old_start,old_count +new_start,new_count @@
-    let rest = line
-        .strip_prefix("@@")
-        .and_then(|s| s.split("@@").next())
-        .ok_or_else(|| format!("malformed hunk header: {line}"))?;
-    let old = rest
-        .split_whitespace()
-        .find(|t| t.starts_with('-'))
-        .ok_or_else(|| format!("malformed hunk header: {line}"))?;
+    let rest = hunk_body(line)?;
+    let old = old_hunk_token(rest, line)?;
     let num = old.trim_start_matches('-').split(',').next().unwrap_or("0");
     num.parse::<usize>()
-        .map_err(|_| format!("malformed hunk header: {line}"))
+        .map_err(|_| malformed_hunk_header(line))
 }
 
 fn apply_hunk(file: &mut Vec<(String, bool)>, hunk: &Hunk) -> Result<(), String> {

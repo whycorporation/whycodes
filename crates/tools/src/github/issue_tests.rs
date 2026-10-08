@@ -365,3 +365,47 @@ async fn execute_surfaces_connect_error() {
         err.content
     );
 }
+
+#[test]
+fn request_error_helpers_format_transport_failures() {
+    assert_eq!(
+        github_request_error("connect"),
+        "GitHub API request failed: connect"
+    );
+    assert_eq!(github_response_error("eof"), "Failed to read response: eof");
+}
+
+#[tokio::test]
+async fn execute_surfaces_truncated_response_body() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\nConnection: close\r\n\r\n");
+        }
+    });
+    let _g = ApiBaseGuard::set(&format!("http://{addr}"));
+    let err = GithubIssueTool
+        .execute(
+            json!({
+                "action": "list",
+                "owner": "o",
+                "repo": "r",
+                "token": "t"
+            }),
+            &ToolContext::new("."),
+        )
+        .await;
+    assert!(err.is_error, "{}", err.content);
+    assert!(
+        err.content.contains("Failed to read response"),
+        "{}",
+        err.content
+    );
+}

@@ -75,6 +75,7 @@ zip = { version = "8", default-features = false, features = ["deflate"], optiona
 
 [dev-dependencies]
 whycodes-sdk = { path = "../sdk" }
+whycodes-storage = { path = "../storage", features = ["test-util"] }
 tempfile.workspace = true
 
 [lints]

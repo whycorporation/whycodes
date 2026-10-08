@@ -15,9 +15,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use crate::images::MAX_IMAGE_BYTES;
-#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
-use crate::images::resolve_image_path;
+use crate::images::{MAX_IMAGE_BYTES, resolve_image_path};
 
 const TIMEOUT: Duration = Duration::from_millis(1500);
 
@@ -118,13 +116,7 @@ pub(crate) fn stash_image_bytes_in(bytes: &[u8], dir: &Path) -> Result<PathBuf, 
         "clipboard data is not a recognized image (png/jpeg/gif/webp/bmp/tiff/ico)".to_string()
     })?;
     std::fs::create_dir_all(dir).map_err(|e| format!("create clipboard-images dir: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(error) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
-            tracing::debug!(%error, "clipboard-images chmod 0700");
-        }
-    }
+    lock_clipboard_dir(dir);
     prune_old_clipboard_images(dir);
     let seq = STASH_SEQ.fetch_add(1, Ordering::Relaxed);
     let millis = std::time::SystemTime::now()
@@ -138,6 +130,30 @@ pub(crate) fn stash_image_bytes_in(bytes: &[u8], dir: &Path) -> Result<PathBuf, 
     ));
     std::fs::write(&path, bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
+}
+
+fn lock_clipboard_dir(dir: &Path) {
+    match clipboard_dir_mode(dir) {
+        Ok(()) => {}
+        Err(error) => note_clipboard_dir_lock(&error),
+    }
+}
+
+fn clipboard_dir_mode(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
+}
+
+fn note_clipboard_dir_lock(error: &std::io::Error) {
+    tracing::debug!(%error, "clipboard-images chmod 0700");
 }
 
 fn clipboard_images_dir() -> PathBuf {
@@ -197,21 +213,32 @@ pub fn read_for_prompt() -> Result<PromptClipboard, String> {
 }
 
 fn read_os_image() -> Result<PromptClipboard, String> {
-    #[cfg(target_os = "macos")]
-    {
-        read_macos_image()
-    }
-    #[cfg(target_os = "windows")]
-    {
-        read_windows_image()
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        read_linux_image()
+    match host_clipboard_os() {
+        HostClipboard::Macos => read_macos_image(),
+        HostClipboard::Windows => read_windows_image(),
+        HostClipboard::Linux => read_linux_image(),
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HostClipboard {
+    Macos,
+    Windows,
+    Linux,
+}
+
+fn host_clipboard_os() -> HostClipboard {
+    host_from_name(std::env::consts::OS)
+}
+
+fn host_from_name(os: &str) -> HostClipboard {
+    match os {
+        "macos" => HostClipboard::Macos,
+        "windows" => HostClipboard::Windows,
+        _ => HostClipboard::Linux,
+    }
+}
+
 fn read_linux_image() -> Result<PromptClipboard, String> {
     match read_wayland_image()? {
         PromptClipboard::Empty => {}
@@ -225,7 +252,6 @@ fn read_linux_image() -> Result<PromptClipboard, String> {
     Ok(PromptClipboard::Empty)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn read_wayland_image() -> Result<PromptClipboard, String> {
     let types = match command_stdout("wl-paste", &["--list-types"], TIMEOUT) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
@@ -258,7 +284,6 @@ fn read_wayland_image() -> Result<PromptClipboard, String> {
     Ok(PromptClipboard::Empty)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn read_xclip_image() -> Result<PromptClipboard, String> {
     let types = match command_stdout(
         "xclip",
@@ -304,7 +329,6 @@ fn read_xclip_image() -> Result<PromptClipboard, String> {
     Ok(PromptClipboard::Empty)
 }
 
-#[cfg(target_os = "macos")]
 fn read_macos_image() -> Result<PromptClipboard, String> {
     match command_stdout("pngpaste", &["-"], TIMEOUT) {
         Ok(bytes) => return bytes_to_prompt(Ok(bytes)),
@@ -349,7 +373,6 @@ function run() {
     }
 }
 
-#[cfg(target_os = "windows")]
 fn read_windows_image() -> Result<PromptClipboard, String> {
     let dest = std::env::temp_dir().join(format!(
         "whycodes-clip-{}-{}.png",
@@ -358,17 +381,23 @@ fn read_windows_image() -> Result<PromptClipboard, String> {
     ));
     let dest_str = dest.to_string_lossy().replace('\'', "''");
     let script = windows_clipboard_script(&dest_str);
-    let result = command_status(
-        "powershell",
-        &["-NoProfile", "-STA", "-Command", &script],
-        TIMEOUT,
-    );
+    let result = run_windows_clipboard(&script);
     finish_windows_clipboard(dest, result)
 }
 
-/// PowerShell snippet that dumps the clipboard bitmap to `dest`. Compiled on
-/// Windows and in tests so tests can drive the script without a pasteboard.
-#[cfg(any(windows, test))]
+fn run_windows_clipboard(script: &str) -> Result<(), RunErr> {
+    #[cfg(test)]
+    if let Some(stubbed) = windows_run_stub(script) {
+        return stubbed;
+    }
+    command_status(
+        "powershell",
+        &["-NoProfile", "-STA", "-Command", script],
+        TIMEOUT,
+    )
+}
+
+/// PowerShell snippet that dumps the clipboard bitmap to `dest`.
 fn windows_clipboard_script(dest: &str) -> String {
     format!(
         "Add-Type -AssemblyName System.Windows.Forms; \
@@ -379,7 +408,6 @@ fn windows_clipboard_script(dest: &str) -> String {
     )
 }
 
-#[cfg(target_os = "windows")]
 fn finish_windows_clipboard(
     dest: PathBuf,
     result: Result<(), RunErr>,
@@ -390,7 +418,6 @@ fn finish_windows_clipboard(
     }
 }
 
-#[cfg(target_os = "windows")]
 fn finish_windows_saved_image(dest: &Path) -> Result<PromptClipboard, String> {
     let bytes = match std::fs::read(dest) {
         Ok(b) => b,
@@ -403,7 +430,6 @@ fn finish_windows_saved_image(dest: &Path) -> Result<PromptClipboard, String> {
     bytes_to_prompt(Ok(bytes))
 }
 
-#[cfg(target_os = "windows")]
 fn windows_clipboard_run_err(dest: &Path, err: RunErr) -> Result<PromptClipboard, String> {
     cleanup_temp(dest);
     match err {
@@ -414,7 +440,6 @@ fn windows_clipboard_run_err(dest: &Path, err: RunErr) -> Result<PromptClipboard
     }
 }
 
-#[cfg(target_os = "windows")]
 fn cleanup_temp(path: &Path) {
     if let Err(error) = std::fs::remove_file(path)
         && path.exists()
@@ -423,7 +448,6 @@ fn cleanup_temp(path: &Path) {
     }
 }
 
-#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
 fn first_image_mime<'a, I>(types: I) -> Option<&'static str>
 where
     I: IntoIterator<Item = &'a str>,
@@ -454,7 +478,6 @@ where
 
 /// `text/uri-list`: comments (`#`) skipped; `file://` and raw paths kept when
 /// they resolve to an existing image.
-#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
 pub(crate) fn parse_uri_list(data: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for line in data.lines() {
@@ -525,6 +548,10 @@ fn send_run(tx: mpsc::Sender<Result<Vec<u8>, RunErr>>, value: Result<Vec<u8>, Ru
 }
 
 fn command_stdout(bin: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>, RunErr> {
+    #[cfg(test)]
+    if let Some(stubbed) = cmd_stub_call(bin, args) {
+        return stubbed;
+    }
     let bin_owned = bin.to_string();
     let args_owned: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
     let (tx, rx) = mpsc::channel();
@@ -543,7 +570,6 @@ fn command_stdout(bin: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>
     }
 }
 
-#[cfg(target_os = "windows")]
 fn command_status(bin: &str, args: &[&str], timeout: Duration) -> Result<(), RunErr> {
     match command_stdout(bin, args, timeout) {
         Ok(_) => Ok(()),
@@ -552,9 +578,58 @@ fn command_status(bin: &str, args: &[&str], timeout: Duration) -> Result<(), Run
 }
 
 #[cfg(test)]
+type CmdStub = Box<dyn Fn(&str, &[&str]) -> Result<Vec<u8>, RunErr>>;
+
+#[cfg(test)]
 thread_local! {
     static STUB: std::cell::RefCell<Option<Result<PromptClipboard, String>>> =
         const { std::cell::RefCell::new(None) };
+    static CMD_STUB: std::cell::RefCell<Option<CmdStub>> = const { std::cell::RefCell::new(None) };
+    static WINDOWS_STUB: std::cell::RefCell<Option<Result<(), RunErr>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn windows_run_stub(_script: &str) -> Option<Result<(), RunErr>> {
+    WINDOWS_STUB.with(|slot| slot.borrow_mut().take())
+}
+
+/// Replace the PowerShell spawn inside `read_windows_image`.
+#[cfg(test)]
+fn with_windows_run<R>(value: Result<(), RunErr>, f: impl FnOnce() -> R) -> R {
+    WINDOWS_STUB.with(|slot| *slot.borrow_mut() = Some(value));
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WINDOWS_STUB.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+    let _reset = Reset;
+    f()
+}
+#[cfg(test)]
+fn cmd_stub_call(bin: &str, args: &[&str]) -> Option<Result<Vec<u8>, RunErr>> {
+    CMD_STUB.with(|slot| {
+        let stub = slot.borrow();
+        stub.as_ref().map(|f| f(bin, args))
+    })
+}
+
+/// Replace `wl-paste` / `xclip` / `osascript` spawns for this thread.
+#[cfg(test)]
+fn with_cmd_stub<R>(
+    stub: impl Fn(&str, &[&str]) -> Result<Vec<u8>, RunErr> + 'static,
+    f: impl FnOnce() -> R,
+) -> R {
+    CMD_STUB.with(|slot| *slot.borrow_mut() = Some(Box::new(stub)));
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            CMD_STUB.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+    let _reset = Reset;
+    f()
 }
 
 #[cfg(test)]

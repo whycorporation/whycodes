@@ -1760,6 +1760,12 @@ mod tests {
 
     #[test]
     fn mcp_notify_hooks_and_discord() {
+        assert_mcp_transport();
+        assert_notify_channels();
+        assert_notify_events_and_discord();
+    }
+
+    fn assert_mcp_transport() {
         assert_eq!(
             mcp(Some("npx"), None, None).resolved_transport().unwrap(),
             McpTransportKind::Stdio
@@ -1794,7 +1800,9 @@ mod tests {
         let remote = mcp(None, Some("https://x"), Some(McpTransportKind::Http));
         assert!(remote.is_remote());
         assert!(!mcp(Some("npx"), None, Some(McpTransportKind::Stdio)).is_remote());
+    }
 
+    fn assert_notify_channels() {
         let mut notify = NotifyConfig::default();
         assert!(!notify.wants(NotifyEvent::TurnDone));
         assert!(!notify.has_channel());
@@ -1821,7 +1829,9 @@ mod tests {
         };
         let merged = notify.merge_with(&overlay);
         assert_eq!(merged.timeout_secs, 12);
+    }
 
+    fn assert_notify_events_and_discord() {
         assert_eq!(NotifyEvent::TurnDone.as_str(), "turn_done");
         assert_eq!(NotifyEvent::NeedInput.as_str(), "need_input");
         assert_eq!(NotifyEvent::parse("done"), Some(NotifyEvent::TurnDone));

@@ -51,6 +51,7 @@ FULL_COVER_CRATES = [
     "whycodes-import",
     "whycodes-slop",
     "whycodes-sdk",
+    "whycodes-tools",
 ]
 
 # Workspace floor. rustup llvm-cov `show` inflates totals with serde /
@@ -58,18 +59,14 @@ FULL_COVER_CRATES = [
 # same measurement as the 100% crate floors.
 WORKSPACE_FLOOR = float(os.environ.get("FAIL_UNDER", "82"))
 
-# Floors as (crate, min_percent)
-FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
-    # Linux skip-expansions still misses host-only tools lines (browser
-    # poll, memory formatters, path/executor helpers). 8323/8387 = 99.2
-    # on the 2026-09-29 Coverage job (run 36516045996). Raise back to 100
-    # once those hit. Issue #82.
-    ("whycodes-tools", 99.2),
-]
+# Floors as (crate, min_percent). `whycodes-tui` and `whycodes-cli` stay
+# off this list until a Linux skip-expansions run prints covered == total
+# for them. Issue #82.
+FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES]
 
-# Print uncovered files even when the crate is at its floor, so the next
-# #82 slice can see the miss list without dropping the floor first.
-GAP_REPORT = {"whycodes-tools"}
+# Extra crates whose uncovered files print even when they meet the floor.
+# Empty once a crate is on FULL_COVER_CRATES: a miss already fails the run.
+GAP_REPORT: set[str] = set()
 GAP_FILE_LIMIT = 25
 
 
@@ -360,7 +357,8 @@ def _self_check() -> None:
     tools_gaps = uncovered_files("whycodes-tools")
     assert tools_gaps == [("tools/src/web/browser.rs", 90, 100)], tools_gaps
     assert uncovered_files("whycodes-cli") == [("cli/src/main.rs", 40, 100)]
-    assert "whycodes-tools" in GAP_REPORT
+    assert "whycodes-tools" not in GAP_REPORT
+    assert "whycodes-tools" in FULL_COVER_CRATES
 
 
 if __name__ == "__main__":

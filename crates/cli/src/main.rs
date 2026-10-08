@@ -39,44 +39,45 @@ pub(crate) use cmd::*;
 fn main() -> anyhow::Result<()> {
     // Floor path for Boot/TTFF (`whycodes --version` / `-V`):
     // never build a Tokio runtime, never run clap, never touch config/logging.
-    // The old `#[tokio::main]` wrapper paid for a multi-thread executor on
-    // every invocation — including the ones that only print a version string.
-    //
-    // Windows: scan GetCommandLineW (no CommandLineToArgvW) and WriteFile
-    // (no println! locale). Unix: write(1) the same bytes.
     if try_print_version_fast() {
         return Ok(());
     }
+    dispatch_process(std::env::args_os().skip(1))
+}
 
-    // First statement on the real path: everything after it is time a user
-    // waits for, and the first-frame benchmark measures from here.
+/// Same path as `main` after the version fast-path. Argv is injected so
+/// tests cover clap, the runtime, and completions without re-exec.
+pub(crate) fn dispatch_process<I, S>(args: I) -> anyhow::Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr> + Clone,
+{
+    let args: Vec<_> = args.into_iter().collect();
     whycodes_tui::bench::mark_process_start();
-
-    // `whycodes run -d <dir>` (harness) and bare `whycodes`: skip clap + Tokio
-    // until after the first paint. Extra flags still take the full parser.
-    if let Some(project_dir) = early_tui_run_dir_from(std::env::args_os().skip(1)) {
+    if let Some(project_dir) = early_tui_run_dir_from(args.iter().map(|s| s.as_ref())) {
         return cmd_run_fast_tui(project_dir);
     }
+    run_parsed_cli(parse_cli_args(args.iter().map(|s| s.as_ref())))
+}
 
-    // Hosts that capture/close stdout (IDE, wrappers: stdout_tty=false) will
-    // SIGPIPE-kill the process on any accidental write to stdout. Ignore it so
-    // the TUI (which draws on the controlling console) keeps running.
-    ignore_sigpipe();
-
-    // Parse before building any runtime so `--help` (and mixed `--version`
-    // forms clap still handles) exit without a thread pool.
-    let cli = match Cli::try_parse() {
+pub(crate) fn parse_cli_args<I, S>(args: I) -> Cli
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let mut argv = vec![std::ffi::OsString::from("whycodes")];
+    argv.extend(args.into_iter().map(|s| s.as_ref().to_os_string()));
+    match Cli::try_parse_from(argv) {
         Ok(cli) => cli,
         Err(err) => args::sanitize_clap_error(err).exit(),
-    };
+    }
+}
 
-    // Completions are stdout-only. Skip Tokio, logging, and plugin discovery
-    // so Homebrew `generate_completions_from_executable` can run in a sandbox
-    // that cannot write `~/.local/share/whycodes`.
+pub(crate) fn run_parsed_cli(cli: Cli) -> anyhow::Result<()> {
+    ignore_sigpipe();
     if let Some(Commands::Completions { shell }) = &cli.command {
         return cmd_completions(*shell);
     }
-
     let bounded_shutdown = crate::cmd::hang::is_short_command(&cli);
     let rt = runtime_for(&cli)?;
     let result = rt.block_on(async_main(cli));

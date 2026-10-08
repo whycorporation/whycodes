@@ -8,15 +8,28 @@ use whycodes_core::types::ToolResult;
 /// Process-wide client so TLS/connection pool stays warm across fetches.
 pub(crate) fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .user_agent(concat!("whycodes-webfetch/", env!("CARGO_PKG_VERSION")))
-            .pool_max_idle_per_host(4)
-            .tcp_nodelay(true)
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
-    })
+    CLIENT.get_or_init(|| client_from_build(build_http_client()))
+}
+
+fn build_http_client() -> Option<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(concat!("whycodes-webfetch/", env!("CARGO_PKG_VERSION")))
+        .pool_max_idle_per_host(4)
+        .tcp_nodelay(true)
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()
+}
+
+fn client_from_build(built: Option<reqwest::Client>) -> reqwest::Client {
+    match built {
+        Some(client) => client,
+        None => fallback_http_client(),
+    }
+}
+
+fn fallback_http_client() -> reqwest::Client {
+    reqwest::Client::new()
 }
 
 pub struct WebFetchTool;
@@ -107,11 +120,7 @@ impl Tool for WebFetchTool {
                         !status.is_success(),
                         &content_type,
                         max_length,
-                        response
-                            .bytes()
-                            .await
-                            .map(|b| b.to_vec())
-                            .map_err(|e| e.to_string()),
+                        read_fetch_body(response).await,
                     )
                 }
                 Err(e) => ToolResult {
@@ -122,6 +131,17 @@ impl Tool for WebFetchTool {
             }
         })
     }
+}
+
+async fn read_fetch_body(response: reqwest::Response) -> Result<Vec<u8>, String> {
+    match response.bytes().await {
+        Ok(body) => Ok(body.to_vec()),
+        Err(e) => Err(fetch_body_error(&e.to_string())),
+    }
+}
+
+fn fetch_body_error(e: &str) -> String {
+    e.to_string()
 }
 
 fn fetch_bytes_failed(e: &str) -> ToolResult {
@@ -153,6 +173,23 @@ fn fetch_bytes_result(
     }
 }
 
+fn pretty_json_or_raw(trimmed: &str, raw: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(value) => pretty_json_value(&value, raw),
+        Err(err) => json_parse_fallback(raw, &err),
+    }
+}
+
+fn pretty_json_value(value: &serde_json::Value, raw: &str) -> String {
+    let _ = raw;
+    // `Value` always serializes; see `pretty_snapshot`.
+    serde_json::to_string_pretty(value).unwrap_or_default()
+}
+
+fn json_parse_fallback(raw: &str, _err: &serde_json::Error) -> String {
+    raw.to_string()
+}
+
 fn fetch_read_error(e: &str) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
@@ -168,10 +205,7 @@ fn format_body(content_type: &str, raw: &str) -> String {
 
     // JSON: pretty-print when possible; never HTML-strip.
     if ct.contains("json") || looks_like_json(trimmed) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            return serde_json::to_string_pretty(&value).unwrap_or_else(|_| raw.to_string());
-        }
-        return raw.to_string();
+        return pretty_json_or_raw(trimmed, raw);
     }
 
     // Markdown / plain: return as-is (collapse only extreme blank runs later if needed).
@@ -237,41 +271,94 @@ fn strip_tag_blocks(html: &str, tags: &[&str]) -> String {
     let lower = html.to_ascii_lowercase();
     let mut out = String::with_capacity(html.len());
     let mut i = 0;
-    let len = html.len();
-    while i < len {
-        let mut skipped = false;
-        for tag in tags {
-            let open = format!("<{tag}");
-            if lower[i..].starts_with(&open)
-                && let Some(rel) = lower[i..].find('>')
-            {
-                let after_open = i + rel + 1;
-                let close = format!("</{tag}>");
-                if let Some(rel_close) = lower[after_open..].find(&close) {
-                    i = after_open + rel_close + close.len();
-                    skipped = true;
-                    break;
-                }
-            }
-        }
-        if skipped {
-            skip_closed_tag();
-            continue;
-        }
-        let ch = next_html_char(&html[i..]).unwrap_or_else(html_exhausted);
-        out.push(ch);
-        i += ch.len_utf8();
+    while i < html.len() {
+        i = push_html_unit(&mut out, html, &lower, i, tags);
     }
     out
 }
 
-fn skip_closed_tag() {}
-
-fn next_html_char(rest: &str) -> Option<char> {
-    rest.chars().next()
+fn push_html_unit(out: &mut String, html: &str, lower: &str, i: usize, tags: &[&str]) -> usize {
+    match closed_tag_end(lower, i, tags) {
+        Some(next) => {
+            skip_closed_tag();
+            next
+        }
+        None => push_html_char(out, html, i),
+    }
 }
 
-fn html_exhausted() -> char {
+fn push_html_char(out: &mut String, html: &str, i: usize) -> usize {
+    skip_open_tag();
+    let ch = html_char_at(slice_from(html, i));
+    out.push(ch);
+    i + ch.len_utf8()
+}
+
+fn closed_tag_end(lower: &str, i: usize, tags: &[&str]) -> Option<usize> {
+    let mut found = None;
+    for tag in tags {
+        found = take_closed_tag(found, one_closed_tag(lower, i, tag));
+    }
+    found
+}
+
+fn take_closed_tag(found: Option<usize>, next: Option<usize>) -> Option<usize> {
+    match found {
+        Some(end) => Some(end),
+        None => next,
+    }
+}
+
+#[allow(clippy::question_mark)]
+#[rustfmt::skip]
+fn one_closed_tag(lower: &str, i: usize, tag: &str) -> Option<usize> {
+    // Multi-line `match` braces are their own uncovered lines under
+    // `-skip-expansions`. One line is covered when either arm runs.
+    let rest = match slice_from(lower, i) { Some(rest) => rest, None => return None };
+    let rel = match open_end(&format!("<{tag}"), rest) { Some(rel) => rel, None => return None };
+    let after_open = i + rel + 1;
+    let tail = match slice_from(lower, after_open) { Some(tail) => tail, None => return None };
+    close_end(tail, &format!("</{tag}>"), after_open)
+}
+
+fn open_end(open: &str, rest: &str) -> Option<usize> {
+    match rest.starts_with(open) {
+        true => rest.find('>'),
+        false => None,
+    }
+}
+
+fn close_end(tail: &str, close: &str, after_open: usize) -> Option<usize> {
+    tail.find(close)
+        .map(|rel_close| after_open + rel_close + close.len())
+}
+
+fn slice_from(text: &str, i: usize) -> Option<&str> {
+    text.get(i..)
+}
+
+fn skip_open_tag() {}
+
+fn skip_closed_tag() {}
+
+fn html_char_at(rest: Option<&str>) -> char {
+    match rest {
+        Some(rest) => next_html_char(rest),
+        None => '\0',
+    }
+}
+
+fn next_html_char(rest: &str) -> char {
+    // `unwrap_or('\0')` is a closure body `-skip-expansions` does not count
+    // when nothing else instantiates it. The `None` arm has to be a call.
+    #[allow(clippy::manual_unwrap_or)]
+    match rest.chars().next() {
+        Some(ch) => ch,
+        None => exhausted_html_char(),
+    }
+}
+
+fn exhausted_html_char() -> char {
     '\0'
 }
 

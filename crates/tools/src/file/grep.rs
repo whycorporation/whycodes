@@ -123,7 +123,7 @@ impl Tool for GrepTool {
             })
             .await;
 
-            grep_from_blocking(result.map_err(|e| e.to_string()))
+            grep_from_blocking(result.map_err(join_error_string))
         })
     }
 }
@@ -144,10 +144,10 @@ impl GrepTool {
             .case_insensitive(case_insensitive)
             .line_terminator(Some(b'\n'))
             .build(pattern)
-            .map_err(|e| invalid_regex(&e.to_string()))?;
+            .map_err(regex_build_error)?;
 
         let glob = match file_glob {
-            Some(g) => Some(glob::Pattern::new(g).map_err(|e| format!("invalid glob: {}", e))?),
+            Some(g) => Some(glob::Pattern::new(g).map_err(glob_build_error)?),
             None => None,
         };
 
@@ -282,7 +282,7 @@ impl GrepTool {
             file,
             searcher
                 .search_path(matcher, file, &mut sink)
-                .map_err(|e| e.to_string()),
+                .map_err(search_path_error),
         );
         // Preserve the historical `path:line-…` / `--` context separator after
         // each file so existing tests and model-facing output stay stable.
@@ -478,8 +478,20 @@ fn grep_err(e: &str) -> ToolResult {
     }
 }
 
-fn invalid_regex(e: &str) -> String {
+fn join_error_string(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+fn regex_build_error(e: impl std::fmt::Display) -> String {
     format!("invalid regex: {e}")
+}
+
+fn glob_build_error(e: impl std::fmt::Display) -> String {
+    format!("invalid glob: {e}")
+}
+
+fn search_path_error(e: impl std::fmt::Display) -> String {
+    e.to_string()
 }
 
 fn sink_at_cap(matches: usize, max_results: usize) -> bool {
@@ -510,9 +522,12 @@ fn search_file_at_cap(matches: usize, max_results: usize) -> bool {
 
 fn skip_search_at_cap() {}
 
+fn note_search_ok() {}
+
 fn handle_search_err(file: &Path, result: Result<(), String>) {
-    if let Err(err) = result {
-        skip_unsearchable(file, &err);
+    match result {
+        Ok(()) => note_search_ok(),
+        Err(err) => skip_unsearchable(file, &err),
     }
 }
 

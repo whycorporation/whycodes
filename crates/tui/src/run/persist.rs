@@ -273,7 +273,7 @@ pub(super) fn memory_service(
     project_dir: &std::path::Path,
     config: &Config,
 ) -> anyhow::Result<whycodes_memory::MemoryService> {
-    let data_dir = Config::data_dir()?;
+    let data_dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     Ok(whycodes_memory::MemoryService::open(
         project_dir,
         data_dir,

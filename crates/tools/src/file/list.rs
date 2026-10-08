@@ -75,7 +75,7 @@ impl Tool for ListTool {
         Box::pin(async move {
             let working_dir = ctx.working_dir.clone();
             let file_index = ctx.file_index.clone();
-            crate::blocking::tool(move || Self::run(args, working_dir, file_index)).await
+            crate::blocking::tool(Box::new(move || Self::run(args, working_dir, file_index))).await
         })
     }
 }
@@ -305,10 +305,10 @@ fn listed_entries_failed(e: ToolResult) -> ToolResult {
     e
 }
 
-fn list_entries_error(e: String) -> ToolResult {
+fn list_entries_error(e: impl std::fmt::Display) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
-        content: e,
+        content: e.to_string(),
         is_error: true,
     }
 }

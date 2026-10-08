@@ -76,7 +76,10 @@ impl Tool for GitCommitTool {
 
             let push = args["push"].as_bool().unwrap_or(false);
             let working_dir = ctx.working_dir.clone();
-            crate::blocking::tool(move || Self::run(working_dir, message, files, push)).await
+            crate::blocking::tool(Box::new(move || {
+                Self::run(working_dir, message, files, push)
+            }))
+            .await
         })
     }
 }

@@ -109,7 +109,7 @@ impl Tool for EditTool {
             }
 
             let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
-            crate::blocking::tool(move || {
+            crate::blocking::tool(Box::new(move || {
                 Self::run(
                     full_path,
                     shown,
@@ -120,7 +120,7 @@ impl Tool for EditTool {
                     to,
                     insert_after,
                 )
-            })
+            }))
             .await
         })
     }
@@ -203,6 +203,14 @@ impl EditTool {
     }
 }
 
+fn io_error_string(e: std::io::Error) -> String {
+    display_error(e)
+}
+
+fn display_error(e: std::io::Error) -> String {
+    e.to_string()
+}
+
 fn write_edit(
     full_path: &str,
     shown: &str,
@@ -214,7 +222,7 @@ fn write_edit(
 ) -> ToolResult {
     write_edit_result(
         crate::file::atomic::write_atomic(std::path::Path::new(full_path), modified)
-            .map_err(|e| e.to_string()),
+            .map_err(io_error_string),
         shown,
         matched,
         new_string,
@@ -308,8 +316,7 @@ fn apply_tagged(
         return Ok((String::new(), modified, Some(i + 2)));
     }
 
-    let from_tag =
-        from.ok_or_else(|| "from is required when insert_after is not set.".to_string())?;
+    let from_tag = require_from_tag(from)?;
     let start_i = resolve(from_tag, "from")?;
     let end_i = if let Some(to_tag) = to {
         let j = resolve(to_tag, "to")?;
@@ -325,6 +332,13 @@ fn apply_tagged(
     let matched = original[byte_start..byte_end].to_string();
     let modified = apply_spans(original, &[(byte_start, byte_end)], new_string);
     Ok((matched, modified, Some(start_i + 1)))
+}
+
+fn require_from_tag(from: Option<&str>) -> Result<&str, String> {
+    match from {
+        Some(tag) => Ok(tag),
+        None => Err("from is required when insert_after is not set.".to_string()),
+    }
 }
 
 fn miss_with_snippet(original: &str, old: &str) -> String {

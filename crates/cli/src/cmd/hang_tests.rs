@@ -91,6 +91,11 @@ fn short_commands_are_debug_config_session() {
 }
 
 #[test]
+fn report_hang_prints_the_diagnostic() {
+    report_hang();
+}
+
+#[test]
 fn hang_message_is_one_line() {
     let msg = hang_message();
     assert!(msg.contains("5s"), "{msg}");
@@ -116,4 +121,20 @@ fn shutdown_runtime_warns_when_work_outlives_budget() {
         tokio::time::sleep(Duration::from_secs(30)).await;
     });
     shutdown_runtime(rt);
+}
+
+#[test]
+fn shutdown_ran_long_allows_scheduler_slack() {
+    assert!(!shutdown_ran_long(Duration::ZERO));
+    assert!(!shutdown_ran_long(Duration::from_millis(1)));
+    assert!(shutdown_ran_long(
+        shutdown_wait() - Duration::from_millis(20)
+    ));
+    assert!(shutdown_ran_long(
+        shutdown_wait() - Duration::from_millis(15)
+    ));
+    assert!(shutdown_ran_long(shutdown_wait()));
+    // The production constant is cfg'd out of the wait helper under test.
+    // Reading it here keeps that 5s arm in the coverage map.
+    assert_eq!(SHUTDOWN_WAIT, Duration::from_secs(5));
 }

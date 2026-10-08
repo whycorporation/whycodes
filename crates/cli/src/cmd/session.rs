@@ -32,12 +32,7 @@ pub(crate) async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
                             whycodes_session::session::Session::load_from_db(&db, &s.id)
                         && loaded.maybe_upgrade_title_from_history()
                     {
-                        if let Err(err) = loaded.save_to_db(&db) {
-                            tracing::warn!(
-                                error = %err,
-                                "failed to persist backfilled session title"
-                            );
-                        }
+                        note_backfill_persist(loaded.save_to_db(&db));
                         title = loaded.title;
                     }
                     println!("{}", session_list_line(&s.id, &title, msg_count));
