@@ -84,6 +84,7 @@ fn prompt_item_selection_keeps_and_skips() {
     ));
     plan.permission_add
         .push(("bash".into(), whycodes_core::types::PermissionAction::Ask));
+    let _guard = crate::cmd::helpers::lock_env();
     crate::cmd::helpers::install_test_repl_lines(["y", "n"]);
     prompt_item_selection(&mut plan).unwrap();
     crate::cmd::helpers::clear_test_repl_lines();
@@ -99,21 +100,33 @@ fn prompt_item_selection_empty_plan_is_ok() {
 }
 
 #[test]
-fn first_run_skips_when_ci_or_skip_env() {
+fn first_run_skips_when_forced_ci_or_skip_env() {
+    let _iso = crate::cmd::helpers::IsolatedHome::new();
     let prev_ci = std::env::var_os("CI");
-    unsafe { std::env::set_var("CI", "1") };
-    assert!(!maybe_first_run_import(true).unwrap());
+    let prev_force = std::env::var_os("WHYCODES_FORCE_CI");
+    unsafe {
+        std::env::set_var("CI", "1");
+        std::env::set_var("WHYCODES_FORCE_CI", "1");
+    }
+    let skipped = maybe_first_run_import(true).unwrap();
     match prev_ci {
         Some(v) => unsafe { std::env::set_var("CI", v) },
         None => unsafe { std::env::remove_var("CI") },
     }
+    match prev_force {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_FORCE_CI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_FORCE_CI") },
+    }
+    assert!(!skipped);
+
     let prev_skip = std::env::var_os("WHYCODES_SKIP_IMPORT");
     unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", "1") };
-    assert!(!maybe_first_run_import(true).unwrap());
+    let skipped = maybe_first_run_import(true).unwrap();
     match prev_skip {
         Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
         None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
     }
+    assert!(!skipped);
 }
 
 #[test]
@@ -131,6 +144,7 @@ fn prompt_item_selection_empty_line_keeps() {
             headers: None,
         },
     ));
+    let _guard = crate::cmd::helpers::lock_env();
     crate::cmd::helpers::install_test_repl_lines([""]);
     prompt_item_selection(&mut plan).unwrap();
     crate::cmd::helpers::clear_test_repl_lines();
@@ -359,6 +373,7 @@ fn run_import_yes_writes_then_nothing_new() {
 fn prompt_item_selection_yes_word_keeps() {
     let mut plan = ImportPlan::default();
     plan.mcp_add.push(("fs".into(), sample_mcp()));
+    let _guard = crate::cmd::helpers::lock_env();
     crate::cmd::helpers::install_test_repl_lines(["yes"]);
     prompt_item_selection(&mut plan).unwrap();
     crate::cmd::helpers::clear_test_repl_lines();

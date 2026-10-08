@@ -28,6 +28,7 @@ fn parsers_expose_possible_values() {
     // Auth plugins register process-wide. A parallel test may already have
     // loaded `cov-auth-demo`, and a non-empty registry skips the builtin
     // fallback. Drop it so this assertion sees `anthropic` / `openai`.
+    let _guard = crate::cmd::helpers::lock_env();
     whycodes_auth::clear_registry();
     let names = auth_provider_ids();
     assert!(

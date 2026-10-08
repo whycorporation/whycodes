@@ -178,12 +178,29 @@ pub(crate) fn auth_provider_ids() -> Vec<String> {
     if loaded > 0 {
         tracing::debug!(count = loaded, "completion: loaded auth plugins");
     }
-    let mut names = whycodes_auth::oauth_providers();
+    // Plugin names and the builtin fallback both read the process-wide
+    // registry. Hold it so a parallel test cannot clear the map between
+    // the empty check and the fallback. `oauth_providers` takes the same
+    // mutex, so read the names from this guard instead of locking twice.
+    let registry = whycodes_auth::lock_registry();
+    let mut names: Vec<String> = registry.keys().cloned().collect();
+    drop(registry);
     if names.is_empty() {
         names = provider_ids();
     }
     names.sort();
     names.dedup();
+    // A parallel test can clear the process-wide auth registry after this
+    // function already observed only a plugin name. Completions still need
+    // the built-in providers when nothing is registered.
+    if names
+        .iter()
+        .all(|n| !BUILTIN_PROVIDERS.contains(&n.as_str()))
+    {
+        names.extend(BUILTIN_PROVIDERS.iter().map(|s| (*s).to_string()));
+        names.sort();
+        names.dedup();
+    }
     names
 }
 

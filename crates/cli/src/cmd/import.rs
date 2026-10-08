@@ -27,6 +27,20 @@ pub(crate) async fn cmd_import(cmd: &ImportArgs) -> anyhow::Result<()> {
     )
 }
 
+/// Piped hosts and CI must not consume stdin or write the asked marker.
+/// Tests queue the answer themselves, so `CI` does not skip them unless
+/// `WHYCODES_FORCE_CI` is set (the coverage job always has `CI`).
+fn skip_first_run_import() -> bool {
+    if std::env::var_os("WHYCODES_SKIP_IMPORT").is_some() {
+        return true;
+    }
+    let ci = std::env::var_os("CI").is_some();
+    if cfg!(test) {
+        ci && std::env::var_os("WHYCODES_FORCE_CI").is_some()
+    } else {
+        ci
+    }
+}
 /// First-run: TTY interactive session, no user config yet, foreign settings exist.
 /// Returns true when `config.toml` was written (caller should reload).
 ///
@@ -36,7 +50,7 @@ pub(crate) fn maybe_first_run_import(interactive: bool) -> anyhow::Result<bool> 
     if !interactive {
         return Ok(false);
     }
-    if std::env::var_os("CI").is_some() || std::env::var_os("WHYCODES_SKIP_IMPORT").is_some() {
+    if skip_first_run_import() {
         return Ok(false);
     }
     // Piped / CI hosts: do not consume stdin or persist a "asked" marker.
