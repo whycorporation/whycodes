@@ -142,13 +142,13 @@ impl Config {
     /// `~/.whycodes/config.toml` as a side effect.
     pub fn load() -> Result<Self> {
         migrate_legacy_instance();
-        Self::read_or_seed(&Self::default_path()?)
+        Self::read_or_seed(&Self::default_path())
     }
 
     /// Load, and on first run write the OpenRouter seed to `config.toml`.
     pub fn load_or_create() -> Result<Self> {
         migrate_legacy_instance();
-        let path = Self::default_path()?;
+        let path = Self::default_path();
         if !path.exists() {
             let cfg = Self::seeded_openrouter();
             match cfg.save() {
@@ -199,16 +199,20 @@ impl Config {
 
     /// Save config to the default location
     pub fn save(&self) -> Result<()> {
-        let path = Self::default_path()?;
+        let path = Self::default_path();
         ensure_parent_dir(&path)?;
         let content = encode_toml(self)?;
         write_atomic(&path, content.as_bytes())?;
         Ok(())
     }
 
-    /// Get default config path
-    pub fn default_path() -> Result<PathBuf> {
-        Ok(whycodes_core::paths::config_file())
+    /// Get default config path.
+    ///
+    /// `config_file()` always resolves (home, or `.` when home is unset), so
+    /// this is not a `Result`. A `Result` left an uncovered `Err` arm in every
+    /// `if let Ok(default_path())` and failed the 100% config line floor.
+    pub fn default_path() -> PathBuf {
+        whycodes_core::paths::config_file()
     }
 
     /// Get data directory for sessions, caches, etc.
@@ -247,6 +251,8 @@ impl Config {
             match std::fs::read_to_string(&project_config_path) {
                 Ok(content) => match toml::from_str::<Config>(&content) {
                     Ok(mut project) => {
+                        // Older project files omit the bump `migrate_schema`
+                        // only writes into the global config.toml.
                         if project.schema_version < CONFIG_SCHEMA_VERSION {
                             project.schema_version = CONFIG_SCHEMA_VERSION;
                         }
@@ -569,11 +575,10 @@ impl Config {
     /// - global: `~/.config/.../commands/*.md`
     /// - project: `<project>/.whycodes/commands/*.md`
     pub fn load_command_files(&mut self, project_dir: &Path) {
-        if let Ok(global_dir) = Self::default_path()
-            && let Some(parent) = global_dir.parent()
-        {
-            load_commands_from_dir(&mut self.commands, &parent.join("commands"));
-        }
+        load_commands_from_dir(
+            &mut self.commands,
+            &whycodes_core::paths::config_dir().join("commands"),
+        );
         load_commands_from_dir(
             &mut self.commands,
             &whycodes_core::project_dir(project_dir).join("commands"),
@@ -592,11 +597,10 @@ impl Config {
     /// - global: `~/.config/.../prompts/`
     /// - project: `<project>/.whycodes/prompts/` (wins on the same key)
     pub fn load_prompt_files(&mut self, project_dir: &Path) {
-        if let Ok(global_dir) = Self::default_path()
-            && let Some(parent) = global_dir.parent()
-        {
-            load_prompt_overlays(&mut self.system_prompt_overlays, &parent.join("prompts"));
-        }
+        load_prompt_overlays(
+            &mut self.system_prompt_overlays,
+            &whycodes_core::paths::config_dir().join("prompts"),
+        );
         load_prompt_overlays(
             &mut self.system_prompt_overlays,
             &whycodes_core::project_dir(project_dir).join("prompts"),

@@ -4991,7 +4991,7 @@ async fn download_asset_via_env_url_and_token() {
 #[test]
 fn complete_unreadable_config_falls_back() {
     let home = IsolatedHome::new();
-    let path = Config::default_path().unwrap();
+    let path = Config::default_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }
@@ -5866,7 +5866,7 @@ async fn cmd_run_effort_persist_fails_when_config_is_dir() {
         std::env::set_var("WHYCODES_TEST_LLM", "ok");
         std::env::set_var("ANTHROPIC_API_KEY", "sk-test-effort");
     }
-    let path = Config::default_path().unwrap();
+    let path = Config::default_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }

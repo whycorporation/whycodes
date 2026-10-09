@@ -34,7 +34,7 @@ fn with_isolated_home(f: impl FnOnce(&std::path::Path)) {
 #[test]
 fn whycodes_home_overrides_config_and_data_paths() {
     with_isolated_home(|home| {
-        let cfg = Config::default_path().expect("config path");
+        let cfg = Config::default_path();
         let data = Config::data_dir().expect("data dir");
         assert_eq!(cfg, home.join("config.toml"));
         assert_eq!(data, home);
@@ -2130,11 +2130,12 @@ fn load_layered_merges_project_and_warns_on_bad_toml() {
         std::fs::create_dir_all(proj.join(".whycodes")).unwrap();
         std::fs::write(
             proj.join(".whycodes/config.toml"),
-            "default_agent = \"explore\"\n",
+            "schema_version = 0\ndefault_agent = \"explore\"\n",
         )
         .unwrap();
         let cfg = Config::load_layered(&proj).unwrap();
         assert_eq!(cfg.default_agent, "explore");
+        assert_eq!(cfg.schema_version, CONFIG_SCHEMA_VERSION);
         std::fs::write(
             proj.join(".whycodes/slop.toml"),
             "verbosity = 0.33\ndelta_loc = 42\n",

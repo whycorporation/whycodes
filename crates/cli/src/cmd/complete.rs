@@ -106,12 +106,11 @@ impl TypedValueParser for SessionIdValueParser {
 }
 
 fn load_config_readonly() -> whycodes_config::Config {
-    load_config_at(whycodes_config::Config::default_path())
+    load_config_at(Ok(whycodes_config::Config::default_path()))
 }
 
-/// `default_path` only wraps `paths::config_file()` and does not fail today.
-/// A missing path, an unreadable file, or bad TOML all fall back to defaults
-/// so shell completion never errors.
+/// A missing file, an unreadable file, or bad TOML falls back to defaults so
+/// shell completion never errors. `Err` stays so tests can hit that arm.
 fn load_config_at(
     path: std::result::Result<std::path::PathBuf, whycodes_core::Error>,
 ) -> whycodes_config::Config {

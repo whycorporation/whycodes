@@ -5333,11 +5333,7 @@ async fn hydrate_after_first_frame(
 
 fn hydrate_auth_plugins(project_dir: &std::path::Path) -> usize {
     let mut dirs = Vec::new();
-    if let Ok(p) = whycodes_config::Config::default_path()
-        && let Some(parent) = p.parent()
-    {
-        dirs.push(parent.join("plugins"));
-    }
+    dirs.push(whycodes_core::paths::config_dir().join("plugins"));
     dirs.push(whycodes_core::project_dir(project_dir).join("plugins"));
     let loaded = whycodes_auth::plugin::load_from_dirs(&dirs);
     if loaded > 0 {

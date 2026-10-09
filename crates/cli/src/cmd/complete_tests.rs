@@ -87,7 +87,7 @@ const AUTH_PLUGIN: &str = r#"{
 #[test]
 fn completion_ids_follow_config_sessions_and_auth_plugins() {
     let _home = crate::cmd::helpers::IsolatedHome::new();
-    let path = whycodes_config::Config::default_path().unwrap();
+    let path = whycodes_config::Config::default_path();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(
         &path,
@@ -197,7 +197,7 @@ fn auth_completion_uses_dot_when_cwd_is_gone() {
 #[test]
 fn completion_covers_bad_toml_duplicate_auth_and_broken_sessions() {
     let _home = crate::cmd::helpers::IsolatedHome::new();
-    let path = whycodes_config::Config::default_path().unwrap();
+    let path = whycodes_config::Config::default_path();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "this is not toml {{{").unwrap();
     assert!(load_config_readonly().providers.is_empty());
@@ -235,7 +235,7 @@ fn completion_covers_bad_toml_duplicate_auth_and_broken_sessions() {
 #[test]
 fn completion_unreadable_config_and_empty_sessions() {
     let _home = crate::cmd::helpers::IsolatedHome::new();
-    let path = whycodes_config::Config::default_path().unwrap();
+    let path = whycodes_config::Config::default_path();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(
         &path,

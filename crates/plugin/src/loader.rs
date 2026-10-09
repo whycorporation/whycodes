@@ -222,9 +222,7 @@ impl LoadedPlugin {
 
 /// `$CONFIG_DIR/plugins` (same tree as `plugins.toml`).
 pub fn global_plugins_dir() -> Option<PathBuf> {
-    whycodes_config::Config::default_path()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("plugins")))
+    Some(whycodes_core::paths::config_dir().join("plugins"))
 }
 
 /// `<project>/.whycodes/plugins`.

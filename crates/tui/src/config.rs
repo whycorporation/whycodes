@@ -97,7 +97,7 @@ impl TuiAppConfig {
 
     /// Build from the core `TuiConfig` loaded from config.toml.
     pub fn from_core_config(cfg: &TuiConfig) -> Self {
-        Self::from_core_config_with_themes(cfg, whycodes_config::Config::default_path().ok())
+        Self::from_core_config_with_themes(cfg, Some(whycodes_config::Config::default_path()))
     }
 
     /// [`Self::from_core_config`] with the config file location supplied, so

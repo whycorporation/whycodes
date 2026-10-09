@@ -9,7 +9,7 @@ pub(crate) async fn cmd_config(cmd: &ConfigCmd) -> anyhow::Result<()> {
 
     match cmd {
         ConfigCmd::Show => {
-            let config_path = Config::default_path()?;
+            let config_path = Config::default_path();
             println!("{}", config_path_line(&config_path.display().to_string()));
             println!();
             let text = toml::to_string_pretty(&config)?;
@@ -26,7 +26,7 @@ pub(crate) async fn cmd_config(cmd: &ConfigCmd) -> anyhow::Result<()> {
             println!("{}", config_set_line(key, value));
         }
         ConfigCmd::Path => {
-            let config_path = Config::default_path()?;
+            let config_path = Config::default_path();
             println!("{}", config_path.display());
         }
     }

@@ -87,8 +87,7 @@ pub fn apply_and_save(plan: &ImportPlan) -> crate::error::Result<std::path::Path
     let mut config = whycodes_config::Config::load().map_err(map_msg)?;
     apply(&mut config, plan);
     config.save().map_err(map_msg)?;
-    let path = whycodes_config::Config::default_path().map_err(map_msg)?;
-    Ok(path)
+    Ok(whycodes_config::Config::default_path())
 }
 
 #[cfg(test)]

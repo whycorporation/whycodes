@@ -54,8 +54,7 @@ struct DebugOauth {
 }
 
 fn collect_debug() -> DebugDump {
-    // `default_path` / `data_dir` wrap infallible path helpers (`Ok(...)`).
-    let config_path = Config::default_path().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let config_path = Config::default_path();
     let config_exists = config_path.exists();
     let data_dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let dirs = whycodes_core::logging::LogDirs::from_data_dir(&data_dir);
@@ -122,8 +121,7 @@ pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
     println!("{}", debug_header_line());
     println!("  Version:     {}", VERSION_LONG.cyan());
 
-    // Config path. `default_path` wraps an infallible helper.
-    let p = Config::default_path().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let p = Config::default_path();
     println!(
         "{}",
         debug_config_line(&p.display().to_string(), p.exists())

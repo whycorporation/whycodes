@@ -254,8 +254,8 @@ pub(crate) async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
     match cmd {
         ModelCmd::List => {
             if config.models.is_empty() {
-                let path = Config::default_path().ok().map(|p| p.display().to_string());
-                for line in model_none_lines(path.as_deref()) {
+                let path = Config::default_path().display().to_string();
+                for line in model_none_lines(Some(path.as_str())) {
                     println!("{line}");
                 }
             } else {
