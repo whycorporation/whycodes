@@ -42,39 +42,37 @@ pub(crate) fn encode_toml(cfg: &Config) -> Result<String> {
 /// already removed the dest, so this temp is gone (`NotFound`) or the dest
 /// came back (`AlreadyExists`) — retries. Anything else is returned at once.
 pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let thread = std::thread::current().id();
     let mut last = std::io::Error::other("config atomic save gave up");
     for _ in 0..64 {
         let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let tmp = parent.join(format!(
-            ".{}.tmp-{}-{thread:?}-{n}",
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("config.toml"),
-            std::process::id()
-        ));
+        let stem = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("config.toml");
+        let tmp = parent.join(format!(".{stem}.tmp-{}-{thread:?}-{n}", std::process::id()));
         if let Err(e) = std::fs::write(&tmp, contents) {
-            if raced(&e) {
-                last = e;
-                continue;
+            if !raced(&e) {
+                drop_tmp(&tmp);
+                return Err(e.into());
             }
-            drop_tmp(&tmp);
-            return Err(e.into());
+            last = e;
+            continue;
         }
         match rename_over(&tmp, path) {
             Ok(()) => return Ok(()),
-            Err(e) if raced(&e) => {
+            Err(e) if !raced(&e) => {
                 drop_tmp(&tmp);
-                last = e;
+                return Err(e.into());
             }
             Err(e) => {
                 drop_tmp(&tmp);
-                return Err(e.into());
+                last = e;
             }
         }
     }
