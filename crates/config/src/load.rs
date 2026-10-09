@@ -88,10 +88,14 @@ fn drop_tmp(tmp: &Path) {
 }
 
 fn rename_over(tmp: &Path, path: &Path) -> std::io::Result<()> {
-    if path.exists() {
-        std::fs::remove_file(path)?;
+    match std::fs::rename(tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) if raced(&e) && path.exists() => {
+            std::fs::remove_file(path)?;
+            std::fs::rename(tmp, path)
+        }
+        Err(e) => Err(e),
     }
-    std::fs::rename(tmp, path)
 }
 
 fn raced(err: &std::io::Error) -> bool {
@@ -176,9 +180,10 @@ impl Config {
         let path = Self::default_path()?;
         if !path.exists() {
             let cfg = Self::seeded_openrouter();
-            match cfg.save() {
-                Ok(()) => return Ok(cfg),
-                Err(e) => {
+            if let Err(e) = cfg.save() {
+                if path.exists() {
+                    tracing::debug!("first-run config.toml appeared during save: {e}");
+                } else {
                     tracing::warn!("first-run config.toml could not be written: {e}");
                     return Ok(cfg);
                 }

@@ -1850,6 +1850,18 @@ fn load_missing_file_seeds_openrouter() {
         assert_eq!(again.default_agent, "plan");
         let third = Config::load_or_create().unwrap();
         assert_eq!(third.default_agent, "plan");
+
+        // Two first-run creates against an empty home must not return
+        // `File exists`. The loser reads what the winner wrote.
+        std::fs::remove_file(home.join("config.toml")).unwrap();
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    Config::load_or_create().unwrap();
+                });
+            }
+        });
+        assert!(home.join("config.toml").exists());
     });
 }
 
