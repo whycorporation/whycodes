@@ -37,15 +37,10 @@ pub(crate) fn encode_toml(cfg: &Config) -> Result<String> {
 
 /// Sibling tempfile + rename so a crash never leaves a half-written `config.toml`.
 ///
-/// The temp name includes a thread id as well as a process-wide sequence.
-/// Parallel `save()` calls (CLI tests, migrate + explicit save) used to share
-/// `.{name}.tmp-{pid}-{seq}` and then fail with `File exists` when two
-/// `std::fs::write` calls landed on the same path.
-///
-/// Persist retries: two threads can both pass `exists`, one `remove_file`s
-/// the dest, and the other `rename`s into that hole. The loser then sees
-/// `NotFound` because its temp was already renamed, or `EEXIST` if the dest
-/// reappeared. Recreate the temp and try again.
+/// Each attempt uses a fresh temp name (process id, thread id, sequence) so
+/// two `save()` calls cannot share a path. The rename is retried: concurrent
+/// writers both observe the dest, one removes it, and the other must write
+/// again. A destination that is not a file fails on the first attempt.
 pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path
         .parent()
@@ -53,7 +48,7 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
         .unwrap_or_else(|| Path::new("."));
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let thread = std::thread::current().id();
-    let mut last = None;
+    let mut last = std::io::Error::other("config atomic save gave up");
     for attempt in 0..8 {
         let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tmp = parent.join(format!(
@@ -63,37 +58,32 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
                 .unwrap_or("config.toml"),
             std::process::id()
         ));
-        if let Err(e) = std::fs::write(&tmp, contents) {
-            last = Some(e);
-            continue;
-        }
-        let renamed = if path.exists() {
-            match std::fs::remove_file(path) {
-                Ok(()) => std::fs::rename(&tmp, path),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => std::fs::rename(&tmp, path),
-                Err(e) => Err(e),
-            }
-        } else {
-            std::fs::rename(&tmp, path)
-        };
-        match renamed {
+        std::fs::write(&tmp, contents)?;
+        match replace_dest(&tmp, path) {
             Ok(()) => return Ok(()),
             Err(e) => {
                 if let Err(cleanup) = std::fs::remove_file(&tmp) {
                     tracing::debug!(error = %cleanup, "config tmp cleanup failed");
                 }
-                // A directory dest (or a file parent) will never succeed.
-                if attempt == 0 && !path.is_file() && path.exists() {
+                if attempt == 0 && path.exists() && !path.is_file() {
                     return Err(e.into());
                 }
-                last = Some(e);
+                last = e;
             }
         }
     }
-    match last {
-        Some(e) => Err(e.into()),
-        None => Err(std::io::Error::other("config atomic save failed").into()),
+    Err(last.into())
+}
+
+fn replace_dest(tmp: &Path, path: &Path) -> std::io::Result<()> {
+    if path.exists() {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
     }
+    std::fs::rename(tmp, path)
 }
 
 fn warn_project_config(kind: &str, path: &Path, e: impl std::fmt::Display) {

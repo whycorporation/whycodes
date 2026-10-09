@@ -206,6 +206,26 @@ fn write_atomic_parallel_saves_do_not_collide() {
 }
 
 #[test]
+fn write_atomic_rejects_directory_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("nested");
+    std::fs::create_dir(&dest).unwrap();
+    let err = write_atomic(&dest, b"nope").unwrap_err();
+    assert!(!err.to_string().is_empty());
+    assert!(dest.is_dir());
+}
+
+#[test]
+fn write_atomic_create_failure_is_returned() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("not-a-dir");
+    std::fs::write(&blocker, b"x").unwrap();
+    let dest = blocker.join("config.toml");
+    let err = write_atomic(&dest, b"nope").unwrap_err();
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
 fn write_atomic_empty_parent_uses_dot() {
     let _guard = lock_env();
     let dir = tempfile::tempdir().unwrap();
