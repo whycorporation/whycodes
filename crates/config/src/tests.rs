@@ -188,6 +188,24 @@ fn write_atomic_replaces_existing_and_creates() {
 }
 
 #[test]
+fn write_atomic_parallel_saves_do_not_collide() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::thread::scope(|scope| {
+        for i in 0..8 {
+            let path = &path;
+            scope.spawn(move || {
+                for n in 0..20 {
+                    write_atomic(path, format!("t{i}-{n}").as_bytes()).unwrap();
+                }
+            });
+        }
+    });
+    let body = std::fs::read_to_string(&path).unwrap();
+    assert!(body.starts_with('t'), "{body}");
+}
+
+#[test]
 fn write_atomic_empty_parent_uses_dot() {
     let _guard = lock_env();
     let dir = tempfile::tempdir().unwrap();
