@@ -1939,11 +1939,16 @@ fn write_atomic_cleanup_when_persist_fails() {
     let err = crate::load::write_atomic(&dest, b"hi").unwrap_err();
     assert!(!err.to_string().is_empty());
 
+    let blocked = dir.path().join("blocked.toml");
+    std::fs::create_dir(&blocked).unwrap();
+    plant_next_tmp(dir.path(), |planted| {
+        std::fs::create_dir(planted).unwrap();
+    });
+    let err = crate::load::write_atomic(&blocked, b"nope").unwrap_err();
+    assert!(err.to_string().contains("tmp cleanup"), "{err}");
+
     let dest = dir.path().join("config.toml");
     std::fs::write(&dest, "old").unwrap();
-    let pid = std::process::id();
-    let leftover = dir.path().join(format!(".config.toml.tmp-{pid}-0"));
-    std::fs::write(&leftover, "stale").unwrap();
     crate::load::write_atomic(&dest, b"new").unwrap();
     assert_eq!(std::fs::read_to_string(&dest).unwrap(), "new");
 }

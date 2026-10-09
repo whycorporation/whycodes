@@ -38,31 +38,47 @@ pub(crate) fn encode_toml(cfg: &Config) -> Result<String> {
 /// Sibling tempfile + rename so a crash never leaves a half-written `config.toml`.
 ///
 /// One process-wide lock: two `save()` calls used to share a temp path and
-/// return `File exists`. The lock keeps the write/rename pair exclusive, so
-/// the body stays the single path the coverage floor already counts.
+/// return `File exists`. The lock keeps the write/rename pair exclusive.
+static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Reserve the next sibling-temp path and run `plant` before any other save
+/// can take that name.
+#[cfg(test)]
+pub(crate) fn plant_next_tmp(parent: &Path, plant: impl FnOnce(&Path)) {
+    let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let n = SEQ.load(std::sync::atomic::Ordering::Relaxed);
+    let path = parent.join(format!(".config.toml.tmp-{}-{n}", std::process::id()));
+    plant(&path);
+}
+
 pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
-    static GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let parent = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = parent.join(format!(".config.toml.tmp-{}-{n}", std::process::id()));
-    std::fs::write(&tmp, contents)?;
-    let persisted = if path.exists() {
-        std::fs::remove_file(path).and_then(|()| std::fs::rename(&tmp, path))
-    } else {
-        std::fs::rename(&tmp, path)
-    };
-    if let Err(e) = persisted {
-        if let Err(cleanup) = std::fs::remove_file(&tmp) {
-            tracing::debug!(error = %cleanup, "config tmp cleanup failed");
-        }
-        return Err(e.into());
+    if let Err(e) = std::fs::write(&tmp, contents) {
+        return Err(cleanup_tmp(&tmp, e).into());
     }
-    Ok(())
+    if path.is_file() {
+        std::fs::remove_file(path).map_err(|e| cleanup_tmp(&tmp, e))?;
+    }
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(cleanup_tmp(&tmp, e).into()),
+    }
+}
+
+/// Remove the sibling temp after a failed replace. A cleanup failure is
+/// folded into the original I/O error so the caller still sees one `Err`.
+fn cleanup_tmp(tmp: &Path, err: std::io::Error) -> std::io::Error {
+    match std::fs::remove_file(tmp) {
+        Ok(()) => err,
+        Err(cleanup) => std::io::Error::other(format!("{err}; tmp cleanup: {cleanup}")),
+    }
 }
 
 fn warn_project_config(kind: &str, path: &Path, e: impl std::fmt::Display) {
