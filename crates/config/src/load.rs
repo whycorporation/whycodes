@@ -36,6 +36,12 @@ pub(crate) fn encode_toml(cfg: &Config) -> Result<String> {
 }
 
 /// Sibling tempfile + rename so a crash never leaves a half-written `config.toml`.
+///
+/// The temp name includes a thread id as well as a process-wide sequence.
+/// Parallel `save()` calls (CLI tests, migrate + explicit save) used to share
+/// `.{name}.tmp-{pid}-{seq}` and then fail with `File exists` when two
+/// `std::fs::write` calls landed on the same path. Persist retries once: the
+/// loser of a remove/rename race should still replace the destination.
 pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path
         .parent()
@@ -43,8 +49,9 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
         .unwrap_or_else(|| Path::new("."));
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let thread = std::thread::current().id();
     let tmp = parent.join(format!(
-        ".{}.tmp-{}-{n}",
+        ".{}.tmp-{}-{thread:?}-{n}",
         path.file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("config.toml"),
@@ -59,12 +66,19 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     };
     match persist() {
         Ok(()) => Ok(()),
-        Err(e) => {
-            if let Err(cleanup) = std::fs::remove_file(&tmp) {
-                tracing::debug!(error = %cleanup, "config tmp cleanup failed");
+        Err(first) => match persist() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                if let Err(cleanup) = std::fs::remove_file(&tmp) {
+                    tracing::debug!(
+                        error = %cleanup,
+                        first = %first,
+                        "config tmp cleanup failed"
+                    );
+                }
+                Err(e.into())
             }
-            Err(e.into())
-        }
+        },
     }
 }
 
