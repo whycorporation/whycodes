@@ -42,36 +42,34 @@ pub(crate) fn encode_toml(cfg: &Config) -> Result<String> {
 /// the body stays the single path the coverage floor already counts.
 pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     static GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _gate = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+    let _gate = match GATE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = parent.join(format!(
-        ".{}.tmp-{}-{n}",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("config.toml"),
-        std::process::id()
-    ));
+    let stem = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config.toml");
+    let tmp = parent.join(format!(".{stem}.tmp-{}-{n}", std::process::id()));
     std::fs::write(&tmp, contents)?;
-    let persist = || {
-        if path.exists() {
-            std::fs::remove_file(path)?;
-        }
+    let persisted = if path.exists() {
+        std::fs::remove_file(path).and_then(|()| std::fs::rename(&tmp, path))
+    } else {
         std::fs::rename(&tmp, path)
     };
-    match persist() {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            if let Err(cleanup) = std::fs::remove_file(&tmp) {
-                tracing::debug!(error = %cleanup, "config tmp cleanup failed");
-            }
-            Err(e.into())
+    if let Err(e) = persisted {
+        if let Err(cleanup) = std::fs::remove_file(&tmp) {
+            tracing::debug!(error = %cleanup, "config tmp cleanup failed");
         }
+        return Err(e.into());
     }
+    Ok(())
 }
 
 fn warn_project_config(kind: &str, path: &Path, e: impl std::fmt::Display) {
