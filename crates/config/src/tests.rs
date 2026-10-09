@@ -220,11 +220,9 @@ fn write_atomic_empty_parent_uses_dot() {
     let dir = tempfile::tempdir().unwrap();
     let prev = std::env::current_dir().unwrap();
     std::env::set_current_dir(dir.path()).unwrap();
-    let result = write_atomic(Path::new("rel.toml"), b"x");
-    let body = std::fs::read_to_string("rel.toml");
+    write_atomic(Path::new("rel.toml"), b"x").unwrap();
+    assert_eq!(std::fs::read_to_string("rel.toml").unwrap(), "x");
     let _ = std::env::set_current_dir(prev);
-    result.unwrap();
-    assert_eq!(body.unwrap(), "x");
 }
 
 #[test]
