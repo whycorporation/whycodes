@@ -195,7 +195,7 @@ fn write_atomic_parallel_saves_do_not_collide() {
         for i in 0..8 {
             let path = &path;
             scope.spawn(move || {
-                for n in 0..20 {
+                for n in 0..40 {
                     write_atomic(path, format!("t{i}-{n}").as_bytes()).unwrap();
                 }
             });
@@ -206,23 +206,18 @@ fn write_atomic_parallel_saves_do_not_collide() {
 }
 
 #[test]
-fn write_atomic_rejects_directory_destination() {
+fn write_atomic_returns_real_io_errors() {
     let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("not-a-dir");
+    std::fs::write(&blocker, b"x").unwrap();
+    let err = write_atomic(&blocker.join("config.toml"), b"nope").unwrap_err();
+    assert!(!err.to_string().is_empty());
+
     let dest = dir.path().join("nested");
     std::fs::create_dir(&dest).unwrap();
     let err = write_atomic(&dest, b"nope").unwrap_err();
     assert!(!err.to_string().is_empty());
     assert!(dest.is_dir());
-}
-
-#[test]
-fn write_atomic_create_failure_is_returned() {
-    let dir = tempfile::tempdir().unwrap();
-    let blocker = dir.path().join("not-a-dir");
-    std::fs::write(&blocker, b"x").unwrap();
-    let dest = blocker.join("config.toml");
-    let err = write_atomic(&dest, b"nope").unwrap_err();
-    assert!(!err.to_string().is_empty());
 }
 
 #[test]

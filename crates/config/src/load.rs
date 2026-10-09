@@ -37,10 +37,10 @@ pub(crate) fn encode_toml(cfg: &Config) -> Result<String> {
 
 /// Sibling tempfile + rename so a crash never leaves a half-written `config.toml`.
 ///
-/// Each attempt uses a fresh temp name (process id, thread id, sequence) so
-/// two `save()` calls cannot share a path. The rename is retried: concurrent
-/// writers both observe the dest, one removes it, and the other must write
-/// again. A destination that is not a file fails on the first attempt.
+/// Each attempt uses a fresh temp name (pid, thread, sequence) so concurrent
+/// `save()` calls do not share a path. A lost rename — the other writer
+/// already removed the dest, so this temp is gone (`NotFound`) or the dest
+/// came back (`AlreadyExists`) — retries. Anything else is returned at once.
 pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path
         .parent()
@@ -49,7 +49,7 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let thread = std::thread::current().id();
     let mut last = std::io::Error::other("config atomic save gave up");
-    for attempt in 0..8 {
+    for _ in 0..64 {
         let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tmp = parent.join(format!(
             ".{}.tmp-{}-{thread:?}-{n}",
@@ -58,32 +58,52 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
                 .unwrap_or("config.toml"),
             std::process::id()
         ));
-        std::fs::write(&tmp, contents)?;
-        match replace_dest(&tmp, path) {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                if let Err(cleanup) = std::fs::remove_file(&tmp) {
-                    tracing::debug!(error = %cleanup, "config tmp cleanup failed");
-                }
-                if attempt == 0 && path.exists() && !path.is_file() {
-                    return Err(e.into());
-                }
+        if let Err(e) = std::fs::write(&tmp, contents) {
+            if raced(&e) {
                 last = e;
+                continue;
+            }
+            drop_tmp(&tmp);
+            return Err(e.into());
+        }
+        match rename_over(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) if raced(&e) => {
+                drop_tmp(&tmp);
+                last = e;
+            }
+            Err(e) => {
+                drop_tmp(&tmp);
+                return Err(e.into());
             }
         }
     }
     Err(last.into())
 }
 
-fn replace_dest(tmp: &Path, path: &Path) -> std::io::Result<()> {
+fn drop_tmp(tmp: &Path) {
+    if let Err(cleanup) = std::fs::remove_file(tmp) {
+        tracing::debug!(error = %cleanup, "config tmp cleanup failed");
+    }
+}
+
+fn rename_over(tmp: &Path, path: &Path) -> std::io::Result<()> {
     if path.exists() {
-        match std::fs::remove_file(path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
-        }
+        std::fs::remove_file(path)?;
     }
     std::fs::rename(tmp, path)
+}
+
+fn raced(err: &std::io::Error) -> bool {
+    // Unix: dest vanished (`NotFound`) or reappeared (`AlreadyExists`).
+    // Windows: a sharing violation while another writer holds the dest is
+    // `PermissionDenied` (os error 5).
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::NotFound
+            | std::io::ErrorKind::AlreadyExists
+            | std::io::ErrorKind::PermissionDenied
+    ) || matches!(err.raw_os_error(), Some(5 | 17 | 32))
 }
 
 fn warn_project_config(kind: &str, path: &Path, e: impl std::fmt::Display) {
