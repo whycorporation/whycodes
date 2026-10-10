@@ -543,6 +543,11 @@ fn test_session_view_delete_missing_and_memory_roundtrip() {
 
     let search = run_home(home.path(), &["memory", "search", "cargo test"]);
     assert_ok(&["memory", "search"], &search);
+    let cards = String::from_utf8_lossy(&search.stdout);
+    assert!(
+        cards.contains("memory search · query \"cargo test\" · shown 1 of 1 · 1 facts"),
+        "{cards}"
+    );
 
     let export = run_home(home.path(), &["memory", "export"]);
     assert_ok(&["memory", "export"], &export);

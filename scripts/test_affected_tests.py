@@ -113,6 +113,16 @@ class AffectedTests(unittest.TestCase):
         agent_line = next(line for line in agent if "-p whycodes-agent" in line)
         self.assertIn("--features whycodes-memory/bundled-sqlite", agent_line)
 
+        # mcp has no alias of its own and reaches storage two hops down
+        # (tools -> memory). Without a feature its tests fail to link.
+        mcp = affected.cargo_lines(
+            affected.plan_for(["crates/mcp/src/lib.rs"], graph),
+            locked=True,
+            features="whycodes-storage/bundled",
+        )
+        mcp_line = next(line for line in mcp if "-p whycodes-mcp" in line)
+        self.assertIn("--features whycodes-tools/bundled-sqlite", mcp_line)
+
         workspace = affected.cargo_lines(
             affected.plan_for(["Cargo.toml"], graph),
             locked=True,

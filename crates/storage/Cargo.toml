@@ -26,6 +26,7 @@ serde_json.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 # Windows has no system sqlite3.lib on a typical MSVC install. Feature
 # unification turns on rusqlite/bundled for this target only.

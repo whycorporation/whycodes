@@ -461,14 +461,36 @@ def _accept_feature(crate: str, spec: str, deps: dict[str, set[str]]) -> str | N
     if dep_dir and dep_dir in deps.get(crate, ()) and feat in _feature_map(dep_dir):
         return spec
     for dep in sorted(deps.get(crate, ())):
-        for name, enables in _feature_map(dep).items():
-            if spec not in enables:
-                continue
-            forwarded = f"{package_name(dep)}/{name}"
-            for own_name, own_enables in own.items():
-                if forwarded in own_enables:
-                    return own_name
-            return forwarded
+        name = _enabling_feature(dep, spec, deps)
+        if name is None:
+            continue
+        forwarded = f"{package_name(dep)}/{name}"
+        for own_name, own_enables in own.items():
+            if forwarded in own_enables:
+                return own_name
+        return forwarded
+    return None
+
+
+def _enabling_feature(crate: str, spec: str, deps: dict[str, set[str]]) -> str | None:
+    """This crate's own feature that turns `spec` on, through any depth of
+    aliases (`whycodes-mcp` -> tools -> memory -> storage)."""
+    pkg, feat = spec.split("/", 1)
+    own = _feature_map(crate)
+    if package_name(crate) == pkg and feat in own:
+        return feat
+    for name, enables in own.items():
+        if spec in enables:
+            return name
+        for enabled in enables:
+            dep_pkg, _, dep_feat = enabled.partition("/")
+            dep_dir = dep_pkg.removeprefix(PKG_PREFIX)
+            if (
+                dep_feat
+                and dep_dir in deps.get(crate, ())
+                and _enabling_feature(dep_dir, spec, deps) == dep_feat
+            ):
+                return name
     return None
 
 

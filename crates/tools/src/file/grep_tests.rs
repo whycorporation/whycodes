@@ -30,7 +30,13 @@ fn search_single_file_matches() {
     assert!(out.contains(":hello world"));
     assert!(out.contains("a.txt:3 "));
     assert!(out.contains(":hello again"));
-    assert!(out.contains("(2 matches in 1 file"));
+    assert!(
+        out.starts_with(
+            "grep · pattern `hello` · shown 2 of 2 · 1 file searched
+"
+        ),
+        "{out}"
+    );
 }
 
 #[test]
@@ -38,7 +44,12 @@ fn search_single_file_no_matches() {
     let dir = TempDir::new().unwrap();
     let f = write(&dir, "a.txt", "hello\n");
     let out = GrepTool::search("zzz", &f, None, false, 0, 50, "/", None).unwrap();
-    assert!(out.is_empty());
+    assert_eq!(
+        out,
+        "No matches found. grep · pattern `zzz` · none in 1 file searched \
+         (not proof it does not exist)\n\
+         next: try case_insensitive, a shorter pattern, or drop path/include"
+    );
 }
 
 #[test]
@@ -95,11 +106,15 @@ fn search_max_results_truncates_in_directory() {
         write(&dir, &format!("f{i}.txt"), "match here\n");
     }
     let out = GrepTool::search("match", dir.path(), None, false, 0, 3, "/", None).unwrap();
-    assert!(out.contains("[truncated at 3 matches"));
+    assert!(out.contains("shown 3 (cap hit; more may exist)"), "{out}");
+    assert!(out.ends_with(
+        "
+next: raise max_results, narrow path/include, or `read` the path"
+    ));
 }
 
 #[test]
-fn search_single_file_respects_max_results_without_notice() {
+fn search_single_file_marks_the_cap_as_truncated() {
     // Single-file searches stop at max_results but do not append the
     // truncation notice (only directory walks set the flag).
     let dir = TempDir::new().unwrap();
@@ -109,8 +124,10 @@ fn search_single_file_respects_max_results_without_notice() {
     }
     let f = write(&dir, "a.txt", &content);
     let out = GrepTool::search("match", &f, None, false, 0, 3, "/", None).unwrap();
-    assert!(!out.contains("[truncated"));
-    assert!(out.contains("(3 matches in 1 file"));
+    assert!(
+        out.contains("shown 3 (cap hit; more may exist) · 1 file searched"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -118,7 +135,7 @@ fn search_skips_binary_files() {
     let dir = TempDir::new().unwrap();
     write(&dir, "bin.dat", "text\x00with nul\n");
     let out = GrepTool::search("nul", dir.path(), None, false, 0, 50, "/", None).unwrap();
-    assert!(out.is_empty());
+    assert!(out.starts_with("No matches found."), "{out}");
 }
 
 #[test]
@@ -182,7 +199,7 @@ fn search_large_file_skipped() {
     let f = write(&dir, "big.txt", "");
     fs::write(&f, big).unwrap();
     let out = GrepTool::search("a", &f, None, false, 0, 50, "/", None).unwrap();
-    assert!(out.is_empty());
+    assert!(out.starts_with("No matches found."), "{out}");
 }
 
 #[test]
@@ -201,7 +218,7 @@ fn search_context_separator_between_matches() {
     let f = write(&dir, "a.txt", "hit\n\n\nhit\n");
     let out = GrepTool::search("hit", &f, None, false, 1, 50, "/", None).unwrap();
     assert!(out.contains("--"), "{out}");
-    assert!(out.contains("in 1 file"), "{out}");
+    assert!(out.contains("· 1 file searched"), "{out}");
 }
 
 #[tokio::test]
@@ -272,9 +289,6 @@ async fn remaining_execute_and_search_edges() {
         GrepTool::search("hello", dir.path(), Some("*.txt"), false, 0, 50, "/", None).unwrap();
     assert!(out.contains("a.txt"));
     assert_eq!(utf8_line(b"hi\r\n"), "hi");
-    let empty = grep_ok(String::new());
-    assert!(!empty.is_error);
-    assert_eq!(empty.content, "No matches found.");
     let hit = grep_ok("a.txt:1:hello".into());
     assert_eq!(hit.content, "a.txt:1:hello");
     let failed = grep_err("grep task failed: boom");
@@ -399,7 +413,7 @@ async fn search_uses_index_hidden_glob_and_truncates() {
         )
         .await;
     assert!(!hit.is_error, "{}", hit.content);
-    assert!(hit.content.contains("[truncated"), "{}", hit.content);
+    assert!(hit.content.contains("cap hit"), "{}", hit.content);
 
     let hidden = GrepTool::new()
         .execute(
@@ -462,7 +476,7 @@ fn search_index_prunes_files_without_trigrams() {
     assert!(out.contains("src/hit.rs"), "{out}");
     assert!(out.contains("README.md"), "{out}");
     assert!(!out.contains("src/miss.rs"), "{out}");
-    assert!(out.contains("in 2 file"), "{out}");
+    assert!(out.contains("· 2 files searched"), "{out}");
 
     let regex = GrepTool::search(
         "unique.needle",
@@ -477,7 +491,7 @@ fn search_index_prunes_files_without_trigrams() {
     .unwrap();
     assert!(regex.contains("src/hit.rs"), "{regex}");
     assert!(regex.contains("README.md"), "{regex}");
-    assert!(regex.contains("in 4 file"), "{regex}");
+    assert!(regex.contains("· 4 files searched"), "{regex}");
 
     let ci = GrepTool::search(
         "helloworld",
@@ -491,7 +505,7 @@ fn search_index_prunes_files_without_trigrams() {
     )
     .unwrap();
     assert!(ci.contains("src/Case.rs"), "{ci}");
-    assert!(ci.contains("in 1 file"), "{ci}");
+    assert!(ci.contains("· 1 file searched"), "{ci}");
     note_search_ok();
     assert_eq!(join_error_string("boom"), "boom");
     assert!(regex_build_error("bad").contains("invalid regex"));

@@ -443,6 +443,13 @@ injected as `# Past sessions`. After retain, the fact bank is capped
 (`memory.consolidate_max`, default 80) by dropping the least-recalled
 entries.
 
+Fact, code, and session searches first take up to 256 candidates from a
+SQLite FTS5 index (a query word must occur in the text), then rank them by
+embedding similarity, so cost does not grow with the bank. Results print
+as short cards under a `shown N of M` header; zero hits mean *none found*,
+not *none exist*, and the output names the next call. `grep` keeps its
+`path:line tag:text` lines under the same kind of header.
+
 ## Configuration
 
 `~/.whycodes/config.toml` on every OS (`%USERPROFILE%\.whycodes\config.toml`

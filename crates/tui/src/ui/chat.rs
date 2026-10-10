@@ -2106,7 +2106,7 @@ fn grep_match_summary(result: Option<&str>) -> String {
     };
     let trimmed = content.trim();
     if trimmed.is_empty()
-        || trimmed == "No matches found."
+        || trimmed.starts_with("No matches found.")
         || trimmed.contains("(no matches)")
         || trimmed.contains("(no files)")
     {
@@ -2838,7 +2838,7 @@ fn tool_result_grep(
     if is_error {
         return tool_result_plain(content, true, palette, expanded, width);
     }
-    if content.trim().is_empty() || content.trim() == "No matches found." {
+    if content.trim().is_empty() || content.trim().starts_with("No matches found.") {
         return tool_result_plain(content, false, palette, expanded, width);
     }
 

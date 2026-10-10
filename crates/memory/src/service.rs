@@ -37,6 +37,19 @@ pub struct SessionHit {
     pub score: f32,
 }
 
+/// Lexical (FTS5) candidates scored by cosine per search. Bounds the work
+/// at any bank size; a query word has to occur in the text to be ranked.
+pub const FTS_CANDIDATES: usize = 256;
+
+/// Ranked hits plus how many rows matched and how many the bank holds, for a
+/// `shown N of M` header.
+#[derive(Debug, Clone)]
+pub struct SearchPage<H> {
+    pub hits: Vec<H>,
+    pub matched: usize,
+    pub corpus: usize,
+}
+
 fn record_consolidated_delete(md_path: &Path, id: &str, deleted: bool) -> usize {
     if !deleted {
         return 0;
@@ -178,10 +191,21 @@ impl MemoryService {
     }
 
     pub fn search(&self, query: &str, top_k: usize, min_score: f32) -> Result<Vec<RecallHit>> {
+        Ok(self.search_page(query, top_k, min_score)?.hits)
+    }
+
+    /// [`Self::search`] with match / bank counts for a card header.
+    pub fn search_page(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: f32,
+    ) -> Result<SearchPage<RecallHit>> {
         let db = self.open_db()?;
-        let rows = db.list_memories(&self.bank_key, 10_000)?;
+        let page = db.search_memories(&self.bank_key, query, FTS_CANDIDATES)?;
         let q = self.embed_text(query);
-        let mut hits: Vec<RecallHit> = rows
+        let mut hits: Vec<RecallHit> = page
+            .rows
             .into_iter()
             .filter_map(|entry| {
                 let v = decode_blob(&entry.embedding);
@@ -203,7 +227,11 @@ impl MemoryService {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         hits.truncate(top_k.max(1));
-        Ok(hits)
+        Ok(SearchPage {
+            hits,
+            matched: page.matched,
+            corpus: page.corpus,
+        })
     }
 
     /// Embed this turn and store it for later session search.
@@ -270,10 +298,21 @@ impl MemoryService {
         top_k: usize,
         min_score: f32,
     ) -> Result<Vec<SessionHit>> {
+        Ok(self.search_sessions_page(query, top_k, min_score)?.hits)
+    }
+
+    /// [`Self::search_sessions`] with match / bank counts for a card header.
+    pub fn search_sessions_page(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: f32,
+    ) -> Result<SearchPage<SessionHit>> {
         let db = self.open_db()?;
-        let rows = db.list_session_chunks(&self.bank_key, 10_000)?;
+        let page = db.search_session_chunks(&self.bank_key, query, FTS_CANDIDATES)?;
         let q = self.embed_text(query);
-        let mut hits: Vec<SessionHit> = rows
+        let mut hits: Vec<SessionHit> = page
+            .rows
             .into_iter()
             .filter_map(|entry| {
                 let v = decode_blob(&entry.embedding);
@@ -294,7 +333,11 @@ impl MemoryService {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         hits.truncate(top_k.max(1));
-        Ok(hits)
+        Ok(SearchPage {
+            hits,
+            matched: page.matched,
+            corpus: page.corpus,
+        })
     }
 
     /// Drop oldest unused facts when the bank is over `consolidate_max`.
@@ -729,6 +772,36 @@ mod tests {
     }
 
     #[test]
+    fn search_pages_count_matches_against_the_bank() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        svc.remember("windows ci links bundled sqlite", None)
+            .unwrap();
+        svc.remember("release notes live in docs folder", None)
+            .unwrap();
+        svc.remember("sqlite wal mode for concurrent readers", None)
+            .unwrap();
+
+        let page = svc.search_page("sqlite", 1, 0.0).unwrap();
+        assert_eq!((page.hits.len(), page.matched, page.corpus), (1, 2, 3));
+        assert!(page.hits[0].entry.text.contains("sqlite"));
+        let none = svc.search_page("kubernetes", 5, 0.0).unwrap();
+        assert_eq!((none.hits.len(), none.matched, none.corpus), (0, 0, 3));
+
+        svc.index_session_turn("ses-1", 0, "why is the retry loop slow", "backoff")
+            .unwrap();
+        let sess = svc.search_sessions_page("retry loop", 5, 0.0).unwrap();
+        assert_eq!((sess.hits.len(), sess.matched, sess.corpus), (1, 1, 1));
+        // A matching turn with no usable embedding is skipped, and the
+        // matching one is dropped by a floor no cosine reaches.
+        svc.open_db()
+            .unwrap()
+            .insert_session_chunk("bad", &svc.bank_key, "ses-2", 0, "retry", &[])
+            .unwrap();
+        let floor = svc.search_sessions_page("retry", 5, 2.0).unwrap();
+        assert_eq!((floor.hits.len(), floor.matched), (0, 2));
+    }
+
+    #[test]
     fn remember_search_delete() {
         let dir = tempdir().unwrap();
         let data = dir.path().join("data");
@@ -952,7 +1025,8 @@ mod tests {
         let hits = svc.search("matching vector fact", 0, -1.0).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].entry.text, "matching vector fact");
-        assert!(svc.search("anything", 5, 2.0).unwrap().is_empty());
+        // Candidates that share a word but score under the floor drop out.
+        assert!(svc.search("vector", 5, 2.0).unwrap().is_empty());
     }
 
     #[test]
