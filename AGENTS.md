@@ -134,7 +134,7 @@ scripts/coverage.sh
 COVERAGE_FEATURES=whycodes-storage/bundled scripts/coverage.sh
 ```
 
-Pass means the script exits 0 and prints `OK` for the workspace 82% floor
+Pass means the script exits 0 and prints `OK` for the workspace 98.5% floor
 and every crate floor. A red CI Coverage job is not a substitute for this
 run. How to measure, flags, and floors: [`docs/coverage.md`](docs/coverage.md).
 

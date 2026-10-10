@@ -859,6 +859,38 @@ mod logging_tests {
         clear_panic_cleanup();
         std::panic::set_hook(prev);
     }
+
+    /// Drives every `JsonVisitor` field type under a local subscriber. The
+    /// global-subscriber test above only reaches them when its `init` wins
+    /// the process-wide race, which made `record_i64` flaky on coverage.
+    #[test]
+    fn json_visitor_records_every_field_type() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        struct Capture(Arc<Mutex<JsonVisitor>>);
+        impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Capture {
+            fn on_event(
+                &self,
+                event: &tracing::Event<'_>,
+                _ctx: tracing_subscriber::layer::Context<'_, S>,
+            ) {
+                event.record(&mut *self.0.lock().unwrap());
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(JsonVisitor::default()));
+        let subscriber = tracing_subscriber::registry().with(Capture(seen.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(sid = "s", i = -3_i64, u = 4_u64, b = true, d = ?"x", "msg");
+        });
+        let v = seen.lock().unwrap();
+        assert_eq!(v.message.as_deref(), Some("msg"));
+        assert_eq!(v.sid.as_deref(), Some("s"));
+        assert_eq!(v.fields["i"], json!(-3));
+        assert_eq!(v.fields["u"], json!(4));
+        assert_eq!(v.fields["b"], json!(true));
+        assert_eq!(v.fields["d"], json!("x"));
+    }
 }
 
 // ── network.rs ──────────────────────────────────────────────

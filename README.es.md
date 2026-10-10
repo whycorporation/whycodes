@@ -174,8 +174,8 @@ Windows es **0.0 redibujos/s** (Linux 2026-09-02 era 0.3/s); el objetivo
 del producto sigue siendo **0 redibujos/s**, no una carrera de fotogramas
 por segundo.
 
-La cobertura de líneas del workspace es **85.58%** (Linux x86_64,
-2026-08-21). CI falla por debajo del 82%, con doce crates fundacionales
+La cobertura de líneas del workspace es **98.7%** (Linux x86_64,
+2026-10-10). CI falla por debajo del 98.5%, con veinticuatro crates
 en 100% de cobertura de líneas de código de producción — véase
 [docs/coverage.md](docs/coverage.md).
 

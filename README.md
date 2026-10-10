@@ -162,8 +162,8 @@ first-frame to the Linux ~12 ms PTY row. Method and machines in
 
 The TUI paints only when something changed. This Windows run’s 3 s harness idle is **0.0 redraws/s** (Linux 2026-09-02 was 0.3/s); the product target is still **0 redraws/s**, not a frames-per-second race. The first-frame harness writes one CSI splash (no ratatui); spawn-to-exit matches `--version` (~14 ms). Interactive home still hydrates after that paint.
 
-Workspace line coverage is **85.58%** (Linux x86_64, 2026-08-21). CI fails
-below 82%, with twelve foundational crates held at 100% production-code line
+Workspace line coverage is **98.7%** (Linux x86_64, 2026-10-10). CI fails
+below 98.5%, with twenty-four crates held at 100% production-code line
 coverage — see [docs/coverage.md](docs/coverage.md).
 
 ## Documentation
