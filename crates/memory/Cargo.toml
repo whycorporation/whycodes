@@ -29,6 +29,7 @@ tokenizers = { version = "0.23", optional = true, default-features = false, feat
 
 [dev-dependencies]
 tempfile = { workspace = true }
+whycodes-storage = { path = "../storage", features = ["test-util"] }
 
 [lints]
 workspace = true

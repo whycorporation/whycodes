@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::embed::{cosine, decode_blob, encode_blob};
 use crate::error::{MemoryError, Result};
-use crate::service::{CodeHit, MemoryService};
+use crate::service::{CodeHit, FTS_CANDIDATES, MemoryService, SearchPage, fts_candidates};
 
 const EXT_OK: &[&str] = &[
     "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "c", "h", "cpp", "hpp", "cs", "rb",
@@ -62,10 +62,24 @@ impl MemoryService {
 
     /// Semantic search over indexed code chunks.
     pub fn search_code(&self, query: &str, top_k: usize, min_score: f32) -> Result<Vec<CodeHit>> {
+        Ok(self.search_code_page(query, top_k, min_score)?.hits)
+    }
+
+    /// [`Self::search_code`] with match / bank counts for a card header.
+    pub fn search_code_page(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: f32,
+    ) -> Result<SearchPage<CodeHit>> {
         let db = self.open_db()?;
-        let rows = db.list_code_chunks(&self.bank_key, 50_000)?;
+        let page = fts_candidates(
+            db.search_code_chunks(&self.bank_key, query, FTS_CANDIDATES),
+            || db.list_code_chunks(&self.bank_key, 50_000),
+        )?;
         let q = self.embed_text(query);
-        let mut hits: Vec<CodeHit> = rows
+        let mut hits: Vec<CodeHit> = page
+            .rows
             .into_iter()
             .filter_map(|entry| {
                 let v = decode_blob(&entry.embedding);
@@ -86,7 +100,11 @@ impl MemoryService {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         hits.truncate(top_k.max(1));
-        Ok(hits)
+        Ok(SearchPage {
+            hits,
+            matched: page.matched,
+            corpus: page.corpus,
+        })
     }
 }
 
@@ -228,7 +246,8 @@ mod tests {
         }
         let n = svc.index_codebase(10, 1).unwrap();
         assert_eq!(n, 1);
-        let ranked = svc.search_code("item_1", 8, -1.0).unwrap();
+        // A query word must occur in the chunk; `fn` is in every indexed one.
+        let ranked = svc.search_code("fn item_1", 8, -1.0).unwrap();
         assert!(!ranked.is_empty());
         assert_eq!(svc.index_codebase(0, 10).unwrap(), 0);
         let _ = svc.index_codebase(1, 500);

@@ -25,11 +25,12 @@ pub use error::{MemoryError, Result};
 pub use project_key::{project_key, project_root};
 pub use retain::{extract_heuristic, llm_retain_prompt, parse_llm_facts};
 pub use service::{
-    CodeChunkRow, CodeHit, MemoryService, RecallHit, SessionHit, apply_memory_prompt,
-    maybe_auto_index, maybe_auto_index_background, maybe_auto_retain, settings_from_flags,
+    CodeChunkRow, CodeHit, FTS_CANDIDATES, MemoryService, RecallHit, SearchPage, SessionHit,
+    apply_memory_prompt, maybe_auto_index, maybe_auto_index_background, maybe_auto_retain,
+    settings_from_flags,
 };
 pub use settings::{EmbedBackend, MemoryScope, MemorySettings};
-pub use whycodes_storage::models::MemoryRow;
+pub use whycodes_storage::models::{MemoryRow, SessionChunkRow};
 
 pub(crate) fn recover_lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())

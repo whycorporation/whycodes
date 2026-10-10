@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use whycodes_storage::db::Database;
+use whycodes_storage::db::{Database, FtsPage};
 use whycodes_storage::models::{MemoryRow, SessionChunkRow};
 
 // CodeHit re-exports the storage row type for callers.
@@ -35,6 +35,39 @@ pub struct CodeHit {
 pub struct SessionHit {
     pub entry: SessionChunkRow,
     pub score: f32,
+}
+
+/// Lexical (FTS5) candidates scored by cosine per search. Bounds the work
+/// at any bank size; a query word has to occur in the text to be ranked.
+pub const FTS_CANDIDATES: usize = 256;
+
+/// Ranked hits plus how many rows matched and how many the bank holds, for a
+/// `shown N of M` header.
+#[derive(Debug, Clone)]
+pub struct SearchPage<H> {
+    pub hits: Vec<H>,
+    pub matched: usize,
+    pub corpus: usize,
+}
+
+/// FTS candidates, or the whole-bank scan when the index is missing/corrupt.
+pub(crate) fn fts_candidates<T>(
+    fts: whycodes_storage::error::Result<FtsPage<T>>,
+    scan: impl FnOnce() -> whycodes_storage::error::Result<Vec<T>>,
+) -> Result<FtsPage<T>> {
+    match fts {
+        Ok(page) => Ok(page),
+        Err(e) => {
+            tracing::warn!(error = %e, "fts search unavailable; scanning the bank");
+            let rows = scan()?;
+            let n = rows.len();
+            Ok(FtsPage {
+                rows,
+                matched: n,
+                corpus: n,
+            })
+        }
+    }
 }
 
 fn record_consolidated_delete(md_path: &Path, id: &str, deleted: bool) -> usize {
@@ -178,10 +211,24 @@ impl MemoryService {
     }
 
     pub fn search(&self, query: &str, top_k: usize, min_score: f32) -> Result<Vec<RecallHit>> {
+        Ok(self.search_page(query, top_k, min_score)?.hits)
+    }
+
+    /// [`Self::search`] with match / bank counts for a card header.
+    pub fn search_page(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: f32,
+    ) -> Result<SearchPage<RecallHit>> {
         let db = self.open_db()?;
-        let rows = db.list_memories(&self.bank_key, 10_000)?;
+        let page = fts_candidates(
+            db.search_memories(&self.bank_key, query, FTS_CANDIDATES),
+            || db.list_memories(&self.bank_key, 10_000),
+        )?;
         let q = self.embed_text(query);
-        let mut hits: Vec<RecallHit> = rows
+        let mut hits: Vec<RecallHit> = page
+            .rows
             .into_iter()
             .filter_map(|entry| {
                 let v = decode_blob(&entry.embedding);
@@ -203,7 +250,11 @@ impl MemoryService {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         hits.truncate(top_k.max(1));
-        Ok(hits)
+        Ok(SearchPage {
+            hits,
+            matched: page.matched,
+            corpus: page.corpus,
+        })
     }
 
     /// Embed this turn and store it for later session search.
@@ -270,10 +321,24 @@ impl MemoryService {
         top_k: usize,
         min_score: f32,
     ) -> Result<Vec<SessionHit>> {
+        Ok(self.search_sessions_page(query, top_k, min_score)?.hits)
+    }
+
+    /// [`Self::search_sessions`] with match / bank counts for a card header.
+    pub fn search_sessions_page(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: f32,
+    ) -> Result<SearchPage<SessionHit>> {
         let db = self.open_db()?;
-        let rows = db.list_session_chunks(&self.bank_key, 10_000)?;
+        let page = fts_candidates(
+            db.search_session_chunks(&self.bank_key, query, FTS_CANDIDATES),
+            || db.list_session_chunks(&self.bank_key, 10_000),
+        )?;
         let q = self.embed_text(query);
-        let mut hits: Vec<SessionHit> = rows
+        let mut hits: Vec<SessionHit> = page
+            .rows
             .into_iter()
             .filter_map(|entry| {
                 let v = decode_blob(&entry.embedding);
@@ -294,7 +359,11 @@ impl MemoryService {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         hits.truncate(top_k.max(1));
-        Ok(hits)
+        Ok(SearchPage {
+            hits,
+            matched: page.matched,
+            corpus: page.corpus,
+        })
     }
 
     /// Drop oldest unused facts when the bank is over `consolidate_max`.
@@ -726,6 +795,42 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         let svc = MemoryService::open(&project, &data, settings).unwrap();
         (dir, data, project, svc)
+    }
+
+    #[test]
+    fn search_pages_count_matches_against_the_bank() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        svc.remember("windows ci links bundled sqlite", None)
+            .unwrap();
+        svc.remember("release notes live in docs folder", None)
+            .unwrap();
+        svc.remember("sqlite wal mode for concurrent readers", None)
+            .unwrap();
+
+        let page = svc.search_page("sqlite", 1, 0.0).unwrap();
+        assert_eq!((page.hits.len(), page.matched, page.corpus), (1, 2, 3));
+        assert!(page.hits[0].entry.text.contains("sqlite"));
+        let none = svc.search_page("kubernetes", 5, 0.0).unwrap();
+        assert_eq!((none.hits.len(), none.matched, none.corpus), (0, 0, 3));
+
+        svc.index_session_turn("ses-1", 0, "why is the retry loop slow", "backoff")
+            .unwrap();
+        let sess = svc.search_sessions_page("retry loop", 5, 0.0).unwrap();
+        assert_eq!((sess.hits.len(), sess.matched, sess.corpus), (1, 1, 1));
+    }
+
+    #[test]
+    fn search_falls_back_to_a_scan_without_the_fts_index() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        svc.remember("cargo test memory crate", None).unwrap();
+        // Database::open re-creates the index, so drop it on this handle.
+        let db = svc.open_db().unwrap();
+        db.drop_fts_for_test().unwrap();
+        let page = fts_candidates(db.search_memories(&svc.bank_key, "cargo", 5), || {
+            db.list_memories(&svc.bank_key, 10)
+        })
+        .unwrap();
+        assert_eq!((page.rows.len(), page.matched, page.corpus), (1, 1, 1));
     }
 
     #[test]

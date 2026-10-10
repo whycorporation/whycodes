@@ -89,7 +89,62 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
         ",
     )?;
 
+    for table in FTS_TABLES {
+        create_fts(conn, table, "fts5")?;
+    }
+
     Ok(())
+}
+
+/// Record tables with an FTS5 candidate index on their `text` column.
+pub(crate) const FTS_TABLES: [&str; 3] = ["memories", "code_chunks", "session_chunks"];
+
+/// External-content FTS5 index over `{table}.text`, kept in sync by triggers
+/// so a row and its index entry land in the same transaction. Keyed by the
+/// implicit rowid, which is stable because nothing here runs `VACUUM`.
+///
+/// Returns `false` when this SQLite build has no `module` (FTS5 compiled
+/// out); search then falls back to a scan. A new index is backfilled once.
+pub(crate) fn create_fts(
+    conn: &Connection,
+    table: &str,
+    module: &str,
+) -> Result<bool, rusqlite::Error> {
+    let fts = format!("{table}_fts");
+    let existed = table_exists(conn, &fts)?;
+    // table/module names are internal constants only.
+    let created = conn.execute_batch(&format!(
+        "
+        CREATE VIRTUAL TABLE IF NOT EXISTS {fts}
+            USING {module}(text, content='{table}', content_rowid='rowid');
+        CREATE TRIGGER IF NOT EXISTS {fts}_ai AFTER INSERT ON {table} BEGIN
+            INSERT INTO {fts}(rowid, text) VALUES (new.rowid, new.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS {fts}_ad AFTER DELETE ON {table} BEGIN
+            INSERT INTO {fts}({fts}, rowid, text) VALUES ('delete', old.rowid, old.text);
+        END;
+        CREATE TRIGGER IF NOT EXISTS {fts}_au AFTER UPDATE OF text ON {table} BEGIN
+            INSERT INTO {fts}({fts}, rowid, text) VALUES ('delete', old.rowid, old.text);
+            INSERT INTO {fts}(rowid, text) VALUES (new.rowid, new.text);
+        END;
+        "
+    ));
+    match created {
+        Ok(()) => {}
+        Err(e) if e.to_string().contains("no such module") => return Ok(false),
+        Err(e) => return Err(e),
+    }
+    if !existed {
+        conn.execute_batch(&format!("INSERT INTO {fts}({fts}) VALUES ('rebuild');"))?;
+    }
+    Ok(true)
+}
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, rusqlite::Error> {
+    let mut stmt =
+        conn.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1")?;
+    let mut rows = stmt.query(rusqlite::params![table])?;
+    Ok(rows.next()?.is_some())
 }
 
 /// Add a column when missing. SQLite has no `ADD COLUMN IF NOT EXISTS`.
@@ -165,11 +220,64 @@ mod tests {
         assert!(table_exists(&conn, "memories").unwrap());
     }
 
-    fn table_exists(conn: &Connection, table: &str) -> Result<bool, rusqlite::Error> {
-        let mut stmt =
-            conn.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1")?;
-        let mut rows = stmt.query(rusqlite::params![table])?;
-        Ok(rows.next()?.is_some())
+    fn fts_hits(conn: &Connection, table: &str, word: &str) -> i64 {
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table}_fts WHERE {table}_fts MATCH ?1"),
+            [word],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn fts_backfills_existing_rows_once_and_tracks_writes() {
+        let conn = Connection::open_in_memory().unwrap();
+        // A pre-FTS database that already holds a fact.
+        conn.execute_batch(
+            "
+            CREATE TABLE memories (
+                id TEXT PRIMARY KEY, project_key TEXT NOT NULL, text TEXT NOT NULL,
+                embedding BLOB NOT NULL, source_session TEXT, created_at TEXT NOT NULL,
+                last_recalled_at TEXT, recall_count INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO memories (id, project_key, text, embedding, created_at)
+                VALUES ('m1', 'p', 'bundled sqlite on windows', x'', 'now');
+            ",
+        )
+        .unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(fts_hits(&conn, "memories", "bundled"), 1);
+        // Idempotent: a second run does not duplicate index entries.
+        run_migrations(&conn).unwrap();
+        assert_eq!(fts_hits(&conn, "memories", "bundled"), 1);
+
+        conn.execute(
+            "UPDATE memories SET text = 'msvc linker' WHERE id = 'm1'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(fts_hits(&conn, "memories", "bundled"), 0);
+        assert_eq!(fts_hits(&conn, "memories", "linker"), 1);
+        conn.execute("DELETE FROM memories WHERE id = 'm1'", [])
+            .unwrap();
+        assert_eq!(fts_hits(&conn, "memories", "linker"), 0);
+    }
+
+    #[test]
+    fn create_fts_reports_a_missing_module_without_failing() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE notes (text TEXT NOT NULL);")
+            .unwrap();
+        assert!(!create_fts(&conn, "notes", "no_such_fts").unwrap());
+        assert!(!table_exists(&conn, "notes_fts").unwrap());
+        assert!(create_fts(&conn, "notes", "fts5").unwrap());
+    }
+
+    #[test]
+    fn create_fts_propagates_other_errors() {
+        let conn = Connection::open_in_memory().unwrap();
+        // A trigger on a table that does not exist is not a missing module.
+        assert!(create_fts(&conn, "missing", "fts5").is_err());
     }
 
     #[test]

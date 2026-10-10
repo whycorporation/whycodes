@@ -3607,7 +3607,10 @@ fn grep_header_no_matches_and_edit_diffstat_on_collapsed() {
     let none = tool_block(
         "grep",
         &json!({"pattern": "zzz"}),
-        Some("No matches found."),
+        Some(
+            "No matches found. grep · pattern `zzz` · none in 3 files searched              (not proof it does not exist)
+next: try case_insensitive",
+        ),
         ToolPaint {
             is_error: false,
             palette: &palette,

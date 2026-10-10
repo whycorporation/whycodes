@@ -130,7 +130,7 @@ async fn execute_write_list_search_delete_and_unknown() {
         .await;
     assert!(!miss_search.is_error, "{}", miss_search.content);
     assert!(
-        miss_search.content.contains("No matching"),
+        miss_search.content.contains("none found in 1 facts"),
         "{}",
         miss_search.content
     );
@@ -243,8 +243,9 @@ async fn learn_index_code_search_and_metadata() {
         .await;
     assert!(!before_index.is_error, "{}", before_index.content);
     assert!(
-        before_index.content.contains("No code hits")
-            || before_index.content.contains("remember_fact"),
+        before_index
+            .content
+            .contains("none found in 0 chunks (not proof none exist)"),
         "{}",
         before_index.content
     );
@@ -262,6 +263,13 @@ async fn learn_index_code_search_and_metadata() {
         )
         .await;
     assert!(!hits.is_error, "{}", hits.content);
+    assert!(
+        hits.content
+            .starts_with("code_search · query \"remember_fact\" · shown 1 of 1"),
+        "{}",
+        hits.content
+    );
+    assert!(hits.content.contains("[1] src/lib.rs:"), "{}", hits.content);
 
     for flag in ["true", "yes", "on"] {
         unsafe { std::env::set_var("WHYCODES_NO_MEMORY", flag) };
@@ -308,38 +316,9 @@ async fn learn_index_code_search_and_metadata() {
         text: "short id".into(),
         ..row.clone()
     };
-    let listed = format_memory_list(vec![row.clone(), short.clone()]);
+    let listed = format_memory_list(vec![row, short]);
     assert!(listed.contains("prefer cargo test"), "{listed}");
     assert!(listed.contains("short id"), "{listed}");
-    let hits = format_memory_hits(vec![
-        whycodes_memory::RecallHit {
-            entry: row,
-            score: 0.42,
-        },
-        whycodes_memory::RecallHit {
-            entry: short,
-            score: 0.1,
-        },
-    ]);
-    assert!(hits.contains("prefer cargo test"), "{hits}");
-    let code = format_code_hits(vec![whycodes_memory::CodeHit {
-        entry: whycodes_memory::CodeChunkRow {
-            id: "c".into(),
-            project_key: "p".into(),
-            path: "src/lib.rs".into(),
-            start_line: 1,
-            end_line: 3,
-            text: "one\ntwo\nthree\nfour\nfive\nsix\nseven\n".into(),
-            embedding: Vec::new(),
-            updated_at: "t".into(),
-        },
-        score: 0.9,
-    }]);
-    assert!(code.contains("src/lib.rs"), "{code}");
-    assert!(code.contains("six"), "{code}");
-    assert!(!code.contains("seven"), "{code}");
-    assert_eq!(format_memory_hits(Vec::new()), "No matching memories.");
-    assert!(format_code_hits(Vec::new()).contains("No code hits"));
     assert_eq!(format_delete("abc", true), "Deleted memory abc");
     assert_eq!(format_delete("abc", false), "No memory matching 'abc'");
     let failed = memory_result(Err("nope".into()));

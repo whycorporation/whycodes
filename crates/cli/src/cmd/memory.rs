@@ -32,17 +32,8 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
             }
         }
         MemoryCmd::Search { query, limit } => {
-            let hits = svc.search(query, *limit, config.memory.recall_min_score.min(0.15))?;
-            if hits.is_empty() {
-                println!("{}", memory_no_matches_line());
-            } else {
-                for h in hits {
-                    println!(
-                        "{}",
-                        memory_search_line(h.score, &h.entry.id, &h.entry.text)
-                    );
-                }
-            }
+            let page = svc.search_page(query, *limit, config.memory.recall_min_score.min(0.15))?;
+            println!("{}", whycodes_tools::cards::memory_cards(query, &page));
         }
         MemoryCmd::Add { text } => {
             let text = text.join(" ");
@@ -100,42 +91,14 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
             println!("{}", memory_indexed_line(n));
         }
         MemoryCmd::SessionSearch { query, limit } => {
-            let hits =
-                svc.search_sessions(query, *limit, config.memory.session_min_score.min(0.1))?;
-            if hits.is_empty() {
-                println!("{}", memory_no_session_hits_line());
-            } else {
-                for h in hits {
-                    println!(
-                        "{}",
-                        memory_session_hit_line(h.score, &h.entry.session_id, h.entry.turn_index)
-                    );
-                    for line in h.entry.text.lines().take(4) {
-                        println!("      {}", line.dimmed());
-                    }
-                }
-            }
+            let page =
+                svc.search_sessions_page(query, *limit, config.memory.session_min_score.min(0.1))?;
+            println!("{}", whycodes_tools::cards::session_cards(query, &page));
         }
         MemoryCmd::CodeSearch { query, limit } => {
-            let hits = svc.search_code(query, *limit, config.memory.code_min_score.min(0.1))?;
-            if hits.is_empty() {
-                println!("{}", memory_no_code_hits_line());
-            } else {
-                for h in hits {
-                    println!(
-                        "{}",
-                        memory_code_hit_line(
-                            h.score,
-                            &h.entry.path,
-                            h.entry.start_line,
-                            h.entry.end_line
-                        )
-                    );
-                    for line in h.entry.text.lines().take(4) {
-                        println!("      {}", line.dimmed());
-                    }
-                }
-            }
+            let page =
+                svc.search_code_page(query, *limit, config.memory.code_min_score.min(0.1))?;
+            println!("{}", whycodes_tools::cards::code_cards(query, &page));
         }
         MemoryCmd::OnnxSmoke => {
             if !whycodes_memory::onnx::onnx_available() {
@@ -164,10 +127,6 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
 
 pub(crate) fn memory_empty_line() -> String {
     format!("{} No memories for this project.", "ℹ".cyan())
-}
-
-pub(crate) fn memory_no_matches_line() -> String {
-    format!("{} No matches.", "ℹ".cyan())
 }
 
 pub(crate) fn memory_saved_line(id: &str, text: &str) -> String {
@@ -202,20 +161,6 @@ pub(crate) fn memory_indexed_line(n: usize) -> String {
     format!("{} Indexed {n} code chunks", "✓".green())
 }
 
-pub(crate) fn memory_no_session_hits_line() -> String {
-    format!(
-        "{} No session hits yet. They appear after turns are retained.",
-        "ℹ".cyan()
-    )
-}
-
-pub(crate) fn memory_no_code_hits_line() -> String {
-    format!(
-        "{} No code hits. Run `whycodes memory index` first.",
-        "ℹ".cyan()
-    )
-}
-
 pub(crate) fn memory_list_header(count: usize, project_key: &str) -> String {
     format!("{count} memories ({project_key})")
 }
@@ -225,31 +170,6 @@ pub(crate) fn memory_row_line(id: &str, text: &str) -> String {
         "  {}  {text}",
         id.chars().take(8).collect::<String>().dimmed()
     )
-}
-
-pub(crate) fn memory_search_line(score: f32, id: &str, text: &str) -> String {
-    format!(
-        "  [{:.2}] {}  {text}",
-        score,
-        id.chars().take(8).collect::<String>().dimmed()
-    )
-}
-
-pub(crate) fn memory_session_hit_line(score: f32, session_id: &str, turn_index: i64) -> String {
-    format!(
-        "  [{:.2}] {} turn {turn_index}",
-        score,
-        &session_id[..8.min(session_id.len())]
-    )
-}
-
-pub(crate) fn memory_code_hit_line(
-    score: f32,
-    path: &str,
-    start_line: i64,
-    end_line: i64,
-) -> String {
-    format!("  [{score:.2}] {path}:{start_line}-{end_line}")
 }
 
 pub(crate) fn memory_import_summary(added: usize, skipped: usize) -> String {

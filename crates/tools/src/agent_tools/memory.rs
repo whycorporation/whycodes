@@ -147,8 +147,8 @@ impl Tool for MemoryTool {
                         };
                     }
                     map_svc(
-                        svc.search(q, limit, 0.15).map_err(memory_err_string),
-                        format_memory_hits,
+                        svc.search_page(q, limit, 0.15).map_err(memory_err_string),
+                        |page| crate::cards::memory_cards(q, &page),
                     )
                 }
                 "delete" => {
@@ -178,8 +178,9 @@ impl Tool for MemoryTool {
                         };
                     }
                     map_svc(
-                        svc.search_code(q, limit, 0.12).map_err(memory_err_string),
-                        format_code_hits,
+                        svc.search_code_page(q, limit, 0.12)
+                            .map_err(memory_err_string),
+                        |page| crate::cards::code_cards(q, &page),
                     )
                 }
                 "index" => map_svc(
@@ -240,46 +241,12 @@ fn format_memory_list(rows: Vec<whycodes_memory::MemoryRow>) -> String {
     out
 }
 
-fn format_memory_hits(hits: Vec<whycodes_memory::RecallHit>) -> String {
-    if hits.is_empty() {
-        return "No matching memories.".into();
-    }
-    let mut out = format!("{} hits:\n", hits.len());
-    for h in hits {
-        out.push_str(&format!(
-            "- [{:.2}] [{}] {}\n",
-            h.score,
-            &h.entry.id[..8.min(h.entry.id.len())],
-            h.entry.text
-        ));
-    }
-    out
-}
-
 fn format_delete(id: &str, ok: bool) -> String {
     if ok {
         format!("Deleted memory {id}")
     } else {
         format!("No memory matching '{id}'")
     }
-}
-
-fn format_code_hits(hits: Vec<whycodes_memory::CodeHit>) -> String {
-    if hits.is_empty() {
-        return "No code hits. Run memory action=index first (or `whycodes memory index`).".into();
-    }
-    let mut out = format!("{} code hits:\n", hits.len());
-    for h in hits {
-        out.push_str(&format!(
-            "- [{:.2}] {}:{}-{}\n{}\n",
-            h.score,
-            h.entry.path,
-            h.entry.start_line,
-            h.entry.end_line,
-            h.entry.text.lines().take(6).collect::<Vec<_>>().join("\n")
-        ));
-    }
-    out
 }
 
 fn memory_result(result: Result<String, String>) -> ToolResult {

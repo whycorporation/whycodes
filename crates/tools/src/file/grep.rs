@@ -172,6 +172,8 @@ impl GrepTool {
                 &mut matches,
                 max_results,
             );
+            // `shown N of N` would claim the file has no more hits.
+            truncated = matches.len() >= max_results;
         } else {
             // Fast path: enumerate from the warm workspace index (no walk).
             // Dotfile-targeting includes bypass it (index skips hidden files).
@@ -228,26 +230,7 @@ impl GrepTool {
             }
         }
 
-        if matches.is_empty() {
-            return Ok(String::new());
-        }
-
-        let mut out = matches.join("\n");
-        out.push_str(&format!(
-            "\n\n({} match{} in {} file{}; pattern `{}`)",
-            matches.len(),
-            if matches.len() == 1 { "" } else { "es" },
-            files_searched,
-            if files_searched == 1 { "" } else { "s" },
-            pattern
-        ));
-        if truncated {
-            out.push_str(&format!(
-                "\n[truncated at {} matches — narrow path/include or raise max_results]",
-                max_results
-            ));
-        }
-        Ok(out)
+        Ok(grep_card(pattern, &matches, files_searched, truncated))
     }
 
     /// Append matching lines as `path:line:content` (optionally with context).
@@ -458,14 +441,38 @@ fn grep_join_error(e: &str) -> ToolResult {
     grep_err(&format!("grep task failed: {e}"))
 }
 
+/// Header (`shown N of M`, files searched) above the unchanged
+/// `path:line tag:text` lines; a cap hit or zero hits names the next call.
+fn grep_card(pattern: &str, matches: &[String], files_searched: usize, truncated: bool) -> String {
+    let files = format!(
+        "{files_searched} file{} searched",
+        if files_searched == 1 { "" } else { "s" }
+    );
+    if matches.is_empty() {
+        return format!(
+            "No matches found. grep · pattern `{pattern}` · none in {files} \
+             (not proof it does not exist)\n\
+             next: try case_insensitive, a shorter pattern, or drop path/include"
+        );
+    }
+    let n = matches.len();
+    let shown = if truncated {
+        format!("shown {n} (cap hit; more may exist)")
+    } else {
+        format!("shown {n} of {n}")
+    };
+    let mut out = format!("grep · pattern `{pattern}` · {shown} · {files}\n");
+    out.push_str(&matches.join("\n"));
+    if truncated {
+        out.push_str("\nnext: raise max_results, narrow path/include, or `read` the path");
+    }
+    out
+}
+
 fn grep_ok(output: String) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
-        content: if output.is_empty() {
-            "No matches found.".to_string()
-        } else {
-            output
-        },
+        content: output,
         is_error: false,
     }
 }

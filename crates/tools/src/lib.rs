@@ -7,6 +7,7 @@
 
 pub mod agent_tools;
 pub(crate) mod blocking;
+pub mod cards;
 pub mod display;
 pub mod executor;
 pub mod file;

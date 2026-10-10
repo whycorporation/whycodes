@@ -525,6 +525,152 @@ impl Database {
         }
         Ok(result)
     }
+
+    // ── FTS5 candidate sets ──────────────────────────────────────────────
+
+    /// Up to `limit` facts that share a word with `query`, best BM25 first.
+    pub fn search_memories(
+        &self,
+        project_key: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::error::Result<FtsPage<MemoryRow>> {
+        self.fts_page(
+            "memories",
+            "t.id, t.project_key, t.text, t.embedding, t.source_session,
+             t.created_at, t.last_recalled_at, t.recall_count",
+            "t.created_at DESC",
+            (project_key, query, limit),
+            map_memory_row,
+        )
+    }
+
+    /// Up to `limit` code chunks that share a word with `query`.
+    pub fn search_code_chunks(
+        &self,
+        project_key: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::error::Result<FtsPage<CodeChunkRow>> {
+        self.fts_page(
+            "code_chunks",
+            "t.id, t.project_key, t.path, t.start_line, t.end_line, t.text,
+             t.embedding, t.updated_at",
+            "t.path ASC, t.start_line ASC",
+            (project_key, query, limit),
+            map_code_chunk_row,
+        )
+    }
+
+    /// Up to `limit` past session turns that share a word with `query`.
+    pub fn search_session_chunks(
+        &self,
+        project_key: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::error::Result<FtsPage<SessionChunkRow>> {
+        self.fts_page(
+            "session_chunks",
+            "t.id, t.project_key, t.session_id, t.turn_index, t.text,
+             t.embedding, t.created_at",
+            "t.created_at DESC",
+            (project_key, query, limit),
+            map_session_chunk_row,
+        )
+    }
+
+    /// `query` with no indexable word browses the bank in `browse_order`
+    /// instead of returning a silent empty page. `table`, `cols`, and
+    /// `browse_order` are internal constants; `query` is only ever bound.
+    fn fts_page<T>(
+        &self,
+        table: &str,
+        cols: &str,
+        browse_order: &str,
+        (project_key, query, limit): (&str, &str, usize),
+        map: fn(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    ) -> crate::error::Result<FtsPage<T>> {
+        let corpus: i64 = self.conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE project_key = ?1"),
+            [project_key],
+            |row| row.get(0),
+        )?;
+        let corpus = corpus as usize;
+        let Some(fts_query) = fts_match_query(query) else {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT {cols} FROM {table} t WHERE t.project_key = ?1
+                 ORDER BY {browse_order} LIMIT ?2"
+            ))?;
+            let rows = stmt.query_map((project_key, limit as i64), map)?;
+            let rows = rows.collect::<rusqlite::Result<Vec<T>>>()?;
+            return Ok(FtsPage {
+                rows,
+                matched: corpus,
+                corpus,
+            });
+        };
+        let from = format!(
+            "FROM {table} t JOIN {table}_fts ON {table}_fts.rowid = t.rowid
+             WHERE {table}_fts MATCH ?1 AND t.project_key = ?2"
+        );
+        let matched: i64 = self.conn.query_row(
+            &format!("SELECT COUNT(*) {from}"),
+            (&fts_query, project_key),
+            |row| row.get(0),
+        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {cols} {from} ORDER BY bm25({table}_fts) LIMIT ?3"
+        ))?;
+        let rows = stmt.query_map((&fts_query, project_key, limit as i64), map)?;
+        let rows = rows.collect::<rusqlite::Result<Vec<T>>>()?;
+        Ok(FtsPage {
+            rows,
+            matched: matched as usize,
+            corpus,
+        })
+    }
+
+    /// Drop the FTS indexes and their triggers so a search hits the
+    /// missing-index fallback. Test-only, like `drop_sessions_table_for_test`.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn drop_fts_for_test(&self) -> crate::error::Result<()> {
+        for table in crate::migrations::FTS_TABLES {
+            self.conn.execute_batch(&format!(
+                "DROP TRIGGER {table}_fts_ai; DROP TRIGGER {table}_fts_ad;
+                 DROP TRIGGER {table}_fts_au; DROP TABLE {table}_fts;"
+            ))?;
+        }
+        Ok(())
+    }
+}
+
+/// Lexical candidates for one project bank.
+#[derive(Debug, Clone)]
+pub struct FtsPage<T> {
+    /// At most the requested limit, best BM25 rank first.
+    pub rows: Vec<T>,
+    /// Rows in the bank that match the query (the whole bank on a browse).
+    pub matched: usize,
+    /// Rows in the bank.
+    pub corpus: usize,
+}
+
+/// FTS5 `MATCH` string for free text: every word of two or more characters,
+/// quoted and OR-ed, so punctuation and FTS operators in user text are inert.
+/// `None` when nothing indexable is left.
+pub fn fts_match_query(text: &str) -> Option<String> {
+    let mut words: Vec<String> = Vec::new();
+    for word in text.split(|c: char| !c.is_alphanumeric()) {
+        let word = word.to_lowercase();
+        if word.chars().count() >= 2 && !words.contains(&word) && words.len() < 32 {
+            words.push(word);
+        }
+    }
+    if words.is_empty() {
+        return None;
+    }
+    let quoted: Vec<String> = words.iter().map(|w| format!("\"{w}\"")).collect();
+    Some(quoted.join(" OR "))
 }
 
 fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
@@ -1070,5 +1216,97 @@ mod tests {
         let sessions = ro.list_sessions().unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "abc123456789");
+    }
+
+    #[test]
+    fn fts_match_query_quotes_words_and_drops_noise() {
+        assert_eq!(
+            fts_match_query("Bundled SQLite, bundled! a").as_deref(),
+            Some("\"bundled\" OR \"sqlite\"")
+        );
+        // FTS operators in user text are quoted, not parsed.
+        assert_eq!(
+            fts_match_query("NOT x* OR \"y").as_deref(),
+            Some("\"not\" OR \"or\"")
+        );
+        assert_eq!(fts_match_query("  ? ! a "), None);
+        let many = (0..40)
+            .map(|i| format!("w{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(fts_match_query(&many).unwrap().matches(" OR ").count(), 31);
+    }
+
+    #[test]
+    fn search_memories_ranks_matches_and_counts_without_loading_the_bank() {
+        let db = test_db();
+        db.insert_memory("m1", "p", "windows ci links bundled sqlite", b"", None)
+            .unwrap();
+        db.insert_memory("m2", "p", "sqlite sqlite sqlite wal mode", b"", None)
+            .unwrap();
+        db.insert_memory("m3", "p", "release notes live in docs", b"", None)
+            .unwrap();
+        db.insert_memory("m4", "other", "sqlite in another bank", b"", None)
+            .unwrap();
+
+        let page = db.search_memories("p", "sqlite", 1).unwrap();
+        assert_eq!((page.matched, page.corpus, page.rows.len()), (2, 3, 1));
+        assert_eq!(page.rows[0].id, "m2", "bm25 ranks the denser match first");
+
+        let none = db.search_memories("p", "kubernetes", 10).unwrap();
+        assert_eq!((none.matched, none.corpus), (0, 3));
+        assert!(none.rows.is_empty());
+
+        // No indexable word: newest-first browse over the bank.
+        let browse = db.search_memories("p", "?", 2).unwrap();
+        assert_eq!(
+            (browse.matched, browse.corpus, browse.rows.len()),
+            (3, 3, 2)
+        );
+
+        db.delete_memory("m2").unwrap();
+        assert_eq!(db.search_memories("p", "sqlite", 5).unwrap().matched, 1);
+        db.clear_memories("p").unwrap();
+        assert_eq!(db.search_memories("p", "sqlite", 5).unwrap().corpus, 0);
+    }
+
+    #[test]
+    fn search_code_and_session_chunks_use_their_fts_index() {
+        let db = test_db();
+        db.insert_code_chunk("c1", "p", "b.rs", 1, 9, "fn list_memories()", b"")
+            .unwrap();
+        db.insert_code_chunk("c2", "p", "a.rs", 3, 7, "fn other()", b"")
+            .unwrap();
+        let code = db.search_code_chunks("p", "memories", 5).unwrap();
+        assert_eq!((code.matched, code.corpus), (1, 2));
+        assert_eq!(code.rows[0].path, "b.rs");
+        let browse = db.search_code_chunks("p", "", 5).unwrap();
+        assert_eq!(browse.rows[0].path, "a.rs", "browse is path order");
+        db.clear_code_chunks("p").unwrap();
+        assert_eq!(
+            db.search_code_chunks("p", "memories", 5).unwrap().matched,
+            0
+        );
+
+        db.insert_session_chunk("s1", "p", "ses", 0, "User: retry loop", b"")
+            .unwrap();
+        db.insert_session_chunk("s2", "p", "ses", 1, "User: unrelated", b"")
+            .unwrap();
+        let sess = db.search_session_chunks("p", "retry", 5).unwrap();
+        assert_eq!((sess.matched, sess.corpus), (1, 2));
+        assert_eq!(sess.rows[0].id, "s1");
+        assert_eq!(db.search_session_chunks("p", "", 5).unwrap().rows.len(), 2);
+    }
+
+    #[test]
+    fn search_without_fts_index_is_an_error_the_caller_can_fall_back_on() {
+        let db = test_db();
+        db.insert_memory("m1", "p", "sqlite", b"", None).unwrap();
+        db.drop_fts_for_test().unwrap();
+        assert!(db.search_memories("p", "sqlite", 5).is_err());
+        // Writes still work once the triggers are gone with the index.
+        db.insert_memory("m2", "p", "sqlite again", b"", None)
+            .unwrap();
+        assert_eq!(db.search_memories("p", "", 5).unwrap().rows.len(), 2);
     }
 }
