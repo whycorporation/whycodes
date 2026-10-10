@@ -1942,6 +1942,19 @@ fn write_atomic_cleanup_when_persist_fails() {
 }
 
 #[test]
+fn fold_tmp_cleanup_keeps_error_and_appends_cleanup_failure() {
+    let io = |m: &str| std::io::Error::other(m.to_string());
+    let first = io("first");
+    let kept = crate::load::fold_tmp_cleanup(io("rename"), &first, Ok(()));
+    assert_eq!(kept.to_string(), "rename");
+    let folded = crate::load::fold_tmp_cleanup(io("rename"), &first, Err(io("busy")));
+    assert_eq!(
+        folded.to_string(),
+        "rename; tmp cleanup: busy (first attempt: first)"
+    );
+}
+
+#[test]
 fn migrate_legacy_into_skips_missing_source() {
     let dest = tempfile::tempdir().unwrap();
     let empty = tempfile::tempdir().unwrap();

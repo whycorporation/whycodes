@@ -362,6 +362,26 @@ fn convert_messages_maps_roles_blocks_and_drops_empty() {
 }
 
 #[test]
+fn assistant_text_is_replayed_verbatim_and_tool_text_is_escaped() {
+    let provider = AnthropicProvider::new();
+    let mut req = base_request();
+    let text = |role| Message {
+        role,
+        content: MessageContent::Text("a <|call|> b".into()),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    };
+    req.messages = Arc::from(vec![text(Role::Tool), text(Role::Assistant)]);
+
+    let body = provider.build_body(&req, "m");
+    let msgs = body["messages"].as_array().unwrap();
+    assert_eq!(msgs[0]["content"][0]["text"], "a < call > b");
+    assert_eq!(msgs[1]["role"], "assistant");
+    assert_eq!(msgs[1]["content"][0]["text"], "a <|call|> b");
+}
+
+#[test]
 fn thinking_without_signature_omits_the_field() {
     let provider = AnthropicProvider::new();
     let mut req = base_request();

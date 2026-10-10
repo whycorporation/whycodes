@@ -33,7 +33,7 @@ CARGO_HOME="$(strip_cr "${CARGO_HOME:-}")"
 
 IGNORE="${IGNORE:-/usr/src/|/rustc-}"
 CRATE_IGNORE="${CRATE_IGNORE:-${IGNORE}|tests\\.rs$}"
-FAIL_UNDER="${FAIL_UNDER:-82}"
+FAIL_UNDER="${FAIL_UNDER:-98.5}"
 REPORT_JSON="${REPORT_JSON:-/tmp/cov.json}"
 COVERAGE_FEATURES="${COVERAGE_FEATURES:-}"
 

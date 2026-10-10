@@ -69,11 +69,11 @@ Things to know about CI:
 - The budget scripts are **ratchets**: counts may only go down. If your
   change legitimately needs a new panic site or swallowed error, the budget
   file change is reviewed as part of the PR.
-- Coverage is enforced with `cargo llvm-cov`: the workspace fails below 82%
+- Coverage is enforced with `cargo llvm-cov`: the workspace fails below 98.5%
   line coverage, and the crates in `scripts/check_coverage_floors.py`
   `FULL_COVER_CRATES` are locked at 100% production lines (`tests.rs`
-  ignored, `--skip-expansions`), including `whycodes-tools`. `whycodes-tui` and
-  `whycodes-cli` have no floor yet. The 100% workspace raise is #82. Locally:
+  ignored, `--skip-expansions`; every line, not a rounded 100.0%).
+  `whycodes-tui` (96.5%) and `whycodes-cli` (95.5%) have ratchet floors. Locally:
   `scripts/coverage.sh` (needs `cargo-llvm-cov` + `llvm-tools-preview`, or
   `LLVM_COV` / `LLVM_PROFDATA` on a distro toolchain). Agents must have that
   wrapper green locally before pushing coverage-related changes

@@ -68,17 +68,24 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
         Ok(()) => Ok(()),
         Err(first) => match persist() {
             Ok(()) => Ok(()),
-            Err(e) => {
-                if let Err(cleanup) = std::fs::remove_file(&tmp) {
-                    tracing::debug!(
-                        error = %cleanup,
-                        first = %first,
-                        "config tmp cleanup failed"
-                    );
-                }
-                Err(e.into())
-            }
+            Err(e) => Err(fold_tmp_cleanup(e, &first, std::fs::remove_file(&tmp)).into()),
         },
+    }
+}
+
+/// Fold a failed temp cleanup into the persist error so the caller still sees
+/// one `Err`. Kept out of `write_atomic`: a temp that cannot be removed right
+/// after it was written is not reproducible in tests.
+pub(crate) fn fold_tmp_cleanup(
+    err: std::io::Error,
+    first: &std::io::Error,
+    cleanup: std::io::Result<()>,
+) -> std::io::Error {
+    match cleanup {
+        Ok(()) => err,
+        Err(cleanup) => std::io::Error::other(format!(
+            "{err}; tmp cleanup: {cleanup} (first attempt: {first})"
+        )),
     }
 }
 

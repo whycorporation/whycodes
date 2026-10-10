@@ -57,12 +57,24 @@ FULL_COVER_CRATES = [
 # Workspace floor. rustup llvm-cov `show` inflates totals with serde /
 # format! expansions (~81.4%). JSON `export -skip-expansions` is the
 # same measurement as the 100% crate floors.
-WORKSPACE_FLOOR = float(os.environ.get("FAIL_UNDER", "82"))
+WORKSPACE_FLOOR = float(os.environ.get("FAIL_UNDER", "98.5"))
 
-# Floors as (crate, min_percent). `whycodes-tui` and `whycodes-cli` stay
-# off this list until a Linux skip-expansions run prints covered == total
-# for them. Issue #82.
-FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES]
+# Floors as (crate, min_percent). `whycodes-tui` and `whycodes-cli` are
+# ratchets at their measured level (2026-10-10: tui 96.7%, cli 95.6%), not
+# 100%: the rest is live TTY / OAuth / download paths. Raise, never lower.
+FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
+    ("whycodes-tui", 96.5),
+    ("whycodes-cli", 95.5),
+]
+
+
+def meets_floor(covered: int, total: int, floor: float) -> bool:
+    """A 100% floor means every line: 2406/2407 rounds to 100.0 but fails."""
+    if floor >= 100.0:
+        return covered >= total
+    pct = (covered / total * 100.0) if total else 0.0
+    # Compare at the same 1-decimal rounding we print.
+    return round(pct, 1) + 1e-9 >= floor
 
 # Extra crates whose uncovered files print even when they meet the floor.
 # Empty once a crate is on FULL_COVER_CRATES: a miss already fails the run.
@@ -260,18 +272,17 @@ def main() -> int:
             continue
         covered, total = pair
         pct = (covered / total * 100.0) if total else 0.0
-        # Compare at the same 1-decimal rounding we print.
         shown = round(pct, 1)
-        status = "OK" if shown + 1e-9 >= floor else "FAIL"
+        passed = meets_floor(covered, total, floor)
+        status = "OK" if passed else "FAIL"
         print(f"{status} {crate}: {covered}/{total} lines {shown:.1f}% floor {floor:g}%")
-        if shown + 1e-9 < floor:
+        if not passed:
             ok = False
-            print(f"  -> below floor by {floor - shown:.1f}pp", file=sys.stderr)
-        if shown + 1e-9 < floor or crate in GAP_REPORT:
+            print(f"  -> {total - covered} missed lines under the {floor:g}% floor", file=sys.stderr)
+        if not passed or crate in GAP_REPORT or floor < 100.0:
             print_gaps(crate)
 
-    # Unfloored crates (#82: tui, cli) need a percent in the log. Names
-    # alone hid the gap between the 82% workspace gate and a 100% close.
+    # Crates with no floor still print a percent and miss list.
     extra = sorted(set(agg.keys()) - {c for c, _ in FLOORS})
     for crate in extra:
         covered, total = agg[crate]
@@ -359,6 +370,10 @@ def _self_check() -> None:
     assert uncovered_files("whycodes-cli") == [("cli/src/main.rs", 40, 100)]
     assert "whycodes-tools" not in GAP_REPORT
     assert "whycodes-tools" in FULL_COVER_CRATES
+    assert not meets_floor(2406, 2407, 100.0)
+    assert meets_floor(2407, 2407, 100.0)
+    assert meets_floor(22841, 23617, 96.5)
+    assert not meets_floor(22000, 23617, 96.5)
 
 
 if __name__ == "__main__":

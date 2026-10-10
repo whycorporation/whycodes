@@ -155,8 +155,8 @@ whycodes -P openai -m gpt-4o generate "Refactor this module"
 TUI 仅在有变化时绘制。本次 Windows 3 秒 harness 空闲为 **0.0 次重绘/秒**
 （Linux 2026-09-02 为 0.3/s）；产品目标仍是 **0 次重绘/秒**，而不是帧率竞赛。
 
-工作区行覆盖率为 **85.58%**（Linux x86_64，2026-08-21）。CI 在低于 82%
-时失败，十二个基础 crate 的生产代码行覆盖率保持 100% —— 见
+工作区行覆盖率为 **98.7%**（Linux x86_64，2026-10-10）。CI 在低于 98.5%
+时失败，二十四个 crate 的生产代码行覆盖率保持 100% —— 见
 [docs/coverage.md](docs/coverage.md)。
 
 ## 文档

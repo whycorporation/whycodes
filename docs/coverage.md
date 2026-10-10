@@ -38,7 +38,7 @@ installed (`pkg-config sqlite3`).
   sibling broken-toml catalog test) skip TUI tests that pin `WHYCODES_HOME`.
   `cargo test --workspace` and `cargo llvm-cov --workspace` are one process;
   other crates overwrite that env. Both CI jobs skip them.
-- The workspace 82% floor is checked on the JSON export (`-skip-expansions`),
+- The workspace 98.5% floor is checked on the JSON export (`-skip-expansions`),
   not on `llvm-cov show` (`--fail-under-lines`). `show` counts serde /
   `format!` expansions and dropped the 0.6.2 patch to 81.4%.
 - Crate floors at 100% also ignore `tests.rs` so host-only branches cannot
@@ -69,32 +69,32 @@ Do **not** loop `cargo llvm-cov -p <crate>` for each floor — that
 re-instruments the workspace (~12×). The Python script reads one JSON
 report.
 
-The 100% workspace raise is tracked as [#82](https://github.com/whycorporation/whycodes/issues/82)
-(successor of closed #57). This file’s floors stay at the current CI values
-until that work lands. Do not raise `FAIL_UNDER` to 100, and do not add
-`whycodes-tui` / `whycodes-cli` to `FULL_COVER_CRATES`, until a Linux
-skip-expansions run prints `OK` at 100% for those crates.
+[#82](https://github.com/whycorporation/whycodes/issues/82) closed with
+ratchets instead of a 100% workspace gate: `tui` and `cli` keep live TTY,
+OAuth, and download paths that CI cannot drive without a real terminal or
+network. Move `whycodes-tui` / `whycodes-cli` to `FULL_COVER_CRATES` only
+after a Linux skip-expansions run prints `covered == total` for them.
 
 ## Floors
 
 | Gate | Floor | What it covers |
 |---|---|---|
-| Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
-| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, `slop`, `tools` | **100%** lines | Production files only (`tests.rs` ignored) |
+| Workspace | **98.5%** lines | Every crate (`tests.rs` ignored) |
+| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, `slop`, `tools` | **100%** lines, exact | Production files only (`tests.rs` ignored). `covered == total`; one missed line fails even though it rounds to 100.0% |
+| `tui` | **96.5%** lines | Production files only |
+| `cli` | **95.5%** lines | Production files only |
 
-The workspace number is a ratchet: CI fails below the floor. When a run lands
-comfortably above it, raise `--fail-under-lines` in
-`scripts/coverage.sh` (`FAIL_UNDER` default) — CI calls that wrapper.
+Every floor is a ratchet: CI fails below it. When a run lands comfortably
+above a floor, raise it — `FAIL_UNDER` default in `scripts/coverage.sh` and
+`check_coverage_floors.py` for the workspace, `FLOORS` for `tui` / `cli`.
 
 ## Last measurement
 
-Linux x86_64, 2026-10-02, CI Coverage job on PR #147
-([run 36978047637](https://github.com/whycorporation/whycodes/actions/runs/36978047637)).
-Workspace **98.5%** (`78968/80176`). Every `FULL_COVER_CRATES` entry printed
-`OK` at 100%. A later Linux `-skip-expansions` run of `whycodes-tools` alone
-printed **100%** (`8716/8716`); that crate is now on `FULL_COVER_CRATES`.
-`tui` is **96.4%** (`22626/23478`) and `cli` is **93.7%** (`5144/5491`);
-neither has a floor. The checker prints their uncovered files on every run.
+Linux x86_64, 2026-10-10, CI Coverage job on PR #154
+([run 38063003726](https://github.com/whycorporation/whycodes/actions/runs/38063003726)).
+Workspace **98.7%** (`79460/80486`). `tui` is **96.7%** (`22841/23617`) and
+`cli` is **95.6%** (`5344/5592`). The checker prints their uncovered files on
+every run.
 
 `core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
 (#48). Production modules also have local `#[cfg(test)]` next to the code (`error`,
@@ -102,7 +102,7 @@ neither has a floor. The checker prints their uncovered files on every run.
 `swarm_hub`, `logging`, `tokens`) so a new branch is reviewable without opening the
 sibling file (#60). `config` mirrors that in `load` / `merge` / `types` / `validate`.
 Swallow-budget numbers live in `scripts/swallowed_error_budget.json`, not in these
-line floors. Workspace floor stays ≥82%. `tools` is now 100%.
+line floors.
 
 Line coverage is the number CI gates on. Function and region rates are
 informational.
@@ -113,8 +113,8 @@ informational.
 |---|---|
 | function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, index | **100%** |
 | session, memory, llm, auth, agent, lsp, mcp, sdk, server, format, import, slop, tools | **100%** (`tools` `8716/8716`) |
-| tui | no floor (**96.4%**, `22626/23478`) |
-| cli | no floor (**93.7%**, `5144/5491`) |
+| tui | floor 96.5% (**96.7%**, `22841/23617`) |
+| cli | floor 95.5% (**95.6%**, `5344/5592`) |
 
 When re-measuring, update this breakdown and the dated workspace total here,
 then copy only the workspace percent into any README claim if it is mentioned.
