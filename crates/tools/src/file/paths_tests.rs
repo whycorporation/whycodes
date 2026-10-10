@@ -342,7 +342,6 @@ fn assert_score_table() {
     assert_eq!(similar_score("abzzzz", "abyy"), Some(8));
     assert!(similar_score("a", "z").is_none());
     assert!(list_dir_error(Path::new("dir"), "denied").contains("Failed to list"));
-    assert!(index_cold().is_none());
     assert!(!visit_halt());
     assert!(glob_pattern_invalid("[", "["));
     assert!(missing_name_none().is_empty());

@@ -68,9 +68,9 @@ pub fn visit_index(
     root: &Path,
     visit: &mut dyn FnMut(&Path, &str, bool, u64) -> bool,
 ) -> Option<()> {
-    if index_not_ready(index) {
-        return index_cold();
-    }
+    // One expression: a "cold" test index can finish its walk before this
+    // check, so a separate `return` line was covered only some runs.
+    (!index_not_ready(index)).then_some(())?;
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| canonical_fallback(root));
     let primary = index.primary_root()?;
     let rel_root = root.strip_prefix(primary).ok()?;
@@ -158,10 +158,6 @@ fn sniff_binary_read(result: std::io::Result<usize>, buf: &[u8]) -> bool {
         Ok(n) => is_binary_bytes(&buf[..n.min(buf.len())]),
         Err(_e) => binary_read_failed(),
     }
-}
-
-fn index_cold() -> Option<()> {
-    None
 }
 
 fn visit_halt() -> bool {

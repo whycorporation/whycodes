@@ -592,11 +592,10 @@ impl Database {
         (project_key, query, limit): (&str, &str, usize),
         map: fn(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
     ) -> crate::error::Result<FtsPage<T>> {
-        let corpus: i64 = self.conn.query_row(
-            &format!("SELECT COUNT(*) FROM {table} WHERE project_key = ?1"),
-            [project_key],
-            |row| row.get(0),
-        )?;
+        let count = format!("SELECT COUNT(*) FROM {table} WHERE project_key = ?1");
+        let corpus: i64 = self
+            .conn
+            .query_row(&count, [project_key], |row| row.get(0))?;
         let corpus = corpus as usize;
         let browse = |n: usize| self.browse(table, cols, browse_order, project_key, n, map);
         let Some(fts_query) = fts_match_query(query) else {
