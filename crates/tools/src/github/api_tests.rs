@@ -455,7 +455,7 @@ fn git_credential_fill_parses_password_from_helper() {
         let mut cmd = Command::new("sh");
         cmd.args([
             "-c",
-            "while IFS= read -r line; do [ -z \"$line\" ] && break; done; printf 'password=from-helper\\n'",
+            "printf 'password=from-helper\\n'; while IFS= read -r line; do [ -z \"$line\" ] && break; done",
         ]);
         cmd
     };

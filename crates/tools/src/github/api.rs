@@ -383,6 +383,8 @@ fn git_credential_command() -> Command {
 fn git_credential_token_from_command(mut cmd: Command) -> Option<String> {
     let host = github_host();
     let mut child = spawn_git_credential(cmd.spawn())?;
+    // `?` only bails on a real stdin error. BrokenPipe still continues so
+    // stdout from a helper that already exited can be parsed.
     write_or_skip_git_credential_stdin(&mut child, &host)?;
     let text = wait_child_stdout(child, GIT_CREDENTIAL_TIMEOUT, "git credential fill")?;
     parse_git_credential_fill(&text)
@@ -431,11 +433,10 @@ fn wait_poll_from(
 ) -> WaitPoll {
     match result {
         Ok(Some(status)) => {
-            if !status.success() {
-                WaitPoll::Done(None)
-            } else {
-                WaitPoll::Done(read_child_stdout_mut(child, what))
-            }
+            // A credential helper can exit non-zero after printing `password=`.
+            // Still read stdout; an empty or missing password line stays None.
+            let _ = status;
+            WaitPoll::Done(read_child_stdout_mut(child, what))
         }
         Ok(None) => {
             if start.elapsed() >= timeout {
@@ -469,12 +470,9 @@ fn credential_stdin_written(child: &mut Child, result: std::io::Result<()>) -> O
     match result {
         Ok(()) => Some(()),
         // A helper that prints and exits without reading stdin (or races
-        // the write) still has stdout we can parse.
+        // the write) still has stdout we can parse. Do not kill it.
         Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Some(()),
-        Err(err) => {
-            git_credential_stdin_failed(child, err);
-            None
-        }
+        Err(err) => git_credential_stdin_failed(child, err),
     }
 }
 
@@ -487,7 +485,7 @@ fn git_credential_spawn_failed(err: std::io::Error) -> Option<String> {
     None
 }
 
-fn git_credential_stdin_failed(child: &mut Child, err: std::io::Error) -> Option<String> {
+fn git_credential_stdin_failed(child: &mut Child, err: std::io::Error) -> Option<()> {
     tracing::debug!(error = %err, "git credential fill: write stdin");
     kill_child_debug(child.kill(), "git credential fill: kill after stdin error");
     None
