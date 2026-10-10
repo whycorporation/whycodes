@@ -171,7 +171,11 @@ fn inject_test_llm(agent: &mut Agent, provider: &str) {
         let step = if text == "FAIL" {
             whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())
         } else if text == "HANG" {
-            whycodes_llm::ScriptedStep::Hang(std::time::Duration::from_secs(30))
+            // Headless tests wait for the in-flight turn before quitting, and
+            // they hold ENV_LOCK, so this runs once per busy test, in series
+            // (30 s each made the tui suite ~4 min). 3 s still outlasts the
+            // queued keys and CANCEL_FORCE_AFTER (1.2 s).
+            whycodes_llm::ScriptedStep::Hang(std::time::Duration::from_secs(3))
         } else {
             whycodes_llm::ScriptedStep::Text(text)
         };
