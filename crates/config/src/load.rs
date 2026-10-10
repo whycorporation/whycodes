@@ -215,9 +215,14 @@ impl Config {
         whycodes_core::paths::config_file()
     }
 
-    /// Get data directory for sessions, caches, etc.
-    pub fn data_dir() -> Result<PathBuf> {
-        Ok(whycodes_core::paths::data_dir())
+    /// Directory for sessions, caches, and the token store.
+    ///
+    /// Same shape as [`Self::default_path`]: `paths::data_dir()` always
+    /// resolves (home, or `.` when home is unset), so this is not a
+    /// `Result`. A `Result` left an uncovered `Ok` line here and dead
+    /// `Err` arms at every caller, which failed the 100% config line floor.
+    pub fn data_dir() -> PathBuf {
+        whycodes_core::paths::data_dir()
     }
 
     // ── Layered config loading ──────────────────────────────────────────

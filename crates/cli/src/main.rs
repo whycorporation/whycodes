@@ -476,7 +476,7 @@ pub(crate) fn ignore_sigpipe() {}
 
 /// Resolve data dir + env/config filters and install the process logger.
 fn init_logging(cli: &Cli) {
-    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let data_dir = Config::data_dir();
     let log_file = std::env::var_os("WHYCODES_LOG_FILE").map(PathBuf::from);
     // Prefer env so we skip a full TOML/config walk on the common path.
     // When WHYCODES_BENCH is set the first-frame clock is running; avoid any

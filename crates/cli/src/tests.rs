@@ -2541,7 +2541,7 @@ async fn cmd_auth_unknown_provider_and_status() {
     .await;
     assert!(err.is_err(), "{err:?}");
     cmd_auth(&AuthCmd::Status).await.unwrap();
-    cmd_auth_import(&Config::data_dir().unwrap()).await.unwrap();
+    cmd_auth_import(&Config::data_dir()).await.unwrap();
 }
 
 #[tokio::test]
@@ -3316,14 +3316,14 @@ async fn cmd_auth_import_approves_claude_code_from_home() {
     )
     .unwrap();
     install_test_repl_lines(["y"]);
-    cmd_auth_import(&Config::data_dir().unwrap()).await.unwrap();
+    cmd_auth_import(&Config::data_dir()).await.unwrap();
     clear_test_repl_lines();
     // Denied path
     let gemini = home.path().join(".gemini");
     std::fs::create_dir_all(&gemini).unwrap();
     std::fs::write(gemini.join("oauth_creds.json"), r#"{"token":"x"}"#).unwrap();
     install_test_repl_lines(["n"]);
-    cmd_auth_import(&Config::data_dir().unwrap()).await.unwrap();
+    cmd_auth_import(&Config::data_dir()).await.unwrap();
     clear_test_repl_lines();
 }
 
@@ -3366,20 +3366,27 @@ async fn cmd_run_tui_path_hits_whycodes_tui_run() {
     }
 }
 
-#[tokio::test]
-async fn cmd_upgrade_downloads_and_replaces_target() {
-    let home = IsolatedHome::new();
-    let target = home.path().join("whycodes-bin");
-    std::fs::write(&target, b"old-binary").unwrap();
-
-    let tar_bytes = {
+/// Archive bytes for this host: zip + `whycodes.exe` on Windows, tar.gz +
+/// `whycodes` everywhere else. `upgrade::extract` picks the format from the
+/// published archive name, so a Linux tarball fails the Windows path.
+fn host_upgrade_archive(payload: &[u8]) -> Vec<u8> {
+    if cfg!(windows) {
+        let mut buf = Vec::new();
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        zip.start_file("whycodes.exe", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        use std::io::Write;
+        zip.write_all(payload).unwrap();
+        zip.finish().unwrap();
+        buf
+    } else {
         let mut raw = Vec::new();
         {
             let mut b = tar::Builder::new(&mut raw);
             let mut h = tar::Header::new_gnu();
-            h.set_size(3);
+            h.set_size(payload.len() as u64);
             h.set_cksum();
-            b.append_data(&mut h, "whycodes", &b"new"[..]).unwrap();
+            b.append_data(&mut h, "whycodes", payload).unwrap();
             b.finish().unwrap();
         }
         let mut gz = Vec::new();
@@ -3388,7 +3395,16 @@ async fn cmd_upgrade_downloads_and_replaces_target() {
         enc.write_all(&raw).unwrap();
         enc.finish().unwrap();
         gz
-    };
+    }
+}
+
+#[tokio::test]
+async fn cmd_upgrade_downloads_and_replaces_target() {
+    let home = IsolatedHome::new();
+    let target = home.path().join("whycodes-bin");
+    std::fs::write(&target, b"old-binary").unwrap();
+
+    let tar_bytes = host_upgrade_archive(b"new");
     let digest = crate::upgrade::digest_of(&tar_bytes);
     let archive_name = crate::upgrade::target_archive().unwrap();
 
@@ -5359,25 +5375,7 @@ async fn upgrade_run_uses_asset_id_when_no_browser_url() {
     let home = IsolatedHome::new();
     let target = home.path().join("whycodes-bin");
     std::fs::write(&target, b"old").unwrap();
-    let tar_bytes = {
-        let mut raw = Vec::new();
-        {
-            let mut b = tar::Builder::new(&mut raw);
-            let mut h = tar::Header::new_gnu();
-            h.set_size(3);
-            h.set_cksum();
-            b.append_data(&mut h, "whycodes", &b"new"[..]).unwrap();
-            b.finish().unwrap();
-        }
-        let mut gz = Vec::new();
-        {
-            let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
-            use std::io::Write;
-            enc.write_all(&raw).unwrap();
-            enc.finish().unwrap();
-        }
-        gz
-    };
+    let tar_bytes = host_upgrade_archive(b"new");
     let digest = crate::upgrade::digest_of(&tar_bytes);
     let archive_name = crate::upgrade::target_archive().unwrap().to_string();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -5660,7 +5658,7 @@ async fn cmd_connect_bails_without_tui_after_health() {
 #[tokio::test]
 async fn cmd_auth_import_symlink_approved_and_bad_json() {
     let home = IsolatedHome::new();
-    let data = Config::data_dir().unwrap();
+    let data = Config::data_dir();
     let real = home.path().join("real-creds.json");
     std::fs::write(
         &real,
@@ -5756,7 +5754,7 @@ fn agent_info_for_unknown_name_falls_back() {
 async fn get_api_key_from_oauth_store() {
     let _home = IsolatedHome::new();
     unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
-    let data = Config::data_dir().unwrap();
+    let data = Config::data_dir();
     let store = whycodes_auth::TokenStore::new(&data);
     store
         .set(
@@ -5998,23 +5996,7 @@ async fn after_tui_exit_upgrade_installs_when_newer() {
     let home = IsolatedHome::new();
     let target = home.path().join("whycodes-bin");
     std::fs::write(&target, b"old-binary").unwrap();
-    let tar_bytes = {
-        let mut raw = Vec::new();
-        {
-            let mut b = tar::Builder::new(&mut raw);
-            let mut h = tar::Header::new_gnu();
-            h.set_size(3);
-            h.set_cksum();
-            b.append_data(&mut h, "whycodes", &b"new"[..]).unwrap();
-            b.finish().unwrap();
-        }
-        let mut gz = Vec::new();
-        let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
-        use std::io::Write;
-        enc.write_all(&raw).unwrap();
-        enc.finish().unwrap();
-        gz
-    };
+    let tar_bytes = host_upgrade_archive(b"new");
     let digest = crate::upgrade::digest_of(&tar_bytes);
     let archive_name = crate::upgrade::target_archive().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -6082,25 +6064,7 @@ async fn upgrade_run_uses_asset_url_env() {
     let home = IsolatedHome::new();
     let target = home.path().join("whycodes-bin");
     std::fs::write(&target, b"old").unwrap();
-    let tar_bytes = {
-        let mut raw = Vec::new();
-        {
-            let mut b = tar::Builder::new(&mut raw);
-            let mut h = tar::Header::new_gnu();
-            h.set_size(3);
-            h.set_cksum();
-            b.append_data(&mut h, "whycodes", &b"new"[..]).unwrap();
-            b.finish().unwrap();
-        }
-        let mut gz = Vec::new();
-        {
-            let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
-            use std::io::Write;
-            enc.write_all(&raw).unwrap();
-            enc.finish().unwrap();
-        }
-        gz
-    };
+    let tar_bytes = host_upgrade_archive(b"new");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let latest_url = format!("http://{addr}/latest");
@@ -6384,23 +6348,7 @@ async fn cmd_upgrade_success_installs() {
     let home = IsolatedHome::new();
     let target = home.path().join("whycodes-bin");
     std::fs::write(&target, b"old-binary").unwrap();
-    let tar_bytes = {
-        let mut raw = Vec::new();
-        {
-            let mut b = tar::Builder::new(&mut raw);
-            let mut h = tar::Header::new_gnu();
-            h.set_size(3);
-            h.set_cksum();
-            b.append_data(&mut h, "whycodes", &b"new"[..]).unwrap();
-            b.finish().unwrap();
-        }
-        let mut gz = Vec::new();
-        let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
-        use std::io::Write;
-        enc.write_all(&raw).unwrap();
-        enc.finish().unwrap();
-        gz
-    };
+    let tar_bytes = host_upgrade_archive(b"new");
     let digest = crate::upgrade::digest_of(&tar_bytes);
     let archive_name = crate::upgrade::target_archive().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -6484,7 +6432,7 @@ async fn cmd_run_share_export_error_when_project_is_file() {
 #[tokio::test]
 async fn cmd_run_resume_error_path_when_db_is_dir() {
     let home = IsolatedHome::new();
-    let db_path = Config::data_dir().unwrap().join("whycodes.db");
+    let db_path = Config::data_dir().join("whycodes.db");
     std::fs::create_dir_all(&db_path).unwrap();
     install_test_repl_lines(["/q"]);
     let mut c = cli(None);
@@ -6518,7 +6466,7 @@ async fn cmd_debug_oauth_store_error_when_auth_json_is_dir() {
 #[tokio::test]
 async fn cmd_stats_open_db_error_when_db_is_dir() {
     let _home = IsolatedHome::new();
-    let db_path = Config::data_dir().unwrap().join("whycodes.db");
+    let db_path = Config::data_dir().join("whycodes.db");
     std::fs::create_dir_all(&db_path).unwrap();
     cmd_stats().await.unwrap();
 }

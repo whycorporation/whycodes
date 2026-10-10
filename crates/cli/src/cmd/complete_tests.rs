@@ -141,7 +141,7 @@ provider_id = "custom"
     assert!(load_config_readonly().providers.is_empty());
     std::fs::remove_dir(&path).unwrap();
 
-    let data = whycodes_config::Config::data_dir().unwrap();
+    let data = whycodes_config::Config::data_dir();
     let db_path = data.join("whycodes.db");
     let db = whycodes_storage::db::Database::open(&db_path.to_string_lossy()).unwrap();
     db.create_session("short", "s", ".").unwrap();
@@ -203,7 +203,7 @@ fn completion_covers_bad_toml_duplicate_auth_and_broken_sessions() {
     assert!(load_config_readonly().providers.is_empty());
     std::fs::remove_file(&path).unwrap();
 
-    let data = whycodes_config::Config::data_dir().unwrap();
+    let data = whycodes_config::Config::data_dir();
     let plug = data.join("plugins").join("dup-auth");
     std::fs::create_dir_all(&plug).unwrap();
     std::fs::write(plug.join("plugin.json"), AUTH_PLUGIN).unwrap();
@@ -223,9 +223,6 @@ fn completion_covers_bad_toml_duplicate_auth_and_broken_sessions() {
     db.drop_sessions_table_for_test().unwrap();
     drop(db);
     assert!(session_id_prefixes().is_empty());
-    assert!(
-        session_prefixes_in(Err(whycodes_core::Error::Config("no data dir".into()))).is_empty()
-    );
 }
 
 /// A config file with mode `000` cannot be read, so completion falls back to
@@ -254,7 +251,7 @@ name = "hidden"
         "unreadable config must not load providers"
     );
 
-    let data = whycodes_config::Config::data_dir().unwrap();
+    let data = whycodes_config::Config::data_dir();
     let db_path = data.join("whycodes.db");
     let db = whycodes_storage::db::Database::open(&db_path.to_string_lossy()).unwrap();
     drop(db);

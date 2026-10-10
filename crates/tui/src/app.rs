@@ -1768,16 +1768,15 @@ pub fn catalog_models(config: &whycodes_config::Config) -> Vec<(String, String)>
         .values()
         .flat_map(|p| p.models.iter().map(move |m| (p.name.clone(), m.clone())))
         .collect();
-    if let Ok(dir) = whycodes_config::Config::data_dir() {
-        let store = whycodes_auth::TokenStore::new(&dir);
-        for name in whycodes_auth::oauth_providers() {
-            if store.get(&name).ok().flatten().is_some() {
-                out.extend(
-                    whycodes_auth::providers::suggested_models(&name)
-                        .into_iter()
-                        .map(|m| (name.clone(), m)),
-                );
-            }
+    let dir = whycodes_config::Config::data_dir();
+    let store = whycodes_auth::TokenStore::new(&dir);
+    for name in whycodes_auth::oauth_providers() {
+        if store.get(&name).ok().flatten().is_some() {
+            out.extend(
+                whycodes_auth::providers::suggested_models(&name)
+                    .into_iter()
+                    .map(|m| (name.clone(), m)),
+            );
         }
     }
     out.sort();

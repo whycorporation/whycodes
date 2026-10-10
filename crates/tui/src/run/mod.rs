@@ -3899,10 +3899,8 @@ async fn apply_pending_picker_choices(
     if let Some(mode) = app.pending_approval_mode.take() {
         apply_approval_mode(app, &mut rt.agent, config, mode);
     }
-    if let Some(p) = app.pending_login_provider.take()
-        && let Ok(dir) = Config::data_dir()
-    {
-        spawn_oauth_login(app, auth_tx, dir, &p);
+    if let Some(p) = app.pending_login_provider.take() {
+        spawn_oauth_login(app, auth_tx, Config::data_dir(), &p);
     }
     if app.pending_catalog_refresh {
         app.pending_catalog_refresh = false;
@@ -4085,9 +4083,8 @@ async fn apply_auth_flow_event(
                         None,
                     );
                 }
-                if let Ok(dir) = Config::data_dir()
-                    && let Some(tok) = whycodes_auth::providers::access_token(&p, &dir).await
-                {
+                let dir = Config::data_dir();
+                if let Some(tok) = whycodes_auth::providers::access_token(&p, &dir).await {
                     whycodes_llm::oauth_refresh::register(&p, dir);
                     *api_key = tok;
                 }
@@ -4188,9 +4185,7 @@ async fn fill_oauth_credential(api_key: &mut String, provider: &str) {
     if !api_key.is_empty() || !whycodes_auth::providers::supports_oauth(provider) {
         return;
     }
-    let Ok(dir) = Config::data_dir() else {
-        return;
-    };
+    let dir = Config::data_dir();
     if let Some(tok) = whycodes_auth::providers::access_token(provider, &dir).await {
         whycodes_llm::oauth_refresh::register(provider, dir);
         *api_key = tok;
@@ -5332,9 +5327,10 @@ async fn hydrate_after_first_frame(
 }
 
 fn hydrate_auth_plugins(project_dir: &std::path::Path) -> usize {
-    let mut dirs = Vec::new();
-    dirs.push(whycodes_core::paths::config_dir().join("plugins"));
-    dirs.push(whycodes_core::project_dir(project_dir).join("plugins"));
+    let dirs = vec![
+        whycodes_core::paths::config_dir().join("plugins"),
+        whycodes_core::project_dir(project_dir).join("plugins"),
+    ];
     let loaded = whycodes_auth::plugin::load_from_dirs(&dirs);
     if loaded > 0 {
         tracing::debug!(count = loaded, "hydrated auth plugins after first frame");

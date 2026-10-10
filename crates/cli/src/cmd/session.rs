@@ -150,7 +150,7 @@ pub(crate) async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
                         }).collect::<Vec<_>>(),
                     });
 
-                    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+                    let data_dir = Config::data_dir();
                     let shares_dir = data_dir.join("shares");
                     std::fs::create_dir_all(&shares_dir)?;
                     let share_path = shares_dir.join(format!("{}.json", id));
@@ -251,7 +251,7 @@ pub(crate) async fn cmd_stats() -> anyhow::Result<()> {
     }
 
     if totals.session_count > 0 {
-        let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let data_dir = Config::data_dir();
         let db_path = data_dir.join("whycodes.db");
         if let Ok(meta) = std::fs::metadata(&db_path) {
             println!();

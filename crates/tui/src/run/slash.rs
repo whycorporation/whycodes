@@ -406,8 +406,13 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 );
                 // OAuth-supported provider: offer the login flow right here
                 // instead of only printing help (plan-oauth `/connect`).
-                if oauth_supported && let Ok(dir) = Config::data_dir() {
-                    spawn_oauth_login(ctx.app, &ctx.auth_tx, dir, ctx.provider.as_str());
+                if oauth_supported {
+                    spawn_oauth_login(
+                        ctx.app,
+                        &ctx.auth_tx,
+                        Config::data_dir(),
+                        ctx.provider.as_str(),
+                    );
                 } else {
                     ctx.app.toasts.push(
                         crate::toast::ToastKind::Warning,
@@ -432,26 +437,23 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 // No argument: open the provider picker, one row per OAuth
                 // provider, annotated with the stored-credential status.
                 let mut rows = Vec::new();
-                if let Ok(dir) = Config::data_dir() {
-                    let store = whycodes_auth::TokenStore::new(&dir);
-                    for name in whycodes_auth::oauth_providers() {
-                        let label = whycodes_auth::providers::spec_for(&name)
-                            .map(|s| s.label)
-                            .unwrap_or_else(|_| name.clone());
-                        let connected = store.get(&name).ok().flatten().is_some();
-                        rows.push(crate::app::LoginProviderRow {
-                            provider: name.clone(),
-                            label: label.to_string(),
-                            connected,
-                        });
-                    }
+                let dir = Config::data_dir();
+                let store = whycodes_auth::TokenStore::new(&dir);
+                for name in whycodes_auth::oauth_providers() {
+                    let label = whycodes_auth::providers::spec_for(&name)
+                        .map(|s| s.label)
+                        .unwrap_or_else(|_| name.clone());
+                    let connected = store.get(&name).ok().flatten().is_some();
+                    rows.push(crate::app::LoginProviderRow {
+                        provider: name.clone(),
+                        label: label.to_string(),
+                        connected,
+                    });
                 }
                 ctx.app.login_dialog = crate::app::LoginDialogState { selected: 0, rows };
                 crate::input::open_dialog(ctx.app, DialogKind::Login);
             } else if whycodes_auth::providers::supports_oauth(arg) {
-                if let Ok(dir) = Config::data_dir() {
-                    spawn_oauth_login(ctx.app, &ctx.auth_tx, dir, arg);
-                }
+                spawn_oauth_login(ctx.app, &ctx.auth_tx, Config::data_dir(), arg);
             } else {
                 ctx.app.status_message = format!(
                     "OAuth login not available for `{arg}` ({})",

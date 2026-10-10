@@ -13,7 +13,7 @@ use whycodes_import::{
 
 pub(crate) async fn cmd_import(cmd: &ImportArgs) -> anyhow::Result<()> {
     // `Config::data_dir` is `Ok(paths::data_dir())` — the `Result` never fails.
-    let data_dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let data_dir = Config::data_dir();
     let consent = ConsentStore::new(&data_dir);
     let home = discover::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     run_import(
@@ -63,7 +63,7 @@ pub(crate) fn maybe_first_run_import(interactive: bool) -> anyhow::Result<bool> 
     if !whycodes_import::why_config_missing() {
         return Ok(false);
     }
-    let data_dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let data_dir = Config::data_dir();
     let consent = ConsentStore::new(&data_dir);
     if consent.first_run_asked()? {
         return Ok(false);

@@ -25,10 +25,10 @@ use crate::app::{AgentState, ChatMessage, ChatRole, PendingTurn};
 use crate::run::TurnOutcome;
 
 /// Open a dedicated connection for one runtime (same db file as the rest
-/// of the app; SQLite serializes writers). `None` when the data dir is
-/// unavailable.
+/// of the app; SQLite serializes writers). `None` when the database cannot
+/// be created or opened.
 fn open_runtime_db() -> Option<Database> {
-    let data_dir = whycodes_config::Config::data_dir().ok()?;
+    let data_dir = whycodes_config::Config::data_dir();
     std::fs::create_dir_all(&data_dir).ok()?;
     let db_path = data_dir.join("whycodes.db");
     Database::open(&db_path.to_string_lossy()).ok()

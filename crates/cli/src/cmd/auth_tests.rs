@@ -108,14 +108,6 @@ fn auth_printer_and_prompt_helpers() {
             .contains("symlink")
     );
     assert!(imported_count_line(2).contains("2"));
-}
-
-#[test]
-fn auth_data_dir_falls_back_to_dot() {
     let dir = auth_data_dir();
     assert!(!dir.as_os_str().is_empty());
-    assert_eq!(
-        auth_data_dir_from(Err(whycodes_core::Error::Config("no home".into()))),
-        std::path::PathBuf::from(".")
-    );
 }

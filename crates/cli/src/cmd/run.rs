@@ -453,7 +453,7 @@ pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
     // direct `emit` lines land regardless of the tracing filter.
     crate::ignore_sigpipe();
     let opts = whycodes_core::logging::InitOptions {
-        data_dir: Config::data_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        data_dir: Config::data_dir(),
         log_level: std::env::var("WHYCODES_LOG_LEVEL").ok(),
         log_file: std::env::var_os("WHYCODES_LOG_FILE").map(PathBuf::from),
         debug: false,
@@ -1272,22 +1272,15 @@ pub(crate) async fn cmd_run(
                     let arg = rest.trim();
                     if arg.is_empty() {
                         println!("{}", "Subscription sign-in (OAuth):".bold());
-                        if let Ok(dir) = Config::data_dir() {
-                            let store = whycodes_auth::TokenStore::new(&dir);
-                            for name in whycodes_auth::oauth_providers() {
-                                let label = whycodes_auth::providers::spec_for(&name)
-                                    .map(|s| s.label)
-                                    .unwrap_or_else(|_| name.clone());
-                                let status = login_connected_label(
-                                    store.get(&name).ok().flatten().is_some(),
-                                );
-                                println!(
-                                    "  {} {} — {}",
-                                    format!("{name:<15}").cyan(),
-                                    label,
-                                    status
-                                );
-                            }
+                        let dir = Config::data_dir();
+                        let store = whycodes_auth::TokenStore::new(&dir);
+                        for name in whycodes_auth::oauth_providers() {
+                            let label = whycodes_auth::providers::spec_for(&name)
+                                .map(|s| s.label)
+                                .unwrap_or_else(|_| name.clone());
+                            let status =
+                                login_connected_label(store.get(&name).ok().flatten().is_some());
+                            println!("  {} {} — {}", format!("{name:<15}").cyan(), label, status);
                         }
                         println!(
                             "\nSign in: {}  ·  CLI: {}",
@@ -1347,7 +1340,7 @@ pub(crate) async fn cmd_run(
                     } else {
                         match whycodes_memory::MemoryService::open(
                             &project_dir,
-                            Config::data_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                            Config::data_dir(),
                             memory_settings(&config),
                         ) {
                             Ok(svc) => match svc.remember(rest, Some(&session.id)) {
@@ -1362,7 +1355,7 @@ pub(crate) async fn cmd_run(
                 "/memory" => {
                     match whycodes_memory::MemoryService::open(
                         &project_dir,
-                        Config::data_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                        Config::data_dir(),
                         memory_settings(&config),
                     ) {
                         Ok(svc) => {

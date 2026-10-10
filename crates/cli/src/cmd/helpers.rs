@@ -131,13 +131,13 @@ pub(crate) async fn get_api_key(provider: &str, config: &Config) -> Option<Strin
         return Some(key);
     }
     // OAuth subscription login (`whycodes auth login <provider>`).
-    if whycodes_auth::providers::supports_oauth(provider)
-        && let Ok(data_dir) = Config::data_dir()
-        && let Some(token) = whycodes_auth::providers::access_token(provider, &data_dir).await
-    {
-        // A 401 on this credential may trigger one forced refresh + retry.
-        whycodes_llm::oauth_refresh::register(provider, data_dir);
-        return Some(token);
+    if whycodes_auth::providers::supports_oauth(provider) {
+        let data_dir = Config::data_dir();
+        if let Some(token) = whycodes_auth::providers::access_token(provider, &data_dir).await {
+            // A 401 on this credential may trigger one forced refresh + retry.
+            whycodes_llm::oauth_refresh::register(provider, data_dir);
+            return Some(token);
+        }
     }
     None
 }
@@ -350,7 +350,7 @@ pub(crate) fn note_backfill_persist(result: Result<(), impl std::fmt::Display>) 
 }
 
 pub(crate) fn open_db() -> anyhow::Result<whycodes_storage::db::Database> {
-    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let data_dir = Config::data_dir();
     std::fs::create_dir_all(&data_dir)?;
     let db_path = data_dir.join("whycodes.db");
     whycodes_storage::db::Database::open(&db_path.to_string_lossy())
@@ -503,7 +503,7 @@ pub(crate) fn memory_settings_for(
 /// Best-effort code index on session start (skips if already indexed).
 /// A fresh build runs on a background thread so the first turn never waits.
 pub(crate) fn maybe_session_auto_index(project_dir: &std::path::Path, config: &Config) {
-    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let data_dir = Config::data_dir();
     if whycodes_memory::maybe_auto_index_background(
         project_dir,
         &data_dir,
@@ -521,7 +521,7 @@ pub(crate) fn with_project_memory(
     config: &Config,
     query: Option<&str>,
 ) -> String {
-    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let data_dir = Config::data_dir();
     whycodes_memory::apply_memory_prompt(
         system_prompt,
         project_dir,
@@ -562,7 +562,7 @@ pub(crate) fn open_memory_service(
     config: &Config,
 ) -> anyhow::Result<whycodes_memory::MemoryService> {
     let project_dir = resolve_dir(cli);
-    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let data_dir = Config::data_dir();
     Ok(whycodes_memory::MemoryService::open(
         project_dir,
         data_dir,

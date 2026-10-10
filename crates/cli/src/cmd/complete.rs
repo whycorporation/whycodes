@@ -204,18 +204,12 @@ pub(crate) fn auth_provider_ids() -> Vec<String> {
 }
 
 pub(crate) fn session_id_prefixes() -> Vec<String> {
-    session_prefixes_in(whycodes_config::Config::data_dir())
+    session_prefixes_in(&whycodes_config::Config::data_dir())
 }
 
-/// `data_dir` only wraps `paths::data_dir()` and does not fail today. A
-/// missing database, a read error, or a failed session query all yield no
+/// A missing database, a read error, or a failed session query all yield no
 /// completions instead of an error on the shell.
-fn session_prefixes_in(
-    data_dir: std::result::Result<std::path::PathBuf, whycodes_core::Error>,
-) -> Vec<String> {
-    let Ok(data_dir) = data_dir else {
-        return Vec::new();
-    };
+fn session_prefixes_in(data_dir: &std::path::Path) -> Vec<String> {
     let db_path = data_dir.join("whycodes.db");
     let Ok(Some(db)) =
         whycodes_storage::db::Database::open_existing_readonly(&db_path.to_string_lossy())

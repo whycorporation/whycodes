@@ -35,7 +35,7 @@ fn with_isolated_home(f: impl FnOnce(&std::path::Path)) {
 fn whycodes_home_overrides_config_and_data_paths() {
     with_isolated_home(|home| {
         let cfg = Config::default_path();
-        let data = Config::data_dir().expect("data dir");
+        let data = Config::data_dir();
         assert_eq!(cfg, home.join("config.toml"));
         assert_eq!(data, home);
     });

@@ -56,7 +56,7 @@ struct DebugOauth {
 fn collect_debug() -> DebugDump {
     let config_path = Config::default_path();
     let config_exists = config_path.exists();
-    let data_dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let data_dir = Config::data_dir();
     let dirs = whycodes_core::logging::LogDirs::from_data_dir(&data_dir);
     let jsonl_log = Some(dirs.unified_jsonl().display().to_string());
     let crash_dir = Some(dirs.crash.display().to_string());
@@ -128,7 +128,7 @@ pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
     );
 
     // Data directory + log paths (Grok-style). `data_dir` is the same.
-    let p = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let p = Config::data_dir();
     println!(
         "{}",
         debug_data_dir_line(&p.display().to_string(), p.exists())
@@ -188,7 +188,7 @@ pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
 
     // OAuth subscription logins — method + expiry only, never token material.
     println!("  OAuth (auth.json):");
-    let dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let dir = Config::data_dir();
     let store = whycodes_auth::TokenStore::new(&dir);
     match store.list() {
         Ok(entries) if entries.is_empty() => {

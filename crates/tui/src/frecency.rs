@@ -57,7 +57,8 @@ impl Frecency {
     /// Load the table for `project_root` (canonical). Missing/corrupt files
     /// start empty.
     pub fn load(project_root: &Path) -> Self {
-        let path = whycodes_config::Config::data_dir().ok().map(|d| {
+        let path = Some({
+            let d = whycodes_config::Config::data_dir();
             d.join("frecency")
                 .join(format!("{}.json", project_key(project_root)))
         });

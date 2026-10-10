@@ -84,7 +84,7 @@ fn session_db_slot() -> &'static std::sync::Mutex<Option<CachedSessionDb>> {
 pub(super) fn with_session_db<T>(
     f: impl FnOnce(&whycodes_storage::db::Database) -> T,
 ) -> Option<T> {
-    let data_dir = whycodes_config::Config::data_dir().ok()?;
+    let data_dir = whycodes_config::Config::data_dir();
     let db_path = data_dir.join("whycodes.db");
     let mut guard = session_db_slot().lock().ok()?;
     let stale = guard.as_ref().is_none_or(|c| c.path != db_path);
@@ -102,7 +102,7 @@ pub(crate) fn reset_session_db_cache() {
 }
 
 pub(super) fn open_db_quiet() -> Option<whycodes_storage::db::Database> {
-    let data_dir = whycodes_config::Config::data_dir().ok()?;
+    let data_dir = whycodes_config::Config::data_dir();
     std::fs::create_dir_all(&data_dir).ok()?;
     let db_path = data_dir.join("whycodes.db");
     whycodes_storage::db::Database::open(&db_path.to_string_lossy()).ok()
@@ -119,9 +119,7 @@ pub(super) fn unshare_session(project_dir: &std::path::Path, id: &str) -> usize 
     let mut n = 0usize;
     let candidates = [
         whycodes_core::project_dir(project_dir).join("shares"),
-        whycodes_config::Config::data_dir()
-            .map(|d| d.join("shares"))
-            .unwrap_or_default(),
+        whycodes_config::Config::data_dir().join("shares"),
     ];
     for dir in candidates {
         for ext in ["json", "md"] {
@@ -216,7 +214,7 @@ pub(super) fn memory_settings_for(
 /// A fresh build runs on a background thread so startup and the first turn
 /// never block on the file walk + embedding; completion is logged, not toasted.
 pub(super) fn maybe_session_auto_index(project_dir: &std::path::Path, config: &Config) {
-    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let data_dir = Config::data_dir();
     if whycodes_memory::maybe_auto_index_background(
         project_dir,
         &data_dir,
@@ -234,7 +232,7 @@ pub(super) fn with_project_memory(
     config: &Config,
     query: Option<&str>,
 ) -> String {
-    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let data_dir = Config::data_dir();
     whycodes_memory::apply_memory_prompt(
         system_prompt,
         project_dir,
@@ -273,7 +271,7 @@ pub(super) fn memory_service(
     project_dir: &std::path::Path,
     config: &Config,
 ) -> anyhow::Result<whycodes_memory::MemoryService> {
-    let data_dir = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let data_dir = Config::data_dir();
     Ok(whycodes_memory::MemoryService::open(
         project_dir,
         data_dir,

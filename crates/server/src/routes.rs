@@ -114,12 +114,12 @@ pub(crate) async fn resolve_api_key(
         whycodes_llm::oauth_refresh::unregister(provider);
         return Some(key.clone());
     }
-    if whycodes_auth::providers::supports_oauth(provider)
-        && let Ok(data_dir) = whycodes_config::Config::data_dir()
-        && let Some(token) = whycodes_auth::providers::access_token(provider, &data_dir).await
-    {
-        whycodes_llm::oauth_refresh::register(provider, data_dir);
-        return Some(token);
+    if whycodes_auth::providers::supports_oauth(provider) {
+        let data_dir = whycodes_config::Config::data_dir();
+        if let Some(token) = whycodes_auth::providers::access_token(provider, &data_dir).await {
+            whycodes_llm::oauth_refresh::register(provider, data_dir);
+            return Some(token);
+        }
     }
     None
 }
