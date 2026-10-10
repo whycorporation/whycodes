@@ -580,8 +580,10 @@ impl Database {
     }
 
     /// `query` with no indexable word browses the bank in `browse_order`
-    /// instead of returning a silent empty page. `table`, `cols`, and
-    /// `browse_order` are internal constants; `query` is only ever bound.
+    /// instead of returning a silent empty page. A missing or broken index
+    /// logs and scans up to [`FTS_SCAN_LIMIT`] rows, as search did before
+    /// FTS. `table`, `cols`, and `browse_order` are internal constants;
+    /// `query` is only ever bound.
     fn fts_page<T>(
         &self,
         table: &str,
@@ -596,38 +598,74 @@ impl Database {
             |row| row.get(0),
         )?;
         let corpus = corpus as usize;
+        let browse = |n: usize| self.browse(table, cols, browse_order, project_key, n, map);
         let Some(fts_query) = fts_match_query(query) else {
-            let mut stmt = self.conn.prepare(&format!(
-                "SELECT {cols} FROM {table} t WHERE t.project_key = ?1
-                 ORDER BY {browse_order} LIMIT ?2"
-            ))?;
-            let rows = stmt.query_map((project_key, limit as i64), map)?;
-            let rows = rows.collect::<rusqlite::Result<Vec<T>>>()?;
+            let rows = browse(limit)?;
             return Ok(FtsPage {
                 rows,
                 matched: corpus,
                 corpus,
             });
         };
+        match self.fts_rows(table, cols, (project_key, &fts_query, limit), map) {
+            Ok((rows, matched)) => Ok(FtsPage {
+                rows,
+                matched,
+                corpus,
+            }),
+            Err(e) => {
+                tracing::warn!(table, error = %e, "fts index unavailable; scanning the bank");
+                let rows = browse(FTS_SCAN_LIMIT)?;
+                Ok(FtsPage {
+                    matched: rows.len(),
+                    rows,
+                    corpus,
+                })
+            }
+        }
+    }
+
+    fn browse<T>(
+        &self,
+        table: &str,
+        cols: &str,
+        order: &str,
+        project_key: &str,
+        limit: usize,
+        map: fn(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    ) -> crate::error::Result<Vec<T>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {cols} FROM {table} t WHERE t.project_key = ?1 ORDER BY {order} LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map((project_key, limit as i64), map)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<T>>>()?)
+    }
+
+    /// Ranked FTS matches and their total count.
+    fn fts_rows<T>(
+        &self,
+        table: &str,
+        cols: &str,
+        (project_key, fts_query, limit): (&str, &str, usize),
+        map: fn(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<(Vec<T>, usize)> {
         let from = format!(
             "FROM {table} t JOIN {table}_fts ON {table}_fts.rowid = t.rowid
              WHERE {table}_fts MATCH ?1 AND t.project_key = ?2"
         );
         let matched: i64 = self.conn.query_row(
             &format!("SELECT COUNT(*) {from}"),
-            (&fts_query, project_key),
+            (fts_query, project_key),
             |row| row.get(0),
         )?;
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {cols} {from} ORDER BY bm25({table}_fts) LIMIT ?3"
         ))?;
-        let rows = stmt.query_map((&fts_query, project_key, limit as i64), map)?;
-        let rows = rows.collect::<rusqlite::Result<Vec<T>>>()?;
-        Ok(FtsPage {
-            rows,
-            matched: matched as usize,
-            corpus,
-        })
+        let rows = stmt.query_map((fts_query, project_key, limit as i64), map)?;
+        Ok((
+            rows.collect::<rusqlite::Result<Vec<T>>>()?,
+            matched as usize,
+        ))
     }
 
     /// Drop the FTS indexes and their triggers so a search hits the
@@ -643,6 +681,9 @@ impl Database {
         Ok(())
     }
 }
+
+/// Rows a search scans when the FTS index is missing or broken.
+pub const FTS_SCAN_LIMIT: usize = 50_000;
 
 /// Lexical candidates for one project bank.
 #[derive(Debug, Clone)]
@@ -1299,14 +1340,13 @@ mod tests {
     }
 
     #[test]
-    fn search_without_fts_index_is_an_error_the_caller_can_fall_back_on() {
+    fn search_without_fts_index_scans_the_bank() {
         let db = test_db();
         db.insert_memory("m1", "p", "sqlite", b"", None).unwrap();
         db.drop_fts_for_test().unwrap();
-        assert!(db.search_memories("p", "sqlite", 5).is_err());
         // Writes still work once the triggers are gone with the index.
-        db.insert_memory("m2", "p", "sqlite again", b"", None)
-            .unwrap();
-        assert_eq!(db.search_memories("p", "", 5).unwrap().rows.len(), 2);
+        db.insert_memory("m2", "p", "unrelated", b"", None).unwrap();
+        let page = db.search_memories("p", "sqlite", 1).unwrap();
+        assert_eq!((page.rows.len(), page.matched, page.corpus), (2, 2, 2));
     }
 }

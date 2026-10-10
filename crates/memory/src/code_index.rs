@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::embed::{cosine, decode_blob, encode_blob};
 use crate::error::{MemoryError, Result};
-use crate::service::{CodeHit, FTS_CANDIDATES, MemoryService, SearchPage, fts_candidates};
+use crate::service::{CodeHit, FTS_CANDIDATES, MemoryService, SearchPage};
 
 const EXT_OK: &[&str] = &[
     "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "c", "h", "cpp", "hpp", "cs", "rb",
@@ -73,10 +73,7 @@ impl MemoryService {
         min_score: f32,
     ) -> Result<SearchPage<CodeHit>> {
         let db = self.open_db()?;
-        let page = fts_candidates(
-            db.search_code_chunks(&self.bank_key, query, FTS_CANDIDATES),
-            || db.list_code_chunks(&self.bank_key, 50_000),
-        )?;
+        let page = db.search_code_chunks(&self.bank_key, query, FTS_CANDIDATES)?;
         let q = self.embed_text(query);
         let mut hits: Vec<CodeHit> = page
             .rows
@@ -259,8 +256,16 @@ mod tests {
         }
 
         let db = svc.open_db().unwrap();
-        db.insert_code_chunk("empty-emb", &svc.bank_key, "x.rs", 1, 2, "fn empty()", &[])
-            .unwrap();
+        db.insert_code_chunk(
+            "empty-emb",
+            &svc.bank_key,
+            "x.rs",
+            1,
+            2,
+            "fn same_empty()",
+            &[],
+        )
+        .unwrap();
         let same = encode_blob(&svc.embed_text("same code chunk"));
         db.insert_code_chunk("same-a", &svc.bank_key, "a.rs", 1, 2, "fn same_a()", &same)
             .unwrap();

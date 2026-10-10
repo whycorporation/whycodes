@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use whycodes_storage::db::{Database, FtsPage};
+use whycodes_storage::db::Database;
 use whycodes_storage::models::{MemoryRow, SessionChunkRow};
 
 // CodeHit re-exports the storage row type for callers.
@@ -48,26 +48,6 @@ pub struct SearchPage<H> {
     pub hits: Vec<H>,
     pub matched: usize,
     pub corpus: usize,
-}
-
-/// FTS candidates, or the whole-bank scan when the index is missing/corrupt.
-pub(crate) fn fts_candidates<T>(
-    fts: whycodes_storage::error::Result<FtsPage<T>>,
-    scan: impl FnOnce() -> whycodes_storage::error::Result<Vec<T>>,
-) -> Result<FtsPage<T>> {
-    match fts {
-        Ok(page) => Ok(page),
-        Err(e) => {
-            tracing::warn!(error = %e, "fts search unavailable; scanning the bank");
-            let rows = scan()?;
-            let n = rows.len();
-            Ok(FtsPage {
-                rows,
-                matched: n,
-                corpus: n,
-            })
-        }
-    }
 }
 
 fn record_consolidated_delete(md_path: &Path, id: &str, deleted: bool) -> usize {
@@ -222,10 +202,7 @@ impl MemoryService {
         min_score: f32,
     ) -> Result<SearchPage<RecallHit>> {
         let db = self.open_db()?;
-        let page = fts_candidates(
-            db.search_memories(&self.bank_key, query, FTS_CANDIDATES),
-            || db.list_memories(&self.bank_key, 10_000),
-        )?;
+        let page = db.search_memories(&self.bank_key, query, FTS_CANDIDATES)?;
         let q = self.embed_text(query);
         let mut hits: Vec<RecallHit> = page
             .rows
@@ -332,10 +309,7 @@ impl MemoryService {
         min_score: f32,
     ) -> Result<SearchPage<SessionHit>> {
         let db = self.open_db()?;
-        let page = fts_candidates(
-            db.search_session_chunks(&self.bank_key, query, FTS_CANDIDATES),
-            || db.list_session_chunks(&self.bank_key, 10_000),
-        )?;
+        let page = db.search_session_chunks(&self.bank_key, query, FTS_CANDIDATES)?;
         let q = self.embed_text(query);
         let mut hits: Vec<SessionHit> = page
             .rows
@@ -817,20 +791,14 @@ mod tests {
             .unwrap();
         let sess = svc.search_sessions_page("retry loop", 5, 0.0).unwrap();
         assert_eq!((sess.hits.len(), sess.matched, sess.corpus), (1, 1, 1));
-    }
-
-    #[test]
-    fn search_falls_back_to_a_scan_without_the_fts_index() {
-        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
-        svc.remember("cargo test memory crate", None).unwrap();
-        // Database::open re-creates the index, so drop it on this handle.
-        let db = svc.open_db().unwrap();
-        db.drop_fts_for_test().unwrap();
-        let page = fts_candidates(db.search_memories(&svc.bank_key, "cargo", 5), || {
-            db.list_memories(&svc.bank_key, 10)
-        })
-        .unwrap();
-        assert_eq!((page.rows.len(), page.matched, page.corpus), (1, 1, 1));
+        // A matching turn with no usable embedding is skipped, and the
+        // matching one is dropped by a floor no cosine reaches.
+        svc.open_db()
+            .unwrap()
+            .insert_session_chunk("bad", &svc.bank_key, "ses-2", 0, "retry", &[])
+            .unwrap();
+        let floor = svc.search_sessions_page("retry", 5, 2.0).unwrap();
+        assert_eq!((floor.hits.len(), floor.matched), (0, 2));
     }
 
     #[test]
@@ -1057,7 +1025,8 @@ mod tests {
         let hits = svc.search("matching vector fact", 0, -1.0).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].entry.text, "matching vector fact");
-        assert!(svc.search("anything", 5, 2.0).unwrap().is_empty());
+        // Candidates that share a word but score under the floor drop out.
+        assert!(svc.search("vector", 5, 2.0).unwrap().is_empty());
     }
 
     #[test]
