@@ -368,7 +368,7 @@ impl Default for OllamaProvider {
 
 struct OllamaNdjson {
     bytes: crate::openai_compat::ByteStream,
-    buffer: String,
+    buffer: crate::line_buffer::LineBuffer,
     pending: VecDeque<whycodes_core::Result<StreamEvent>>,
     done: bool,
 }
@@ -401,8 +401,7 @@ impl OllamaNdjson {
     }
 
     fn finish_leftover(&mut self) {
-        let leftover = self.buffer.trim().to_string();
-        self.buffer.clear();
+        let leftover = self.buffer.take_rest();
         if !leftover.is_empty() {
             self.push_line(&leftover);
         }
@@ -427,10 +426,8 @@ impl Stream for OllamaNdjson {
             }
             match this.bytes.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(bytes))) => {
-                    this.buffer.push_str(&String::from_utf8_lossy(&bytes));
-                    while let Some(pos) = this.buffer.find('\n') {
-                        let line = this.buffer[..pos].trim().to_string();
-                        this.buffer = this.buffer[pos + 1..].to_string();
+                    this.buffer.push(&bytes);
+                    while let Some(line) = this.buffer.next_line() {
                         this.push_line(&line);
                         if this.done {
                             break;
@@ -452,7 +449,7 @@ impl Stream for OllamaNdjson {
 fn ollama_ndjson(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
     Box::pin(OllamaNdjson {
         bytes,
-        buffer: String::new(),
+        buffer: crate::line_buffer::LineBuffer::default(),
         pending: VecDeque::new(),
         done: false,
     })
