@@ -64,13 +64,8 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     ));
     std::fs::write(&tmp, contents)?;
     let persist = || std::fs::rename(&tmp, path);
-    match persist() {
-        Ok(()) => Ok(()),
-        Err(first) => match persist() {
-            Ok(()) => Ok(()),
-            Err(e) => Err(fold_tmp_cleanup(e, &first, std::fs::remove_file(&tmp)).into()),
-        },
-    }
+    let Err(first) = persist() else { return Ok(()) };
+    persist().map_err(|e| fold_tmp_cleanup(e, &first, std::fs::remove_file(&tmp)).into())
 }
 
 /// Fold a failed temp cleanup into the persist error so the caller still sees
