@@ -126,7 +126,7 @@ mod imp {
     fn console_handle(out: &TuiWriter) -> Option<*mut core::ffi::c_void> {
         use std::os::windows::io::AsRawHandle;
         match out {
-            TuiWriter::Console(f) => Some(f.as_raw_handle()),
+            TuiWriter::Console(f) => Some(f.get_ref().as_raw_handle()),
             TuiWriter::Stdout(s) => Some(s.as_raw_handle()),
             TuiWriter::Buf(_) | TuiWriter::Fail => None,
         }
@@ -196,7 +196,7 @@ mod tests {
         let Ok(file) = super::super::try_open_windows_console() else {
             return;
         };
-        let out = TuiWriter::Console(file);
+        let out = TuiWriter::Console(std::io::BufWriter::new(file));
         prepare_windows_console(&out);
         let mid = unsafe { GetConsoleOutputCP() };
         restore_windows_console();
