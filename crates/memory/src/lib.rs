@@ -27,7 +27,7 @@ pub use retain::{extract_heuristic, llm_retain_prompt, parse_llm_facts};
 pub use service::{
     CodeChunkRow, CodeHit, FTS_CANDIDATES, MemoryService, RecallHit, SearchPage, SessionHit,
     apply_memory_prompt, maybe_auto_index, maybe_auto_index_background, maybe_auto_retain,
-    settings_from_flags,
+    recall_turn_context, settings_from_flags,
 };
 pub use settings::{EmbedBackend, MemoryScope, MemorySettings};
 pub use whycodes_storage::models::{MemoryRow, SessionChunkRow};

@@ -1818,3 +1818,101 @@ async fn successful_turn_stamps_default_sticky_credential() {
     assert!(out.contains("ok"), "{out}");
     assert_eq!(agent.sticky_credential().as_deref(), Some("default"));
 }
+
+/// Records `(system, last user text)` per stream request, then delegates.
+struct RecordingProvider {
+    inner: ScriptedProvider,
+    seen: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+}
+
+impl LlmProvider for RecordingProvider {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn default_base_url(&self) -> &str {
+        self.inner.default_base_url()
+    }
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        self.inner.complete(request, api_key, model)
+    }
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        let last_user = request
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == whycodes_core::types::Role::User)
+            .map(|m| match &m.content {
+                whycodes_core::types::MessageContent::Text(t) => t.clone(),
+                whycodes_core::types::MessageContent::Blocks(b) => format!("{b:?}"),
+            })
+            .unwrap_or_default();
+        self.seen
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((request.system.clone(), last_user));
+        self.inner.stream(request, api_key, model)
+    }
+}
+
+#[tokio::test]
+async fn turn_context_rides_on_the_user_message_at_every_step() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "secret").unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(RecordingProvider {
+        inner: ScriptedProvider::batched(
+            "script",
+            [
+                vec![ScriptedStep::ToolCall {
+                    id: "c1".into(),
+                    name: "read".into(),
+                    input: json!({"path": "note.txt"}),
+                }],
+                vec![ScriptedStep::Text("done reading".into())],
+            ],
+        ),
+        seen: std::sync::Arc::clone(&seen),
+    }));
+    let agent = Agent::new(info("build")).with_provider_registry(registry);
+    let mut session = session_at(dir.path(), "please read note.txt and summarize it");
+    let system_before = session.system_prompt.clone();
+    session.turn_context = Some("\n\n<recalled-context>\nfact\n</recalled-context>".into());
+    agent
+        .run_turn(&mut session, "script", "m", "k", Some(4))
+        .await
+        .expect("turn");
+
+    let seen = seen.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert_eq!(seen.len(), 2, "tool step + answer step: {seen:?}");
+    for (system, user) in &seen {
+        assert_eq!(
+            system, &system_before,
+            "system prompt must stay byte-stable"
+        );
+        assert!(
+            user.ends_with("summarize it\n\n<recalled-context>\nfact\n</recalled-context>"),
+            "every step carries the same recall suffix: {user:?}"
+        );
+    }
+    let stored = session
+        .messages
+        .iter()
+        .find(|m| m.role == whycodes_core::types::Role::User)
+        .and_then(|m| m.content.as_text())
+        .unwrap_or_default();
+    assert_eq!(
+        stored, "please read note.txt and summarize it",
+        "recall is never written into the transcript"
+    );
+}

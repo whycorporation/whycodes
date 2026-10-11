@@ -573,6 +573,12 @@ pub struct Session {
     /// Last rewind report, used to reject a second rewind with no new checkpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_rewind_report: Option<String>,
+    /// Model-facing context for the current user turn (memory recall).
+    /// Appended to the latest user message at request time, never stored in
+    /// `messages`, so the system prompt and history stay byte-stable for the
+    /// provider prompt cache. Not persisted.
+    #[serde(skip)]
+    pub turn_context: Option<String>,
 }
 
 /// Boundary recorded by the `checkpoint` tool for a later `rewind`.
@@ -631,6 +637,7 @@ impl Session {
             token_cache,
             checkpoint: None,
             last_rewind_report: None,
+            turn_context: None,
         }
     }
 
@@ -1434,6 +1441,7 @@ impl Session {
             token_cache,
             checkpoint: None,
             last_rewind_report: None,
+            turn_context: None,
         }))
     }
 

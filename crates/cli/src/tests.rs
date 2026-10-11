@@ -2430,8 +2430,10 @@ fn refresh_session_memory_and_open_memory_service() {
     refresh_session_memory(&mut session, &agent, dir, &config, Some("query"));
     // Trivial chit-chat keeps the prompt byte-stable (prompt-cache friendly).
     session.set_system_prompt("hydrated prompt");
+    session.turn_context = Some("stale recall".into());
     refresh_session_memory(&mut session, &agent, dir, &config, Some("selam"));
     assert_eq!(session.system_prompt, "hydrated prompt");
+    assert_eq!(session.turn_context, None, "chit-chat carries no recall");
     // Trivial query on an empty prompt still rebuilds (without recall).
     session.system_prompt.clear();
     refresh_session_memory(&mut session, &agent, dir, &config, Some("merhaba"));

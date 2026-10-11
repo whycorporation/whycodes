@@ -13,7 +13,8 @@ use crate::tool_stream::ToolCallAssembler;
 
 use super::{
     Agent, DOOM_LOOP_THRESHOLD, MAX_CONSECUTIVE_COMPACT_FAILURES, append_request_user_suffix,
-    first_stream_rule_hit, settle_checkpoint_rewind, tool_call_signature, would_doom_loop,
+    append_turn_context, first_stream_rule_hit, settle_checkpoint_rewind, tool_call_signature,
+    would_doom_loop,
 };
 
 impl Agent {
@@ -237,6 +238,7 @@ impl Agent {
             );
 
             let mut request = session.build_request(tools, None, self.info.temperature, Some(true));
+            append_turn_context(&mut request, session.turn_context.as_deref());
             request.use_prompt_cache = self.use_prompt_cache && !skip_cache;
             crate::thinking_acc::attach_thinking_request(
                 &mut request,

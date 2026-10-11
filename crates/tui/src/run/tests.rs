@@ -2523,6 +2523,55 @@ fn memory_and_index_helpers() {
 }
 
 #[test]
+fn recall_rides_on_turn_context_and_system_prompt_stays_stable() {
+    let _home = isolate_home_fresh();
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    memory_service(dir.path(), &config)
+        .expect("memory service")
+        .remember("the login flow lives in src/auth.rs", None)
+        .expect("remember");
+    let mut session = Session::new(dir.path().to_path_buf(), String::new());
+    let agent = Agent::new(whycodes_core::types::AgentInfo {
+        name: "build".into(),
+        description: String::new(),
+        mode: AgentMode::Primary,
+        permission: whycodes_core::types::PermissionSet::default(),
+        model: None,
+        system_prompt: Some("sys".into()),
+        temperature: None,
+        top_p: None,
+    });
+    let ask = "fix the login flow in src/auth.rs";
+    refresh_session_memory(&mut session, &agent, dir.path(), &config, Some(ask));
+    let first = session.system_prompt.clone();
+    let ctx = session
+        .turn_context
+        .clone()
+        .expect("recall for a matching query");
+    assert!(ctx.starts_with("\n\n<recalled-context>"), "{ctx}");
+    assert!(ctx.contains("login flow lives"), "{ctx}");
+    assert!(
+        !first.contains("# Recalled Memories"),
+        "query recall must not enter the system prompt (the MEMORY.md index may)"
+    );
+    refresh_session_memory(
+        &mut session,
+        &agent,
+        dir.path(),
+        &config,
+        Some("now explain the retry loop backoff"),
+    );
+    assert_eq!(
+        session.system_prompt, first,
+        "a new query must not change the system prompt (prompt cache)"
+    );
+    session.turn_context = Some("stale".into());
+    refresh_session_memory(&mut session, &agent, dir.path(), &config, Some("selam"));
+    assert_eq!(session.turn_context, None, "chit-chat carries no recall");
+}
+
+#[test]
 fn trivial_query_keeps_system_prompt_byte_stable() {
     let _home = isolate_home_fresh();
     let dir = tempfile::tempdir().unwrap();
