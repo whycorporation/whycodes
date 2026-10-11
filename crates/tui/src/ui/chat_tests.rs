@@ -3814,3 +3814,58 @@ fn consecutive_busy_frames_do_not_shift_finished_cells() {
     }
     let _ = prompt_cells;
 }
+
+#[test]
+fn overflowing_transcript_keeps_line_caches_across_frames() {
+    // The bar layout measures at the full width and again without the
+    // gutter. Both heights must stay cached so an idle frame re-renders
+    // nothing (each miss used to replace every bubble's painted lines).
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    for i in 0..20 {
+        app.add_message(ChatRole::User, format!("user line {i} that wraps a bit"));
+        app.add_message(ChatRole::Assistant, format!("assistant reply {i}"));
+    }
+    let palette = app.config.palette();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 10)).expect("test terminal");
+    let mut draw = |app: &mut TuiApp| {
+        terminal
+            .draw(|f| super::render(f, f.area(), app, &palette))
+            .expect("draw");
+    };
+    draw(&mut app);
+    let before: Vec<_> = app
+        .messages
+        .iter()
+        .map(|m| {
+            m.line_cache
+                .as_ref()
+                .map(|(_, _, l)| std::sync::Arc::clone(l))
+        })
+        .collect();
+    draw(&mut app);
+    for (i, (m, old)) in app.messages.iter().zip(&before).enumerate() {
+        let now = m.line_cache.as_ref().map(|(_, _, l)| l);
+        assert!(
+            matches!((old, now), (Some(a), Some(b)) if std::sync::Arc::ptr_eq(a, b)),
+            "message {i} was re-rendered on an unchanged frame"
+        );
+        assert!(m.layout_cache.is_some() && m.layout_cache_alt.is_some());
+    }
+}
+
+#[test]
+fn set_layout_parks_the_previous_width_and_cached_height_reads_both() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "hi");
+    let m = &mut app.messages[0];
+    m.set_layout(80, true, 3);
+    m.set_layout(80, true, 4);
+    assert_eq!(m.layout_cache_alt, None, "same key overwrites in place");
+    m.set_layout(78, true, 5);
+    assert_eq!(m.cached_height(80, true), Some(4));
+    assert_eq!(m.cached_height(78, true), Some(5));
+    assert_eq!(m.cached_height(78, false), None);
+    m.invalidate_layout();
+    assert_eq!(m.cached_height(80, true), None);
+}

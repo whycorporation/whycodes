@@ -33,6 +33,11 @@ pub struct IncrementalMarkdown {
     /// + complete rows (no partial line, no closing pad).
     fence_display: usize,
     fence_nw: usize,
+    /// State for the other width the layout probes each frame. With an
+    /// overflowing transcript `session_bar_layout` measures at the full
+    /// width and again without the scrollbar gutter; one slot per width
+    /// keeps both incremental instead of re-parsing the reply twice a frame.
+    other: Option<Box<IncrementalMarkdown>>,
 }
 
 impl IncrementalMarkdown {
@@ -55,12 +60,18 @@ impl IncrementalMarkdown {
         palette: &ThemePalette,
         width: Option<usize>,
     ) -> &[Line<'static>] {
-        if self.width != width || !self.prefix_ok(text) {
+        if self.width != width {
+            self.switch_width(width);
+        }
+        if !self.prefix_ok(text) {
             self.clear();
-            self.width = width;
         }
 
-        let cp = whycodes_format::markdown::last_checkpoint(text);
+        // `frozen_bytes` is itself a checkpoint (line start, outside any
+        // fence), so scanning from it finds the same next checkpoint as a
+        // full scan without re-reading the frozen prefix every frame.
+        let cp = self.frozen_bytes
+            + whycodes_format::markdown::last_checkpoint(&text[self.frozen_bytes..]);
         if cp > self.frozen_bytes && cp <= text.len() && text.is_char_boundary(cp) {
             // Checkpoint advanced: the previous open fence (if any) is now
             // closed inside `chunk`. Drop the incremental fence rows and
@@ -114,6 +125,18 @@ impl IncrementalMarkdown {
         self.fence_display = 0;
         self.fence_nw = 0;
         self.buf.extend(render_with_width(tail, palette, width));
+    }
+
+    /// Swap in the state kept for `width` (or a fresh one), parking the
+    /// current state as the other slot.
+    fn switch_width(&mut self, width: Option<usize>) {
+        let mut parked = self.other.take().unwrap_or_default();
+        std::mem::swap(self, &mut parked);
+        if self.width != width {
+            self.clear();
+            self.width = width;
+        }
+        self.other = Some(parked);
     }
 
     fn prefix_ok(&self, text: &str) -> bool {

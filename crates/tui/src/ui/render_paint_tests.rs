@@ -210,6 +210,7 @@ fn chat_message_with_thinking(tb: ThinkingBlock) -> crate::app::ChatMessage {
         image_labels: vec![],
         created_at: None,
         layout_cache: None,
+        layout_cache_alt: None,
         line_cache: None,
         stream_md: None,
     }
