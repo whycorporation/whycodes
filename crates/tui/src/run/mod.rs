@@ -1744,11 +1744,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 app.mark_dirty();
             }
 
-            // Animation = glyphs that change every frame (spinner / stream).
-            // Static toasts are *not* animation — jcode measured ~180 wasted
-            // full frames per notice when they pulled the loop to 40 ms.
-            let animate = rt.agent_busy || app.running_task_count() > 0;
-            if app.needs_redraw || animate {
+            // ── Stream events from rt.agent (coalesce text/thinking deltas) ──
+            // Before the draw, so tokens that arrived during the last poll
+            // paint this iteration instead of one poll (≤40 ms) later.
+            after_turn_events_drain(&mut app, &mut rt.event_rx, &config, &file_index);
+
+            // Paint only when something changed. Busy turns used to paint
+            // every iteration; deltas and spinner ticks already mark dirty,
+            // and static toasts never did (jcode: ~180 wasted frames each).
+            if app.needs_redraw {
                 if app.pending_full_clears > 0 {
                     // Full *themed* redraw, not CSI erase: Windows paints
                     // ClearType::All with the profile default background
@@ -1776,7 +1780,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 crate::bench::record_draw();
                 // Cell snapshot is only for mouse text selection → clipboard.
                 // Skip the ~4k String allocs/frame when nothing is selected.
-                if after_draw_frame(&mut app, snapshot, animate, bench.as_ref()) {
+                if after_draw_frame(&mut app, snapshot, bench.as_ref()) {
                     break;
                 }
             }
@@ -1784,9 +1788,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             if bench_should_break(bench.as_ref()) {
                 break;
             }
-
-            // ── Stream events from rt.agent (coalesce text/thinking deltas) ──
-            after_turn_events_drain(&mut app, &mut rt.event_rx, &config, &file_index);
 
             if should_tick_spinner(&app, rt.agent_busy) {
                 spinner_dwell = spinner_dwell.saturating_add(1);
@@ -3315,7 +3316,7 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
         // Disjoint from `rt.view`: adopt → drain → yield, no overlapping borrow.
         let mut scratch = TuiApp::from_config(crate::config::TuiAppConfig::default());
         scratch.adopt_view(&mut rt.view);
-        let any = drain_turn_events(&mut scratch, &mut rt.event_rx);
+        let any = drain_turn_events(&mut scratch, &mut rt.event_rx) != Drained::Nothing;
         scratch.yield_view(&mut rt.view);
         if any {
             rt.unread = true;
@@ -3414,10 +3415,23 @@ fn with_view_scratch(view: &mut crate::session_runtime::ViewSnapshot, f: impl Fn
     scratch.yield_view(view);
 }
 
+/// What one drain applied, ordered so the strongest kind wins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Drained {
+    Nothing,
+    /// Only text / thinking deltas: the transcript grew, nothing else moved.
+    Deltas,
+    /// Tool calls, results, status… — anything that can touch the workspace.
+    Events,
+}
+
 /// Drain the agent event channel, coalescing consecutive text/thinking deltas
-/// into one UI append each. Returns whether any event was applied.
-fn drain_turn_events(app: &mut TuiApp, event_rx: &mut mpsc::UnboundedReceiver<TurnEvent>) -> bool {
-    let mut any = false;
+/// into one UI append each. Returns the strongest kind of event applied.
+fn drain_turn_events(
+    app: &mut TuiApp,
+    event_rx: &mut mpsc::UnboundedReceiver<TurnEvent>,
+) -> Drained {
+    let mut drained = Drained::Nothing;
     let mut text_buf = String::new();
     let mut think_buf = String::new();
 
@@ -3440,7 +3454,7 @@ fn drain_turn_events(app: &mut TuiApp, event_rx: &mut mpsc::UnboundedReceiver<Tu
     };
 
     while let Ok(ev) = event_rx.try_recv() {
-        any = true;
+        drained = drained.max(Drained::Deltas);
         match ev {
             TurnEvent::TextDelta(t) => {
                 flush_think(app, &mut think_buf);
@@ -3451,6 +3465,7 @@ fn drain_turn_events(app: &mut TuiApp, event_rx: &mut mpsc::UnboundedReceiver<Tu
                 think_buf.push_str(&t);
             }
             other => {
+                drained = Drained::Events;
                 flush_text(app, &mut text_buf);
                 flush_think(app, &mut think_buf);
                 apply_turn_event(app, other);
@@ -3459,7 +3474,7 @@ fn drain_turn_events(app: &mut TuiApp, event_rx: &mut mpsc::UnboundedReceiver<Tu
     }
     flush_text(app, &mut text_buf);
     flush_think(app, &mut think_buf);
-    any
+    drained
 }
 
 /// Apply a finished turn to the visible session. Returns `true` when the
@@ -5239,12 +5254,11 @@ fn bench_should_break(bench: Option<&crate::bench::BenchConfig>) -> bool {
 fn after_draw_frame(
     app: &mut TuiApp,
     snapshot: Option<crate::cell_grid::CellGrid>,
-    animate: bool,
     bench: Option<&crate::bench::BenchConfig>,
 ) -> bool {
     apply_draw_snapshot(app, snapshot);
     crate::heap::run_deferred_release();
-    app.needs_redraw = animate || app.pending_full_clears > 0;
+    app.needs_redraw = app.pending_full_clears > 0;
     bench_should_break(bench)
 }
 
@@ -5265,13 +5279,17 @@ fn after_turn_events_drain(
     config: &whycodes_config::Config,
     file_index: &std::sync::Arc<whycodes_index::WorkspaceIndex>,
 ) -> bool {
-    if drain_turn_events(app, event_rx) {
-        refresh_sidebar_if_visible(app, config, file_index);
-        app.mark_dirty();
-        true
-    } else {
-        false
+    let drained = drain_turn_events(app, event_rx);
+    if drained == Drained::Nothing {
+        return false;
     }
+    // Deltas only grow the transcript. Re-listing every indexed file per
+    // token batch cost more than the frame; the tree moves with tool events.
+    if drained == Drained::Events {
+        refresh_sidebar_if_visible(app, config, file_index);
+    }
+    app.mark_dirty();
+    true
 }
 
 /// Refresh sidebar lists from the workspace index, config, and session todos.

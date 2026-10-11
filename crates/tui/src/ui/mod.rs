@@ -26,3 +26,7 @@ pub use render::render;
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "stream_bench_tests.rs"]
+mod stream_bench_tests;

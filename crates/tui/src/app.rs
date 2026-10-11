@@ -728,6 +728,10 @@ pub struct ChatMessage {
     /// [`ChatMessage::invalidate_layout`]. `closed` is per-message
     /// (finished vs live tail), not the global agent-busy flag.
     pub layout_cache: Option<(u16, bool, usize)>,
+    /// Height at the previous `(width, closed)` key. An overflowing
+    /// transcript is measured at two widths every frame (with and without
+    /// the scrollbar gutter); keeping both stops them evicting each other.
+    pub layout_cache_alt: Option<(u16, bool, usize)>,
     /// Cached painted lines for closed messages at `(width, closed)`.
     /// `Arc` so a scroll frame can paint by reference (no per-row String clone).
     pub line_cache: Option<(u16, bool, std::sync::Arc<Vec<ratatui::text::Line<'static>>>)>,
@@ -740,9 +744,29 @@ impl ChatMessage {
     /// Drop cached height/lines so the next layout pass re-measures this message.
     pub fn invalidate_layout(&mut self) {
         self.layout_cache = None;
+        self.layout_cache_alt = None;
         self.line_cache = None;
         // Keep `stream_md`: append-only growth still hits the frozen prefix.
         // Width / prefix mismatch inside IncrementalMarkdown resets itself.
+    }
+
+    /// Cached height for `(width, closed)` from either slot.
+    pub fn cached_height(&self, width: u16, closed: bool) -> Option<usize> {
+        [self.layout_cache, self.layout_cache_alt]
+            .into_iter()
+            .flatten()
+            .find(|&(w, c, _)| w == width && c == closed)
+            .map(|(_, _, h)| h)
+    }
+
+    /// Record a height; a different key moves the old one to the alt slot.
+    pub fn set_layout(&mut self, width: u16, closed: bool, h: usize) {
+        if let Some((w, c, _)) = self.layout_cache
+            && (w, c) != (width, closed)
+        {
+            self.layout_cache_alt = self.layout_cache;
+        }
+        self.layout_cache = Some((width, closed, h));
     }
 
     fn blank(role: ChatRole, content: impl Into<String>) -> Self {
@@ -757,6 +781,7 @@ impl ChatMessage {
             image_labels: vec![],
             created_at: Some(chrono::Utc::now()),
             layout_cache: None,
+            layout_cache_alt: None,
             line_cache: None,
             stream_md: None,
         }

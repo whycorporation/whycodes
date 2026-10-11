@@ -1109,13 +1109,14 @@ fn apply_background_event_covers_every_status() {
 fn drain_turn_events_coalesces_deltas() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let (tx, mut rx) = mpsc::unbounded_channel();
-    assert!(!drain_turn_events(&mut app, &mut rx));
+    assert_eq!(drain_turn_events(&mut app, &mut rx), Drained::Nothing);
     tx.send(TurnEvent::ThinkingDelta("th".into())).unwrap();
     tx.send(TurnEvent::ThinkingDelta("ink".into())).unwrap();
     tx.send(TurnEvent::TextDelta("hel".into())).unwrap();
+    assert_eq!(drain_turn_events(&mut app, &mut rx), Drained::Deltas);
     tx.send(TurnEvent::TextDelta("lo".into())).unwrap();
     tx.send(TurnEvent::Status("done".into())).unwrap();
-    assert!(drain_turn_events(&mut app, &mut rx));
+    assert_eq!(drain_turn_events(&mut app, &mut rx), Drained::Events);
     assert_eq!(app.status_message, "done");
     assert!(app.messages.iter().any(|m| m.content.contains("hello")));
 }
@@ -10285,23 +10286,22 @@ fn apply_draw_snapshot_stores_then_clears_when_nothing_is_selected() {
 }
 
 #[test]
-fn after_draw_frame_clears_dirty_unless_animating_or_full_clear_owed() {
+fn after_draw_frame_clears_dirty_unless_full_clear_owed() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.needs_redraw = true;
     app.pending_full_clears = 0;
-    assert!(!after_draw_frame(&mut app, None, false, None));
-    assert!(!app.needs_redraw);
+    assert!(!after_draw_frame(&mut app, None, None));
+    assert!(
+        !app.needs_redraw,
+        "a busy turn repaints on deltas and spinner ticks, not every iteration"
+    );
 
     app.pending_full_clears = 1;
-    assert!(!after_draw_frame(&mut app, None, false, None));
+    assert!(!after_draw_frame(&mut app, None, None));
     assert!(
         app.needs_redraw,
         "a owed full-clear must keep the loop dirty"
     );
-
-    app.pending_full_clears = 0;
-    assert!(!after_draw_frame(&mut app, None, true, None));
-    assert!(app.needs_redraw, "animation must keep the loop dirty");
     assert!(!bench_should_break(None));
 }
 
@@ -10313,9 +10313,21 @@ fn after_turn_events_drain_refreshes_visible_sidebar() {
     let config = Config::default();
     let (tx, mut rx) = mpsc::unbounded_channel();
     assert!(!after_turn_events_drain(&mut app, &mut rx, &config, &idx));
+    app.sidebar.mcp_status = vec!["sentinel".into()];
     tx.send(TurnEvent::TextDelta("stream".into())).unwrap();
     assert!(after_turn_events_drain(&mut app, &mut rx, &config, &idx));
     assert!(app.needs_redraw);
+    assert_eq!(
+        app.sidebar.mcp_status,
+        vec!["sentinel".to_string()],
+        "text deltas must not re-list the sidebar"
+    );
+    tx.send(TurnEvent::Status("tool ran".into())).unwrap();
+    assert!(after_turn_events_drain(&mut app, &mut rx, &config, &idx));
+    assert!(
+        app.sidebar.mcp_status.is_empty(),
+        "a non-delta event refreshes the visible sidebar"
+    );
     assert!(
         app.messages
             .iter()

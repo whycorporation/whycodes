@@ -12,6 +12,7 @@ fn msg(role: ChatRole, content: &str) -> ChatMessage {
         image_labels: Vec::new(),
         created_at: None,
         layout_cache: None,
+        layout_cache_alt: None,
         line_cache: None,
         stream_md: None,
     }

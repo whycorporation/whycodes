@@ -61,10 +61,7 @@ pub fn message_row_layout(app: &TuiApp, width: u16) -> (Vec<usize>, usize) {
             total += lines.len();
             continue;
         }
-        if let Some((w, c, h)) = msg.layout_cache
-            && w == width
-            && c == closed
-        {
+        if let Some(h) = msg.cached_height(width, closed) {
             total += h;
             continue;
         }
@@ -87,13 +84,10 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
         {
             let h = lines.len();
             if app.messages[i].layout_cache != Some((width, closed, h)) {
-                app.messages[i].layout_cache = Some((width, closed, h));
+                app.messages[i].set_layout(width, closed, h);
             }
             h
-        } else if let Some((w, c, h)) = app.messages[i].layout_cache
-            && w == width
-            && c == closed
-        {
+        } else if let Some(h) = app.messages[i].cached_height(width, closed) {
             h
         } else if !closed {
             // Live bubble: prefix (thinking/tools) is small; markdown lives in
@@ -110,7 +104,7 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
                 render_message_live(app, i, &palette, width, true)
             };
             let h = lines.len();
-            app.messages[i].layout_cache = Some((width, closed, h));
+            app.messages[i].set_layout(width, closed, h);
             app.messages[i].line_cache = Some((width, closed, Arc::new(lines)));
             h
         };
@@ -358,7 +352,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
 
         if let Some(ref lines) = cached {
             if lines.len() != laid_out_h {
-                app.messages[i].layout_cache = Some((content_width, closed, lines.len()));
+                app.messages[i].set_layout(content_width, closed, lines.len());
             }
             y = paint_message_slice(
                 buf,
@@ -377,7 +371,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
             let arc = Arc::new(rendered);
             let h = arc.len();
             app.messages[i].line_cache = Some((content_width, closed, Arc::clone(&arc)));
-            app.messages[i].layout_cache = Some((content_width, closed, h));
+            app.messages[i].set_layout(content_width, closed, h);
             y = paint_message_slice(
                 buf,
                 y,

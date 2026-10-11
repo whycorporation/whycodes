@@ -1045,6 +1045,32 @@ state mutation — and a missed one leaves a stale screen, which is a worse
 failure than a wasted repaint. The timeout change gets most of the benefit
 without that risk.
 
+## Streaming frame cost (2026-10-12)
+
+`stream_frame_bench` paints the whole TUI after every 48-byte batch of a
+50 KB markdown reply (60 sections of prose, lists and 12-line Rust fences),
+on top of 20 finished exchanges, into a 120×40 `TestBackend`. It covers what
+the first-frame harness cannot: the cost of a frame while a long reply grows.
+
+```bash
+cargo test -p whycodes-tui --release --lib stream_frame_bench -- --ignored --nocapture
+```
+
+Windows AMD64, release. Mean per frame, by quarter of the reply:
+
+| | Q1 | Q2 | Q3 | Q4 | idle frame after the turn |
+|---|---|---|---|---|---|
+| before | 50.9 ms | 131.6 ms | 212.0 ms | 291.2 ms | 11.7 ms |
+| after | 1.18 ms | 1.01 ms | 0.89 ms | 0.78 ms | 0.28 ms |
+
+Before, the frame cost grew with the reply, and by the end one frame took
+seven poll intervals. The scrollbar layout measures each message at two widths
+per frame, and every cache held only one, so each width evicted the other (see
+`docs/knowhow.md`, "Streaming frames grew with reply length"). The loop
+changes that ship with it are not in the table, because a `TestBackend`
+cannot see them: busy turns now paint only when dirty, not every 40 ms
+iteration, and tokens are drained before the draw instead of after.
+
 ## Multi-session PSS
 
 Taken 2026-08-04 on Linux x86_64, release profile. Idle TUI sessions (no

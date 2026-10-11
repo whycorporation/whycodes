@@ -3233,3 +3233,19 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 **Fix:** The stand-in reads stdin until the blank line, then prints `password=from-helper`.
 
 **Prevention:** A fake `git credential fill` must consume the payload the production path writes. Do not use `sh -c cat` as that consumer.
+
+**Follow-up (2026-10-11, #165):** It flaked again with the stdin fix in place. Sibling git tests point `PATH` at a missing dir under `ENV_LOCK`, and the api tests resolved `sh` through `PATH` without that lock. The stand-ins now spawn `/bin/sh` by absolute path. Repro: run the tools test binary with `PATH=/nonexistent` (3 failures before, 0 after).
+
+## Streaming frames grew with reply length (two-width layout thrash)
+
+**Date:** 2026-10-12 · **Area:** `crates/tui` `md_stream.rs` / `ui/chat.rs` / `run/mod.rs`
+
+**Symptom:** The TUI felt frozen during long replies. `stream_frame_bench` (50 KB markdown streamed in 48-byte batches, 120×40, release) painted a frame in 51 ms at the start and 291 ms by the end, against a 40 ms poll. An idle 42-message transcript cost 11.7 ms per frame.
+
+**JSONL / crash:** none.
+
+**Root cause:** Once the transcript overflows, `session_bar_layout` measures every message at the full width and again without the scrollbar gutter. Both caches held one width only. `IncrementalMarkdown::render` reset itself on a width change, so the live reply was re-parsed and re-highlighted from byte 0 twice a frame. Each closed message's `line_cache` / `layout_cache` was overwritten by the other width, so every frame re-rendered the whole transcript. The loop also painted every iteration while busy, and drained stream events after the draw (up to one poll of latency).
+
+**Fix:** `IncrementalMarkdown` parks the other width's state in a second slot. `ChatMessage::layout_cache_alt` keeps the second height (`set_layout` / `cached_height`). `last_checkpoint` scans from the frozen prefix only. The loop drains stream events before drawing and paints only on `needs_redraw` (deltas and spinner ticks mark dirty). Text deltas no longer re-list the sidebar file tree. Result: 0.8–1.2 ms per streaming frame, flat with length, and 0.28 ms idle.
+
+**Prevention:** Any per-width cache on the chat path needs two slots, because the bar layout probes two widths each frame. Regressions: `overflowing_transcript_keeps_line_caches_across_frames`, `alternating_widths_stay_incremental_and_match_full_render`. Re-run `cargo test -p whycodes-tui --release --lib stream_frame_bench -- --ignored --nocapture` after touching `ui/chat.rs` or `md_stream.rs`. Frame cost must stay flat across the four quarters.
