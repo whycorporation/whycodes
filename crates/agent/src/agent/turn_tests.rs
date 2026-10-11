@@ -1755,6 +1755,7 @@ async fn rate_limit_without_failover_returns_err() {
 
 #[tokio::test]
 async fn rate_limit_same_secret_does_not_loop() {
+    let _env = crate::CREDENTIAL_ENV_LOCK.lock().await;
     let prev = std::env::var_os("WHYCODES_TEST_FAILOVER_DUP");
     let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
     unsafe {
