@@ -366,3 +366,39 @@ fn slop_helpers_cover_clean_error_and_text() {
     let missing = slop_report_text(&gone, None, &cfg);
     assert!(missing.contains("error"), "{missing}");
 }
+
+#[tokio::test]
+async fn event_drain_ends_on_signal_even_with_a_live_sender_clone() {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+    // A background-job listener keeps this clone for the life of the agent.
+    let parked = tx.clone();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let (done, drain) = spawn_event_drain(rx, move |ev| {
+        if let TurnEvent::Status(s) = ev {
+            sink.lock().unwrap().push(s);
+        }
+    });
+    tx.send(TurnEvent::Status("a".into())).unwrap();
+    tx.send(TurnEvent::Status("b".into())).unwrap();
+    drop(tx);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        finish_event_drain(done, drain),
+    )
+    .await
+    .expect("drain must not wait for every sender to drop");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec!["a".to_string(), "b".to_string()]
+    );
+    drop(parked);
+
+    // A channel that closes on its own still ends the drain; the late
+    // signal is then a no-op.
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+    let (done, drain) = spawn_event_drain(rx, |_| {});
+    drop(tx);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    finish_event_drain(done, drain).await;
+}

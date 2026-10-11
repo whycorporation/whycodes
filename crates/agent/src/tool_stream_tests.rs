@@ -155,3 +155,48 @@ fn new_named_alias_id_inserts_when_active_is_set() {
     let calls = a.finish();
     assert_eq!(calls.len(), 1);
 }
+
+#[test]
+fn repeated_start_with_the_same_id_continues_the_call() {
+    // grokv: every chunk of one call repeats id + name.
+    let mut a = ToolCallAssembler::new();
+    a.on_tool_use("call-0".into(), "write".into(), json!(""));
+    a.on_tool_use("call-1".into(), "read".into(), json!(""));
+    a.on_tool_use(
+        "call-0".into(),
+        "write".into(),
+        json!(r#"{"path":"notes.txt","content":"1. Apple"}"#),
+    );
+    a.on_tool_use(
+        "call-1".into(),
+        "read".into(),
+        json!(r#"{"path":"calc.py"}"#),
+    );
+    let calls = a.finish();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0].name, "write");
+    assert_eq!(calls[0].arguments["path"], "notes.txt");
+    assert_eq!(calls[1].name, "read");
+    assert_eq!(calls[1].arguments["path"], "calc.py");
+}
+
+#[test]
+fn repeated_start_merges_fragments_cumulative_args_and_objects() {
+    let mut a = ToolCallAssembler::new();
+    // Fragments append; a cumulative repeat replaces instead of doubling.
+    a.on_tool_use("c".into(), String::new(), json!(r#"{"path":"#));
+    a.on_tool_use("c".into(), "read".into(), json!(r#""a.rs"}"#));
+    a.on_tool_use("c".into(), "read".into(), json!(r#"{"path":"a.rs"}"#));
+    a.on_tool_use("c".into(), "ignored".into(), Value::Null);
+    a.on_tool_use("c".into(), "read".into(), json!(7));
+    let calls = a.finish();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "read", "an empty name is filled once");
+
+    let mut b = ToolCallAssembler::new();
+    b.on_tool_use("o".into(), "bash".into(), json!(""));
+    b.on_tool_use("o".into(), "bash".into(), json!({"command": "ls"}));
+    let calls = b.finish();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].arguments["command"], "ls");
+}

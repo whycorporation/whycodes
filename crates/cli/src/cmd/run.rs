@@ -1865,22 +1865,20 @@ pub(crate) async fn run_one_parallel_turn(
         .emit_stdout();
     }
 
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+    let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
     let cancel = new_cancel_flag();
     let stream = format == OutputFormat::StreamJson;
     let sid = session_id.clone();
-    let drain = tokio::spawn(async move {
-        while let Some(ev) = event_rx.recv().await {
-            if !stream {
-                continue;
+    let (drain_done, drain) = spawn_event_drain(event_rx, move |ev| {
+        if !stream {
+            return;
+        }
+        if let Some(ci) = turn_event_to_ci(ev) {
+            let _ = CiEvent::Session {
+                session_id: sid.clone(),
+                event: Box::new(ci),
             }
-            if let Some(ci) = turn_event_to_ci(ev) {
-                let _ = CiEvent::Session {
-                    session_id: sid.clone(),
-                    event: Box::new(ci),
-                }
-                .emit_stdout();
-            }
+            .emit_stdout();
         }
     });
 
@@ -1897,7 +1895,7 @@ pub(crate) async fn run_one_parallel_turn(
             },
         )
         .await;
-    let _ = drain.await;
+    finish_event_drain(drain_done, drain).await;
 
     let meta = ResultMeta {
         session_id: session.id.clone(),
