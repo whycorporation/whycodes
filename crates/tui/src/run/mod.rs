@@ -50,6 +50,7 @@ const CANCEL_FORCE_AFTER: Duration = Duration::from_millis(1200);
 /// Cap on concurrently live sessions (each holds a full transcript + agent).
 const MAX_LIVE_SESSIONS: usize = 8;
 
+mod goal_run;
 mod import;
 mod persist;
 mod slash;
@@ -57,6 +58,8 @@ mod slash;
 mod tests;
 mod windows_console;
 
+pub(crate) use goal_run::GoalCheck;
+use goal_run::*;
 pub(crate) use import::mark_import_declined;
 use import::*;
 pub use persist::resolve_and_load_session;
@@ -1706,6 +1709,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             // and cycle keys can surface activity.
             for bg in runtimes.iter_mut() {
                 drain_background_runtime(bg);
+                drain_background_goal(bg);
             }
             // Dashboard / picker: rebuild only when rows actually change.
             // Unconditional mark_dirty here used to lock the idle poll at
@@ -1906,6 +1910,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             // A7 suggestion results
             while let Ok(suggestion) = suggest_rx.try_recv() {
                 apply_idle_suggestion(&mut app, suggestion, rt.agent_busy);
+            }
+
+            // `/goal` verdicts for the visible session.
+            while let Ok(check) = rt.goal_rx.try_recv() {
+                apply_goal_check(&mut app, &mut rt, check);
             }
 
             // OAuth login flow progress (`/connect` spawned task).
@@ -2597,6 +2606,8 @@ async fn apply_idle_loop_key(
                         question_prompter: Arc::clone(&rt.question_prompter),
                         auth_tx: auth_tx.clone(),
                         pending_compact: &mut rt.pending_compact,
+                        goal: &mut rt.goal,
+                        goal_db: rt.db.as_ref(),
                     },
                 )
                 .await;
@@ -3518,6 +3529,7 @@ fn apply_turn_outcome(
                 false,
             );
             rt.persist("ok");
+            goal_after_turn(app, rt, config, provider, model, api_key);
             maybe_spawn_prompt_suggestion(
                 config,
                 &rt.session,
@@ -3574,6 +3586,7 @@ fn apply_turn_outcome(
             app.session_title = rt.session.title.clone();
             app.finish_open_thinking();
             app.sync_context_estimate(&rt.session);
+            pause_goal_after_error(app, rt, cancelled);
             if cancelled {
                 app.current_agent_state = AgentState::Idle;
                 app.status_message = format_turn_done_status(
@@ -4506,6 +4519,11 @@ enum BusyCtrlC {
 }
 
 fn refresh_live_session_ui(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[SessionRuntime]) {
+    let chip = goal_chip(rt.goal.as_ref());
+    if app.goal_chip != chip {
+        app.goal_chip = chip;
+        app.mark_dirty();
+    }
     if matches!(app.dialogs.active(), Some(DialogKind::Sessions)) {
         let cursor = app.sessions_cursor;
         let changed = refresh_sessions_rows(app, rt, runtimes);
@@ -4520,6 +4538,16 @@ fn refresh_live_session_ui(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[Se
     {
         app.mark_dirty();
     }
+}
+
+fn goal_chip(goal: Option<&crate::goal::Goal>) -> Option<&'static str> {
+    goal.map(|g| {
+        if g.paused.is_some() {
+            "◎ goal paused"
+        } else {
+            "◎ goal"
+        }
+    })
 }
 
 fn should_tick_spinner(app: &TuiApp, agent_busy: bool) -> bool {

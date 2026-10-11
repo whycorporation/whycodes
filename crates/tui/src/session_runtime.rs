@@ -185,6 +185,11 @@ pub struct SessionRuntime {
     /// per runtime avoids a global Mutex around every persist. `None` when
     /// the data dir is unavailable; persists become best-effort no-ops.
     pub(crate) db: Option<Database>,
+    /// `/goal` for this session (restored on resume).
+    pub(crate) goal: Option<crate::goal::Goal>,
+    /// Goal evaluator → UI, per runtime so a verdict lands on its session.
+    pub(crate) goal_tx: mpsc::UnboundedSender<crate::run::GoalCheck>,
+    pub(crate) goal_rx: mpsc::UnboundedReceiver<crate::run::GoalCheck>,
 }
 
 impl SessionRuntime {
@@ -205,6 +210,9 @@ impl SessionRuntime {
         perm_rx: mpsc::UnboundedReceiver<PermissionRequest>,
         question_rx: mpsc::UnboundedReceiver<QuestionRequest>,
     ) -> Self {
+        let db = open_runtime_db();
+        let goal = crate::goal::restore(db.as_ref(), &session);
+        let (goal_tx, goal_rx) = mpsc::unbounded_channel();
         Self {
             agent,
             session,
@@ -228,7 +236,10 @@ impl SessionRuntime {
             unread: false,
             last_error: false,
             created_at: std::time::Instant::now(),
-            db: open_runtime_db(),
+            db,
+            goal,
+            goal_tx,
+            goal_rx,
         }
     }
 

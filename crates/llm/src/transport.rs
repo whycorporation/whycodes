@@ -73,6 +73,25 @@ impl LlmTransport {
             debug!("llm.complete_cache_hit model={model}");
             return Ok(ResponseCache::to_response(&hit, model));
         }
+        let resp = self
+            .complete_uncached(provider, request, api_key, model)
+            .await?;
+        if let Some(text) = text_only_response(&resp) {
+            ResponseCache::global().store(request, model, &text);
+        }
+        Ok(resp)
+    }
+
+    /// [`Self::complete`] without the response cache, for calls whose answer
+    /// must reflect this exact request (a `/goal` check: a semantic hit on a
+    /// near-identical transcript would replay an old verdict).
+    pub async fn complete_uncached(
+        &self,
+        provider: &dyn LlmProvider,
+        request: &LlmRequest,
+        api_key: &str,
+        model: &str,
+    ) -> whycodes_core::Result<LlmResponse> {
         let name = provider.name();
         let max_retries = self.retry.max_retries;
         debug!("llm.complete provider={name} model={model} max_retries={max_retries}");
@@ -83,7 +102,7 @@ impl LlmTransport {
             provider.complete(request, api_key, model)
         });
 
-        let resp = match timeout {
+        match timeout {
             Some(t) => match tokio::time::timeout(t, work).await {
                 Ok(r) => r,
                 Err(elapsed) => Err(whycodes_core::Error::llm_kind(
@@ -92,11 +111,7 @@ impl LlmTransport {
                 )),
             },
             None => work.await,
-        }?;
-        if let Some(text) = text_only_response(&resp) {
-            ResponseCache::global().store(request, model, &text);
         }
-        Ok(resp)
     }
 
     /// Stream a turn: optional response-cache replay, then first-token race.

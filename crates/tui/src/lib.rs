@@ -10,6 +10,7 @@ pub mod clipboard_image;
 pub mod color;
 pub mod config;
 pub mod frecency;
+pub mod goal;
 pub mod heap;
 pub mod hit_area;
 pub mod images;

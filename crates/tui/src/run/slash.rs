@@ -18,9 +18,52 @@ pub struct SlashContext<'a> {
     /// Queued `/compact [note]` — the event loop spawns it like a turn so
     /// the LLM summary cannot freeze the pager.
     pub pending_compact: &'a mut Option<String>,
+    /// This session's `/goal`, and where to persist it for resume.
+    pub goal: &'a mut Option<crate::goal::Goal>,
+    pub goal_db: Option<&'a whycodes_storage::db::Database>,
 }
 
 pub(super) const LOOP_USAGE: &str = "Usage: /loop N prompt…  |  /loop stop";
+pub(super) const GOAL_USAGE: &str = "Usage: /goal <condition>  |  /goal (status)  |  /goal clear";
+
+/// `/goal`: set (and start a turn), show status, or clear.
+pub(super) fn handle_goal_slash(rest: &str, ctx: &mut SlashContext<'_>) {
+    use crate::goal::{Goal, GoalSlash, MAX_CONDITION_CHARS, parse_goal_slash, session_tokens};
+    match parse_goal_slash(rest) {
+        GoalSlash::Show => match ctx.goal.as_ref() {
+            Some(goal) => {
+                let status = goal.status(session_tokens(ctx.session));
+                ctx.app.add_message(ChatRole::System, &status);
+            }
+            None => ctx.app.status_message = format!("No active goal. {GOAL_USAGE}"),
+        },
+        GoalSlash::Clear => {
+            if ctx.goal.take().is_some() {
+                crate::goal::save(ctx.goal_db, &ctx.session.id, None);
+                ctx.app
+                    .toasts
+                    .push(crate::toast::ToastKind::Info, "Goal cleared");
+            } else {
+                ctx.app.status_message = "No active goal.".into();
+            }
+        }
+        GoalSlash::TooLong(chars) => {
+            ctx.app.status_message =
+                format!("Goal is {chars} characters; the limit is {MAX_CONDITION_CHARS}.");
+        }
+        GoalSlash::Set(condition) => {
+            let goal = Goal::new(condition.clone(), session_tokens(ctx.session));
+            crate::goal::save(ctx.goal_db, &ctx.session.id, Some(&goal));
+            *ctx.goal = Some(goal);
+            ctx.app.toasts.push(
+                crate::toast::ToastKind::Info,
+                "Goal set — working until it is met",
+            );
+            ctx.app.add_message(ChatRole::User, &condition);
+            ctx.app.enqueue_prompt_text(condition);
+        }
+    }
+}
 
 pub(super) fn oauth_unavailable_hint(names: Vec<String>) -> String {
     if names.is_empty() {
@@ -159,6 +202,9 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             ctx.app.help_searching = false;
         }
         "/new" | "/clear" => {
+            if ctx.goal.take().is_some() {
+                crate::goal::save(ctx.goal_db, &ctx.session.id, None);
+            }
             *ctx.history = SessionHistory::new();
             *ctx.session = Session::new(
                 ctx.project_dir.to_path_buf(),
@@ -284,6 +330,7 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.status_message = "Usage: /bg | /bg kill <id>".into();
             }
         }
+        "/goal" => handle_goal_slash(rest, ctx),
         "/loop" => match parse_loop_slash(rest) {
             LoopSlash::Stop => {
                 let n = ctx.app.pending_auto_prompts.len();
