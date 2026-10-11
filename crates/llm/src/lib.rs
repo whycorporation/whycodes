@@ -6,6 +6,7 @@ pub mod error_class;
 pub mod fallback;
 pub mod harmony;
 pub(crate) mod json_value;
+pub(crate) mod line_buffer;
 pub mod model_catalog;
 pub mod oauth_refresh;
 pub mod openai_compat;
