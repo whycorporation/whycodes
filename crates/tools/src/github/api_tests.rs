@@ -2,6 +2,11 @@ use super::*;
 use std::process::Command;
 use std::time::Instant;
 
+/// Absolute so stand-ins still spawn while sibling git tests point `PATH`
+/// at a missing dir under `ENV_LOCK`.
+/// Unix only; Windows stand-ins use `cmd`, found in System32.
+const SH: &str = "/bin/sh";
+
 #[test]
 fn explicit_token_takes_precedence_without_environment_access() {
     assert_eq!(
@@ -275,7 +280,7 @@ fn fail_cmd() -> Command {
     }
     #[cfg(not(windows))]
     {
-        let mut cmd = Command::new("sh");
+        let mut cmd = Command::new(SH);
         cmd.args(["-c", "exit 1"]);
         cmd
     }
@@ -294,7 +299,7 @@ fn hang_cmd(sleep: bool) -> Command {
     }
     #[cfg(not(windows))]
     {
-        let mut cmd = Command::new("sh");
+        let mut cmd = Command::new(SH);
         if sleep {
             cmd.args(["-c", "sleep 2"]);
         } else {
@@ -452,7 +457,7 @@ fn git_credential_fill_parses_password_from_helper() {
         cmd.args(["/C", "echo password=from-helper"]);
         cmd
     } else {
-        let mut cmd = Command::new("sh");
+        let mut cmd = Command::new(SH);
         cmd.args([
             "-c",
             "while IFS= read -r line; do [ -z \"$line\" ] && break; done; printf 'password=from-helper\\n'",
