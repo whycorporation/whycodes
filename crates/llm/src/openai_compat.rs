@@ -119,7 +119,7 @@ pub fn chat_sse_stream(resp: reqwest::Response, provider: &str) -> ProviderEvent
 pub(crate) fn chat_sse_from_bytes(bytes: ByteStream, provider: &str) -> ProviderEventStream {
     Box::pin(ChatSse {
         bytes,
-        buffer: String::new(),
+        buffer: crate::line_buffer::LineBuffer::default(),
         pending: std::collections::VecDeque::new(),
         provider: provider.to_string(),
         done: false,
@@ -128,7 +128,7 @@ pub(crate) fn chat_sse_from_bytes(bytes: ByteStream, provider: &str) -> Provider
 
 struct ChatSse {
     bytes: ByteStream,
-    buffer: String,
+    buffer: crate::line_buffer::LineBuffer,
     pending: std::collections::VecDeque<whycodes_core::Result<StreamEvent>>,
     provider: String,
     done: bool,
@@ -158,9 +158,7 @@ impl ChatSse {
     }
 
     fn drain_buffer_lines(&mut self) {
-        while let Some(pos) = self.buffer.find('\n') {
-            let line = self.buffer[..pos].trim().to_string();
-            self.buffer = self.buffer[pos + 1..].to_string();
+        while let Some(line) = self.buffer.next_line() {
             self.push_data_line(&line);
             if self.done {
                 break;
@@ -183,7 +181,7 @@ impl Stream for ChatSse {
             }
             match this.bytes.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(bytes))) => {
-                    this.buffer.push_str(&String::from_utf8_lossy(&bytes));
+                    this.buffer.push(&bytes);
                     this.drain_buffer_lines();
                 }
                 Poll::Ready(Some(Err(e))) => {

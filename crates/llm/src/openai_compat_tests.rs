@@ -935,3 +935,24 @@ async fn chat_sse_from_scripted_bytes_covers_pending_error_and_done_break() {
     assert_eq!(text, "hi");
     assert!(saw_stop);
 }
+
+#[tokio::test]
+async fn chat_sse_keeps_multibyte_text_split_across_chunks() {
+    // A network chunk boundary can land inside `ş` (0xC5 0x9F). Decoding each
+    // chunk alone used to paint two U+FFFD for it.
+    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"Merhaba, şöyle güzel\"}}]}\n\
+                data: [DONE]\n";
+    let bytes = body.as_bytes();
+    let cut = body.find('ş').expect("ş") + 1;
+    let mut stream = chat_sse_from_bytes(
+        scripted_bytes([Ok(bytes[..cut].to_vec()), Ok(bytes[cut..].to_vec())]),
+        "openai",
+    );
+    let mut text = String::new();
+    while let Some(ev) = stream.next().await {
+        if let Ok(StreamEvent::TextDelta { text: d }) = ev {
+            text.push_str(&d);
+        }
+    }
+    assert_eq!(text, "Merhaba, şöyle güzel");
+}

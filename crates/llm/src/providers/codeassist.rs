@@ -863,7 +863,7 @@ async fn stream_with(
 
 struct CodeAssistSse {
     bytes: crate::openai_compat::ByteStream,
-    buffer: String,
+    buffer: crate::line_buffer::LineBuffer,
     pending: VecDeque<whycodes_core::Result<StreamEvent>>,
     call_seq: u64,
     done: bool,
@@ -897,10 +897,8 @@ impl Stream for CodeAssistSse {
             }
             match this.bytes.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(bytes))) => {
-                    this.buffer.push_str(&String::from_utf8_lossy(&bytes));
-                    while let Some(pos) = this.buffer.find('\n') {
-                        let line = this.buffer[..pos].trim().to_string();
-                        this.buffer = this.buffer[pos + 1..].to_string();
+                    this.buffer.push(&bytes);
+                    while let Some(line) = this.buffer.next_line() {
                         this.push_data_line(&line);
                         if this.done {
                             break;
@@ -926,7 +924,7 @@ impl Stream for CodeAssistSse {
 fn codeassist_sse(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
     Box::pin(CodeAssistSse {
         bytes,
-        buffer: String::new(),
+        buffer: crate::line_buffer::LineBuffer::default(),
         pending: VecDeque::new(),
         call_seq: 0,
         done: false,
