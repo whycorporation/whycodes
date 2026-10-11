@@ -625,6 +625,31 @@ Harness splash is now a single CSI burst (no ratatui `Terminal`):
 That spawn-to-exit matches `--version` on this box. Interactive `run()`
 still attaches crossterm after the splash and hydrates Agent/SQLite.
 
+### Re-measure, 2026-10-11 (Windows AMD64, release, HEAD `fe41214`)
+
+Same machine (AMD Ryzen 7 3800X), Windows 11 Pro 10.0.26300. Release binary
+**16.9 MB**, `--features bundled-sqlite`. Process level only; the criterion
+hot paths / index in [`bench-results.json`](bench-results.json) are still the
+2026-09-11 run.
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **14.8 ms** | 18.7 ms | **8.1 MB** |
+| `--help` | **41.1 ms** | 58.1 ms | — |
+| `config show` | **51.6 ms** | 60.3 ms | **13.6 MB** |
+| `session list` | — | — | **13.6 MB** |
+| binary size | **16.9 MB** | — | — |
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **0.3 ms** in-proc | 0.0/s | spawn-to-exit **15.1 ms** (min 13.9, max 22.4) |
+| Harness `--idle-ms 3000` (10 runs) | **0.3 ms** in-proc | **0.0/s** | still zero |
+
+Same band as 2026-09-11 (`--version` 13.8 ms, 7.6 MB). Peak RSS is
+~0.5–0.7 MB higher than that run (cause not profiled); `--version` p95
+18.7 ms is still far under the CI ceiling (50 ms / 40 MB). **Multi-session PSS:**
+skipped (Linux only); the Linux column in the README stays 2026-09-02.
+
 
 ## Hot paths
 

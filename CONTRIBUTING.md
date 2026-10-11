@@ -88,8 +88,9 @@ Things to know about CI:
   previous CI run so the pool is not stuck on stale jobs. After lint, Test and
   Coverage run in parallel across whatever runners are online. Release Build
   still reports on PRs (required check) but only compiles the binary on push
-  to main. Formula-only **pushes** to main skip this workflow (`paths-ignore`);
-  formula PRs still run it (the ruleset requires those checks). Coverage
+  to main. Docs- and formula-only **pushes** to main skip this workflow
+  (`paths-ignore`); pull requests always run it (the ruleset requires those
+  checks), and a docs-only PR skips the Coverage measurement. Coverage
   persists instrumented rlibs under `${CARGO_TARGET_DIR}-llvm-cov` and only
   deletes `*.profraw` / `*.profdata` between runs.
   Each job pins `CARGO_HOME` and `CARGO_TARGET_DIR` under
@@ -140,8 +141,8 @@ see [AGENTS.md](AGENTS.md) “Interactive TUI fast path”.
 ### Agent rules
 
 Agent-facing repository rules are in [AGENTS.md](AGENTS.md); they apply to
-human contributors just the same. Releases (tag, Homebrew follow-up, docs-only
-PR deadlock) are documented there under “Releases”.
+human contributors just the same. Releases (tag, Homebrew follow-up) are
+documented there under “Releases”.
 
 ## Secrets and local scratch
 
