@@ -177,6 +177,116 @@ class AffectedTests(unittest.TestCase):
         self.assertNotIn("cli", graph["core"])
         self.assertIn("core", graph["cli"])
 
+    LOCK = """
+version = 4
+
+[[package]]
+name = "tokio"
+version = "{tokio}"
+dependencies = [{tokio_deps}]
+
+[[package]]
+name = "whycodes-storage"
+version = "0.6.6"
+dependencies = [{storage_deps}]
+{extra}
+"""
+
+    def lock(self, tokio="1.53.1", tokio_deps="", storage_deps="", extra="") -> str:
+        return self.LOCK.format(
+            tokio=tokio, tokio_deps=tokio_deps, storage_deps=storage_deps, extra=extra
+        )
+
+    def test_lockfile_widens_only_for_external_bumps(self) -> None:
+        base = self.lock()
+        # A member's dependency list and a brand-new package follow manifests.
+        added = self.lock(
+            storage_deps='"tracing"',
+            extra='[[package]]\nname = "tracing"\nversion = "0.1.44"\n',
+        )
+        self.assertEqual(affected.lock_bumps_external(base, added), [])
+        # A version bump or a changed dependency list can reach every crate.
+        self.assertEqual(affected.lock_bumps_external(base, self.lock(tokio="1.53.2")), ["tokio"])
+        self.assertEqual(
+            affected.lock_bumps_external(base, self.lock(tokio_deps='"bytes"')), ["tokio"]
+        )
+
+        graph = affected.direct_deps()
+        paths = ["Cargo.lock", "crates/storage/Cargo.toml"]
+        narrow = affected.plan_for(paths, graph, lock_bumps=[])
+        self.assertFalse(narrow.workspace)
+        self.assertIn("storage", narrow.full)
+        self.assertTrue(affected.plan_for(paths, graph, lock_bumps=["tokio"]).workspace)
+        # Unknown (no base to diff) stays conservative.
+        self.assertTrue(affected.plan_for(paths, graph).workspace)
+
+    def test_several_crates_build_once_with_qualified_features(self) -> None:
+        graph = affected.direct_deps()
+        plan = affected.plan_for(
+            ["crates/storage/src/db.rs", "crates/tools/src/cards.rs", "crates/cli/tests/cli_args.rs"],
+            graph,
+        )
+        cmd = affected.bundled_build(plan, locked=True, features="whycodes-storage/bundled")
+        self.assertEqual(cmd[:5], ["cargo", "test", "--no-run", "--message-format=json-render-diagnostics", "--locked"])
+        features = cmd[cmd.index("--features") + 1].split(",")
+        self.assertIn("whycodes-storage/bundled", features)
+        self.assertIn("whycodes-tools/bundled-sqlite", features)
+        for pkg in ("whycodes-cli", "whycodes-storage", "whycodes-tools"):
+            self.assertIn(pkg, cmd)
+        self.assertEqual(cmd.count("--lib"), 1)
+        self.assertIn("cli_args", cmd)
+        self.assertNotIn("--bin", cmd, "cli is selected for its integration test only")
+
+        def artifact(crate: str, kind: str, name: str) -> dict:
+            return {
+                "reason": "compiler-artifact",
+                "executable": f"/t/{name}-{kind}",
+                "profile": {"test": True},
+                "manifest_path": f"/repo/crates/{crate}/Cargo.toml",
+                "target": {"kind": [kind], "name": name},
+            }
+
+        runs = affected.bundled_runs(
+            plan,
+            [
+                artifact("storage", "lib", "whycodes_storage"),
+                artifact("tools", "lib", "whycodes_tools"),
+                artifact("tools", "test", "tools"),
+                artifact("cli", "test", "cli_args"),
+                artifact("cli", "test", "sdk_v1"),
+                {"reason": "build-finished"},
+            ],
+        )
+        self.assertEqual(
+            runs,
+            [
+                ("cli", "/t/cli_args-test", []),
+                ("storage", "/t/whycodes_storage-lib", ["db::"]),
+                ("tools", "/t/whycodes_tools-lib", ["cards::"]),
+            ],
+        )
+
+    def test_full_crates_run_every_binary_and_doctests_are_detected(self) -> None:
+        graph = affected.direct_deps()
+        plan = affected.plan_for(["crates/format/src/lib.rs"], graph)
+        self.assertIn("format", plan.full)
+        runs = affected.bundled_runs(
+            plan,
+            [
+                {
+                    "reason": "compiler-artifact",
+                    "executable": "/t/fmt",
+                    "profile": {"test": True},
+                    "manifest_path": "/repo/crates/format/Cargo.toml",
+                    "target": {"kind": ["lib"], "name": "whycodes_format"},
+                }
+            ],
+        )
+        self.assertIn(("format", "/t/fmt", []), runs)
+        self.assertTrue(affected.has_doctests("format"))
+        self.assertFalse(affected.has_doctests("cli"), "no lib, no doctests")
+        self.assertFalse(affected.has_doctests("storage"))
+
 
 if __name__ == "__main__":
     raise SystemExit(unittest.main())

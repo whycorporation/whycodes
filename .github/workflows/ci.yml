@@ -168,7 +168,11 @@ jobs:
     env:
       # One rustc per parallel job on the shared 4-vCPU host.
       CARGO_BUILD_JOBS: 1
-    if: ${{ always() && needs.lint.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    # Pull requests only. The main ruleset requires branches to be up to
+    # date before merging (strict status checks), so the tree that lands on
+    # main is the tree this job already tested. Re-running it on push only
+    # held the runner pool. Coverage still runs on push (docs cite it).
+    if: ${{ always() && needs.lint.result == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -187,12 +191,12 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run tests
         # Changed files pick the crates and modules. A leaf edit does not
-        # re-run the workspace. Root Cargo.toml / Cargo.lock still means
-        # --workspace (same two WHYCODES_HOME skips as before).
-        # Pull requests diff against the base branch. A push has no base
-        # ref; the script then tests the files in HEAD.
+        # re-run the workspace. Root Cargo.toml means --workspace, and so
+        # does Cargo.lock when an existing external package is bumped (same
+        # two WHYCODES_HOME skips as before). Several crates build in one
+        # `cargo test --no-run`, then each binary runs with its filters.
         env:
-          AFFECTED_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD' }}
+          AFFECTED_BASE: origin/${{ github.base_ref }}
         run: |
           # `-p` lines keep whycodes-storage/bundled only when that package
           # can activate it. Others get their bundled-sqlite alias, or no
