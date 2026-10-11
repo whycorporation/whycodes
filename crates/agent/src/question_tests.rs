@@ -177,7 +177,7 @@ fn default_question_prompter_ci_and_construct_stdin() {
     let _ = default_question_prompter();
     unsafe { std::env::remove_var("CI") };
     let _ = default_question_prompter();
-    let _ = StdinQuestionPrompter;
+    let _ = StdinQuestionPrompter::default();
     // Force both restore arms so leftover coverage is not env-dependent.
     unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", "restore-some") };
     if let Some(v) = std::env::var_os("WHYCODES_AUTO_APPROVE") {
@@ -408,10 +408,8 @@ fn parse_stdin_question_line_covers_numeric_other_and_free_text() {
 
 #[tokio::test]
 async fn stdin_question_prompter_eof_cancels() {
-    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        return;
-    }
-    let p = StdinQuestionPrompter;
+    // Never the process stdin: an open terminal or pipe would block.
+    let p = StdinQuestionPrompter::with_input(|| Box::new(std::io::empty()));
     let err = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         p.ask(vec![QuestionSpec {

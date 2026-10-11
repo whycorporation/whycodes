@@ -141,19 +141,24 @@ impl std::io::Write for FailFlush {
 
 #[tokio::test]
 async fn stdin_prompter_eof_denies() {
-    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        return;
+    // Never the process stdin: an open terminal or pipe would block.
+    fn eof() -> Box<dyn std::io::BufRead> {
+        Box::new(std::io::empty())
     }
+    // The real source only locks stdin; reading is what blocks.
+    drop(stdin_input());
     let allowed = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        StdinPrompter::default().ask("bash", ""),
+        StdinPrompter::default().with_input(eof).ask("bash", ""),
     )
     .await
     .expect("stdin ask must not hang on EOF");
     let _ = allowed;
     let allowed = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        StdinPrompter::default().ask("bash", "rm -rf /tmp/x"),
+        StdinPrompter::default()
+            .with_input(eof)
+            .ask("bash", "rm -rf /tmp/x"),
     )
     .await
     .expect("stdin ask with detail must not hang on EOF");
@@ -167,6 +172,7 @@ async fn stdin_prompter_eof_denies() {
     let allowed = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         StdinPrompter::default()
+            .with_input(eof)
             .with_notify(crate::notify::handle_from_config(&cfg))
             .ask("bash", "echo notify"),
     )
