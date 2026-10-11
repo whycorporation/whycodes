@@ -772,6 +772,58 @@ pub(crate) fn emit_headless_setup_error(format: OutputFormat, message: &str) -> 
     }
 }
 
+/// Forward turn events to `on_event` until the turn is over.
+///
+/// The drain must not wait for the channel to close: an agent without a
+/// long-lived sink (headless) parks a clone of the turn sender in its
+/// background-job listener, and `schedule` moves one into a delayed task, so
+/// the channel can stay open for the life of the process (`generate` hung
+/// after every turn that ran bash). [`finish_event_drain`] signals the end;
+/// events already queued are still delivered, in order.
+pub(crate) fn spawn_event_drain<F>(
+    mut event_rx: tokio::sync::mpsc::UnboundedReceiver<TurnEvent>,
+    mut on_event: F,
+) -> (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+)
+where
+    F: FnMut(TurnEvent) + Send + 'static,
+{
+    let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
+    let drain = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                ev = event_rx.recv() => match ev {
+                    Some(ev) => on_event(ev),
+                    None => break,
+                },
+                _ = &mut done_rx => {
+                    while let Ok(ev) = event_rx.try_recv() {
+                        on_event(ev);
+                    }
+                    break;
+                }
+            }
+        }
+    });
+    (done_tx, drain)
+}
+
+/// End a [`spawn_event_drain`] once the turn has returned.
+pub(crate) async fn finish_event_drain(
+    done: tokio::sync::oneshot::Sender<()>,
+    drain: tokio::task::JoinHandle<()>,
+) {
+    if done.send(()).is_err() {
+        tracing::debug!("event drain already finished");
+    }
+    if let Err(e) = drain.await {
+        tracing::debug!(error = %e, "ci event drain skipped");
+    }
+}
+
 /// Run one agent turn and write stdout according to `format`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_headless_turn(
@@ -799,21 +851,19 @@ pub(crate) async fn run_headless_turn(
         .emit_stdout();
     }
 
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+    let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
     let cancel = new_cancel_flag();
 
     // Drain TurnEvents → CiEvent while the agent runs.
     let stream = format == OutputFormat::StreamJson;
-    let drain = tokio::spawn(async move {
-        while let Some(ev) = event_rx.recv().await {
-            if !stream {
-                continue;
-            }
-            if let Some(ci) = turn_event_to_ci(ev)
-                && let Err(e) = ci.emit_stdout()
-            {
-                tracing::debug!(error = %e, "ci event emit skipped");
-            }
+    let (drain_done, drain) = spawn_event_drain(event_rx, move |ev| {
+        if !stream {
+            return;
+        }
+        if let Some(ci) = turn_event_to_ci(ev)
+            && let Err(e) = ci.emit_stdout()
+        {
+            tracing::debug!(error = %e, "ci event emit skipped");
         }
     });
 
@@ -831,10 +881,7 @@ pub(crate) async fn run_headless_turn(
         )
         .await;
 
-    // Drop the sender side (inside agent) already closed; wait for drain.
-    if let Err(e) = drain.await {
-        tracing::debug!(error = %e, "ci event drain skipped");
-    }
+    finish_event_drain(drain_done, drain).await;
 
     let duration_ms = started.elapsed().as_millis() as u64;
     let meta = ResultMeta {

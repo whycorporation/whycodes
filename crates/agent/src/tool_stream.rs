@@ -34,7 +34,17 @@ impl ToolCallAssembler {
     }
 
     /// Handle a tool-call start (or a full non-streamed tool use).
+    ///
+    /// A start whose `id` is already open continues that call: some gateways
+    /// (grokv) repeat `id` + `name` on every chunk of the same call, which
+    /// used to split one call into an empty-argument call plus the real one.
     pub fn on_tool_use(&mut self, id: String, name: String, input: Value) {
+        if !id.is_empty()
+            && let Some(&i) = self.keys.get(&id)
+        {
+            self.continue_tool_use(i, name, input);
+            return;
+        }
         let idx = self.calls.len();
         let mut buf = String::new();
         let mut pre_parsed: Option<Value> = None;
@@ -61,6 +71,32 @@ impl ToolCallAssembler {
         }
         // Sequential OpenAI index: first call → "0", second → "1", …
         self.keys.insert(idx.to_string(), idx);
+    }
+
+    /// A repeated start for call `i`: merge its arguments instead of opening a
+    /// new call. A fragment that repeats the whole buffer so far (cumulative
+    /// streams) replaces it; anything else is appended.
+    fn continue_tool_use(&mut self, i: usize, name: String, input: Value) {
+        if self.calls[i].name.is_empty() {
+            self.calls[i].name = name;
+        }
+        let fragment = match input {
+            Value::String(s) => s,
+            Value::Object(m) if !m.is_empty() => {
+                self.calls[i].arguments = Value::Object(m);
+                self.arg_bufs[i].clear();
+                String::new()
+            }
+            Value::Null | Value::Object(_) => String::new(),
+            other => other.to_string(),
+        };
+        let buf = &mut self.arg_bufs[i];
+        if !buf.is_empty() && fragment.starts_with(buf.as_str()) {
+            *buf = fragment;
+        } else {
+            buf.push_str(&fragment);
+        }
+        self.active = Some(i);
     }
 
     /// Append a JSON fragment to the matching tool call.
