@@ -18,6 +18,15 @@ tests:
 
 `--execute` runs those commands. Without it, the script only prints them
 (one cargo invocation per line) so CI and agents can see the selection.
+When more than one crate is selected, `--execute` compiles every selected
+test target in one `cargo test --no-run` and then runs each binary with its
+own filters. Separate `cargo test -p` calls resolve features per package,
+so each one rebuilt serde/tokio/reqwest and most workspace crates again.
+
+`Cargo.lock` widens to the workspace only when an external package that
+already existed changes version or dependencies (a bump can reach every
+crate). Added or removed packages and workspace-member entries follow the
+crate manifests in the same diff.
 
 Usage:
     python scripts/affected_tests.py [--base origin/main] [--execute]
@@ -28,11 +37,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+try:  # Python 3.11+. Without it Cargo.lock stays a workspace root.
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - old runner python3
+    tomllib = None  # type: ignore[assignment]
 
 ROOT = Path(__file__).resolve().parent.parent
 CRATES = ROOT / "crates"
@@ -318,7 +335,51 @@ class Plan:
         self.reasons.append(f"{package_name(crate)} --test {target}: {why}")
 
 
-def plan_for(paths: list[str], graph: dict[str, set[str]]) -> Plan:
+def lock_bumps_external(base_lock: str, head_lock: str) -> list[str]:
+    """External packages present on both sides whose version or dependency
+    list changed. Workspace members and packages that were only added or
+    only removed are left to the crate manifests in the same diff."""
+
+    def entries(text: str) -> set[tuple[str, str, tuple[str, ...]]]:
+        packages = tomllib.loads(text).get("package", [])
+        return {
+            (p["name"], p.get("version", ""), tuple(sorted(p.get("dependencies", []))))
+            for p in packages
+            if not p["name"].startswith(PKG_PREFIX)
+        }
+
+    base, head = entries(base_lock), entries(head_lock)
+    head_names = {name for name, _, _ in head}
+    return sorted({name for name, _, _ in base - head if name in head_names})
+
+
+def _lock_bumps(base: str) -> list[str] | None:
+    """`lock_bumps_external` against `base`, or None when either side is unreadable."""
+    if tomllib is None:
+        return None
+    old = subprocess.run(
+        ["git", "show", f"{base}:Cargo.lock"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    try:
+        new = (ROOT / "Cargo.lock").read_text(encoding="utf-8")
+        if old.returncode != 0:
+            return None
+        return lock_bumps_external(old.stdout, new)
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def plan_for(
+    paths: list[str],
+    graph: dict[str, set[str]],
+    lock_bumps: list[str] | None = None,
+) -> Plan:
+    """`lock_bumps` is the external packages a `Cargo.lock` change bumped;
+    None (unknown) keeps the lockfile a workspace root."""
     plan = Plan()
     rev = dependents_of(graph)
     if not paths:
@@ -326,9 +387,13 @@ def plan_for(paths: list[str], graph: dict[str, set[str]]) -> Plan:
         return plan
 
     for path in paths:
+        if path == "Cargo.lock" and lock_bumps is not None and not lock_bumps:
+            plan.reasons.append("Cargo.lock: no external version bumps; crate manifests decide")
+            continue
         if path in WORKSPACE_ROOTS or path.startswith(".cargo/"):
             plan.workspace = True
-            plan.reasons.append(f"workspace: {path}")
+            why = f" ({', '.join(lock_bumps[:5])})" if path == "Cargo.lock" and lock_bumps else ""
+            plan.reasons.append(f"workspace: {path}{why}")
             return plan
 
         crate = crate_of(path)
@@ -521,6 +586,138 @@ def _cargo(locked: bool, features: str, args: list[str]) -> str:
     return " ".join(cmd)
 
 
+def plan_crates(plan: Plan) -> list[str]:
+    return sorted(plan.full | set(plan.lib_filters) | set(plan.integration))
+
+
+def integration_targets(crate: str) -> list[str]:
+    tests = CRATES / crate / "tests"
+    return sorted(p.stem for p in tests.glob("*.rs")) if tests.is_dir() else []
+
+
+FENCE = re.compile(r"^\s*//[/!]\s*```\s*([A-Za-z0-9_,\-]*)")
+# Fenced blocks rustdoc does not compile as tests.
+NON_RUST_FENCES = {"text", "sh", "bash", "console", "toml", "json", "yaml", "plain", "ignore"}
+
+
+def has_doctests(crate: str) -> bool:
+    """True when a doc comment under `src/` opens a Rust code fence."""
+    src = CRATES / crate / "src"
+    if not has_lib_target(crate):
+        return False
+    for rs in src.rglob("*.rs"):
+        inside = False
+        for line in rs.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = FENCE.match(line)
+            if not match:
+                continue
+            if inside:
+                inside = False
+                continue
+            inside = True
+            langs = {t for t in match.group(1).split(",") if t}
+            if not langs & NON_RUST_FENCES:
+                return True
+    return False
+
+
+def bundled_build(plan: Plan, *, locked: bool, features: str) -> list[str]:
+    """One `cargo test --no-run` over every selected package and target.
+
+    Features are qualified per package (`whycodes-tools/bundled-sqlite`) so
+    one invocation can carry what each `-p` line would have passed.
+    """
+    deps = direct_deps()
+    crates = plan_crates(plan)
+    specs: list[str] = []
+    flags: list[str] = []
+    seen: set[tuple[str, ...]] = set()
+
+    def flag(*args: str) -> None:
+        if args not in seen:
+            seen.add(args)
+            flags.extend(args)
+
+    for crate in crates:
+        for spec in filter(None, features_for_crate(crate, features, deps).split(",")):
+            qualified = spec if "/" in spec else f"{package_name(crate)}/{spec}"
+            if qualified not in specs:
+                specs.append(qualified)
+        unit = crate in plan.full or crate in plan.lib_filters
+        if unit and has_lib_target(crate):
+            flag("--lib")
+        if crate in plan.full or (unit and not has_lib_target(crate)):
+            for name in bin_names(crate):
+                flag("--bin", name)
+        tests = integration_targets(crate) if crate in plan.full else sorted(plan.integration.get(crate, ()))
+        for target in tests:
+            flag("--test", target)
+    cmd = ["cargo", "test", "--no-run", "--message-format=json-render-diagnostics"]
+    if locked:
+        cmd.append("--locked")
+    if specs:
+        cmd.extend(["--features", ",".join(specs)])
+    for crate in crates:
+        cmd.extend(["-p", package_name(crate)])
+    return cmd + flags
+
+
+def bundled_runs(plan: Plan, artifacts: list[dict]) -> list[tuple[str, str, list[str]]]:
+    """`(crate, executable, harness args)` for each planned test binary."""
+    exes: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    for msg in artifacts:
+        if msg.get("reason") != "compiler-artifact" or not msg.get("executable"):
+            continue
+        if not msg.get("profile", {}).get("test"):
+            continue
+        crate = Path(msg["manifest_path"]).parent.name
+        kinds = msg["target"]["kind"]
+        kind = "test" if "test" in kinds else "bin" if "bin" in kinds else "lib"
+        exes[crate].append((kind, msg["target"]["name"], msg["executable"]))
+
+    runs: list[tuple[str, str, list[str]]] = []
+    for crate in plan_crates(plan):
+        built = sorted(exes.get(crate, []))
+        if crate in plan.full:
+            runs.extend((crate, exe, []) for _, _, exe in built)
+            continue
+        if crate in plan.lib_filters:
+            filters = plan.lib_filters[crate]
+            args = [] if "" in filters else sorted(filters)
+            unit = "lib" if has_lib_target(crate) else "bin"
+            runs.extend((crate, exe, args) for kind, _, exe in built if kind == unit)
+        wanted = plan.integration.get(crate, set())
+        runs.extend((crate, exe, []) for kind, name, exe in built if kind == "test" and name in wanted)
+    return runs
+
+
+def run_bundled(plan: Plan, *, locked: bool, features: str) -> int:
+    cmd = bundled_build(plan, locked=locked, features=features)
+    print("build: " + " ".join(cmd), flush=True)
+    built = subprocess.run(cmd, cwd=ROOT, stdout=subprocess.PIPE, text=True, check=False)
+    if built.returncode != 0:
+        return built.returncode
+    artifacts = [json.loads(line) for line in built.stdout.splitlines() if line.startswith("{")]
+    failed: list[str] = []
+    for crate, exe, args in bundled_runs(plan, artifacts):
+        label = f"{package_name(crate)} {Path(exe).name} {' '.join(args)}".strip()
+        print(f"\n== {label}", flush=True)
+        env = dict(os.environ, CARGO_MANIFEST_DIR=str(CRATES / crate))
+        if subprocess.run([exe, *args], cwd=CRATES / crate, env=env, check=False).returncode:
+            failed.append(label)
+    deps = direct_deps()
+    for crate in sorted(plan.full):
+        if has_doctests(crate):
+            doc = _cargo(locked, features_for_crate(crate, features, deps), ["-p", package_name(crate), "--doc"])
+            print(f"\n== {doc}", flush=True)
+            if subprocess.run(doc, cwd=ROOT, shell=True, check=False).returncode:
+                failed.append(doc)
+    if failed:
+        print("\nfailed:\n  " + "\n  ".join(failed), file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--paths", nargs="*", help="changed files (repo-relative)")
@@ -542,7 +739,12 @@ def main(argv: list[str] | None = None) -> int:
 
     paths = changed_files(args)
     graph = direct_deps()
-    plan = plan_for(paths, graph)
+    # Only a real base can say what the lockfile bumped; --paths/--stdin and
+    # a push (base HEAD) keep Cargo.lock a workspace root.
+    lock_bumps = None
+    if "Cargo.lock" in paths and not (args.paths or args.stdin) and args.base != "HEAD":
+        lock_bumps = _lock_bumps(args.base)
+    plan = plan_for(paths, graph, lock_bumps)
     lines = cargo_lines(plan, locked=args.locked, features=args.features)
 
     if not args.quiet:
@@ -562,6 +764,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.execute:
         return 0
+    if not plan.workspace and len(plan_crates(plan)) > 1:
+        return run_bundled(plan, locked=args.locked, features=args.features)
     for line in lines:
         result = subprocess.run(line, cwd=ROOT, shell=True)
         if result.returncode != 0:

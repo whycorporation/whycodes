@@ -24,7 +24,7 @@ Whenever you edit Rust source, `Cargo.toml`, or anything that affects compilatio
    python scripts/affected_tests.py --paths <changed files...> --execute
    ```
 
-   A module runs that module's tests (`--lib ui::spinner::`), not the crate and not dependents. `lib.rs`, `main.rs`, or a crate `Cargo.toml` also runs direct dependents' `--lib` tests. Root `Cargo.toml` / `Cargo.lock` still runs the workspace. Docs and scripts select nothing. Print the plan without running it by omitting `--execute`.
+   A module runs that module's tests (`--lib ui::spinner::`), not the crate and not dependents. `lib.rs`, `main.rs`, or a crate `Cargo.toml` also runs direct dependents' `--lib` tests. Root `Cargo.toml` still runs the workspace; `Cargo.lock` does too when diffed against a base (`--base`) and an existing external package was bumped, and always with `--paths`. Several selected crates build once (`cargo test --no-run`) and each test binary then runs with its own filters. Docs and scripts select nothing. Print the plan without running it by omitting `--execute`.
 
 4. **Fix compile errors in the same turn** before reporting done. A “done” response with a red `cargo check` is incomplete.
 5. Docs-only, comment-only, or pure markdown/config prose that cannot affect the build may skip compile — when unsure, run `cargo check -p …` anyway.
