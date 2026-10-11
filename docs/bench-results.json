@@ -115,5 +115,22 @@
     "query_now_nonblocking_20k_us": 17.0,
     "query_settle_20k_us": 17.4
   },
-  "hot_paths_date": "2026-09-11"
+  "hot_paths_date": "2026-09-11",
+  "version_ab_interleaved": {
+    "rounds": 10,
+    "runs_per_round": 20,
+    "f5686a9": {
+      "median_ms": 13.98,
+      "p95_ms": 20.53,
+      "min_ms": 11.83,
+      "rss_median_mb": 8.56
+    },
+    "fe41214": {
+      "median_ms": 13.68,
+      "p95_ms": 17.54,
+      "min_ms": 11.91,
+      "rss_median_mb": 8.51
+    },
+    "note": "Same boot, alternating binaries. No regression; the 7.6 -> 8.1 MB RSS step vs 2026-09-11 is the OS update (10.0.26200 -> 10.0.26300): f5686a9 also measures 8.1 MB today."
+  }
 }

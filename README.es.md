@@ -165,7 +165,7 @@ máquinas en [docs/benchmarks.md](docs/benchmarks.md):
 |---|---|---|
 | 1 sesión PSS | — (solo `/proc`) | **10.5 MB** |
 | 10 sesiones PSS | — | **32.0 MB** (~2.4 MB cada extra) |
-| `--version` | **14.8 ms** | **1.4 ms** |
+| `--version` | **13.7 ms** | **1.4 ms** |
 | Primer fotograma (harness, in-proc) | **0.3 ms** (consola heredada) | **12 ms** (PTY 80×24) |
 | Redibujos en reposo (harness, 3 s) | **0.0 /s** | **0.3 /s** |
 

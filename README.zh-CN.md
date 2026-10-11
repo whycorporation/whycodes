@@ -148,7 +148,7 @@ whycodes -P openai -m gpt-4o generate "Refactor this module"
 |---|---|---|
 | 1 个会话 PSS | —（仅 `/proc`） | **10.5 MB** |
 | 10 个会话 PSS | — | **32.0 MB**（每多一个约 2.4 MB） |
-| `--version` | **14.8 ms** | **1.4 ms** |
+| `--version` | **13.7 ms** | **1.4 ms** |
 | 首帧（harness，进程内） | **0.3 ms**（继承控制台） | **12 ms**（80×24 PTY） |
 | 空闲重绘（harness，3 s） | **0.0 /s** | **0.3 /s** |
 

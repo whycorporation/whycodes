@@ -645,9 +645,22 @@ hot paths / index in [`bench-results.json`](bench-results.json) are still the
 | Harness `--idle-ms 0` (12 runs) | **0.3 ms** in-proc | 0.0/s | spawn-to-exit **15.1 ms** (min 13.9, max 22.4) |
 | Harness `--idle-ms 3000` (10 runs) | **0.3 ms** in-proc | **0.0/s** | still zero |
 
-Same band as 2026-09-11 (`--version` 13.8 ms, 7.6 MB). Peak RSS is
-~0.5–0.7 MB higher than that run (cause not profiled); `--version` p95
-18.7 ms is still far under the CI ceiling (50 ms / 40 MB). **Multi-session PSS:**
+This single run looked slower than 2026-09-11 (`--version` 13.8 ms,
+7.6 MB), so both binaries were re-built and compared **interleaved** on the
+same boot (10 rounds × 20 runs each, alternating, 3 RSS samples per round):
+
+| Binary | `--version` median | p95 | min | Peak RSS median |
+|---|---|---|---|---|
+| `f5686a9` (2026-09-11 row) | 13.98 ms | 20.53 ms | 11.83 ms | 8.56 MB |
+| `fe41214` (this row) | **13.68 ms** | 17.54 ms | 11.91 ms | 8.51 MB |
+
+No regression. The 0.5 MB RSS step is the host, not the binary: the
+2026-09-11 build also measures **8.1 MB** with `bench_memory.py` today
+(Windows 11 moved from 10.0.26200 to 10.0.26300 in between). A 20-run
+p95 is the slowest run and swings by several ms between back-to-back
+invocations (19.5 vs 23.3 ms here), so quote medians across days.
+`config show` is +0.3 MB (13.3 → 13.6 MB) on the same boot; more work
+sits on that path now. Still far under the CI ceiling (50 ms / 40 MB). **Multi-session PSS:**
 skipped (Linux only); the Linux column in the README stays 2026-09-02.
 
 
