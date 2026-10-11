@@ -206,6 +206,21 @@ async fn complete_cache_hit_and_no_timeout() {
             |b| matches!(b, whycodes_core::types::ContentBlock::Text { text } if text == "live")
         )
     );
+
+    // Uncached: the cached answer for this exact request is not replayed,
+    // and the live answer is not stored.
+    let provider = ScriptedProvider::new([ScriptedStep::Text("fresh".into())]);
+    let resp = transport
+        .complete_uncached(&provider, &req, "k", "complete-cache")
+        .await
+        .unwrap();
+    assert!(resp.content.iter().any(
+        |b| matches!(b, whycodes_core::types::ContentBlock::Text { text } if text == "fresh")
+    ));
+    let hit = ResponseCache::global()
+        .lookup(&req, "complete-cache")
+        .unwrap();
+    assert_eq!(hit.text, "from-cache");
 }
 
 #[tokio::test]

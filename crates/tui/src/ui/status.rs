@@ -298,6 +298,15 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
 
     // Right: composable StatusBar (bg jobs + context meter).
     let mut bar = StatusBar::new(Style::default().fg(palette.dim).bg(palette.bg));
+    if let Some(chip) = app.goal_chip {
+        bar.push(
+            "goal",
+            Line::from(Span::styled(
+                chip,
+                Style::default().fg(palette.accent).bg(palette.bg),
+            )),
+        );
+    }
     if app.bg_running_count > 0 {
         bar.push(
             "bg",

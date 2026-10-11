@@ -1442,6 +1442,8 @@ pub struct TuiApp {
     pub(crate) auth_code_sink: Option<tokio::sync::oneshot::Sender<String>>,
     /// Running background shell jobs (status bar chip).
     pub(crate) bg_running_count: usize,
+    /// Footer `◎ goal` chip for the visible session (`None` = no goal).
+    pub(crate) goal_chip: Option<&'static str>,
     /// Background jobs listed in the sticky tasks panel (running + recent).
     pub(crate) bg_jobs: Vec<BgJobUi>,
     /// Model switch from the picker dialog: `(provider, model)`.
@@ -1985,6 +1987,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/loop",
         hint: "N prompt… | stop — queue N sequential turns",
     },
+    SlashCommand {
+        name: "/goal",
+        hint: "condition | clear — keep working until a check says it is met",
+    },
 ];
 
 /// Autocomplete state for slash commands while typing.
@@ -2196,6 +2202,7 @@ impl TuiApp {
             pending_suggestion: None,
             auth_code_sink: None,
             bg_running_count: 0,
+            goal_chip: None,
             bg_jobs: Vec::new(),
             pending_model: None,
             pending_effort: None,

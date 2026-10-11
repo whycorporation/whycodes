@@ -266,7 +266,27 @@ Both TUI and `--plain`:
 | `/doctor` | Environment / config diagnostics |
 
 TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
-`/loop` (`/loop 3 <prompt>`; `/loop stop`).
+`/loop` (`/loop 3 <prompt>`; `/loop stop`), `/goal` (below).
+
+### Goals
+
+`/goal <condition>` keeps the agent working until the condition holds, for
+example `/goal all tests in crates/storage pass and clippy is clean`. Setting
+a goal starts a turn. After each turn a fast model (`session.model_fast`,
+else the current model) reads the condition and the recent transcript and
+answers met, not met, or impossible: not met starts another turn, met or
+impossible clears the goal. The check cannot run commands, so the agent
+has to show the evidence (test output, the finished change) in the session.
+
+- `/goal` shows the condition, time, turns checked, tokens, and the last reason.
+- `/goal clear` (or `stop`, `off`, `reset`, `none`, `cancel`) removes it;
+  `/new` and `/clear` do too. One goal per session, up to 4,000 characters.
+- Three turns in a row without a tool call, a failed or cancelled turn, or a
+  failed check pause the goal; your next prompt resumes it.
+- The footer shows `◎ goal` (or `◎ goal paused`). A goal is saved with the
+  session and restored on resume, with fresh counters.
+- There is no built-in turn or token cap; put one in the condition
+  (`…or stop after 20 turns`). The goal does not change permission prompts.
 
 `--plain` only: `/thinking` toggles thinking output.
 
