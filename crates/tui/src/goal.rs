@@ -290,7 +290,10 @@ fn message_text(content: &MessageContent) -> String {
 const EVALUATOR_SYSTEM: &str = "You check whether a coding agent has met a goal. \
 You cannot run commands or read files: judge only from the transcript. \
 Say met only when the transcript shows evidence (command output, test results, \
-the finished change). Say impossible only when the goal cannot be reached. \
+the finished change). Say impossible only when the transcript shows the goal \
+cannot be reached by more work: something it needs is gone for good and cannot \
+be recreated, the user ruled it out, or the condition contradicts itself. \
+Missing evidence alone is not_met. \
 Answer in exactly two lines:\nVERDICT: met | not_met | impossible\nREASON: one sentence";
 
 /// No-tools request for the evaluator model.
