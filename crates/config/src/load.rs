@@ -40,8 +40,13 @@ pub(crate) fn encode_toml(cfg: &Config) -> Result<String> {
 /// The temp name includes a thread id as well as a process-wide sequence.
 /// Parallel `save()` calls (CLI tests, migrate + explicit save) used to share
 /// `.{name}.tmp-{pid}-{seq}` and then fail with `File exists` when two
-/// `std::fs::write` calls landed on the same path. Persist retries once: the
-/// loser of a remove/rename race should still replace the destination.
+/// `std::fs::write` calls landed on the same path.
+///
+/// `rename` replaces the destination atomically on Unix and on Windows
+/// (`MoveFileExW` + `MOVEFILE_REPLACE_EXISTING`), so there is no remove
+/// first: remove-then-rename left no `config.toml` if the process died in
+/// between, and two parallel saves raced on the remove (`NotFound`). One
+/// retry covers a transient Windows sharing violation.
 pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path
         .parent()
@@ -58,12 +63,7 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
         std::process::id()
     ));
     std::fs::write(&tmp, contents)?;
-    let persist = || {
-        if path.exists() {
-            std::fs::remove_file(path)?;
-        }
-        std::fs::rename(&tmp, path)
-    };
+    let persist = || std::fs::rename(&tmp, path);
     match persist() {
         Ok(()) => Ok(()),
         Err(first) => match persist() {

@@ -1,4 +1,11 @@
 pub mod agent;
+
+/// Tests that set `WHYCODES_CREDENTIAL_LANE` and the named-credential env
+/// vars hold this across their turn. Without it two such tests ran in
+/// parallel and one restored the other's vars mid-turn, so the 429
+/// failover found no second credential (flaky in Coverage).
+#[cfg(test)]
+pub(crate) static CREDENTIAL_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 pub mod background;
 #[cfg(test)]
 #[path = "behavior_eval_tests.rs"]

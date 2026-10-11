@@ -82,13 +82,39 @@ impl PermissionPrompter for AutoDenyPrompter {
     }
 }
 
+/// Where a stdin prompter reads its answer line. Tests pass an empty reader
+/// so they never read the process stdin: the read blocks the runtime thread,
+/// a timeout cannot cancel it, and with stdin left open (a terminal or a
+/// pipe) the whole agent suite hung behind the stdin lock.
+pub type AnswerInput = fn() -> Box<dyn std::io::BufRead>;
+
+/// The process stdin. Locking does not block; only reading does.
+pub fn stdin_input() -> Box<dyn std::io::BufRead> {
+    Box::new(std::io::stdin().lock())
+}
+
 /// Stdin y/n prompter for the plain CLI.
-#[derive(Default)]
 pub struct StdinPrompter {
     notify: Option<NotifyHandle>,
+    input: AnswerInput,
+}
+
+impl Default for StdinPrompter {
+    fn default() -> Self {
+        Self {
+            notify: None,
+            input: stdin_input,
+        }
+    }
 }
 
 impl StdinPrompter {
+    /// Read answers from `input` instead of the process stdin.
+    pub fn with_input(mut self, input: AnswerInput) -> Self {
+        self.input = input;
+        self
+    }
+
     pub fn with_notify(mut self, notify: NotifyHandle) -> Self {
         self.notify = Some(notify);
         self
@@ -110,7 +136,7 @@ impl PermissionPrompter for StdinPrompter {
             eprint!("  Allow? [y/N] ");
             flush_permission_prompt(&mut io::stderr());
             let mut line = String::new();
-            let read = io::stdin().read_line(&mut line);
+            let read = (self.input)().read_line(&mut line);
             permission_from_read(read, &line)
         })
     }
