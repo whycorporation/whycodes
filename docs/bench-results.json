@@ -1,76 +1,79 @@
 {
-  "date": "2026-09-11",
-  "git": "f5686a9",
+  "date": "2026-10-11",
+  "git": "fe41214",
   "machine": {
     "platform": "Windows AMD64",
     "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
-    "os": "Microsoft Windows 11 Pro 10.0.26200"
+    "os": "Microsoft Windows 11 Pro 10.0.26300"
   },
   "binary": "target/release/whycodes.exe",
   "profile": "release",
-  "features": ["bundled-sqlite"],
-  "binary_size_mb": 16.5,
-  "version_ms_p95": 14.41,
-  "version_rss_mb": 7.61,
+  "features": [
+    "bundled-sqlite"
+  ],
+  "binary_size_mb": 16.9,
+  "version_ms_p95": 18.69,
+  "version_rss_mb": 8.12,
   "startup": {
     "version": {
       "runs": 20,
-      "median_ms": 13.8,
-      "p95_ms": 14.41,
-      "min_ms": 13.0,
-      "max_ms": 14.41
+      "median_ms": 14.84,
+      "p95_ms": 18.69,
+      "min_ms": 12.38,
+      "max_ms": 18.69
     },
     "help": {
       "runs": 20,
-      "median_ms": 43.17,
-      "p95_ms": 65.15,
-      "min_ms": 39.38,
-      "max_ms": 65.15
+      "median_ms": 41.14,
+      "p95_ms": 58.13,
+      "min_ms": 36.51,
+      "max_ms": 58.13
     },
     "config-show": {
       "runs": 20,
-      "median_ms": 50.18,
-      "p95_ms": 54.52,
-      "min_ms": 47.9,
-      "max_ms": 54.52
+      "median_ms": 51.64,
+      "p95_ms": 60.34,
+      "min_ms": 48.67,
+      "max_ms": 60.34
     }
   },
   "memory": {
     "version": {
       "runs": 5,
-      "median_mb": 7.61,
-      "max_mb": 7.66
+      "median_mb": 8.12,
+      "max_mb": 8.12
     },
     "config-show": {
       "runs": 5,
-      "median_mb": 12.9,
-      "max_mb": 12.91
+      "median_mb": 13.63,
+      "max_mb": 13.69
     },
     "session-list": {
       "runs": 5,
-      "median_mb": 12.93,
-      "max_mb": 13.02
+      "median_mb": 13.63,
+      "max_mb": 13.66
     }
   },
   "multi_session": {
     "skipped": true,
     "reason": "not-linux"
   },
-  "first_frame_note": "Windows 11, AMD Ryzen 7 3800X, HEAD f5686a9 on feat/lsp-config. Release binary built with --features bundled-sqlite (system sqlite3.lib is not on PATH). TUI run is still multi-thread Tokio, capped at TUI_WORKER_THREADS=2. Windows has no stdlib ConPTY: bench_first_frame.py inherits the console, so TTFF is not comparable to the Linux 80x24 PTY harness (~12 ms on 2026-09-02). Idle draws over 3 s are 0.6/s (was 0.3/s on Linux 56f2e43). Compared with the 2026-07-31 Windows baseline: --version 20.9 -> 13.8 ms, peak RSS 9.6 -> 7.6 MB. --help / config show are slower than that pre-opt row (43 / 50 ms vs 21 / 26 ms) because more work sits on those paths now; they are still the Windows process-start band, not the Linux 1-3 ms floor.",
+  "first_frame_note": "Windows 11, AMD Ryzen 7 3800X, HEAD fe41214 on main. Release binary built with --features bundled-sqlite. Windows has no stdlib ConPTY: bench_first_frame.py inherits the console, and the harness splash is one CSI burst, so in-proc TTFF (~0.3 ms) is not comparable to the Linux 80x24 PTY figure (~12 ms on 2026-09-02); spawn-to-exit (~15 ms) matches the --version floor. Idle draws over 3 s are 0.0/s. hot_paths and index are criterion results from 2026-09-11 (f5686a9) and were not re-run.",
   "first_frame_harness": {
-    "median_ms": 131.44,
-    "min_ms": 122.11,
-    "max_ms": 141.45,
+    "median_ms": 0.28,
+    "min_ms": 0.22,
+    "max_ms": 0.47,
     "runs": 12,
     "idle_ms": 0,
-    "spawn_to_exit_median_ms": 158.76,
-    "spawn_to_exit_min_ms": 150.15,
-    "spawn_to_exit_max_ms": 171.44
+    "spawn_to_exit_median_ms": 15.08,
+    "spawn_to_exit_min_ms": 13.93,
+    "spawn_to_exit_max_ms": 22.39
   },
   "idle_draws_harness": {
-    "median_per_s": 0.58,
+    "median_per_s": 0.0,
     "window_ms": 3000,
-    "first_frame_median_ms": 128.97
+    "first_frame_median_ms": 0.3,
+    "runs": 10
   },
   "hot_paths": {
     "assess": {
@@ -111,5 +114,23 @@
     "entries_snapshot_us": 128,
     "query_now_nonblocking_20k_us": 17.0,
     "query_settle_20k_us": 17.4
+  },
+  "hot_paths_date": "2026-09-11",
+  "version_ab_interleaved": {
+    "rounds": 10,
+    "runs_per_round": 20,
+    "f5686a9": {
+      "median_ms": 13.98,
+      "p95_ms": 20.53,
+      "min_ms": 11.83,
+      "rss_median_mb": 8.56
+    },
+    "fe41214": {
+      "median_ms": 13.68,
+      "p95_ms": 17.54,
+      "min_ms": 11.91,
+      "rss_median_mb": 8.51
+    },
+    "note": "Same boot, alternating binaries. No regression; the 7.6 -> 8.1 MB RSS step vs 2026-09-11 is the OS update (10.0.26200 -> 10.0.26300): f5686a9 also measures 8.1 MB today."
   }
 }

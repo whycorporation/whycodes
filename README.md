@@ -147,20 +147,20 @@ configuration — is in **[docs/guide.md](docs/guide.md)**.
 
 ## Performance
 
-Latest re-measure, Windows AMD64, 2026-09-11 (Ryzen 7 3800X). Linux
+Latest re-measure, Windows AMD64, 2026-10-11 (Ryzen 7 3800X). Linux
 2026-09-02 remains the last PTY / PSS snapshot — do not compare Windows
 first-frame to the Linux ~12 ms PTY row. Method and machines in
 [docs/benchmarks.md](docs/benchmarks.md):
 
-| Metric | Windows 2026-09-11 | Linux 2026-09-02 |
+| Metric | Windows 2026-10-11 | Linux 2026-09-02 |
 |---|---|---|
 | 1 session PSS | — (`/proc` only) | **10.5 MB** |
 | 10 sessions PSS | — | **32.0 MB** (~2.4 MB each extra) |
-| `--version` | **13.8 ms** | **1.4 ms** |
-| First frame (harness, in-proc) | **0.1 ms** (console inherit) | **12 ms** (80×24 PTY) |
+| `--version` | **13.7 ms** | **1.4 ms** |
+| First frame (harness, in-proc) | **0.3 ms** (console inherit) | **12 ms** (80×24 PTY) |
 | Idle redraws (harness, 3 s) | **0.0 /s** | **0.3 /s** |
 
-The TUI paints only when something changed. This Windows run’s 3 s harness idle is **0.0 redraws/s** (Linux 2026-09-02 was 0.3/s); the product target is still **0 redraws/s**, not a frames-per-second race. The first-frame harness writes one CSI splash (no ratatui); spawn-to-exit matches `--version` (~14 ms). Interactive home still hydrates after that paint.
+The TUI paints only when something changed. This Windows run’s 3 s harness idle is **0.0 redraws/s** (Linux 2026-09-02 was 0.3/s); the product target is still **0 redraws/s**, not a frames-per-second race. The first-frame harness writes one CSI splash (no ratatui); spawn-to-exit matches `--version` (~14–15 ms). Interactive home still hydrates after that paint.
 
 Workspace line coverage is **98.7%** (Linux x86_64, 2026-10-10). CI fails
 below 98.5%, with twenty-four crates held at 100% production-code line

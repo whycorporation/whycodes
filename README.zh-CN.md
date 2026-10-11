@@ -140,16 +140,16 @@ whycodes -P openai -m gpt-4o generate "Refactor this module"
 
 ## 性能
 
-最近一次测量：Windows AMD64，2026-09-11（Ryzen 7 3800X）。Linux 2026-09-02
+最近一次测量：Windows AMD64，2026-10-11（Ryzen 7 3800X）。Linux 2026-09-02
 仍是最近一次 PTY / PSS 快照 — 不要把 Windows 首帧与 Linux PTY 的约 12 ms
 相比。方法与机器见 [docs/benchmarks.md](docs/benchmarks.md)：
 
-| 指标 | Windows 2026-09-11 | Linux 2026-09-02 |
+| 指标 | Windows 2026-10-11 | Linux 2026-09-02 |
 |---|---|---|
 | 1 个会话 PSS | —（仅 `/proc`） | **10.5 MB** |
 | 10 个会话 PSS | — | **32.0 MB**（每多一个约 2.4 MB） |
-| `--version` | **13.8 ms** | **1.4 ms** |
-| 首帧（harness，进程内） | **0.1 ms**（继承控制台） | **12 ms**（80×24 PTY） |
+| `--version` | **13.7 ms** | **1.4 ms** |
+| 首帧（harness，进程内） | **0.3 ms**（继承控制台） | **12 ms**（80×24 PTY） |
 | 空闲重绘（harness，3 s） | **0.0 /s** | **0.3 /s** |
 
 TUI 仅在有变化时绘制。本次 Windows 3 秒 harness 空闲为 **0.0 次重绘/秒**

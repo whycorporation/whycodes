@@ -70,10 +70,10 @@ Exceptions (skip commit/push unless asked): pure Q&A with no file edits; the use
 `main` is ruleset-protected: **no direct pushes**, including `gh pr merge --admin`.
 Everything lands through a PR whose required checks actually run.
 
-1. **Never open a docs-only PR** (`**.md`, `docs/**`, `landing/**`).
-   `ci.yml` `pull_request.paths-ignore` skips those paths, so the four required
-   checks stay `expected` forever and the PR cannot merge. Bundle a `.rs` /
-   `Cargo.toml` / `Formula/` / workflow change, or the PR is stuck.
+1. **Docs-only PRs are fine.** CI has no `paths-ignore` on pull requests, so
+   the four required checks always report. A docs-only PR stays cheap: Test
+   selects no crates and Coverage skips its measurement. (Before 2026-10-11
+   such PRs stayed `expected` forever and could not merge.)
 2. **Patch / minor:** bump `[workspace.package] version` in the root
    `Cargo.toml` and `cd sdk/typescript && npm version X.Y.Z --no-git-tag-version`.
    `cargo check -p whycodes-cli` refreshes `Cargo.lock`. Open `release/vX.Y.Z`,
@@ -85,8 +85,8 @@ Everything lands through a PR whose required checks actually run.
 4. **Homebrew job always fails** (it pushes `Formula/whycodes.rb` straight to
    `main`; the ruleset rejects it). After the GitHub release exists, run
    `scripts/update_homebrew_formula.sh vX.Y.Z` on a `chore/homebrew-vX.Y.Z`
-   branch and open a PR. `Formula/**` is ignored on **push** to main, **not**
-   on pull requests — a formula-only PR must still run CI (v0.6.3 deadlock).
+   branch and open a PR. `Formula/**` is ignored on **push** to main only;
+   pull requests always run CI.
 5. Coverage flakes (`poll_matches_adopts_fuzzy_hits…` and similar) on a
    formula-only PR are not a product regression. `gh run rerun <id> --failed`;
    do not bump versions or re-tag to “fix” them.

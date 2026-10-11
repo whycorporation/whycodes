@@ -625,6 +625,44 @@ Harness splash is now a single CSI burst (no ratatui `Terminal`):
 That spawn-to-exit matches `--version` on this box. Interactive `run()`
 still attaches crossterm after the splash and hydrates Agent/SQLite.
 
+### Re-measure, 2026-10-11 (Windows AMD64, release, HEAD `fe41214`)
+
+Same machine (AMD Ryzen 7 3800X), Windows 11 Pro 10.0.26300. Release binary
+**16.9 MB**, `--features bundled-sqlite`. Process level only; the criterion
+hot paths / index in [`bench-results.json`](bench-results.json) are still the
+2026-09-11 run.
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **14.8 ms** | 18.7 ms | **8.1 MB** |
+| `--help` | **41.1 ms** | 58.1 ms | — |
+| `config show` | **51.6 ms** | 60.3 ms | **13.6 MB** |
+| `session list` | — | — | **13.6 MB** |
+| binary size | **16.9 MB** | — | — |
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **0.3 ms** in-proc | 0.0/s | spawn-to-exit **15.1 ms** (min 13.9, max 22.4) |
+| Harness `--idle-ms 3000` (10 runs) | **0.3 ms** in-proc | **0.0/s** | still zero |
+
+This single run looked slower than 2026-09-11 (`--version` 13.8 ms,
+7.6 MB), so both binaries were re-built and compared **interleaved** on the
+same boot (10 rounds × 20 runs each, alternating, 3 RSS samples per round):
+
+| Binary | `--version` median | p95 | min | Peak RSS median |
+|---|---|---|---|---|
+| `f5686a9` (2026-09-11 row) | 13.98 ms | 20.53 ms | 11.83 ms | 8.56 MB |
+| `fe41214` (this row) | **13.68 ms** | 17.54 ms | 11.91 ms | 8.51 MB |
+
+No regression. The 0.5 MB RSS step is the host, not the binary: the
+2026-09-11 build also measures **8.1 MB** with `bench_memory.py` today
+(Windows 11 moved from 10.0.26200 to 10.0.26300 in between). A 20-run
+p95 is the slowest run and swings by several ms between back-to-back
+invocations (19.5 vs 23.3 ms here), so quote medians across days.
+`config show` is +0.3 MB (13.3 → 13.6 MB) on the same boot; more work
+sits on that path now. Still far under the CI ceiling (50 ms / 40 MB). **Multi-session PSS:**
+skipped (Linux only); the Linux column in the README stays 2026-09-02.
+
 
 ## Hot paths
 
