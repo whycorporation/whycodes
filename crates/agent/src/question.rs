@@ -152,11 +152,32 @@ impl QuestionPrompter for AutoAnswerPrompter {
 }
 
 /// Stdin fallback for plain CLI (delegates to tool module helpers via execute path).
-pub struct StdinQuestionPrompter;
+pub struct StdinQuestionPrompter {
+    input: crate::permission::AnswerInput,
+}
+
+impl Default for StdinQuestionPrompter {
+    fn default() -> Self {
+        Self {
+            input: crate::permission::stdin_input,
+        }
+    }
+}
+
+impl StdinQuestionPrompter {
+    /// Read answers from `input` instead of the process stdin.
+    pub fn with_input(input: crate::permission::AnswerInput) -> Self {
+        Self { input }
+    }
+}
 
 impl QuestionPrompter for StdinQuestionPrompter {
     fn ask(&self, questions: Vec<QuestionSpec>) -> QuestionAskFuture<'_> {
-        Box::pin(async move { ask_stdin_questions(questions, &mut read_line) })
+        // Answered before the future: the reader is not `Send`, and the
+        // prompt has nothing to await.
+        let mut input = (self.input)();
+        let answers = ask_stdin_questions(questions, &mut || read_buf_line(&mut *input));
+        Box::pin(async move { answers })
     }
 }
 
@@ -239,10 +260,6 @@ fn invalid_line(result: Result<String, String>) -> Result<String, QuestionError>
 
 fn line_or_empty(result: Result<String, String>) -> String {
     result.unwrap_or_default()
-}
-
-fn read_line() -> Result<String, String> {
-    read_buf_line(&mut std::io::stdin().lock())
 }
 
 fn read_buf_line(input: &mut dyn std::io::BufRead) -> Result<String, String> {
@@ -355,7 +372,7 @@ pub fn default_question_prompter() -> Arc<dyn QuestionPrompter> {
     {
         return Arc::new(AutoAnswerPrompter);
     }
-    Arc::new(StdinQuestionPrompter)
+    Arc::new(StdinQuestionPrompter::default())
 }
 
 /// Parse tool call args and run the prompter; return a ToolResult body.

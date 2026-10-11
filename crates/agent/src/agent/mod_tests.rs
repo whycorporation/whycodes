@@ -3033,6 +3033,7 @@ fn apply_plugin_count_replaces_executor_when_lsp_overlay_is_set() {
 
 #[tokio::test]
 async fn failover_api_key_walks_named_credentials() {
+    let _env = crate::CREDENTIAL_ENV_LOCK.lock().await;
     let mut config = whycodes_config::Config::default();
     config.providers.insert(
         "openai".into(),

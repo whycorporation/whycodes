@@ -1601,6 +1601,7 @@ impl LlmProvider for RateThenOk {
 
 #[tokio::test]
 async fn rate_limit_retries_same_model_on_next_credential() {
+    let _env = crate::CREDENTIAL_ENV_LOCK.lock().await;
     let prev_live = std::env::var_os("WHYCODES_TEST_FAILOVER_LIVE");
     let prev_ci = std::env::var_os("WHYCODES_TEST_FAILOVER_CI");
     let prev_lane = std::env::var_os("WHYCODES_CREDENTIAL_LANE");
