@@ -681,7 +681,10 @@ pub fn tui_available() -> bool {
 
 /// Concrete writer for ratatui/crossterm (`execute!` needs `Sized`).
 enum TuiWriter {
-    Console(std::fs::File),
+    /// Buffered: crossterm queues a write per changed cell (~11k for a full
+    /// 120×40 frame). Unbuffered, each was a console `WriteFile`; now a frame
+    /// leaves in one write when ratatui / `execute!` flush.
+    Console(io::BufWriter<std::fs::File>),
     Stdout(io::Stdout),
     /// In-memory sink so `LoopTerm::live` can be unit-tested without a TTY.
     Buf(Vec<u8>),
@@ -1095,6 +1098,9 @@ where
     Ok((area, cells))
 }
 
+/// Holds a full truecolor 200×60 frame (12k cells × ~20 B) without a mid-frame flush.
+const CONSOLE_WRITE_BUFFER: usize = 256 * 1024;
+
 /// Writer for alt-screen / draw / mouse: controlling console first, else stdout if TTY.
 fn open_tui_writer() -> io::Result<TuiWriter> {
     choose_tui_writer(open_controlling_console(), io::stdout().is_terminal())
@@ -1102,7 +1108,10 @@ fn open_tui_writer() -> io::Result<TuiWriter> {
 
 fn choose_tui_writer(console: Option<std::fs::File>, stdout_is_tty: bool) -> io::Result<TuiWriter> {
     if let Some(console) = console {
-        return Ok(TuiWriter::Console(console));
+        return Ok(TuiWriter::Console(io::BufWriter::with_capacity(
+            CONSOLE_WRITE_BUFFER,
+            console,
+        )));
     }
     if stdout_is_tty {
         return Ok(TuiWriter::Stdout(io::stdout()));

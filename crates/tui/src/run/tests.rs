@@ -6709,12 +6709,31 @@ fn console_open_and_primary_agent_defaults() {
 }
 
 #[test]
+fn console_writer_holds_a_frame_until_flush() {
+    // A frame is ~11k small cell writes; they must reach the console as one
+    // write on flush, not one syscall each.
+    let file = tempfile::tempfile().expect("tempfile");
+    let probe = file.try_clone().expect("clone");
+    let mut w = choose_tui_writer(Some(file), false).expect("console writer");
+    for _ in 0..10_000 {
+        w.write_all(b"[1;1Hx").expect("write");
+    }
+    assert_eq!(
+        probe.metadata().expect("meta").len(),
+        0,
+        "nothing written before flush"
+    );
+    w.flush().expect("flush");
+    assert_eq!(probe.metadata().expect("meta").len(), 10_000 * 7);
+}
+
+#[test]
 fn tui_writer_write_flush_and_summary() {
     let mut stdout = TuiWriter::Stdout(io::stdout());
     let _ = stdout.write(b"");
     let _ = stdout.flush();
     if let Some(console) = open_controlling_console() {
-        let mut w = TuiWriter::Console(console);
+        let mut w = TuiWriter::Console(io::BufWriter::new(console));
         let _ = w.write(b"");
         let _ = w.flush();
     }
