@@ -96,7 +96,7 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
                     }
                 };
                 for tool in tools {
-                    let bridge_name = format!("{}_{}", server_name, tool.name);
+                    let bridge_name = bridge_tool_name(&server_name, &tool.name);
                     let description = tool
                         .description
                         .clone()
@@ -158,6 +158,45 @@ fn required_mcp_field<'a>(
 
 fn stdio_command(command: Option<&str>) -> &str {
     command.unwrap_or("")
+}
+
+/// Longest tool name OpenAI-compatible APIs accept.
+const MAX_TOOL_NAME: usize = 64;
+
+/// Wire-safe `{server}_{tool}` name for a bridged MCP tool.
+///
+/// OpenAI-compatible APIs accept `^[a-zA-Z0-9_-]{1,64}$` and reject the
+/// whole request otherwise, while MCP servers may use dots, slashes or long
+/// names. A valid name is left unchanged (tool names are stable API). Any
+/// other character becomes `_`; past 64 chars the name keeps a 55-char
+/// prefix plus an FNV-1a hash of the full name, so long siblings stay
+/// distinct and the name is the same in every session.
+pub(crate) fn bridge_tool_name(server: &str, tool: &str) -> String {
+    let raw = format!("{server}_{tool}");
+    let mut name: String = raw.chars().map(wire_char).collect();
+    if name.len() > MAX_TOOL_NAME {
+        let hash = fnv1a(raw.as_bytes());
+        name.truncate(MAX_TOOL_NAME - 9);
+        name.push_str(&format!("_{hash:08x}"));
+    }
+    name
+}
+
+fn wire_char(c: char) -> char {
+    if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+        c
+    } else {
+        '_'
+    }
+}
+
+fn fnv1a(bytes: &[u8]) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for b in bytes {
+        hash ^= u32::from(*b);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
 }
 
 #[cfg(test)]
