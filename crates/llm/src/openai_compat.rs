@@ -111,6 +111,24 @@ fn without_reasoning(messages: Vec<Value>) -> Vec<Value> {
     out
 }
 
+/// Request fields a provider's `extra_body` may not replace.
+const PROTECTED_BODY_KEYS: &[&str] = &["model", "messages", "stream", "tools", "system"];
+
+/// Merge configured `extra_body` fields into a request body.
+///
+/// Later keys win over what the provider built (so `temperature` or
+/// `reasoning_effort` can be pinned per provider), except the fields that
+/// make up the request itself, which are skipped.
+pub fn apply_extra_body(body: &mut Value, extra: &std::collections::HashMap<String, Value>) {
+    for (key, value) in extra {
+        if PROTECTED_BODY_KEYS.contains(&key.as_str()) {
+            tracing::warn!(key = %key, "provider extra_body cannot override this field; ignored");
+            continue;
+        }
+        body[key.as_str()] = value.clone();
+    }
+}
+
 /// Flatten `err` + `source()` chain so reqwest decode failures keep TLS/EOF/JSON
 /// causes that `{e}` alone drops (`error decoding response body`).
 pub fn error_source_chain(err: &dyn std::error::Error) -> String {

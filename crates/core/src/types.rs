@@ -400,8 +400,17 @@ pub struct ProviderConfig {
     /// model-name heuristic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_arguments: Option<ToolArgumentsFormat>,
-    /// Provider-specific extra fields (optional in config.toml).
-    #[serde(default)]
+    /// Extra top-level fields merged into every request body for this
+    /// provider (`extra_body` in config.toml; `extra` still accepted), e.g.
+    /// `service_tier = "flex"`, a gateway's routing or compression knobs.
+    /// The fields that make up the request (`model`, `messages`, `stream`,
+    /// `tools`, `system`) are never overridden.
+    #[serde(
+        default,
+        rename = "extra_body",
+        alias = "extra",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
     pub extra: HashMap<String, serde_json::Value>,
     /// Named credential pool. Secrets stay in env / `api_key`, never here.
     #[serde(default, skip_serializing_if = "ProviderCredentials::is_empty")]

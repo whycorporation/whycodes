@@ -504,6 +504,10 @@ api_key = "sk-ant-..."
 [providers.openai]
 name = "openai"
 api_key = "sk-..."
+# Extra top-level request fields for this provider (OpenAI, Anthropic and
+# custom OpenAI-compatible gateways). `model`, `messages`, `stream`, `tools`
+# and `system` are never overridden.
+# extra_body = { service_tier = "flex" }
 
 [tui]
 theme = "default_dark"
