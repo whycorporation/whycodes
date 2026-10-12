@@ -297,6 +297,10 @@ fn reload_config_after_import_keeps_current_on_error() {
 /// from spawning a network task on this path.
 #[test]
 fn fast_tui_quits_and_upgrades_under_the_test_stub() {
+    // Points WHYCODES_HOME at a *file* below: hold the env lock so sibling
+    // tests saving config under IsolatedHome never see that path
+    // (create_dir_all -> "File exists", which flaked provider_tests on CI).
+    let _env = crate::cmd::helpers::lock_env();
     let home = tempfile::tempdir().expect("tempdir");
     let prev_home = std::env::var_os("WHYCODES_HOME");
     let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
