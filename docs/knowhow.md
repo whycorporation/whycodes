@@ -144,6 +144,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-10-12 — Wheel flick teleported the transcript (Grok scroll pacer)
+
+**Symptom:** Mouse wheel / trackpad scrolling felt jumpy next to Grok. A trackpad flick moved hundreds of rows in one frame, and the speed of one notch depended on the terminal.
+
+**Root cause:** `coalesce_chat_wheels` summed every wheel event in a drained batch at `viewport/3` (3–12) rows each and applied it in one `scroll_rows`. Terminals send 1 or 3 events per notch, and terminal events carry only a direction.
+
+**Fix:** `crate::wheel` (trimmed port of Grok Build `input/mouse.rs`). Events form a gesture (80 ms gap or direction flip ends it). One notch is 3 lines (events-per-notch: 1 on `WT_SESSION` / VS Code family, else 3). Trackpads are detected and accelerated by event rate. Each 16 ms flush moves at most half the viewport, and after input stops the backlog tapers within one cap. The loop calls `tick_wheel` every pass and `redraw_schedule` polls at 16 ms while `wheel_scrolling`.
+
+**Prevention:** Do not apply a drained wheel batch as one jump again. `a_flood_is_paced_across_frames_not_dumped_at_once` and `tick_wheel_drains_a_flick_over_frames_and_stops_under_a_modal`. If one notch feels too slow or fast on a terminal, fix `events_per_notch`, not the line price.
+
+---
+
 ### 2026-10-03 — binary crate has no `--lib`
 
 **Symptom:** Test (linux) on PR #147 exits in about a second:

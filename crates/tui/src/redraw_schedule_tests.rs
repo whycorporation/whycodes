@@ -7,6 +7,7 @@ fn idle() -> RedrawNeed {
         running_subagents: false,
         awaiting_matches: false,
         needs_redraw: false,
+        wheel_scrolling: false,
         toasts_visible: false,
         since_user_input: Duration::from_secs(1),
     }
@@ -33,6 +34,15 @@ fn streaming_keeps_the_fast_cadence_even_with_a_toast() {
     need.agent_busy = true;
     need.toasts_visible = true;
     assert_eq!(poll_interval(&need), REDRAW_ANIMATE);
+}
+
+#[test]
+fn a_wheel_gesture_polls_at_its_flush_cadence() {
+    let mut need = idle();
+    need.wheel_scrolling = true;
+    assert!(!is_animating(&need), "scrolling is not a spinner");
+    assert_eq!(poll_interval(&need), REDRAW_ANIMATE);
+    assert_eq!(REDRAW_ANIMATE, crate::wheel::FLUSH_CADENCE);
 }
 
 #[test]

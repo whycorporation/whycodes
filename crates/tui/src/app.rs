@@ -1425,6 +1425,8 @@ pub struct TuiApp {
     pub(crate) selected_msg: Option<usize>,
     /// Chat viewport height in rows (updated each paint).
     pub(crate) chat_viewport_rows: u16,
+    /// Wheel / trackpad gesture being paced onto the transcript.
+    pub(crate) wheel: crate::wheel::WheelScroll,
     /// Chat content width in columns (updated each paint).
     pub(crate) chat_content_width: u16,
     /// Last-paint message viewport (for wheel hit-testing).
@@ -2229,6 +2231,7 @@ impl TuiApp {
             chat_extent: None,
             selected_msg: None,
             chat_viewport_rows: 20,
+            wheel: crate::wheel::WheelScroll::default(),
             chat_content_width: 80,
             chat_area: None,
             chat_scrollbar_hit: None,
@@ -3432,6 +3435,29 @@ impl TuiApp {
         if self.scroll_offset != prev {
             self.mark_dirty();
         }
+    }
+
+    /// Feed one transcript wheel event through the gesture pacer.
+    pub fn wheel_scroll(&mut self, up: bool) {
+        let rows = self
+            .wheel
+            .on_event(std::time::Instant::now(), up, self.chat_viewport_rows);
+        self.scroll_rows(rows);
+    }
+
+    /// Deliver the paced wheel backlog. Call once per loop pass.
+    pub fn tick_wheel(&mut self) {
+        if !self.wheel.is_active() {
+            return;
+        }
+        if self.modal_is_open() {
+            self.wheel.cancel();
+            return;
+        }
+        let rows = self
+            .wheel
+            .tick(std::time::Instant::now(), self.chat_viewport_rows);
+        self.scroll_rows(rows);
     }
 
     pub fn scroll_page(&mut self, up: bool) {

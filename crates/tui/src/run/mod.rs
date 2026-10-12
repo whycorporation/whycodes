@@ -486,6 +486,8 @@ fn prepare_tui_chrome(opts: &TuiRunOptions) -> TuiChrome {
     // `~/.config/whycodes/themes/` — that belongs after `record_draw`.
     let tui_cfg = TuiAppConfig::default();
     let mut app = TuiApp::new(tui_cfg);
+    // Events per wheel notch depend on the host terminal; `new` stays hermetic.
+    app.wheel = crate::wheel::WheelScroll::from_env();
 
     app.provider_name = opts.provider.clone();
     app.model_name = opts.model.clone();
@@ -1760,6 +1762,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             // paint this iteration instead of one poll (≤40 ms) later.
             after_turn_events_drain(&mut app, &mut rt.event_rx, &config, &file_index);
 
+            // Paced wheel/trackpad backlog (Grok scroll clock): one capped
+            // chunk per 16 ms instead of the whole flick in one frame.
+            app.tick_wheel();
+
             // Paint only when something changed. Busy turns used to paint
             // every iteration; deltas and spinner ticks already mark dirty,
             // and static toasts never did (jcode: ~180 wasted frames each).
@@ -2044,6 +2050,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     running_subagents: app.running_task_count() > 0,
                     awaiting_matches,
                     needs_redraw: app.needs_redraw,
+                    wheel_scrolling: app.wheel.is_active(),
                     toasts_visible: !app.toasts.is_empty(),
                     since_user_input: last_user_input.elapsed(),
                 });

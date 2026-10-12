@@ -1108,13 +1108,8 @@ fn help_overlay_wheel_and_close() {
 }
 
 #[test]
-fn chat_wheel_step_and_coalesce() {
+fn coalesce_chat_wheels_folds_wheels_and_keeps_moves() {
     let mut a = app();
-    a.chat_viewport_rows = 30;
-    assert_eq!(chat_wheel_step(&a), 10);
-    a.chat_viewport_rows = 3;
-    assert_eq!(chat_wheel_step(&a), 3);
-
     a.chat_viewport_rows = 12;
     a.chat_content_width = 40;
     for i in 0..20 {
@@ -1124,7 +1119,7 @@ fn chat_wheel_step_and_coalesce() {
         mouse(MouseEventKind::ScrollUp, 1, 1),
         mouse(MouseEventKind::ScrollUp, 1, 1),
         mouse(MouseEventKind::Moved, 1, 1),
-        mouse(MouseEventKind::ScrollDown, 1, 1),
+        mouse(MouseEventKind::ScrollUp, 1, 1),
     ];
     coalesce_chat_wheels(&mut a, &mut events);
     assert_eq!(events.len(), 1, "wheels folded, move kept");
