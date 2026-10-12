@@ -5,7 +5,7 @@ pub mod session;
 pub mod title;
 
 pub use error::{Result, SessionError};
-pub use history::SessionHistory;
+pub use history::{SessionHistory, StashSlot};
 pub use import::{ImportKind, import_messages};
 pub use session::{
     COMPACT_CONTINUATION_PREAMBLE, CheckpointState, CompactOutcome, Session,

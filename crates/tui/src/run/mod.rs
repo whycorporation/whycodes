@@ -55,6 +55,8 @@ mod import;
 mod persist;
 mod slash;
 #[cfg(test)]
+mod submit_probe_tests;
+#[cfg(test)]
 mod tests;
 mod windows_console;
 
@@ -4245,17 +4247,15 @@ fn record_user_turn(
     project_dir: &std::path::Path,
     config: &Config,
     submit_images: &[crate::images::PromptImage],
-) -> String {
+) -> (String, whycodes_session::StashSlot) {
     let expanded = expand_at_files(prompt, project_dir);
-    rt.history
+    // Only the cheap transcript snapshot runs here. The undo stash (two git
+    // spawns, ~150 ms on Windows) and the memory rebuild (~200 ms on a
+    // lived-in install) used to block the event loop at every submit; they
+    // now run in the turn task (`prepare_turn`).
+    let stash = rt
+        .history
         .push_before_turn(&rt.session.messages, project_dir);
-    refresh_session_memory(
-        &mut rt.session,
-        &rt.agent,
-        project_dir,
-        config,
-        Some(&expanded),
-    );
     if submit_images.is_empty() {
         rt.session.add_user_message(&expanded);
     } else {
@@ -4284,7 +4284,30 @@ fn record_user_turn(
             app.session_title = rt.session.title.clone();
         }
     }
-    expanded
+    (expanded, stash)
+}
+
+/// Submit-time work moved off the event loop, run in the turn task before
+/// the first LLM step. Memory recall must be in place before the request;
+/// the undo stash must finish before any tool can edit a file. They run
+/// side by side.
+async fn prepare_turn(
+    agent: &Agent,
+    session: &mut Session,
+    stash: whycodes_session::StashSlot,
+    project_dir: &std::path::Path,
+    config: &Config,
+    query: &str,
+) {
+    let stash_done = tokio::task::spawn_blocking(move || stash.wait());
+    refresh_session_memory(session, agent, project_dir, config, Some(query));
+    note_stash_join(stash_done.await);
+}
+
+fn note_stash_join(joined: Result<Option<String>, tokio::task::JoinError>) {
+    if let Err(e) = joined {
+        tracing::debug!(error = %e, "undo stash wait failed");
+    }
 }
 
 fn route_turn_model(
@@ -4635,7 +4658,7 @@ fn spawn_local_turn(
     title_tx: mpsc::UnboundedSender<(String, String)>,
 ) {
     let flag = arm_generating(app, rt, cancel_requested_at, "");
-    let expanded = record_user_turn(app, rt, prompt, project_dir, config, submit_images);
+    let (expanded, stash) = record_user_turn(app, rt, prompt, project_dir, config, submit_images);
     let (route_provider, route_model) = route_turn_model(
         rt.session.id.as_str(),
         provider,
@@ -4657,12 +4680,23 @@ fn spawn_local_turn(
     let title_tx2 = title_tx;
     let title_provider = provider.to_string();
     let title_session_model = model.to_string();
+    let prep_dir = project_dir.to_path_buf();
+    let prep_config = config.clone();
 
     let (ag, sess) = take_turn_owner(rt, project_dir);
 
     rt.turn_join = Some(tokio::spawn(async move {
         let agent = ag;
         let mut session = sess;
+        prepare_turn(
+            &agent,
+            &mut session,
+            stash,
+            &prep_dir,
+            &prep_config,
+            &expanded,
+        )
+        .await;
         // Time only the agent loop. Title refine runs async *after*
         // we release rt.agent_busy so the user can type immediately.
         let work_t0 = Instant::now();

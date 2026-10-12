@@ -1,20 +1,39 @@
 //! Stable per-repository memory key (shared across worktrees).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 /// Derive a filesystem-safe key for the project that owns `path`.
 ///
 /// Prefers the git toplevel so all worktrees of the same repo share memory
 /// (Claude Code / Grok Build parity). Falls back to the canonical path.
 pub fn project_key(path: &Path) -> String {
-    let root = git_toplevel(path).unwrap_or_else(|| canonicalize_or_self(path));
+    let root = toplevel_cached(path).unwrap_or_else(|| canonicalize_or_self(path));
     sanitize_key(&root.to_string_lossy())
 }
 
 /// Absolute path used as the logical project root for memory.
 pub fn project_root(path: &Path) -> PathBuf {
-    git_toplevel(path).unwrap_or_else(|| canonicalize_or_self(path))
+    toplevel_cached(path).unwrap_or_else(|| canonicalize_or_self(path))
+}
+
+/// [`git_toplevel`] once per directory per process.
+///
+/// `MemoryService::open` derives the key twice and a turn opens the service
+/// more than once: each lookup spawned `git` (~40 ms on Windows), ~80 ms
+/// per open on the path to the first LLM request.
+fn toplevel_cached(path: &Path) -> Option<PathBuf> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<PathBuf>>>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    cache
+        .entry(path.to_path_buf())
+        .or_insert_with(|| git_toplevel(path))
+        .clone()
 }
 
 fn git_toplevel(path: &Path) -> Option<PathBuf> {
