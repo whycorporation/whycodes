@@ -2817,3 +2817,35 @@ fn configured_context_window_none_when_unset() {
     cfg.default_model = Some(make_model("p", "other"));
     assert_eq!(cfg.configured_context_window("p", "m"), None);
 }
+
+#[test]
+fn provider_extra_body_parses_from_toml() {
+    let cfg: Config = toml::from_str(
+        r#"
+[providers.grokv]
+name = "grokv"
+base_url = "https://gateway.example/v1"
+extra_body = { service_tier = "flex", top_k = 40 }
+"#,
+    )
+    .expect("config with extra_body");
+    let extra = &cfg.providers["grokv"].extra;
+    assert_eq!(extra["service_tier"], "flex");
+    assert_eq!(extra["top_k"], 40);
+}
+
+#[test]
+fn provider_extra_body_round_trips_under_its_own_name() {
+    let cfg: Config =
+        toml::from_str("[providers.gw]\nname = \"gw\"\nextra = { service_tier = \"priority\" }\n")
+            .expect("legacy `extra` key still reads");
+    let saved = toml::to_string(&cfg).expect("serialize");
+    assert!(saved.contains("extra_body"), "{saved}");
+    assert!(!saved.contains("\nextra ="), "{saved}");
+    let empty: Config = toml::from_str("[providers.gw]\nname = \"gw\"\n").expect("plain");
+    assert!(
+        !toml::to_string(&empty)
+            .expect("serialize")
+            .contains("extra")
+    );
+}

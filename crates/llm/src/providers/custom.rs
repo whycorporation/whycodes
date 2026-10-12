@@ -24,6 +24,8 @@ pub struct CustomProvider {
     api_key: Option<String>,
     headers: HashMap<String, String>,
     tool_arguments: ToolArgumentsFormat,
+    /// `extra_body` from config, merged into every request body.
+    extra_body: HashMap<String, Value>,
 }
 
 impl CustomProvider {
@@ -40,6 +42,7 @@ impl CustomProvider {
             api_key,
             headers,
             tool_arguments: ToolArgumentsFormat::JsonString,
+            extra_body: HashMap::new(),
         }
     }
 
@@ -69,11 +72,18 @@ impl CustomProvider {
             api_key: config.api_key.clone(),
             headers,
             tool_arguments: config.tool_arguments_format(),
+            extra_body: config.extra.clone(),
         }
     }
 
     fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
-        crate::openai_compat::chat_completions_body(request, model, self.convert_messages(request))
+        let mut body = crate::openai_compat::chat_completions_body(
+            request,
+            model,
+            self.convert_messages(request),
+        );
+        crate::openai_compat::apply_extra_body(&mut body, &self.extra_body);
+        body
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {

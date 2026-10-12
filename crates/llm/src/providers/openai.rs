@@ -9,6 +9,8 @@ use crate::provider::{LlmProvider, ProviderResponseFuture, ProviderStreamFuture}
 pub struct OpenAiProvider {
     name: String,
     chat_url: String,
+    /// `extra_body` from config, merged into every request body.
+    extra_body: std::collections::HashMap<String, Value>,
 }
 
 impl OpenAiProvider {
@@ -17,7 +19,10 @@ impl OpenAiProvider {
     }
 
     pub fn from_config(config: &whycodes_core::types::ProviderConfig) -> Self {
-        Self::from_base(config.base_url.as_deref().or(config.api_base.as_deref()))
+        let mut provider =
+            Self::from_base(config.base_url.as_deref().or(config.api_base.as_deref()));
+        provider.extra_body = config.extra.clone();
+        provider
     }
 
     pub fn from_base(base: Option<&str>) -> Self {
@@ -27,11 +32,18 @@ impl OpenAiProvider {
                 Some(raw) => super::custom::normalize_chat_completions_url(raw),
                 None => "https://api.openai.com/v1/chat/completions".to_string(),
             },
+            extra_body: Default::default(),
         }
     }
 
     pub fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
-        crate::openai_compat::chat_completions_body(request, model, self.convert_messages(request))
+        let mut body = crate::openai_compat::chat_completions_body(
+            request,
+            model,
+            self.convert_messages(request),
+        );
+        crate::openai_compat::apply_extra_body(&mut body, &self.extra_body);
+        body
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {

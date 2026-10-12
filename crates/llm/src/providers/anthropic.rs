@@ -238,6 +238,8 @@ fn content_block_to_anthropic_role(b: &ContentBlock, untrusted: bool) -> Value {
 pub struct AnthropicProvider {
     name: String,
     messages_url: String,
+    /// `extra_body` from config, merged into every request body.
+    extra_body: std::collections::HashMap<String, Value>,
 }
 
 /// POST with the right auth header for the credential type.
@@ -268,13 +270,17 @@ impl AnthropicProvider {
     }
 
     pub fn from_config(config: &whycodes_core::types::ProviderConfig) -> Self {
-        Self::from_base(config.base_url.as_deref().or(config.api_base.as_deref()))
+        let mut provider =
+            Self::from_base(config.base_url.as_deref().or(config.api_base.as_deref()));
+        provider.extra_body = config.extra.clone();
+        provider
     }
 
     pub fn from_base(base: Option<&str>) -> Self {
         Self {
             name: "anthropic".to_string(),
             messages_url: crate::endpoint::normalize_anthropic_messages_url(base),
+            extra_body: Default::default(),
         }
     }
 
@@ -310,6 +316,7 @@ impl AnthropicProvider {
             );
         }
 
+        crate::openai_compat::apply_extra_body(&mut body, &self.extra_body);
         body
     }
 
