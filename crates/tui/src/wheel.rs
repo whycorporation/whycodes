@@ -158,18 +158,11 @@ impl Stream {
         }
     }
 
-    fn wheel_like(&self, ept: u8) -> bool {
-        self.kind == Kind::Wheel || (self.kind == Kind::Unknown && ept <= 1)
-    }
-
     /// Whole lines owed. Never negative: a re-price below what was already
-    /// applied is a pause, not a bounce.
+    /// applied is a pause, not a bounce. (Every event is worth ≥ 1 line at
+    /// 1 or 3 events per notch, so a gesture always moves.)
     fn pending(&self, ept: u8, carry: f32) -> i32 {
-        let mut whole = self.desired(ept, carry).trunc() as i32;
-        if whole == 0 && self.wheel_like(ept) {
-            whole = 1;
-        }
-        (whole - self.applied).max(0)
+        (self.desired(ept, carry).trunc() as i32 - self.applied).max(0)
     }
 
     /// No input since the last delivering flush: what remains is catch-up.
