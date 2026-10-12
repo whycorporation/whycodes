@@ -777,6 +777,7 @@ impl Agent {
             };
 
             let mut results = results;
+            attach_nested_instructions(session, &tool_calls, &mut results);
             let (checkpoint_goal, rewind_report) =
                 settle_checkpoint_rewind(session, &tool_calls, &mut results);
 
@@ -974,6 +975,49 @@ fn defs_without_swarm(
         .filter(|def| def.name != "swarm")
         .cloned()
         .collect()
+}
+
+/// Append the instruction files of a nested directory (its `AGENTS.md`, …)
+/// to the successful `read` that first reached it this session.
+///
+/// Attached to the tool result, not the system prompt, so the cached prefix
+/// stays byte-stable. See [`crate::context_files::nested_for`].
+fn attach_nested_instructions(
+    session: &mut Session,
+    calls: &[whycodes_core::types::ToolCall],
+    results: &mut [whycodes_core::types::ToolResult],
+) {
+    for result in results.iter_mut() {
+        let path = read_path_for(calls, result);
+        if path.is_empty() {
+            continue;
+        }
+        let file = session.project_path.join(path);
+        let found = crate::context_files::nested_for(
+            &session.project_path,
+            &file,
+            &mut session.instruction_dirs,
+        );
+        if !found.is_empty() {
+            result
+                .content
+                .push_str(&crate::context_files::render_nested(&found));
+        }
+    }
+}
+
+/// The `path` of the successful `read` call that produced `result`, or "".
+fn read_path_for<'a>(
+    calls: &'a [whycodes_core::types::ToolCall],
+    result: &whycodes_core::types::ToolResult,
+) -> &'a str {
+    let mut path = "";
+    for call in calls {
+        if call.id == result.tool_call_id && call.name == "read" && !result.is_error {
+            path = call.arguments["path"].as_str().unwrap_or("");
+        }
+    }
+    path
 }
 
 /// Result body for a call the turn stopped before it could answer.
