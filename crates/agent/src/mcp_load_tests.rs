@@ -445,3 +445,37 @@ async fn register_unresolved_transport_logs_err_detail() {
     let count = register_mcp_tools(&mut executor, &config).await;
     assert_eq!(count, 0);
 }
+
+#[test]
+fn bridge_tool_name_keeps_valid_names_and_fixes_the_rest() {
+    // Valid names are stable API: unchanged.
+    assert_eq!(
+        bridge_tool_name("github", "create_issue"),
+        "github_create_issue"
+    );
+    assert_eq!(bridge_tool_name("fs-2", "read-file"), "fs-2_read-file");
+    // Dots, slashes, spaces and non-ASCII are rejected by OpenAI-compatible APIs.
+    assert_eq!(
+        bridge_tool_name("acme.io", "repo/list"),
+        "acme_io_repo_list"
+    );
+    assert_eq!(bridge_tool_name("my server", "çek"), "my_server__ek");
+
+    let long = "x".repeat(80);
+    let a = bridge_tool_name("srv", &format!("{long}_alpha"));
+    let b = bridge_tool_name("srv", &format!("{long}_beta"));
+    assert_eq!(a.len(), 64);
+    assert_eq!(b.len(), 64);
+    assert_ne!(a, b, "long siblings stay distinct");
+    assert_eq!(
+        a,
+        bridge_tool_name("srv", &format!("{long}_alpha")),
+        "stable"
+    );
+    assert!(a.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    assert_eq!(
+        bridge_tool_name("s", &"y".repeat(62)).len(),
+        64,
+        "64 fits as is"
+    );
+}
