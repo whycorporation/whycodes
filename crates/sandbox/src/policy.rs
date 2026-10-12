@@ -49,8 +49,8 @@ impl SandboxOutcome {
     }
 
     pub fn display_content(&self) -> (String, bool) {
-        let stdout = self.stdout_lossy();
-        let stderr = self.stderr_lossy();
+        let stdout = crate::clean::clean_terminal_output(&self.stdout_lossy());
+        let stderr = crate::clean::clean_terminal_output(&self.stderr_lossy());
         let mut result = String::new();
         if !stdout.is_empty() {
             result.push_str(&stdout);
@@ -68,12 +68,28 @@ impl SandboxOutcome {
                 self.status.code().unwrap_or(0)
             );
         }
-        if let Some(ref w) = self.warning {
+        if let Some(ref w) = self.warning
+            && first_sighting(w)
+        {
             append_sandbox_warning(&mut result, w);
         }
         (result, self.status.success())
     }
 }
+
+/// True the first time this process sees `warning`.
+///
+/// The no-bubblewrap fallback warning was appended to every command's output
+/// (~40 tokens each on Windows/macOS, where bwrap never exists). The model
+/// needs it once; later outputs stay clean.
+fn first_sighting(warning: &str) -> bool {
+    let mut seen = SEEN_WARNINGS.lock().unwrap_or_else(|e| e.into_inner());
+    seen.insert(warning.to_string())
+}
+
+/// Warnings already shown this process (see [`first_sighting`]).
+pub(crate) static SEEN_WARNINGS: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
 
 fn append_sandbox_warning(result: &mut String, warning: &str) {
     if !result.is_empty() {
@@ -124,7 +140,10 @@ pub fn prepare_with(
                 match request.settings.fallback {
                     SandboxFallback::Deny => Err(SandboxError::Unavailable(msg)),
                     SandboxFallback::Allow => {
-                        tracing::warn!("{msg}; running on host (sandbox_fallback=allow)");
+                        // Same message every command: log it once, not per call.
+                        if first_sighting(&msg) {
+                            tracing::warn!("{msg}; running on host (sandbox_fallback=allow)");
+                        }
                         Ok(host::prepare_host(
                             &request.command,
                             cwd,

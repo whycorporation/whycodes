@@ -9,6 +9,7 @@
 //! This is defence in depth, not a multi-tenant security boundary.
 
 mod bwrap;
+mod clean;
 mod host;
 mod policy;
 
