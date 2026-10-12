@@ -2004,3 +2004,51 @@ async fn cancel_during_a_tool_closes_every_unanswered_call() {
         .unwrap_or_default();
     assert!(body.contains("not run"), "{body}");
 }
+
+#[tokio::test]
+async fn a_read_below_the_project_attaches_that_directory_s_agents_md_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let pkg = dir.path().join("pkg");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(pkg.join("AGENTS.md"), "Use tabs in pkg.").unwrap();
+    std::fs::write(pkg.join("a.txt"), "alpha").unwrap();
+    std::fs::write(pkg.join("b.txt"), "beta").unwrap();
+    let agent = batched([
+        vec![ScriptedStep::ToolCall {
+            id: "r1".into(),
+            name: "read".into(),
+            input: json!({"path": "pkg/a.txt"}),
+        }],
+        vec![ScriptedStep::ToolCall {
+            id: "r2".into(),
+            name: "read".into(),
+            input: json!({"path": "pkg/b.txt"}),
+        }],
+        vec![ScriptedStep::Text("done".into())],
+    ]);
+    let mut session = session_at(dir.path(), "please read both files in pkg");
+    agent
+        .run_turn(&mut session, "script", "m", "k", Some(5))
+        .await
+        .expect("turn");
+    let tool_text = |id: &str| -> String {
+        session
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some(id))
+            .and_then(|m| m.content.as_text())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let first = tool_text("r1");
+    assert!(first.contains("alpha"), "{first}");
+    assert!(first.contains("<nested-instructions>"), "{first}");
+    assert!(first.contains("Use tabs in pkg."), "{first}");
+    let second = tool_text("r2");
+    assert!(second.contains("beta"), "{second}");
+    assert!(
+        !second.contains("nested-instructions"),
+        "once per directory: {second}"
+    );
+    assert!(session.system_prompt == "test", "system prompt untouched");
+}

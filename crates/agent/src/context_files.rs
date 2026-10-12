@@ -77,6 +77,80 @@ pub fn discover(project_path: &Path) -> Vec<ContextFile> {
     out
 }
 
+/// Byte cap for the nested instructions attached to one tool result.
+const MAX_NESTED_BYTES: usize = 20_000;
+
+/// Instruction files of the directories between `project_path` and `file`.
+///
+/// The system prompt only carries the project root's instructions (and its
+/// ancestors up to the git root). A monorepo package often has its own
+/// `AGENTS.md` the agent would never see. For a file below the project
+/// root, this returns the instruction files of each directory from the
+/// first level down to the file's own directory, skipping directories in
+/// `seen` and recording the ones it visits. Outside the project: nothing.
+pub fn nested_for(
+    project_path: &Path,
+    file: &Path,
+    seen: &mut BTreeSet<PathBuf>,
+) -> Vec<ContextFile> {
+    let mut out = Vec::new();
+    let mut bytes = 0usize;
+    // `AGENTS.md` and `agents.md` are one file on case-insensitive disks.
+    let mut contents = BTreeSet::new();
+    for dir in nested_dirs(project_path, file) {
+        if !seen.insert(dir.clone()) {
+            continue;
+        }
+        for path in candidates_in(&dir) {
+            let content = read_trimmed(&path);
+            let fits = bytes + content.len() <= MAX_NESTED_BYTES;
+            if !content.is_empty() && fits && contents.insert(content.clone()) {
+                bytes += content.len();
+                out.push(ContextFile {
+                    label: label_for(&path, project_path),
+                    content,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Directories strictly below `project_path` that contain `file`, top down.
+fn nested_dirs(project_path: &Path, file: &Path) -> Vec<PathBuf> {
+    let rel = match file.parent().map(|dir| dir.strip_prefix(project_path)) {
+        Some(Ok(rel)) => rel.to_path_buf(),
+        _ => return Vec::new(),
+    };
+    let mut dirs = Vec::new();
+    let mut cur = project_path.to_path_buf();
+    for part in rel.components() {
+        cur.push(part);
+        dirs.push(cur.clone());
+    }
+    dirs
+}
+
+fn read_trimmed(path: &Path) -> String {
+    std::fs::read_to_string(path)
+        .map(|raw| raw.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Nested instructions as a block appended to the tool result that found them.
+pub fn render_nested(files: &[ContextFile]) -> String {
+    let mut out = String::from("\n\n<nested-instructions>");
+    for file in files {
+        out.push_str("\n# Instructions for this directory (");
+        out.push_str(&file.label);
+        out.push_str(")\n\n");
+        out.push_str(&file.content);
+        out.push('\n');
+    }
+    out.push_str("</nested-instructions>");
+    out
+}
+
 fn render(files: &[ContextFile]) -> String {
     let mut out = String::new();
     for (i, file) in files.iter().enumerate() {

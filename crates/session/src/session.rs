@@ -579,6 +579,11 @@ pub struct Session {
     /// provider prompt cache. Not persisted.
     #[serde(skip)]
     pub turn_context: Option<String>,
+    /// Directories below the project whose instruction files (`AGENTS.md`
+    /// …) were already attached to a tool result this session. Not persisted:
+    /// a resumed session sees each once more.
+    #[serde(skip)]
+    pub instruction_dirs: std::collections::BTreeSet<PathBuf>,
 }
 
 /// Boundary recorded by the `checkpoint` tool for a later `rewind`.
@@ -638,6 +643,7 @@ impl Session {
             checkpoint: None,
             last_rewind_report: None,
             turn_context: None,
+            instruction_dirs: Default::default(),
         }
     }
 
@@ -1448,6 +1454,7 @@ impl Session {
             checkpoint: None,
             last_rewind_report: None,
             turn_context: None,
+            instruction_dirs: Default::default(),
         }))
     }
 
