@@ -26,10 +26,7 @@ pub fn project_root(path: &Path) -> PathBuf {
 /// per open on the path to the first LLM request.
 fn toplevel_cached(path: &Path) -> Option<PathBuf> {
     static CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<PathBuf>>>> = OnceLock::new();
-    let mut cache = CACHE
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut cache = crate::recover_lock(CACHE.get_or_init(Default::default));
     cache
         .entry(path.to_path_buf())
         .or_insert_with(|| git_toplevel(path))

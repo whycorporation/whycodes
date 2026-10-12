@@ -344,6 +344,19 @@ mod tests {
     }
 
     #[test]
+    fn stash_slot_wait_survives_a_poisoned_lock() {
+        let slot = StashSlot::done(Some("kept".into()));
+        let held = slot.clone();
+        let poisoned = std::thread::spawn(move || {
+            let _guard = held.0.lock().expect("first lock");
+            panic!("poison the slot");
+        })
+        .join();
+        assert!(poisoned.is_err());
+        assert_eq!(slot.wait().as_deref(), Some("kept"));
+    }
+
+    #[test]
     fn stash_slot_waits_once_and_keeps_the_result() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut h = SessionHistory::new();
