@@ -176,6 +176,23 @@ pub fn visible_message_range(
 
 /// Visible `[start, end)` range for bottom-anchored scroll.
 ///
+/// Keep a scrolled-up reader on the same rows while the transcript grows.
+///
+/// `scroll_offset` counts rows up from the newest line, so every streamed
+/// row used to push the text the user was reading up the screen. Growth at
+/// the same width is added to the offset; a reflow (new width) or a shrink
+/// (undo, compaction) leaves it alone, and at the bottom (`0`) it follows.
+fn hold_reading_position(app: &mut TuiApp, width: u16, total: usize) {
+    if let Some((w, before)) = app.chat_extent
+        && w == width
+        && total > before
+        && app.scroll_offset > 0
+    {
+        app.scroll_offset += total - before;
+    }
+    app.chat_extent = Some((width, total));
+}
+
 /// `scroll_offset` is rows up from the newest line (`0` = stick to bottom).
 /// Matches `TuiApp::scroll_offset` / `ensure_selected_visible`.
 pub fn visible_range(total: usize, height: usize, scroll_offset: usize) -> (usize, usize) {
@@ -300,6 +317,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     // the solid scrollbar never paints over wrapped text.
     let height = area.height as usize;
     let (starts, total, content_width, needs_bar) = session_bar_layout(app, area.width, height);
+    hold_reading_position(app, content_width, total);
     let (view_start, view_end) = visible_range(total, height, app.scroll_offset);
 
     // Pin messages to the bottom: empty rows sit above the transcript.
