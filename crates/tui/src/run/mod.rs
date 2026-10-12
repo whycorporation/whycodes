@@ -1647,7 +1647,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // abort the join handle so "Cancelling…" can never stick forever.
     let mut cancel_requested_at: Option<Instant> = None;
     let mut spinner_frame: usize = 0;
-    let mut spinner_dwell: u32 = 0;
+    let mut last_spinner_tick = Instant::now();
     // Title may arrive before TurnOutcome restores the real rt.session; hold it.
     let mut pending_async_title: Option<(String, String)> = None;
     let mut update_rx = opts.update_rx;
@@ -1789,14 +1789,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 break;
             }
 
-            if should_tick_spinner(&app, rt.agent_busy) {
-                spinner_dwell = spinner_dwell.saturating_add(1);
-                if spinner_dwell >= crate::ui::spinner::TICK_DIVISOR {
-                    spinner_dwell = 0;
-                    tick_spinner(&mut app, &mut spinner_frame);
-                }
-            } else {
-                spinner_dwell = 0;
+            if should_tick_spinner(&app, rt.agent_busy)
+                && last_spinner_tick.elapsed() >= crate::ui::spinner::TICK_INTERVAL
+            {
+                last_spinner_tick = Instant::now();
+                tick_spinner(&mut app, &mut spinner_frame);
             }
 
             // ── Permission / question requests (queued; one at a time) ─

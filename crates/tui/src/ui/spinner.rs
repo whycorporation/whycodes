@@ -14,9 +14,10 @@ pub const BRAILLE_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", 
 /// Legacy ConHost 1-column fallback.
 pub const ASCII_FRAMES: &[&str] = &["|", "/", "-", "\\"];
 
-/// Animate-loop dwell: `REDRAW_ANIMATE` is 40 ms, Grok shows each glyph
-/// ~133 ms (~7.5 fps). Three 40 ms ticks ≈ 120 ms.
-pub const TICK_DIVISOR: u32 = 3;
+/// Glyph dwell. Grok shows each frame ~133 ms (~7.5 fps). A wall-clock
+/// interval, not a count of loop passes: those speed up with typing and
+/// with a shorter `REDRAW_ANIMATE`.
+pub const TICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(120);
 
 pub fn frames() -> &'static [&'static str] {
     if is_legacy_windows_console() {
