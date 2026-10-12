@@ -956,3 +956,105 @@ async fn chat_sse_keeps_multibyte_text_split_across_chunks() {
     }
     assert_eq!(text, "Merhaba, şöyle güzel");
 }
+
+fn assistant(blocks: Vec<ContentBlock>) -> Message {
+    Message {
+        role: Role::Assistant,
+        content: MessageContent::Blocks(blocks),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }
+}
+
+fn thinking(text: &str) -> ContentBlock {
+    ContentBlock::Thinking {
+        text: text.into(),
+        signature: None,
+    }
+}
+
+fn reasoning_request() -> LlmRequest {
+    req_with(vec![
+        Message {
+            role: Role::User,
+            content: MessageContent::Text("q".into()),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        },
+        // Thinking only: becomes `content: null` + `reasoning_content`.
+        assistant(vec![thinking("only thoughts")]),
+        assistant(vec![
+            thinking("plan the call"),
+            ContentBlock::ToolUse {
+                id: "c1".into(),
+                name: "read".into(),
+                input: serde_json::json!({"path": "a"}),
+            },
+        ]),
+        assistant(vec![
+            thinking("why"),
+            ContentBlock::Text {
+                text: "answer".into(),
+            },
+        ]),
+    ])
+}
+
+fn sent(model: &str) -> Vec<Value> {
+    let req = reasoning_request();
+    chat_completions_body(&req, model, convert_messages(&req))["messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[test]
+fn reasoning_is_replayed_to_thinking_tool_models() {
+    for model in [
+        "deepseek-chat",
+        "deepseek-v4",
+        "kimi-k2-thinking",
+        "qwq-32b",
+        "glm-4.6",
+    ] {
+        let messages = sent(model);
+        let replayed = messages
+            .iter()
+            .filter(|m| m.get("reasoning_content").is_some())
+            .count();
+        assert_eq!(replayed, 3, "{model}: {messages:#?}");
+        assert!(replays_reasoning(model));
+    }
+}
+
+#[test]
+fn mistral_and_deepseek_reasoner_never_get_reasoning_back() {
+    for model in [
+        "mistral-large-latest",
+        "mistralai/codestral-2508",
+        "magistral-medium",
+        "deepseek-reasoner",
+        "deepseek/deepseek-r1",
+    ] {
+        assert!(!replays_reasoning(model), "{model}");
+        let messages = sent(model);
+        assert!(
+            messages
+                .iter()
+                .all(|m| m.get("reasoning_content").is_none()),
+            "{model}: {messages:#?}"
+        );
+        // The thinking-only turn would be an empty assistant message: dropped.
+        // The tool-call and text turns stay.
+        let roles: Vec<&str> = messages.iter().filter_map(|m| m["role"].as_str()).collect();
+        assert_eq!(
+            roles,
+            ["system", "user", "assistant", "assistant"],
+            "{model}"
+        );
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "c1");
+        assert_eq!(messages[3]["content"], "answer");
+    }
+}

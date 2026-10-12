@@ -44,6 +44,11 @@ pub fn apply_sampling(body: &mut Value, request: &LlmRequest) {
 
 /// Shared chat-completions request body used by OpenAI-compatible providers.
 pub fn chat_completions_body(request: &LlmRequest, model: &str, messages: Vec<Value>) -> Value {
+    let messages = if replays_reasoning(model) {
+        messages
+    } else {
+        without_reasoning(messages)
+    };
     let mut body = obj([
         ("model", jstr(model)),
         ("messages", arr(messages)),
@@ -60,6 +65,50 @@ pub fn chat_completions_body(request: &LlmRequest, model: &str, messages: Vec<Va
     apply_sampling(&mut body, request);
     crate::thinking::ThinkingConfig::apply_openai_effort(&mut body, request.thinking.as_ref());
     body
+}
+
+/// Model families that must not receive past `reasoning_content`.
+///
+/// Thinking models that call tools (DeepSeek V3/V4 chat, Kimi, QwQ / Qwen /
+/// GLM thinking) need their reasoning replayed inside a tool turn, so it is
+/// sent by default. Mistral rejects the field outright (HTTP 422);
+/// deepseek-reasoner / R1 reject reasoning in input messages.
+const NO_REASONING_REPLAY: &[&str] = &[
+    "mistral",
+    "mixtral",
+    "codestral",
+    "devstral",
+    "magistral",
+    "pixtral",
+    "ministral",
+    "deepseek-reasoner",
+    "deepseek-r1",
+];
+
+/// Whether past assistant `reasoning_content` may be sent back to `model`.
+pub fn replays_reasoning(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    !NO_REASONING_REPLAY
+        .iter()
+        .any(|family| model.contains(family))
+}
+
+/// Drop `reasoning_content`, and any assistant turn left with nothing else
+/// (strict APIs reject an assistant message without content or tool calls).
+fn without_reasoning(messages: Vec<Value>) -> Vec<Value> {
+    let mut out = Vec::with_capacity(messages.len());
+    for mut message in messages {
+        let had = message
+            .as_object_mut()
+            .and_then(|o| o.remove("reasoning_content"))
+            .is_some();
+        let hollow = message.get("content").is_none_or(Value::is_null)
+            && message.get("tool_calls").is_none();
+        if !(had && hollow) {
+            out.push(message);
+        }
+    }
+    out
 }
 
 /// Flatten `err` + `source()` chain so reqwest decode failures keep TLS/EOF/JSON
