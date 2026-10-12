@@ -3072,6 +3072,9 @@ fn format_turn_done_status(
     if let Some(ref usage) = app.turn_usage {
         parts.push(format_usage_short(usage));
     }
+    if let Some(tps) = app.stream_speed.tokens_per_second() {
+        parts.push(format!("{tps:.0} tok/s"));
+    }
     parts.join(" · ")
 }
 
@@ -3465,10 +3468,12 @@ fn drain_turn_events(
         drained = drained.max(Drained::Deltas);
         match ev {
             TurnEvent::TextDelta(t) => {
+                app.stream_speed.note_delta(Instant::now());
                 flush_think(app, &mut think_buf);
                 text_buf.push_str(&t);
             }
             TurnEvent::ThinkingDelta(t) => {
+                app.stream_speed.note_delta(Instant::now());
                 flush_text(app, &mut text_buf);
                 think_buf.push_str(&t);
             }
@@ -5060,6 +5065,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             app.mark_dirty();
         }
         TurnEvent::Usage(usage) => {
+            app.stream_speed.close_step(usage.output_tokens);
             app.turn_usage = Some(usage.clone());
             // Per-step input size ≈ context window fill (Grok-style meter).
             app.set_context_from_usage(&usage);

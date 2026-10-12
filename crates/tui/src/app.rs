@@ -788,6 +788,46 @@ impl ChatMessage {
     }
 }
 
+/// Output speed of a turn, measured where the user sees it.
+///
+/// Each LLM step counts from its first streamed token to its last; time to
+/// first token and tool runs between steps are excluded, so the figure is
+/// the model's generation speed, not the turn's wall time.
+#[derive(Debug, Clone, Default)]
+pub struct StreamSpeed {
+    first: Option<std::time::Instant>,
+    last: Option<std::time::Instant>,
+    tokens: u64,
+    ms: u128,
+}
+
+/// Shorter generation windows give a meaningless rate.
+const MIN_SPEED_WINDOW_MS: u128 = 250;
+
+impl StreamSpeed {
+    /// A text / thinking delta arrived.
+    pub fn note_delta(&mut self, at: std::time::Instant) {
+        self.first.get_or_insert(at);
+        self.last = Some(at);
+    }
+
+    /// The step's stream closed and reported `output_tokens`.
+    pub fn close_step(&mut self, output_tokens: u64) {
+        let window = match (self.first.take(), self.last.take()) {
+            (Some(first), Some(last)) => last.duration_since(first).as_millis(),
+            _ => return,
+        };
+        self.ms += window;
+        self.tokens += output_tokens;
+    }
+
+    /// Output tokens per second, once enough generation was observed.
+    pub fn tokens_per_second(&self) -> Option<f64> {
+        let enough = self.ms >= MIN_SPEED_WINDOW_MS && self.tokens > 0;
+        enough.then(|| self.tokens as f64 * 1000.0 / self.ms as f64)
+    }
+}
+
 /// How many trailing reasoning lines to show while the block is still streaming.
 /// Matches Grok Build default `truncated_lines: 3`.
 pub const THINKING_LIVE_TAIL_LINES: usize = 3;
@@ -1578,6 +1618,8 @@ pub struct TuiApp {
     pub(crate) turn_started_at: Option<std::time::Instant>,
     /// Latest token usage reported for the current/last turn.
     pub(crate) turn_usage: Option<whycodes_core::types::Usage>,
+    /// Generation speed of the current/last turn (`tok/s` in the done line).
+    pub(crate) stream_speed: StreamSpeed,
     /// Mouse `[stop]` (or future UI) requested cancel — run loop consumes this.
     pub(crate) pending_cancel: bool,
     /// Active session id (todo file key; empty before the first session).
@@ -2282,6 +2324,7 @@ impl TuiApp {
             api_context_for: None,
             turn_started_at: None,
             turn_usage: None,
+            stream_speed: StreamSpeed::default(),
             pending_cancel: false,
             session_id: String::new(),
             todos: Vec::new(),
@@ -2685,6 +2728,7 @@ impl TuiApp {
     pub fn mark_turn_started(&mut self) {
         self.turn_started_at = Some(std::time::Instant::now());
         self.turn_usage = None;
+        self.stream_speed = StreamSpeed::default();
     }
 
     /// Live elapsed ms for the in-flight turn, if any.
@@ -3551,6 +3595,8 @@ impl TuiApp {
     /// Move `view` into this app (no transcript clone). Pair with
     /// [`Self::yield_view`] after applying background turn events.
     pub fn adopt_view(&mut self, view: &mut crate::session_runtime::ViewSnapshot) {
+        // A speed measured for the previous session must not mix in.
+        self.stream_speed = StreamSpeed::default();
         self.chat_extent = None;
         self.messages = std::mem::take(&mut view.messages);
         self.session_title = std::mem::take(&mut view.session_title);
