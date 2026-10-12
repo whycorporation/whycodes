@@ -2523,6 +2523,55 @@ fn memory_and_index_helpers() {
 }
 
 #[test]
+fn recall_rides_on_turn_context_and_system_prompt_stays_stable() {
+    let _home = isolate_home_fresh();
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    memory_service(dir.path(), &config)
+        .expect("memory service")
+        .remember("the login flow lives in src/auth.rs", None)
+        .expect("remember");
+    let mut session = Session::new(dir.path().to_path_buf(), String::new());
+    let agent = Agent::new(whycodes_core::types::AgentInfo {
+        name: "build".into(),
+        description: String::new(),
+        mode: AgentMode::Primary,
+        permission: whycodes_core::types::PermissionSet::default(),
+        model: None,
+        system_prompt: Some("sys".into()),
+        temperature: None,
+        top_p: None,
+    });
+    let ask = "fix the login flow in src/auth.rs";
+    refresh_session_memory(&mut session, &agent, dir.path(), &config, Some(ask));
+    let first = session.system_prompt.clone();
+    let ctx = session
+        .turn_context
+        .clone()
+        .expect("recall for a matching query");
+    assert!(ctx.starts_with("\n\n<recalled-context>"), "{ctx}");
+    assert!(ctx.contains("login flow lives"), "{ctx}");
+    assert!(
+        !first.contains("# Recalled Memories"),
+        "query recall must not enter the system prompt (the MEMORY.md index may)"
+    );
+    refresh_session_memory(
+        &mut session,
+        &agent,
+        dir.path(),
+        &config,
+        Some("now explain the retry loop backoff"),
+    );
+    assert_eq!(
+        session.system_prompt, first,
+        "a new query must not change the system prompt (prompt cache)"
+    );
+    session.turn_context = Some("stale".into());
+    refresh_session_memory(&mut session, &agent, dir.path(), &config, Some("selam"));
+    assert_eq!(session.turn_context, None, "chit-chat carries no recall");
+}
+
+#[test]
 fn trivial_query_keeps_system_prompt_byte_stable() {
     let _home = isolate_home_fresh();
     let dir = tempfile::tempdir().unwrap();
@@ -6660,12 +6709,31 @@ fn console_open_and_primary_agent_defaults() {
 }
 
 #[test]
+fn console_writer_holds_a_frame_until_flush() {
+    // A frame is ~11k small cell writes; they must reach the console as one
+    // write on flush, not one syscall each.
+    let file = tempfile::tempfile().expect("tempfile");
+    let probe = file.try_clone().expect("clone");
+    let mut w = choose_tui_writer(Some(file), false).expect("console writer");
+    for _ in 0..10_000 {
+        w.write_all(b"[1;1Hx").expect("write");
+    }
+    assert_eq!(
+        probe.metadata().expect("meta").len(),
+        0,
+        "nothing written before flush"
+    );
+    w.flush().expect("flush");
+    assert_eq!(probe.metadata().expect("meta").len(), 10_000 * 7);
+}
+
+#[test]
 fn tui_writer_write_flush_and_summary() {
     let mut stdout = TuiWriter::Stdout(io::stdout());
     let _ = stdout.write(b"");
     let _ = stdout.flush();
     if let Some(console) = open_controlling_console() {
-        let mut w = TuiWriter::Console(console);
+        let mut w = TuiWriter::Console(io::BufWriter::new(console));
         let _ = w.write(b"");
         let _ = w.flush();
     }
