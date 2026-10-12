@@ -725,7 +725,7 @@ impl Agent {
                 // Sequential for shell / mutating / permission-ask tools so risk
                 // gates and the TUI single-slot permission UI stay correct.
                 let tool_t0 = Instant::now();
-                let results = self
+                let executed = self
                     .execute_tool_calls(
                         &tool_calls,
                         session,
@@ -738,7 +738,11 @@ impl Agent {
                         Some(&turn_intent),
                         &mut speculative_reads,
                     )
-                    .await?;
+                    .await;
+                let results = match executed {
+                    Ok(results) => results,
+                    Err(e) => return Err(close_unanswered_calls(session, &tool_calls, e)),
+                };
                 crate::speculative_read::abort_all(&mut speculative_reads);
                 let tool_batch_ms = tool_t0.elapsed().as_millis();
                 for tc in &tool_calls {
@@ -970,6 +974,32 @@ fn defs_without_swarm(
         .filter(|def| def.name != "swarm")
         .cloned()
         .collect()
+}
+
+/// Result body for a call the turn stopped before it could answer.
+const NOT_RUN: &str = "Tool not run: the turn was stopped before this call finished.";
+
+/// Answer every call of an interrupted batch, then hand back `err`.
+///
+/// The assistant turn holding these calls is already in the transcript.
+/// Strict APIs reject the next request if any call lacks a result (OpenAI:
+/// tool_calls must be followed by tool messages; Anthropic: tool_use needs a
+/// tool_result), so a cancel mid-tool used to break the following message.
+fn close_unanswered_calls(
+    session: &mut Session,
+    calls: &[whycodes_core::types::ToolCall],
+    err: whycodes_core::Error,
+) -> whycodes_core::Error {
+    let mut results = Vec::with_capacity(calls.len());
+    for call in calls {
+        results.push(whycodes_core::types::ToolResult {
+            tool_call_id: call.id.clone(),
+            content: NOT_RUN.to_string(),
+            is_error: true,
+        });
+    }
+    session.add_tool_results(results);
+    err
 }
 
 #[cfg(test)]
