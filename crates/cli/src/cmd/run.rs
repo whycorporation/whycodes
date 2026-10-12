@@ -839,7 +839,9 @@ pub(crate) async fn cmd_run(
                 }
                 apply_sticky_credential(&agent, &provider, &config, &api_key);
                 println!("{}", custom_command_line(name));
-                history.push_before_turn(&session.messages, &project_dir);
+                // The undo stash runs while memory rebuilds; wait before the
+                // turn so it records the tree ahead of any edit.
+                let stash = history.push_before_turn(&session.messages, &project_dir);
                 refresh_session_memory(
                     &mut session,
                     &agent,
@@ -847,6 +849,7 @@ pub(crate) async fn cmd_run(
                     &config,
                     Some(&rendered),
                 );
+                stash.wait();
                 session.add_user_message(&rendered);
                 match agent
                     .run_turn(&mut session, &provider, &model, &api_key, max_turns)
@@ -1406,8 +1409,11 @@ pub(crate) async fn cmd_run(
         }
         apply_sticky_credential(&agent, &provider, &config, &api_key);
 
-        history.push_before_turn(&session.messages, &project_dir);
+        // The undo stash runs while memory rebuilds; wait before the turn so
+        // it records the tree ahead of any edit.
+        let stash = history.push_before_turn(&session.messages, &project_dir);
         refresh_session_memory(&mut session, &agent, &project_dir, &config, Some(&expanded));
+        stash.wait();
         session.add_user_message(&expanded);
         if config.session.auto_title {
             let seed = session

@@ -2571,6 +2571,68 @@ fn recall_rides_on_turn_context_and_system_prompt_stays_stable() {
     assert_eq!(session.turn_context, None, "chit-chat carries no recall");
 }
 
+#[tokio::test]
+async fn prepare_turn_builds_memory_and_finishes_the_stash() {
+    let (_lock, _home) = isolate_home_fresh();
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    let mut session = Session::new(dir.path().to_path_buf(), String::new());
+    let agent = Agent::new(whycodes_core::types::AgentInfo {
+        name: "build".into(),
+        description: String::new(),
+        mode: AgentMode::Primary,
+        permission: whycodes_core::types::PermissionSet::default(),
+        model: None,
+        system_prompt: Some("sys".into()),
+        temperature: None,
+        top_p: None,
+    });
+    let mut history = whycodes_session::SessionHistory::new();
+    let stash = history.push_before_turn(&session.messages, dir.path());
+    prepare_turn(
+        &agent,
+        &mut session,
+        stash.clone(),
+        dir.path(),
+        &config,
+        "fix the login flow in src/auth.rs",
+    )
+    .await;
+    assert!(
+        session.system_prompt.contains("sys"),
+        "memory/AGENTS.md prompt is built in the turn task"
+    );
+    assert_eq!(
+        stash.wait(),
+        None,
+        "outside a repo the stash finished empty"
+    );
+    note_stash_join(Ok(None));
+}
+
+#[test]
+fn record_user_turn_leaves_memory_to_the_turn_task() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "hydrated".into());
+    let (expanded, stash) = record_user_turn(
+        &mut app,
+        &mut rt,
+        "fix the login flow in src/auth.rs",
+        dir.path(),
+        &Config::default(),
+        &[],
+    );
+    assert_eq!(expanded, "fix the login flow in src/auth.rs");
+    assert_eq!(
+        rt.session.system_prompt, "hydrated",
+        "no memory rebuild on the event loop"
+    );
+    assert_eq!(stash.wait(), None);
+}
+
 #[test]
 fn trivial_query_keeps_system_prompt_byte_stable() {
     let _home = isolate_home_fresh();
@@ -4795,7 +4857,7 @@ fn arm_record_route_and_model_choice() {
     std::fs::write(dir.path().join("note.txt"), "hello file").unwrap();
     let mut config = Config::default();
     config.session.auto_title = true;
-    let expanded = record_user_turn(
+    let (expanded, _stash) = record_user_turn(
         &mut app,
         &mut rt,
         "read @note.txt please",
@@ -5991,7 +6053,7 @@ fn record_user_turn_appends_message_and_title() {
     rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
     let mut config = Config::default();
     config.session.auto_title = true;
-    let expanded = record_user_turn(
+    let (expanded, _stash) = record_user_turn(
         &mut app,
         &mut rt,
         "please look at @note.txt",
@@ -9618,7 +9680,8 @@ fn record_user_turn_with_valid_png_appends_image_blocks() {
     let mut rt = test_runtime();
     rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
     let config = Config::default();
-    let expanded = record_user_turn(&mut app, &mut rt, "see this", dir.path(), &config, &[img]);
+    let (expanded, _stash) =
+        record_user_turn(&mut app, &mut rt, "see this", dir.path(), &config, &[img]);
     assert_eq!(expanded, "see this");
     let last = rt.session.messages.last().expect("user turn recorded");
     match &last.content {
