@@ -204,6 +204,42 @@ fn turn_done_status_formats_cancel_and_usage() {
     assert!(s.contains("in"), "{s}");
     assert!(s.contains("out"), "{s}");
     assert!(s.contains("cached"), "{s}");
+    assert!(
+        !s.contains("tok/s"),
+        "no speed without a measured stream: {s}"
+    );
+
+    // Two steps: 40 tokens over 500 ms, then 60 over 500 ms -> 100 tok/s.
+    let t0 = Instant::now();
+    app.stream_speed.note_delta(t0);
+    app.stream_speed.note_delta(t0 + Duration::from_millis(500));
+    app.stream_speed.close_step(40);
+    app.stream_speed.note_delta(t0 + Duration::from_secs(3));
+    app.stream_speed
+        .note_delta(t0 + Duration::from_millis(3500));
+    app.stream_speed.close_step(60);
+    let s = format_turn_done_status(&app, "build", "anthropic", "m", Some(4200), false);
+    assert!(s.ends_with(" · 100 tok/s"), "{s}");
+}
+
+#[test]
+fn stream_speed_ignores_steps_without_deltas_and_short_windows() {
+    let mut speed = crate::app::StreamSpeed::default();
+    speed.close_step(500);
+    assert_eq!(
+        speed.tokens_per_second(),
+        None,
+        "a step that streamed nothing"
+    );
+    let t0 = Instant::now();
+    speed.note_delta(t0);
+    speed.note_delta(t0 + Duration::from_millis(100));
+    speed.close_step(50);
+    assert_eq!(
+        speed.tokens_per_second(),
+        None,
+        "100 ms is too short to rate"
+    );
 }
 
 #[test]
