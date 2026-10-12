@@ -83,14 +83,13 @@ impl SandboxOutcome {
 /// (~40 tokens each on Windows/macOS, where bwrap never exists). The model
 /// needs it once; later outputs stay clean.
 fn first_sighting(warning: &str) -> bool {
-    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
-        std::sync::OnceLock::new();
-    let mut seen = SEEN
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut seen = SEEN_WARNINGS.lock().unwrap_or_else(|e| e.into_inner());
     seen.insert(warning.to_string())
 }
+
+/// Warnings already shown this process (see [`first_sighting`]).
+pub(crate) static SEEN_WARNINGS: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
 
 fn append_sandbox_warning(result: &mut String, warning: &str) {
     if !result.is_empty() {

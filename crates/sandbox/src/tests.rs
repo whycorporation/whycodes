@@ -790,3 +790,15 @@ fn display_content_cleans_terminal_noise() {
     .display_content();
     assert_eq!(shown, "ok 100%\n[stderr]\nwarn");
 }
+
+#[test]
+fn warning_dedup_survives_a_poisoned_set() {
+    let poisoned = std::thread::spawn(|| {
+        let _guard = crate::policy::SEEN_WARNINGS.lock().expect("first lock");
+        panic!("poison the warning set");
+    })
+    .join();
+    assert!(poisoned.is_err());
+    let (first, _) = host_outcome("x", "", Some("after-poison warning")).display_content();
+    assert!(first.contains("[sandbox] after-poison warning"), "{first}");
+}
