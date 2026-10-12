@@ -1,6 +1,7 @@
 pub mod error;
 pub mod history;
 pub mod import;
+pub mod pairing;
 pub mod session;
 pub mod title;
 
