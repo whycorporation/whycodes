@@ -76,11 +76,18 @@ impl IsolatedHome {
 
 #[cfg(test)]
 impl Drop for IsolatedHome {
+    /// Restores while `_lock` is still held (fields drop after this body).
     fn drop(&mut self) {
-        match &self.prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
-        }
+        restore_home(self.prev.as_deref());
+    }
+}
+
+/// Put `WHYCODES_HOME` back to `prev`. Callers hold [`ENV_LOCK`].
+#[cfg(test)]
+pub(crate) fn restore_home(prev: Option<&std::ffi::OsStr>) {
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
     }
 }
 

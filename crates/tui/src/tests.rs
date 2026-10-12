@@ -2518,8 +2518,11 @@ fn chat_messages_from_session_covers_system_tool_image_redacted() {
 
 #[test]
 fn isolated_home_pins_and_restores_whycodes_home() {
-    let outside = std::env::var_os("WHYCODES_HOME");
+    // Every check runs while `home` holds ENV_LOCK. Reading the env after the
+    // guard drops raced sibling tests that pin a shared home for the whole
+    // process (`run::tests::isolate_home`), and flaked on Linux CI too.
     let home = crate::IsolatedHome::new();
+    assert!(home.path().is_dir());
     assert_eq!(
         std::env::var_os("WHYCODES_HOME").as_deref(),
         Some(home.path().as_os_str())
@@ -2530,18 +2533,14 @@ fn isolated_home_pins_and_restores_whycodes_home() {
         std::env::var_os("WHYCODES_HOME").as_deref(),
         Some(home.path().as_os_str())
     );
-    drop(home);
-    assert_eq!(std::env::var_os("WHYCODES_HOME"), outside);
 
-    let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let prev = std::env::var_os("WHYCODES_HOME");
-    unsafe { std::env::remove_var("WHYCODES_HOME") };
-    drop(_lock);
-    let home = crate::IsolatedHome::new();
-    assert!(home.path().is_dir());
-    drop(home);
+    // What Drop runs: restore a previous value, or clear an unset one.
+    crate::restore_home(Some(std::ffi::OsStr::new("previous-home")));
+    assert_eq!(
+        std::env::var_os("WHYCODES_HOME").as_deref(),
+        Some(std::ffi::OsStr::new("previous-home"))
+    );
+    crate::restore_home(None);
     assert!(std::env::var_os("WHYCODES_HOME").is_none());
-    if let Some(prev) = prev {
-        unsafe { std::env::set_var("WHYCODES_HOME", prev) };
-    }
+    drop(home);
 }
