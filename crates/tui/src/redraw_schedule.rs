@@ -19,8 +19,10 @@ pub const REDRAW_IDLE: Duration = Duration::from_millis(500);
 /// Forgotten session: no keys/clicks for [`REDRAW_DEEP_IDLE_AFTER`].
 pub const REDRAW_DEEP_IDLE: Duration = Duration::from_millis(5000);
 pub const REDRAW_DEEP_IDLE_AFTER: Duration = Duration::from_secs(30);
-/// Spinner / streaming / just-dirty.
-pub const REDRAW_ANIMATE: Duration = Duration::from_millis(40);
+/// Spinner / streaming / just-dirty. Stream tokens are drained once per
+/// loop pass, so this is their worst-case wait for the screen. Paint is
+/// gated on `needs_redraw`, so a pass with nothing new costs no frame.
+pub const REDRAW_ANIMATE: Duration = Duration::from_millis(16);
 /// `@file` matcher workers mid-rematch.
 pub const REDRAW_FUZZY: Duration = Duration::from_millis(16);
 

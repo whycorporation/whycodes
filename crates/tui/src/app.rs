@@ -1378,6 +1378,9 @@ pub struct TuiApp {
     /// Display rows scrolled up from the newest line (not message count).
     pub(crate) scroll_offset: usize,
     pub(crate) auto_scroll: bool,
+    /// `(content width, total rows)` of the last painted transcript, so a
+    /// reader scrolled up keeps their place while the reply grows below.
+    pub(crate) chat_extent: Option<(u16, usize)>,
     /// Selected message index when scrollback is focused.
     pub(crate) selected_msg: Option<usize>,
     /// Chat viewport height in rows (updated each paint).
@@ -2181,6 +2184,7 @@ impl TuiApp {
             pending_pastes: vec![],
             scroll_offset: 0,
             auto_scroll: true,
+            chat_extent: None,
             selected_msg: None,
             chat_viewport_rows: 20,
             chat_content_width: 80,
@@ -3471,6 +3475,7 @@ impl TuiApp {
     /// Tool-role messages are folded into the matching assistant tool-call when
     /// possible so the UI matches live turns.
     pub fn load_messages_from_session(&mut self, session: &whycodes_session::session::Session) {
+        self.chat_extent = None;
         self.messages = chat_messages_from_session(session);
         self.session_title = session.title.clone();
         self.session_id = session.id.clone();
@@ -3546,6 +3551,7 @@ impl TuiApp {
     /// Move `view` into this app (no transcript clone). Pair with
     /// [`Self::yield_view`] after applying background turn events.
     pub fn adopt_view(&mut self, view: &mut crate::session_runtime::ViewSnapshot) {
+        self.chat_extent = None;
         self.messages = std::mem::take(&mut view.messages);
         self.session_title = std::mem::take(&mut view.session_title);
         self.status_message = std::mem::take(&mut view.status_message);

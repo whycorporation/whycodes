@@ -1032,3 +1032,50 @@ fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
     }
     out
 }
+
+fn screen_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<String> {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), app, &palette))
+        .expect("draw");
+    let buf = terminal.backend().buffer().clone();
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn scrolled_up_reader_keeps_their_rows_while_the_reply_grows() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 12);
+    app.add_message(ChatRole::Assistant, "streaming reply line one");
+    let _ = screen_rows(&mut app, 60, 10);
+    app.scroll_offset = 6;
+    let before = screen_rows(&mut app, 60, 10);
+    for i in 0..5 {
+        app.append_to_last(&format!("\n\nmore streamed text {i}"));
+    }
+    let after = screen_rows(&mut app, 60, 10);
+    assert_eq!(
+        after, before,
+        "growth below must not move a scrolled-up view"
+    );
+    assert!(app.scroll_offset > 6, "offset absorbed the new rows");
+
+    // At the bottom the view follows the stream.
+    app.scroll_offset = 0;
+    let _ = screen_rows(&mut app, 60, 10);
+    app.append_to_last("\n\nnewest tail line");
+    let tail = screen_rows(&mut app, 60, 10);
+    assert!(
+        tail.iter().any(|r| r.contains("newest tail line")),
+        "{tail:?}"
+    );
+    assert_eq!(app.scroll_offset, 0);
+}
