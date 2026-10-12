@@ -299,14 +299,18 @@ fn clamp_wait_ms_caps_at_fifteen_seconds() {
 
 #[test]
 fn find_browser_and_http_get_without_slash() {
+    // Held for the whole test: the helpers below read and replace the
+    // process-wide browser SESSION, which loopback-CDP tests set under the
+    // same lock. Reading it unlocked flaked `assert!(!running)` on CI.
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     assert_find_browser_env();
     assert_browser_lookup_and_status();
     assert_page_action_results();
     assert_browser_session_helpers();
 }
 
+/// Caller holds `ENV_LOCK`.
 fn assert_find_browser_env() {
-    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let prev = std::env::var_os("WHYCODES_BROWSER");
     let missing = std::env::temp_dir().join("whycodes-missing-browser-bin");
     unsafe { std::env::set_var("WHYCODES_BROWSER", &missing) };
