@@ -279,30 +279,31 @@ fn find_bwrap_in_none_path_uses_fallbacks() {
     assert_eq!(hit.as_deref(), Some(fake.as_path()));
 }
 
+fn fake_status(code: i32) -> std::process::ExitStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(code << 8)
+    }
+    #[cfg(windows)]
+    {
+        let arg = if code == 0 { "exit 0" } else { "exit 1" };
+        std::process::Command::new("cmd")
+            .args(["/C", arg])
+            .status()
+            .expect("cmd exit status")
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = code;
+        std::process::Command::new("true")
+            .status()
+            .expect("exit status")
+    }
+}
+
 #[test]
 fn display_content_combines_streams_and_warning() {
-    fn fake_status(code: i32) -> std::process::ExitStatus {
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-            std::process::ExitStatus::from_raw(code << 8)
-        }
-        #[cfg(windows)]
-        {
-            let arg = if code == 0 { "exit 0" } else { "exit 1" };
-            std::process::Command::new("cmd")
-                .args(["/C", arg])
-                .status()
-                .expect("cmd exit status")
-        }
-        #[cfg(not(any(unix, windows)))]
-        {
-            let _ = code;
-            std::process::Command::new("true")
-                .status()
-                .expect("exit status")
-        }
-    }
     fn outcome(stdout: &str, stderr: &str, code: i32, warning: Option<&str>) -> SandboxOutcome {
         SandboxOutcome {
             backend: Backend::Host,
@@ -758,4 +759,34 @@ fn ignore_io_ok_and_err() {
 #[test]
 fn own_process_group_sets_pgid() {
     crate::policy::own_process_group().expect("setpgid");
+}
+
+fn host_outcome(stdout: &str, stderr: &str, warning: Option<&str>) -> SandboxOutcome {
+    SandboxOutcome {
+        backend: Backend::Host,
+        warning: warning.map(str::to_string),
+        status: fake_status(0),
+        stdout: stdout.as_bytes().to_vec(),
+        stderr: stderr.as_bytes().to_vec(),
+    }
+}
+
+#[test]
+fn a_repeated_sandbox_warning_reaches_the_model_once() {
+    let warning = "fallback warning seen once per process (test-only text)";
+    let (first, _) = host_outcome("out", "", Some(warning)).display_content();
+    let (second, _) = host_outcome("out", "", Some(warning)).display_content();
+    assert!(first.ends_with(&format!("[sandbox] {warning}")), "{first}");
+    assert_eq!(second, "out", "later outputs stay clean");
+}
+
+#[test]
+fn display_content_cleans_terminal_noise() {
+    let (shown, _) = host_outcome(
+        "\x1b[32mok\x1b[0m 10%\rok 100%",
+        "\x1b[31mwarn\x1b[0m",
+        None,
+    )
+    .display_content();
+    assert_eq!(shown, "ok 100%\n[stderr]\nwarn");
 }
