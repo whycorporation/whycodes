@@ -144,6 +144,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-10-12 — Swarm mail went to the wrong inbox in worktree mode
+
+**Symptom:** Swarm workers in a git repo (worktree mode, the default) could not message each other. `swarm_msg` to `worker-N` was never read, every sender showed as `worker`, `all` missed siblings after their first read, and mail to `parent` only reached a toast.
+
+**Root cause:** The worker id was set only by `SubagentRunner::with_file_claims`, which worktree mode skips, so every worker used the shared `worker` inbox. `SwarmHub::drain` removed the inbox key, so `all` (which targets known keys) skipped drained workers. Nothing drained `parent`; the parent is blocked on the `swarm` call anyway.
+
+**Fix:** `with_identity(worker-N, label)` on every worker. `drain` empties the inbox but keeps it registered. The swarm report gets a `### Messages to parent` section. A DM to an unknown id returns a `swarm_msg` error listing known ids (oh-my-pi refuses unknown recipients too).
+
+**Prevention:** `execute_swarm_worktree_worker_mail_reaches_parent_under_its_own_id` and `broadcast_still_reaches_an_inbox_after_it_was_drained`. Identity and file claims are separate concerns; do not tie a worker's name to claims again.
+
+---
+
 ### 2026-10-12 — Wheel flick teleported the transcript (Grok scroll pacer)
 
 **Symptom:** Mouse wheel / trackpad scrolling felt jumpy next to Grok. A trackpad flick moved hundreds of rows in one frame, and the speed of one notch depended on the terminal.

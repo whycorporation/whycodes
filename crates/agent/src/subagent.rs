@@ -130,6 +130,18 @@ impl SubagentRunner {
         self
     }
 
+    /// Name this runner (`worker-0`, …) for swarm mail and conflict labels,
+    /// whether or not file claims are on.
+    pub fn with_identity(
+        mut self,
+        agent_id: impl Into<String>,
+        agent_label: impl Into<String>,
+    ) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self.agent_label = Some(agent_label.into());
+        self
+    }
+
     /// Bind this runner to a swarm file-claim registry and worker identity.
     pub fn with_file_claims(
         mut self,

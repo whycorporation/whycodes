@@ -1830,6 +1830,47 @@ async fn execute_swarm_worktrees_on_git_repo() {
 }
 
 #[tokio::test]
+async fn execute_swarm_worktree_worker_mail_reaches_parent_under_its_own_id() {
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "script",
+        [
+            vec![whycodes_llm::ScriptedStep::ToolCall {
+                id: "m".into(),
+                name: "swarm_msg".into(),
+                input: json!({"to": "parent", "text": "found the bug"}),
+            }],
+            vec![whycodes_llm::ScriptedStep::Text("done".into())],
+        ],
+    )));
+    let mut a = test_agent().with_provider_registry(registry);
+    a.swarm_enabled = true;
+    a.swarm_worktrees = true;
+    let (_keep, root) = init_git_repo();
+    let session = Session::new(root.clone(), "sys".into());
+    let out = a
+        .execute_swarm_tool(
+            &tc(
+                "swarm",
+                json!({"tasks": [{"goal": "look", "subagent_type": "explore", "max_turns": 3}]}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(out.content.contains("worktrees"), "{}", out.content);
+    assert!(
+        out.content
+            .contains("### Messages to parent\n\n- from worker-0: found the bug"),
+        "{}",
+        out.content
+    );
+}
+
+#[tokio::test]
 async fn execute_schedule_clamps_after_secs_and_reports_cap_fail() {
     let a = test_agent();
     a.background.set_max_jobs(1);

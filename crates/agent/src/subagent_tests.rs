@@ -54,6 +54,14 @@ fn runner_builders_set_state() {
     assert!(!runner.memory.enabled);
 }
 
+#[test]
+fn with_identity_names_the_runner_without_file_claims() {
+    let runner = make_runner().with_identity("worker-2", "worker-2/explore");
+    assert_eq!(runner.agent_id.as_deref(), Some("worker-2"));
+    assert_eq!(runner.agent_label.as_deref(), Some("worker-2/explore"));
+    assert!(runner.file_claims.is_none());
+}
+
 #[tokio::test]
 async fn run_returns_failed_result_for_preflight_errors() {
     let cases = [
@@ -214,7 +222,7 @@ async fn run_intercepts_question_and_swarm_inbox() {
     )));
     let hub = whycodes_core::SwarmHub::new();
     hub.ensure("worker-q");
-    hub.send("parent", "worker-q", "hello worker");
+    hub.send("parent", "worker-q", "hello worker").unwrap();
     let runner = SubagentRunner::new(
         Arc::new(registry),
         Arc::new(ToolExecutor::new()),

@@ -78,11 +78,17 @@ impl Tool for SwarmMsgTool {
                 .as_deref()
                 .or(ctx.agent_label.as_deref())
                 .unwrap_or("worker");
-            hub.send(from, to, text);
-            ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Sent to {to}."),
-                is_error: false,
+            match hub.send(from, to, text) {
+                Ok(()) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Sent to {to}."),
+                    is_error: false,
+                },
+                Err(e) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("swarm_msg: {e}"),
+                    is_error: true,
+                },
             }
         })
     }
