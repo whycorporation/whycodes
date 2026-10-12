@@ -232,3 +232,50 @@ fn from_config_uses_api_base_and_existing_authorization() {
         Some("Bearer already")
     );
 }
+
+/// A provider config carrying `extra_body` (the key users write).
+fn config_with_extra_body(name: &str) -> whycodes_core::types::ProviderConfig {
+    serde_json::from_value(serde_json::json!({
+        "name": name,
+        "base_url": "http://127.0.0.1:9999/v1",
+        "extra_body": {
+            "service_tier": "flex",
+            "reasoning_effort": "high",
+            "model": "hijack",
+            "stream": false
+        }
+    }))
+    .expect("provider config with extra_body")
+}
+
+#[test]
+fn extra_body_from_config_reaches_every_request() {
+    let p = CustomProvider::from_config(&config_with_extra_body("gateway"));
+    let body = p.build_body(&make_req(), "real-model");
+    assert_eq!(body["service_tier"], "flex");
+    assert_eq!(body["reasoning_effort"], "high");
+    // Request-defining fields are never overridden by config.
+    assert_eq!(body["model"], "real-model");
+    assert_eq!(body["stream"], true);
+
+    let plain = CustomProvider::new("plain", "http://x/v1", None, Default::default());
+    let body = plain.build_body(&make_req(), "m");
+    assert!(body.get("service_tier").is_none());
+}
+
+#[test]
+fn extra_body_reaches_openai_and_anthropic_requests() {
+    let openai =
+        crate::providers::openai::OpenAiProvider::from_config(&config_with_extra_body("openai"));
+    let body = openai.build_body(&make_req(), "gpt-5");
+    assert_eq!(body["service_tier"], "flex");
+    assert_eq!(body["model"], "gpt-5");
+
+    let anthropic = crate::providers::anthropic::AnthropicProvider::from_config(
+        &config_with_extra_body("anthropic"),
+    );
+    let body = anthropic.build_body(&make_req(), "claude-opus-4-7");
+    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["model"], "claude-opus-4-7");
+    assert!(!body["system"].is_null(), "system kept");
+}
