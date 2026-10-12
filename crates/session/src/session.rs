@@ -847,9 +847,15 @@ impl Session {
         temperature: Option<f32>,
         _thinking: Option<bool>,
     ) -> LlmRequest {
+        // Repair an unpaired tool call / result in the request copy only;
+        // a paired transcript (the common case) is not copied.
+        let messages = match crate::pairing::paired_messages(&self.messages) {
+            Some(fixed) => std::sync::Arc::from(fixed),
+            None => std::sync::Arc::from(self.messages.as_slice()),
+        };
         LlmRequest {
             system: self.system_prompt.clone(),
-            messages: std::sync::Arc::from(self.messages.as_slice()),
+            messages,
             tools: tools.into(),
             max_tokens,
             temperature,

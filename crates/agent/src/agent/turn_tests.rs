@@ -1916,3 +1916,91 @@ async fn turn_context_rides_on_the_user_message_at_every_step() {
         "recall is never written into the transcript"
     );
 }
+
+/// Read-only tool that outlives the cancel in the test below.
+struct SlowGlob;
+
+impl whycodes_core::Tool for SlowGlob {
+    fn name(&self) -> &str {
+        "glob"
+    }
+    fn description(&self) -> &str {
+        "slow"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        json!({"type": "object"})
+    }
+    fn execute<'a>(
+        &'a self,
+        _args: serde_json::Value,
+        _ctx: &'a whycodes_core::ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            whycodes_core::types::ToolResult {
+                tool_call_id: String::new(),
+                content: "never".into(),
+                is_error: false,
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn cancel_during_a_tool_closes_every_unanswered_call() {
+    // An assistant tool call with no result makes the next request invalid
+    // (OpenAI: "tool_calls must be followed by tool messages"; Anthropic:
+    // tool_use without tool_result). Cancel mid-tool must still answer it.
+    let mut exec = whycodes_tools::executor::ToolExecutor::new();
+    exec.register(Box::new(SlowGlob));
+    let agent = scripted([
+        ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "glob".into(),
+            input: json!({"pattern": "*.rs"}),
+        },
+        ScriptedStep::ToolCall {
+            id: "c2".into(),
+            name: "glob".into(),
+            input: json!({"pattern": "*.md"}),
+        },
+    ])
+    .with_tool_executor(exec);
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_at(dir.path(), "please list the rust and markdown files");
+    let cancel = crate::events::new_cancel_flag();
+    let trigger = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        crate::events::request_cancel(&trigger);
+    });
+    let err = agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "script",
+                model: "m",
+                api_key: "k",
+                max_turns: Some(4),
+                events: None,
+                cancel: Some(cancel),
+            },
+        )
+        .await
+        .expect_err("cancelled");
+    assert!(err.to_string().contains("Cancelled"), "{err}");
+
+    let answered: Vec<&str> = session
+        .messages
+        .iter()
+        .filter(|m| m.role == whycodes_core::types::Role::Tool)
+        .filter_map(|m| m.tool_call_id.as_deref())
+        .collect();
+    assert_eq!(answered, ["c1", "c2"], "{:#?}", session.messages);
+    let body = session
+        .messages
+        .last()
+        .and_then(|m| m.content.as_text())
+        .unwrap_or_default();
+    assert!(body.contains("not run"), "{body}");
+}
