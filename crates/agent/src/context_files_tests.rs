@@ -186,3 +186,54 @@ fn nested_whycodes_dir_skips_duplicate_absolute_path() {
         .count();
     assert_eq!(hits, 1, "{files:?}");
 }
+
+#[test]
+fn nested_for_returns_each_new_directory_top_down_once() {
+    let project = tempfile::tempdir().unwrap();
+    let pkg = project.path().join("pkg");
+    let deep = pkg.join("sub");
+    std::fs::create_dir_all(&deep).unwrap();
+    std::fs::write(project.path().join("AGENTS.md"), "root rules").unwrap();
+    std::fs::write(pkg.join("CLAUDE.md"), "  pkg rules  ").unwrap();
+    std::fs::write(deep.join("AGENTS.md"), "deep rules").unwrap();
+    std::fs::write(deep.join("RULES.md"), "   ").unwrap();
+    let mut seen = BTreeSet::new();
+
+    let found = nested_for(project.path(), &deep.join("lib.rs"), &mut seen);
+    let got: Vec<(&str, &str)> = found
+        .iter()
+        .map(|f| (f.label.as_str(), f.content.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("pkg/CLAUDE.md", "pkg rules"),
+            ("pkg/sub/AGENTS.md", "deep rules")
+        ],
+        "root rules live in the system prompt; empty files are skipped"
+    );
+    assert!(
+        nested_for(project.path(), &deep.join("other.rs"), &mut seen).is_empty(),
+        "each directory once per session"
+    );
+    assert!(nested_for(project.path(), &project.path().join("top.rs"), &mut seen).is_empty());
+    let outside = tempfile::tempdir().unwrap();
+    assert!(nested_for(project.path(), &outside.path().join("x.rs"), &mut seen).is_empty());
+}
+
+#[test]
+fn nested_for_caps_the_bytes_attached_at_once() {
+    let project = tempfile::tempdir().unwrap();
+    let a = project.path().join("a");
+    let b = a.join("b");
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(a.join("AGENTS.md"), "x".repeat(15_000)).unwrap();
+    std::fs::write(b.join("AGENTS.md"), "y".repeat(15_000)).unwrap();
+    let found = nested_for(project.path(), &b.join("f.rs"), &mut BTreeSet::new());
+    assert_eq!(found.len(), 1, "the second file would pass 20 KB");
+    let block = render_nested(&found);
+    assert!(block.starts_with(
+        "\n\n<nested-instructions>\n# Instructions for this directory (a/AGENTS.md)\n\n"
+    ));
+    assert!(block.ends_with("\n</nested-instructions>"));
+}
