@@ -469,10 +469,25 @@ impl MemoryService {
     }
 
     pub fn build_inject_block(&self, query: Option<&str>) -> Result<String> {
+        let (index, mut parts) = self.inject_parts(query)?;
+        parts.splice(0..0, index);
+        Ok(parts.join("\n\n"))
+    }
+
+    /// Only the query-dependent part: recalled memories, code and past
+    /// sessions. The MEMORY.md index is left to the system prompt.
+    pub fn build_recall_block(&self, query: Option<&str>) -> Result<String> {
+        Ok(self.inject_parts(query)?.1.join("\n\n"))
+    }
+
+    /// `(MEMORY.md index block, recall blocks)`. The index still counts
+    /// against the recall budget so both callers recall the same hits.
+    fn inject_parts(&self, query: Option<&str>) -> Result<(Option<String>, Vec<String>)> {
         if !self.settings.enabled {
-            return Ok(String::new());
+            return Ok((None, Vec::new()));
         }
 
+        let mut index_block: Option<String> = None;
         let mut parts: Vec<String> = Vec::new();
         let mut char_budget = self.settings.recall_char_budget()
             + self
@@ -494,7 +509,7 @@ impl MemoryService {
                  {index}"
             );
             char_budget = char_budget.saturating_sub(block.len());
-            parts.push(block);
+            index_block = Some(block);
         }
 
         if self.settings.auto_inject
@@ -606,7 +621,7 @@ impl MemoryService {
             }
         }
 
-        Ok(parts.join("\n\n"))
+        Ok((index_block, parts))
     }
 
     pub fn append_to_prompt(&self, system_prompt: &str, query: Option<&str>) -> String {
@@ -669,6 +684,44 @@ pub fn apply_memory_prompt(
             system_prompt.to_string()
         }
     }
+}
+
+/// Query-dependent recall for one user turn, wrapped for the request.
+///
+/// Goes on the turn's user message at request time, not in the system
+/// prompt: a system prompt that changes every turn invalidates the provider
+/// prompt cache for the whole history (43k tokens: 1.7 s → 2.6 s to first
+/// token, 43,392 → 1,152 cached tokens).
+pub fn recall_turn_context(
+    project_path: &Path,
+    data_dir: &Path,
+    settings: &MemorySettings,
+    query: &str,
+) -> Option<String> {
+    if !settings.enabled {
+        return None;
+    }
+    let svc = match MemoryService::open(project_path, data_dir, settings.clone()) {
+        Ok(svc) => svc,
+        Err(e) => return skip_turn_context(&e),
+    };
+    let block = svc.build_recall_block(Some(query)).unwrap_or_default();
+    wrap_turn_context(block.trim())
+}
+
+fn skip_turn_context(e: &MemoryError) -> Option<String> {
+    tracing::warn!("memory recall skipped: {e}");
+    None
+}
+
+fn wrap_turn_context(block: &str) -> Option<String> {
+    if block.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "\n\n<recalled-context>\nRecalled by whycodes for this message, not written by \
+         the user. Verify before relying on it.\n\n{block}\n</recalled-context>"
+    ))
 }
 
 /// Best-effort post-turn retain for CLI/TUI (heuristic only).
@@ -1809,5 +1862,61 @@ mod tests {
         std::fs::remove_file(&svc.db_path).expect("remove sqlite file");
         std::fs::create_dir_all(&svc.db_path).unwrap();
         svc.bump_recall_counts(&[id]);
+    }
+
+    #[test]
+    fn recall_block_leaves_the_index_to_the_system_prompt() {
+        let settings = MemorySettings {
+            code_inject: false,
+            session_inject: false,
+            recall_min_score: -1.0,
+            ..Default::default()
+        };
+        let (_dir, _data, _project, svc) = open_test_service(settings);
+        svc.remember("recall block local fact", None).unwrap();
+        let recall = svc.build_recall_block(Some("local fact")).unwrap();
+        assert!(recall.contains("# Recalled Memories"), "{recall}");
+        assert!(!recall.contains("# Auto Memory"), "{recall}");
+        let both = svc.build_inject_block(Some("local fact")).unwrap();
+        assert!(both.starts_with("# Auto Memory"), "{both}");
+        assert!(both.ends_with(&recall), "{both}");
+        assert_eq!(svc.build_recall_block(None).unwrap(), "");
+    }
+
+    #[test]
+    fn recall_turn_context_wraps_hits_and_skips_empty_disabled_and_broken() {
+        let settings = MemorySettings {
+            code_inject: false,
+            session_inject: false,
+            recall_min_score: -1.0,
+            ..Default::default()
+        };
+        let (dir, data, project, svc) = open_test_service(settings.clone());
+        svc.remember("turn context retry loop fact", None).unwrap();
+
+        let ctx = recall_turn_context(&project, &data, &settings, "retry loop").expect("hits");
+        assert!(ctx.starts_with("\n\n<recalled-context>\n"), "{ctx}");
+        assert!(ctx.ends_with("\n</recalled-context>"), "{ctx}");
+        assert!(ctx.contains("turn context retry loop fact"), "{ctx}");
+        assert!(!ctx.contains("# Auto Memory"), "{ctx}");
+
+        let quiet = MemorySettings {
+            auto_inject: false,
+            ..settings.clone()
+        };
+        assert_eq!(
+            recall_turn_context(&project, &data, &quiet, "retry loop"),
+            None
+        );
+        assert_eq!(
+            recall_turn_context(&project, &data, &MemorySettings::disabled(), "retry loop"),
+            None
+        );
+        let blocked = dir.path().join("blocked-data");
+        std::fs::write(&blocked, "file").unwrap();
+        assert_eq!(
+            recall_turn_context(&project, &blocked, &settings, "q"),
+            None
+        );
     }
 }

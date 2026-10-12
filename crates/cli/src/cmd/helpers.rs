@@ -545,6 +545,8 @@ pub(crate) fn refresh_session_memory(
     // rebuild only if the session has no prompt yet, without the query.
     let query = match query {
         Some(q) if whycodes_agent::is_trivial_title_seed(q) => {
+            // No recall either: last turn's must not ride on this message.
+            session.turn_context = None;
             if !session.system_prompt.is_empty() {
                 return;
             }
@@ -554,7 +556,22 @@ pub(crate) fn refresh_session_memory(
     };
     let (provider, model) = agent.route();
     let base = Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project_dir);
-    session.set_system_prompt(&with_project_memory(&base, project_dir, config, query));
+    // Only message-independent text (instructions, AGENTS.md, the MEMORY.md
+    // index) goes in the system prompt, so it is byte-stable across turns and
+    // the provider keeps the whole history cached. Recall rides on the user
+    // message instead.
+    session.set_system_prompt(&with_project_memory(&base, project_dir, config, None));
+    session.turn_context = turn_recall(project_dir, config, query);
+}
+
+/// Memory recall for this turn's user message; `None` without a query.
+fn turn_recall(
+    project_dir: &std::path::Path,
+    config: &Config,
+    query: Option<&str>,
+) -> Option<String> {
+    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    whycodes_memory::recall_turn_context(project_dir, &data_dir, &memory_settings(config), query?)
 }
 
 pub(crate) fn open_memory_service(

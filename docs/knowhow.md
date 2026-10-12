@@ -3249,3 +3249,15 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 **Fix:** `IncrementalMarkdown` parks the other width's state in a second slot. `ChatMessage::layout_cache_alt` keeps the second height (`set_layout` / `cached_height`). `last_checkpoint` scans from the frozen prefix only. The loop drains stream events before drawing and paints only on `needs_redraw` (deltas and spinner ticks mark dirty). Text deltas no longer re-list the sidebar file tree. Result: 0.8–1.2 ms per streaming frame, flat with length, and 0.28 ms idle.
 
 **Prevention:** Any per-width cache on the chat path needs two slots, because the bar layout probes two widths each frame. Regressions: `overflowing_transcript_keeps_line_caches_across_frames`, `alternating_widths_stay_incremental_and_match_full_render`. Re-run `cargo test -p whycodes-tui --release --lib stream_frame_bench -- --ignored --nocapture` after touching `ui/chat.rs` or `md_stream.rs`. Frame cost must stay flat across the four quarters.
+
+## Memory recall in the system prompt defeated the prompt cache
+
+**Date:** 2026-10-12 · **Area:** `crates/memory` service / `tui` + `cli` `refresh_session_memory` / `agent` turn
+
+**Symptom:** Long sessions answered slowly and burned tokens. On a real two-turn headless run (`grokv`, ~10.4k prompt tokens) the provider reported only 1,152 cached tokens on each turn. A controlled A/B at 43k tokens showed 1.72 s to first token with a stable system prompt and 2.56 s when it changed (43,392 vs 1,152 cached).
+
+**Root cause:** `refresh_session_memory` rebuilt the system prompt on every non-trivial user turn with query-dependent recall (memories, code chunks, past sessions). The system prompt is the first thing in every request, so each new query invalidated the cached prefix for the whole history.
+
+**Fix:** The system prompt now carries only message-independent text: instructions, AGENTS.md, skills and the MEMORY.md index. `whycodes_memory::recall_turn_context` builds the recall for the current query. It lives in `Session::turn_context`, which is never persisted, and the agent appends it to the latest user message at **every step** of the turn (`append_turn_context`). Steps within a turn share the cached prefix, and the next turn re-reads only from the previous user message. Chit-chat clears it. The same two-turn run now caches 10,368/10,439 and 10,496/10,498 tokens.
+
+**Prevention:** Nothing query- or time-dependent goes into `Session::system_prompt`. Put per-turn context on the user message via `turn_context` or `append_request_user_suffix`. Note that a newly retained memory still changes the MEMORY.md index, and therefore the system prompt, once. Tests: `turn_context_rides_on_the_user_message_at_every_step` and `recall_rides_on_turn_context_and_system_prompt_stays_stable`.

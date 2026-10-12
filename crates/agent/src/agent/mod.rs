@@ -267,6 +267,22 @@ fn catalog_from_load(
     }
 }
 
+/// This turn's memory recall, on the latest user message at every step.
+///
+/// Every step of the turn sends the same suffix, so the steps share the
+/// provider's cached prefix; the system prompt never carries it.
+pub(crate) fn append_turn_context(
+    request: &mut whycodes_core::types::LlmRequest,
+    context: Option<&str>,
+) {
+    match context {
+        Some(text) => append_request_user_suffix(request, text),
+        None => skip_turn_context(),
+    }
+}
+
+fn skip_turn_context() {}
+
 pub(crate) fn append_request_user_suffix(
     request: &mut whycodes_core::types::LlmRequest,
     suffix: &str,
