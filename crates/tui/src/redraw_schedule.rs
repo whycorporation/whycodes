@@ -24,6 +24,7 @@ pub const REDRAW_DEEP_IDLE_AFTER: Duration = Duration::from_secs(30);
 /// gated on `needs_redraw`, so a pass with nothing new costs no frame.
 pub const REDRAW_ANIMATE: Duration = Duration::from_millis(16);
 /// `@file` matcher workers mid-rematch.
+/// (A wheel gesture also polls at [`REDRAW_ANIMATE`] — its flush cadence.)
 pub const REDRAW_FUZZY: Duration = Duration::from_millis(16);
 
 /// Inputs the loop already has; no `TuiApp` so this stays unit-testable.
@@ -33,6 +34,8 @@ pub struct RedrawNeed {
     pub running_subagents: bool,
     pub awaiting_matches: bool,
     pub needs_redraw: bool,
+    /// A wheel/trackpad gesture is live or draining (`crate::wheel`).
+    pub wheel_scrolling: bool,
     /// Visible toasts. Must **not** force animation cadence.
     pub toasts_visible: bool,
     pub since_user_input: Duration,
@@ -49,7 +52,7 @@ pub fn poll_interval(need: &RedrawNeed) -> Duration {
     if need.awaiting_matches {
         return REDRAW_FUZZY;
     }
-    if is_animating(need) || need.needs_redraw {
+    if is_animating(need) || need.needs_redraw || need.wheel_scrolling {
         return REDRAW_ANIMATE;
     }
     if need.since_user_input >= REDRAW_DEEP_IDLE_AFTER && !need.toasts_visible {

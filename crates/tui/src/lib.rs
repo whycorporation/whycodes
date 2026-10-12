@@ -26,6 +26,7 @@ pub mod session_runtime;
 pub mod theme;
 pub mod toast;
 pub mod ui;
+pub mod wheel;
 pub mod widgets;
 
 pub use app::UpdateOffer;

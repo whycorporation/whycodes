@@ -2092,7 +2092,8 @@ fn chat_scrollbar_hit_and_mouse_wheel_scroll_transcript() {
         modifiers: KeyModifiers::NONE,
     });
     assert!(crate::input::handle_event(&mut app, wheel_up));
-    assert!(app.scroll_offset >= 3, "offset={}", app.scroll_offset);
+    // One event is a third of a notch on the default three-event terminal.
+    assert!(app.scroll_offset >= 1, "offset={}", app.scroll_offset);
     assert!(!app.auto_scroll);
 
     // Click the track near the top → jump toward oldest (large offset).

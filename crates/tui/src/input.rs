@@ -1357,21 +1357,19 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 
     match mouse.kind {
         // Wheel always moves the transcript (dialog path is handled above).
-        // Step ≈ ⅓ viewport so one notch is visible on tall terminals; min 3.
+        // Paced by `crate::wheel`: one notch ≈ 3 lines, flicks animate.
         MouseEventKind::ScrollDown => {
             if app.todos_panel_wheel_hit(mouse.column, mouse.row) {
                 app.scroll_todos(1);
             } else {
-                let step = chat_wheel_step(app);
-                app.scroll_rows(-step);
+                app.wheel_scroll(false);
             }
         }
         MouseEventKind::ScrollUp => {
             if app.todos_panel_wheel_hit(mouse.column, mouse.row) {
                 app.scroll_todos(-1);
             } else {
-                let step = chat_wheel_step(app);
-                app.scroll_rows(step);
+                app.wheel_scroll(true);
             }
         }
         MouseEventKind::Moved => {
@@ -1576,18 +1574,15 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 ///
 /// Public for unit tests; step scales with viewport so one notch is visible
 /// on both short and tall terminals.
-pub fn chat_wheel_step(app: &TuiApp) -> isize {
-    let h = app.chat_viewport_rows.max(1) as isize;
-    (h / 3).clamp(3, 12)
-}
-
-/// Fold queued chat-wheel events into a single `scroll_rows` and drop them
-/// from `events`. Wheel over an overflowing todo list is folded into
-/// `scroll_todos` instead — otherwise a trackpad flick never reaches the panel.
+/// Feed queued chat-wheel events through the gesture pacer
+/// (`crate::wheel`) and drop them from `events`. Wheel over an overflowing
+/// todo list is folded into `scroll_todos` instead — otherwise a trackpad
+/// flick never reaches the panel.
 ///
 /// A trackpad flick is dozens of `ScrollUp`/`ScrollDown` plus `Moved`.
-/// Handling each through `handle_mouse` is cheap; painting after each is not.
-/// The run loop drains first, then this collapse, then one paint.
+/// Summing them into one jump teleported the transcript; the pacer moves at
+/// most a capped chunk now and the loop's `tick_wheel` delivers the rest at
+/// 16 ms. The run loop drains first, then this, then one paint.
 ///
 /// Dialogs / Help keep their own wheel path — leave those events in the
 /// batch when a modal is open.
@@ -1595,28 +1590,25 @@ pub fn coalesce_chat_wheels(app: &mut TuiApp, events: &mut Vec<Event>) {
     if app.modal_is_open() {
         return;
     }
-    let step = chat_wheel_step(app);
-    let mut chat_delta = 0isize;
+    let mut chat_wheels: Vec<bool> = Vec::new();
     let mut todo_delta = 0isize;
     events.retain(|ev| match ev {
         Event::Mouse(m) => match m.kind {
             MouseEventKind::ScrollUp => {
                 if app.todos_panel_wheel_hit(m.column, m.row) {
                     todo_delta -= 1;
-                    false
                 } else {
-                    chat_delta += step;
-                    false
+                    chat_wheels.push(true);
                 }
+                false
             }
             MouseEventKind::ScrollDown => {
                 if app.todos_panel_wheel_hit(m.column, m.row) {
                     todo_delta += 1;
-                    false
                 } else {
-                    chat_delta -= step;
-                    false
+                    chat_wheels.push(false);
                 }
+                false
             }
             _ => true,
         },
@@ -1625,8 +1617,8 @@ pub fn coalesce_chat_wheels(app: &mut TuiApp, events: &mut Vec<Event>) {
     if todo_delta != 0 {
         app.scroll_todos(todo_delta);
     }
-    if chat_delta != 0 {
-        app.scroll_rows(chat_delta);
+    for up in chat_wheels {
+        app.wheel_scroll(up);
     }
 }
 

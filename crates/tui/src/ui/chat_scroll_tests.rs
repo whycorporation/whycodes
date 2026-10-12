@@ -7,7 +7,7 @@
 use super::{session_line_count, visible_range};
 use crate::app::{AppMode, ChatRole, DialogKind, TuiApp};
 use crate::config::TuiAppConfig;
-use crate::input::{self, chat_wheel_step};
+use crate::input;
 use crate::keymap::KeymapContext;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -217,15 +217,15 @@ fn mouse_wheel_scrolls_transcript_both_directions() {
         }),
         total,
     );
-    let step = chat_wheel_step(&app) as usize;
-    assert!((3..=12).contains(&step));
-
     let before = app.scroll_offset;
     assert!(input::handle_event(
         &mut app,
         mouse(MouseEventKind::ScrollUp, 5, 3)
     ));
-    assert_eq!(app.scroll_offset, before + step);
+    assert!(
+        app.scroll_offset > before,
+        "first wheel event moves at once"
+    );
     assert!(!app.auto_scroll);
     assert!(app.needs_redraw);
 
@@ -234,7 +234,7 @@ fn mouse_wheel_scrolls_transcript_both_directions() {
         &mut app,
         mouse(MouseEventKind::ScrollDown, 5, 3)
     ));
-    assert_eq!(app.scroll_offset, mid.saturating_sub(step));
+    assert!(app.scroll_offset < mid, "a reversal answers at once");
 }
 
 #[test]
@@ -867,7 +867,7 @@ fn scroll_paints_reuse_closed_line_cache() {
 }
 
 #[test]
-fn coalesce_chat_wheels_sums_notches_into_one_scroll() {
+fn coalesce_chat_wheels_moves_a_whole_notch_in_one_frame() {
     let mut app = TuiApp::new(cfg());
     fill_overflowing_chat(&mut app, 20);
     let total = session_line_count(&app, 40);
@@ -881,17 +881,17 @@ fn coalesce_chat_wheels_sums_notches_into_one_scroll() {
         None,
         total,
     );
-    let step = chat_wheel_step(&app);
+    // One notch on a three-event terminal (the hermetic default).
     let mut events = vec![
         mouse(MouseEventKind::Moved, 4, 4),
         mouse(MouseEventKind::ScrollUp, 4, 4),
         mouse(MouseEventKind::ScrollUp, 4, 4),
         mouse(MouseEventKind::ScrollUp, 4, 4),
         mouse(MouseEventKind::Moved, 5, 5),
-        mouse(MouseEventKind::ScrollDown, 5, 5),
     ];
     input::coalesce_chat_wheels(&mut app, &mut events);
-    assert_eq!(app.scroll_offset, (step * 2) as usize);
+    assert_eq!(app.scroll_offset, 3);
+    assert!(!app.auto_scroll);
     assert_eq!(events.len(), 2, "only Moved events should remain");
     assert!(
         events
@@ -988,21 +988,33 @@ fn stale_layout_cache_scroll_paint_does_not_panic() {
         msg.line_cache = None;
     }
 
-    app.scroll_rows(chat_wheel_step(&app));
+    app.scroll_rows(3);
     paint_session(&mut app, 40, 10);
-    app.scroll_rows(-chat_wheel_step(&app));
+    app.scroll_rows(-3);
     paint_session(&mut app, 40, 10);
 }
 
 #[test]
-fn wheel_step_scales_with_viewport() {
+fn tick_wheel_drains_a_flick_over_frames_and_stops_under_a_modal() {
     let mut app = TuiApp::new(cfg());
-    app.chat_viewport_rows = 6;
-    assert_eq!(chat_wheel_step(&app), 3); // clamp min
-    app.chat_viewport_rows = 30;
-    assert_eq!(chat_wheel_step(&app), 10); // 30/3
-    app.chat_viewport_rows = 60;
-    assert_eq!(chat_wheel_step(&app), 12); // clamp max
+    fill_overflowing_chat(&mut app, 40);
+    paint_session(&mut app, 40, 10);
+    let mut events: Vec<Event> = (0..40)
+        .map(|_| mouse(MouseEventKind::ScrollUp, 4, 4))
+        .collect();
+    input::coalesce_chat_wheels(&mut app, &mut events);
+    let first = app.scroll_offset;
+    assert!(first <= 6, "flick capped to one chunk, got {first}");
+    assert!(app.wheel.is_active());
+
+    std::thread::sleep(crate::wheel::FLUSH_CADENCE);
+    app.tick_wheel();
+    assert!(app.scroll_offset > first, "backlog keeps moving next frame");
+
+    app.mode = AppMode::Help;
+    app.tick_wheel();
+    assert!(!app.wheel.is_active(), "a modal cancels the gesture");
+    app.tick_wheel();
 }
 
 // ── helpers ────────────────────────────────────────────────────────────
