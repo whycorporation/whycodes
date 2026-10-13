@@ -228,6 +228,7 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 .toasts
                 .push(crate::toast::ToastKind::Success, "New session");
         }
+        "/fork" => fork_session_in_place(ctx.app, ctx.session, rest),
         "/rename" => {
             let name = rest.trim();
             if name.is_empty() {

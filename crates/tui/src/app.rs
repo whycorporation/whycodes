@@ -1980,6 +1980,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Resume the most recent session",
     },
     SlashCommand {
+        name: "/fork",
+        hint: "[title] Continue in a copy; the original session stays as is",
+    },
+    SlashCommand {
         name: "/rename",
         hint: "[args] Set the session title (locks auto-title)",
     },

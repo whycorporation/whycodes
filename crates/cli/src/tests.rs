@@ -222,6 +222,7 @@ fn cli(command: Option<Commands>) -> Cli {
         plain: false,
         continue_session: false,
         resume: None,
+        fork_session: false,
         debug: false,
         no_auto_update: false,
         no_memory: false,
@@ -362,6 +363,7 @@ fn resume_flag_wins_over_continue() {
 
     let blank = Cli {
         resume: Some("   ".into()),
+        fork_session: false,
         continue_session: false,
         ..cli(None)
     };
@@ -2444,7 +2446,7 @@ fn refresh_session_memory_and_open_memory_service() {
     maybe_session_auto_index(dir, &config);
     load_auth_plugins(&c);
     let _ = oauth_provider_list();
-    resume_session_into(&mut session, "no-such-session").unwrap();
+    resume_session_into(&mut session, "no-such-session", false).unwrap();
 }
 
 #[tokio::test]
@@ -6707,4 +6709,28 @@ async fn cmd_run_empty_one_shot_then_missing_key() {
     cmd_run(&c, Some("needs key"), Some(1), OutputFormat::Text, false)
         .await
         .unwrap();
+}
+
+#[test]
+fn resume_with_fork_saves_a_copy_and_keeps_the_original() {
+    let _home = IsolatedHome::new();
+    let db = open_db().unwrap();
+    let mut saved = whycodes_session::session::Session::new(PathBuf::from("/p"), "old".into());
+    saved.set_title_manual("retry loop");
+    saved.add_user_message("explain the retry loop");
+    saved.save_to_db(&db).unwrap();
+
+    let mut session = whycodes_session::session::Session::new(PathBuf::from("/p"), "sys".into());
+    assert!(resume_session_into(&mut session, &saved.id, true).unwrap());
+    assert_ne!(session.id, saved.id);
+    assert_eq!(session.title, "retry loop (fork)");
+    assert_eq!(session.system_prompt, "sys");
+    let copy = whycodes_session::session::Session::load_from_db(&db, &session.id)
+        .unwrap()
+        .expect("fork saved");
+    assert_eq!(copy.messages.len(), 1);
+    let original = whycodes_session::session::Session::load_from_db(&db, &saved.id)
+        .unwrap()
+        .expect("original kept");
+    assert_eq!(original.title, "retry loop");
 }

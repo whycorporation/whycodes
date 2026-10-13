@@ -647,6 +647,20 @@ impl Session {
         }
     }
 
+    /// Copy of this conversation under a new id, so it can diverge while the
+    /// original stays as saved. Usage restarts at zero (the history's tokens
+    /// were spent by the original); the title gets a `(fork)` suffix.
+    pub fn fork(&self) -> Self {
+        let now = chrono::Utc::now();
+        let mut forked = self.clone();
+        forked.id = uuid::Uuid::new_v4().to_string();
+        forked.title = crate::title::sanitize_title(&format!("{} (fork)", self.title));
+        forked.created_at = now;
+        forked.updated_at = now;
+        forked.usage = Default::default();
+        forked
+    }
+
     /// User-facing rename; locks the title against further auto updates.
     pub fn set_title_manual(&mut self, title: impl Into<String>) {
         let t = crate::title::sanitize_title(&title.into());
@@ -1771,6 +1785,26 @@ mod tests {
 
     fn test_system_prompt() -> String {
         "You are a helpful assistant.".to_string()
+    }
+
+    #[test]
+    fn fork_copies_history_under_a_new_id() {
+        let mut s = Session::new(test_project_path(), test_system_prompt());
+        s.set_title_manual("retry loop");
+        s.add_user_message("explain the retry loop");
+        s.add_usage(&whycodes_core::types::Usage {
+            input_tokens: 5,
+            ..Default::default()
+        });
+        let f = s.fork();
+        assert_ne!(f.id, s.id);
+        assert_eq!(f.title, "retry loop (fork)");
+        assert_eq!(f.title_source, s.title_source);
+        assert_eq!(f.messages.len(), 1);
+        assert_eq!(f.system_prompt, s.system_prompt);
+        assert!(f.usage.is_empty());
+        assert!(f.created_at >= s.created_at);
+        assert_eq!(s.usage.input_tokens, 5, "original untouched");
     }
 
     #[test]
