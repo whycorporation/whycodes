@@ -3372,3 +3372,42 @@ fn which_python() -> Option<&'static str> {
         None
     }
 }
+
+#[test]
+fn permission_detail_shows_the_pending_edit_diff() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
+    let wd = dir.path().to_string_lossy().into_owned();
+    let call = |name: &str, arguments: serde_json::Value| whycodes_core::types::ToolCall {
+        id: "c".into(),
+        name: name.into(),
+        arguments,
+    };
+    let edit = permission_detail_for(
+        &call(
+            "edit",
+            json!({"path": "a.txt", "old_string": "two", "new_string": "2"}),
+        ),
+        &wd,
+    );
+    assert!(edit.starts_with("Edit a.txt"), "{edit}");
+    assert!(edit.contains("|+2"), "{edit}");
+    let write = permission_detail_for(
+        &call("write", json!({"path": "b.txt", "content": "hi"})),
+        &wd,
+    );
+    assert!(write.starts_with("Create b.txt"), "{write}");
+    // No preview (edit would not apply, other tools) → the argument list.
+    let miss = permission_detail_for(
+        &call(
+            "edit",
+            json!({"path": "a.txt", "old_string": "zzz", "new_string": "2"}),
+        ),
+        &wd,
+    );
+    assert!(miss.contains("old_string: zzz"), "{miss}");
+    assert_eq!(
+        permission_detail_for(&call("read", json!({"path": "a.txt"})), &wd),
+        "path: a.txt"
+    );
+}
