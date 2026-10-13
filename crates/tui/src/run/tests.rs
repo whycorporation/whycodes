@@ -2011,6 +2011,7 @@ fn run_options_and_turn_outcome_exist() {
         initial_prompt: None,
         config: Config::default(),
         resume_session_id: Some(RESUME_LATEST.into()),
+        fork_session: false,
         remote: None,
         defer_config_load: false,
         provider_from_cli: true,
@@ -5063,6 +5064,7 @@ fn boot_opts(dir: &std::path::Path, key: &str) -> TuiRunOptions {
         initial_prompt: None,
         config: Config::default(),
         resume_session_id: None,
+        fork_session: false,
         remote: None,
         defer_config_load: false,
         provider_from_cli: true,
@@ -5830,6 +5832,7 @@ async fn run_returns_quit_when_test_tui_env_set() {
         initial_prompt: None,
         config: Config::default(),
         resume_session_id: None,
+        fork_session: false,
         remote: None,
         defer_config_load: false,
         provider_from_cli: true,
@@ -5862,6 +5865,7 @@ async fn run_returns_upgrade_when_test_tui_env_upgrade() {
         initial_prompt: None,
         config: Config::default(),
         resume_session_id: None,
+        fork_session: false,
         remote: None,
         defer_config_load: false,
         provider_from_cli: true,
@@ -10862,4 +10866,68 @@ fn goal_save_and_restore_round_trip_through_the_state_table() {
     crate::goal::save(Some(&db), &session.id, None);
     assert!(crate::goal::restore(Some(&db), &session).is_none());
     crate::goal::save(None, &session.id, Some(&goal));
+}
+
+#[tokio::test]
+async fn fork_slash_continues_in_a_saved_copy() {
+    let mut h = SlashHarness::new();
+    h.session.add_user_message("explain the retry loop");
+    h.session.add_usage(&whycodes_core::types::Usage {
+        input_tokens: 9,
+        ..Default::default()
+    });
+    let original = h.session.id.clone();
+    h.run("/fork try the backoff idea").await;
+    assert_ne!(h.session.id, original);
+    assert_eq!(h.session.title, "try the backoff idea");
+    assert_eq!(h.app.session_id, h.session.id);
+    assert_eq!(h.session.messages.len(), 1, "history is kept");
+    assert!(h.session.usage.is_empty(), "usage restarts");
+    assert!(
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Forked →") && t.message.contains(&original[..8]))
+    );
+    let kept = try_load_session(&original)
+        .unwrap()
+        .expect("original saved");
+    assert_eq!(kept.messages.len(), 1);
+    let copy = try_load_session(&h.session.id)
+        .unwrap()
+        .expect("fork saved");
+    assert_eq!(copy.title, "try the backoff idea");
+
+    h.run("/fork").await;
+    assert!(h.session.title.ends_with("(fork)"), "{}", h.session.title);
+}
+
+#[tokio::test]
+async fn boot_fork_flag_forks_only_a_resumed_session() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let mut saved = Session::new(dir.path().to_path_buf(), "sys".into());
+    saved.add_user_message("boot fork");
+    persist_session_best_effort(&saved, "boot-fork");
+    let mut opts = boot_opts(dir.path(), "sk");
+    opts.resume_session_id = Some(saved.id.clone());
+    opts.fork_session = true;
+    let boot = prepare_tui_boot(&opts).await;
+    assert_ne!(boot.session.id, saved.id);
+    assert_eq!(boot.session.messages.len(), 1);
+    assert_eq!(boot.app.session_id, boot.session.id);
+
+    opts.resume_session_id = Some("no-such-session".into());
+    let missing = prepare_tui_boot(&opts).await;
+    assert!(missing.session.messages.is_empty());
+    assert!(
+        !missing
+            .app
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Forked")),
+        "nothing resumed, nothing forked"
+    );
 }

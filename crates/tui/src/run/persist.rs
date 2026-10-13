@@ -2,6 +2,25 @@
 use super::*;
 
 /// Best-effort session flush (success, error, or cancel) + structured log.
+/// Continue in a fork of `session`: save the original, switch to a copy with
+/// a new id (optional `title`), and save that too.
+pub(super) fn fork_session_in_place(app: &mut TuiApp, session: &mut Session, title: &str) {
+    persist_session_best_effort(session, "fork_source");
+    let from: String = session.id.chars().take(8).collect();
+    *session = session.fork();
+    if !title.trim().is_empty() {
+        session.set_title_manual(title.trim());
+    }
+    persist_session_best_effort(session, "fork");
+    app.session_title = session.title.clone();
+    app.session_id = session.id.clone();
+    app.turn_usage = None;
+    app.toasts.push(
+        crate::toast::ToastKind::Success,
+        format!("Forked → {} · original {from} unchanged", session.title),
+    );
+}
+
 pub(super) fn persist_session_best_effort(session: &Session, reason: &str) {
     persist_session_outcome(
         session,

@@ -61,6 +61,7 @@ Options (global):
   -d, --dir <DIR>            Project directory (defaults to cwd)
   -c, --continue             Resume the most recently updated session
   -r, --resume <SESSION_ID>  Resume a saved session (full id or unique prefix)
+      --fork                 With -c / -r: continue in a copy, keep the original
       --plain                Line-based stdin REPL instead of the TUI
       --debug                Write debug logs under the data dir
       --no-memory            Disable cross-session memory for this process
@@ -93,6 +94,7 @@ whycodes generate "Explain the error handling in main.rs" -d ./my-project
 whycodes run "Where is the retry logic?" -d ./my-project
 whycodes --continue
 whycodes --resume a1b2c3d4
+whycodes --resume a1b2c3d4 --fork   # branch off; a1b2c3d4 stays as it was
 whycodes session import ./transcript.jsonl --from auto
 whycodes -P openai -m gpt-4o generate "Refactor this module"
 ```
@@ -267,6 +269,7 @@ Both TUI and `--plain`:
 | `/exit` `/quit` `/q` | Exit |
 | `/new` `/clear` | Start a new session |
 | `/rename [name]` | Set the session title (locks auto-title) |
+| `/fork [title]` | Continue in a copy under a new id; the original stays as saved |
 | `/init` | Create or update `AGENTS.md` |
 | `/review` | AI review of git changes (read-only) |
 | `/security-review` | Security-focused review of changes |

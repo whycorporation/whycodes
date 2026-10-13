@@ -85,6 +85,11 @@ pub struct Cli {
     )]
     pub resume: Option<String>,
 
+    /// With --continue / --resume: continue in a copy under a new id and
+    /// leave the saved session untouched
+    #[arg(long = "fork", global = true)]
+    pub fork_session: bool,
+
     /// Write debug logs under the data dir (`debug/whycodes-*.log` + `debug/latest.log`)
     #[arg(long, global = true)]
     pub debug: bool,
