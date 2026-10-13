@@ -148,3 +148,91 @@ fn mcp_serve_cwd_uses_dot_when_cwd_is_gone() {
     }
     assert_eq!(cwd, ".");
 }
+
+#[tokio::test]
+async fn mcp_login_and_logout() {
+    let home = crate::cmd::helpers::IsolatedHome::new();
+    let err = cmd_mcp(&McpCmd::Login {
+        name: "nope".into(),
+    })
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("no MCP server named 'nope'"),
+        "{err}"
+    );
+
+    cmd_mcp(&McpCmd::Add {
+        name: "local".into(),
+        command: Some("npx".into()),
+        args: None,
+        url: None,
+        transport: None,
+        headers: vec![],
+    })
+    .await
+    .unwrap();
+    let err = cmd_mcp(&McpCmd::Login {
+        name: "local".into(),
+    })
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("local (stdio) server"), "{err}");
+
+    // Nothing listens on port 9: discovery finds no authorization server.
+    cmd_mcp(&McpCmd::Add {
+        name: "remote".into(),
+        command: None,
+        args: None,
+        url: Some("http://127.0.0.1:9/mcp".into()),
+        transport: Some("http".into()),
+        headers: vec![],
+    })
+    .await
+    .unwrap();
+    let config = Config::load_or_create().unwrap();
+    assert_eq!(
+        mcp_login_url(&config, "remote").unwrap(),
+        "http://127.0.0.1:9/mcp"
+    );
+    let err = cmd_mcp(&McpCmd::Login {
+        name: "remote".into(),
+    })
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("authorization server"), "{err}");
+
+    cmd_mcp(&McpCmd::Logout {
+        name: "remote".into(),
+    })
+    .await
+    .unwrap();
+    let store = home.dir().join("mcp");
+    std::fs::create_dir_all(&store).unwrap();
+    let file = store.join("auth.json");
+    std::fs::write(
+        &file,
+        r#"{"providers":{"mcp:remote":{"method":"oauth","token":{"access_token":"t"}}}}"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    cmd_mcp(&McpCmd::Logout {
+        name: "remote".into(),
+    })
+    .await
+    .unwrap();
+    assert!(
+        !std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("mcp:remote")
+    );
+
+    assert!(mcp_login_start_line("x").contains("browser"));
+    assert!(mcp_login_done_line("x").contains("Signed in"));
+    assert!(mcp_logout_line("x", true).contains("Removed"));
+    assert!(mcp_logout_line("x", false).contains("No OAuth token"));
+}

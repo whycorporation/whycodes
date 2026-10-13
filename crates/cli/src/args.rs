@@ -350,6 +350,10 @@ pub enum McpCmd {
     },
     /// Remove an MCP server
     Remove { name: String },
+    /// Sign in to a remote MCP server with OAuth (opens a browser)
+    Login { name: String },
+    /// Forget the OAuth token stored for an MCP server
+    Logout { name: String },
     /// Run whycodes as an MCP **server** on stdio (export core tools)
     Serve {
         /// Tool profile: `core` (default) or `full`

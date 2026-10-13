@@ -479,3 +479,58 @@ fn bridge_tool_name_keeps_valid_names_and_fixes_the_rest() {
         "64 fits as is"
     );
 }
+
+fn remote(headers: Option<HashMap<String, String>>) -> McpServerConfig {
+    McpServerConfig {
+        transport: Some(McpTransportKind::Http),
+        command: None,
+        args: vec![],
+        env: None,
+        cwd: None,
+        url: Some("https://mcp.example.com/mcp".into()),
+        headers,
+    }
+}
+
+#[tokio::test]
+async fn oauth_bearer_is_added_to_remote_servers_only() {
+    let dir = tempfile::tempdir().unwrap();
+    // No stored token: nothing added.
+    let plain = with_oauth_header("docs", remote(None), dir.path()).await;
+    assert!(plain.headers.unwrap().is_empty());
+
+    let store = dir.path().join("mcp");
+    std::fs::create_dir_all(&store).unwrap();
+    let file = store.join("auth.json");
+    std::fs::write(
+        &file,
+        r#"{"providers":{"mcp:docs":{"method":"oauth","token":{"access_token":"tok"}}}}"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let authed = with_oauth_header("docs", remote(None), dir.path()).await;
+    assert_eq!(authed.headers.unwrap()["Authorization"], "Bearer tok");
+
+    let own = HashMap::from([("authorization".to_string(), "Bearer mine".to_string())]);
+    let kept = with_oauth_header("docs", remote(Some(own)), dir.path()).await;
+    assert_eq!(kept.headers.unwrap()["authorization"], "Bearer mine");
+
+    let local = with_oauth_header("docs", server(McpTransportKind::Stdio), dir.path()).await;
+    assert!(local.headers.is_none());
+}
+
+#[test]
+fn unauthorized_connects_suggest_login() {
+    assert_eq!(
+        login_hint(
+            "docs",
+            "MCP HTTP error 401 Unauthorized for method 'initialize'"
+        ),
+        "run `whycodes mcp login docs`"
+    );
+    assert_eq!(login_hint("docs", "connection refused"), "");
+}

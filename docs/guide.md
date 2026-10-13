@@ -641,6 +641,17 @@ mode = "primary"
 # delta_loc = 800
 ```
 
+Remote MCP servers that use OAuth: run `whycodes mcp login <name>`. WhyCodes
+finds the server's authorization server (protected-resource metadata, or
+the server's own origin for older servers), registers itself as a client,
+and opens the browser. The token is stored in `<data_dir>/mcp/auth.json`
+(owner-only, separate from provider logins), sent as
+`Authorization: Bearer …` on the next connect and refreshed when it
+expires. An `Authorization` header in config wins over a stored token. A
+server that answers 401 logs a hint to run `mcp login`; `whycodes mcp logout
+<name>` forgets the token. Servers whose authorization server does not offer
+dynamic client registration still need a header in config.
+
 Layers, each overriding the one above:
 
 1. Built-in defaults

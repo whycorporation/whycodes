@@ -4899,6 +4899,7 @@ version = "0.6.9"
 dependencies = [
  "async-stream",
  "axum",
+ "chrono",
  "futures",
  "http-body-util",
  "reqwest",
@@ -4908,6 +4909,8 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "url",
+ "whycodes-auth",
  "whycodes-core",
  "whycodes-tools",
 ]

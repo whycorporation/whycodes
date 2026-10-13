@@ -1,6 +1,7 @@
 pub mod client;
 pub mod error;
 pub mod http;
+pub mod oauth;
 pub mod server;
 pub mod sse;
 pub mod types;
