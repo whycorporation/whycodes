@@ -91,6 +91,28 @@ fn severity_serde_uses_snake_case() {
 }
 
 #[test]
+fn severity_accepts_lsp_integers() {
+    let parse = |s: &str| serde_json::from_str::<DiagnosticSeverity>(s).unwrap();
+    assert_eq!(parse("1"), DiagnosticSeverity::Error);
+    assert_eq!(parse("2"), DiagnosticSeverity::Warning);
+    assert_eq!(parse("3"), DiagnosticSeverity::Information);
+    assert_eq!(parse("4"), DiagnosticSeverity::Hint);
+    assert_eq!(parse("9"), DiagnosticSeverity::Hint);
+    assert!(serde_json::from_str::<DiagnosticSeverity>(r#""fatal""#).is_err());
+    assert!(serde_json::from_str::<DiagnosticSeverity>("true").is_err());
+
+    // A real server batch: integer severity must not drop the notification.
+    let params: PublishDiagnosticsParams = serde_json::from_str(
+        r#"{"uri":"file:///a.go","diagnostics":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":1,"message":"undefined: x"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        params.diagnostics[0].severity,
+        Some(DiagnosticSeverity::Error)
+    );
+}
+
+#[test]
 fn hover_contents_string_flattens_every_variant() {
     let markup = HoverResult {
         contents: HoverContents::MarkupContent(MarkupContent {
@@ -166,12 +188,25 @@ fn incoming_message_detects_notifications_and_responses() {
     let resp = IncomingMessage::from_line(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#).unwrap();
     assert!(matches!(resp, IncomingMessage::Response(_)));
 
-    // An id wins even if a method sneaks in — the server is answering us.
-    let weird = IncomingMessage::from_line(r#"{"jsonrpc":"2.0","id":2,"method":"x"}"#).unwrap();
-    assert!(matches!(weird, IncomingMessage::Response(_)));
+    // id + method is a server → client request (string ids are legal).
+    let req = IncomingMessage::from_line(
+        r#"{"jsonrpc":"2.0","id":"cfg-1","method":"workspace/configuration","params":{"items":[]}}"#,
+    )
+    .unwrap();
+    match req {
+        IncomingMessage::Request(r) => {
+            assert_eq!(r.id, "cfg-1");
+            assert_eq!(r.method, "workspace/configuration");
+            assert!(r.params.is_some());
+        }
+        other => panic!("expected request, got {other:?}"),
+    }
+    let bare = IncomingMessage::from_line(r#"{"id":2,"method":"x"}"#).unwrap();
+    assert!(matches!(bare, IncomingMessage::Request(ref r) if r.params.is_none()));
 
     assert!(IncomingMessage::from_line("not json").is_err());
     assert!(IncomingMessage::from_line(r#"{"method":"x"}"#).is_err());
+    assert!(IncomingMessage::from_line(r#"{"id":1,"method":7}"#).is_err());
     assert!(IncomingMessage::from_line(r#"{"id":1}"#).is_err());
 }
 

@@ -3024,6 +3024,7 @@ fn apply_plugin_count_replaces_executor_when_lsp_overlay_is_set() {
     let mut a = test_agent();
     a.lsp_overlay = whycodes_tools::LspSettings {
         idle_timeout_ms: Some(60_000),
+        edit_diagnostics_ms: None,
         servers: Default::default(),
     };
     let before = Arc::as_ptr(&a.tool_executor);
@@ -3142,6 +3143,17 @@ async fn load_mcp_replaces_executor_for_lsp_overlay_without_servers() {
     a.load_mcp(&config).await;
     assert_ne!(Arc::as_ptr(&a.tool_executor), before);
     assert!(a.tool_executor.get("lsp").is_some());
+}
+
+#[tokio::test]
+async fn edit_diagnostics_setting_alone_reconfigures_lsp() {
+    let mut config = whycodes_config::Config::default();
+    config.lsp.edit_diagnostics_ms = Some(0);
+    let mut a = test_agent().with_config(&config);
+    assert_eq!(a.lsp_overlay.edit_diagnostics_ms, Some(0));
+    let before = Arc::as_ptr(&a.tool_executor);
+    a.load_mcp(&config).await;
+    assert_ne!(Arc::as_ptr(&a.tool_executor), before);
 }
 
 #[test]

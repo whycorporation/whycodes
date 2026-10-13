@@ -101,9 +101,20 @@ pub struct LspSettings {
         skip_serializing_if = "Option::is_none"
     )]
     pub idle_timeout_ms: Option<u64>,
+    /// How long to wait for diagnostics after an `edit` / `write`
+    /// (default [`DEFAULT_EDIT_DIAGNOSTICS_MS`]). `0` turns it off.
+    #[serde(
+        default,
+        alias = "editDiagnosticsMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub edit_diagnostics_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub servers: HashMap<String, LspServerSpec>,
 }
+
+/// Wait budget for post-write diagnostics when the user sets nothing.
+pub const DEFAULT_EDIT_DIAGNOSTICS_MS: u64 = 1500;
 
 impl LspSettings {
     /// Built-in auto-detect set. No user overlay.
@@ -114,7 +125,19 @@ impl LspSettings {
         }
         Self {
             idle_timeout_ms: None,
+            edit_diagnostics_ms: None,
             servers,
+        }
+    }
+
+    /// Wait budget for post-write diagnostics; `None` when disabled.
+    pub fn edit_diagnostics_wait(&self) -> Option<std::time::Duration> {
+        match self
+            .edit_diagnostics_ms
+            .unwrap_or(DEFAULT_EDIT_DIAGNOSTICS_MS)
+        {
+            0 => None,
+            ms => Some(std::time::Duration::from_millis(ms)),
         }
     }
 
@@ -126,6 +149,9 @@ impl LspSettings {
         let mut out = Self::builtins();
         if overlay.idle_timeout_ms.is_some() {
             out.idle_timeout_ms = overlay.idle_timeout_ms;
+        }
+        if overlay.edit_diagnostics_ms.is_some() {
+            out.edit_diagnostics_ms = overlay.edit_diagnostics_ms;
         }
         for (name, spec) in &overlay.servers {
             match out.servers.get(name) {

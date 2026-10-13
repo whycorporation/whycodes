@@ -402,11 +402,20 @@ directories and binary files. MCP server tools bind as `{server}_{tool}`.
 `node_modules/.bin`, `.venv`). It auto-detects from cwd markers such as
 `Cargo.toml` / `package.json` / `go.mod`. Actions: `diagnostics`, `hover`,
 `definition`, `references`, `type_definition`, `implementation`, `symbols`.
+
+After a successful `edit` or `write`, the matching server (started on first
+use) gets the new text and errors/warnings for that file are appended to the
+tool result, so the model sees type errors without a separate `lsp` call. It
+waits up to `edit_diagnostics_ms` (default 1500) for the server's
+`publishDiagnostics`; a cold server that is still indexing just adds nothing.
+Set `edit_diagnostics_ms = 0` to turn it off.
+
 Override or disable a server in `config.toml`:
 
 ```toml
 [lsp]
 idle_timeout_ms = 300000
+edit_diagnostics_ms = 1500
 
 [lsp.servers.pylsp]
 disabled = true
@@ -730,6 +739,20 @@ interactive sessions try `interactive` before `ci`, and `CI=true` /
 order = ["interactive", "ci"]
 reserve = 0.10
 env = { interactive = "OPENAI_API_KEY", ci = "OPENAI_CI_API_KEY" }
+```
+
+When the active model still cannot open a stream — a 429 after the named
+credentials are used up, a 5xx, a network error or a timeout, each after the
+normal retries — the turn switches to the next `session.fallback_models`
+entry and stays there for the rest of that turn. The next turn starts on the
+primary again. Auth and request errors (401, 400) never fall back. Each
+entry needs a key: a model on the same provider reuses the active key, another
+provider uses its config `api_key` or `<PROVIDER>_API_KEY`. Entries with no
+key (for example an OAuth-only login on another provider) are skipped.
+
+```toml
+[session]
+fallback_models = ["anthropic/claude-sonnet-5-5", "openrouter/qwen/qwen3-coder"]
 ```
 
 Long tool notes live at `agent://tools/<name>` (`read agent://tools/bash`).

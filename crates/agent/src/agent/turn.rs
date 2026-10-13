@@ -135,10 +135,17 @@ impl Agent {
         let mut compact_paused = false;
         let mut overflow_retries: u32 = 0;
         let mut harmony_retries: u32 = 0;
-        let harmony = whycodes_llm::uses_harmony_dialect(provider_name, model);
         let mut api_key = api_key.to_string();
+        // Set once the primary fails to open; sticks for the rest of this turn.
+        let mut fallback: Option<(usize, super::FallbackTarget, &dyn whycodes_llm::LlmProvider)> =
+            None;
 
         loop {
+            let (provider_name, model, provider) = match &fallback {
+                Some((_, target, p)) => (target.provider.as_str(), target.model.as_str(), *p),
+                None => (provider_name, model, provider),
+            };
+            let harmony = whycodes_llm::uses_harmony_dialect(provider_name, model);
             self.inject_auto_background_completions(session);
             // Cached schemas; extra activations still apply per step.
             let tools = if tools_free_chat {
@@ -361,6 +368,25 @@ impl Agent {
                             self.set_sticky_credential(Some(name));
                             continue;
                         }
+                    }
+                    let from = fallback.as_ref().map_or(0, |(idx, _, _)| idx + 1);
+                    if kind.retryable()
+                        && let Some((idx, target)) =
+                            self.next_fallback(from, provider_name, model, &api_key)
+                        && let Some(next) = self.provider_registry.get(&target.provider)
+                    {
+                        let from_ref = format!("{provider_name}/{model}");
+                        let to_ref = format!("{}/{}", target.provider, target.model);
+                        emit(
+                            &events,
+                            TurnEvent::Status(format!(
+                                "{from_ref} unavailable ({kind}) — falling back to {to_ref}"
+                            )),
+                        );
+                        tracing::warn!(from = %from_ref, to = %to_ref, %kind, "model fallback");
+                        api_key = target.api_key.clone();
+                        fallback = Some((idx, target, next));
+                        continue;
                     }
                     return Err(e);
                 }

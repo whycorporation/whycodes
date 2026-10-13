@@ -180,7 +180,7 @@ async fn start_fails_when_command_is_missing() {
 async fn initialize_hover_definition_and_references() {
     let client = start_fake("ok").await;
     client
-        .open_document("file:///tmp/a.rs", None)
+        .sync_document("file:///tmp/a.rs", None)
         .await
         .unwrap();
     let hover = client.hover("file:///tmp/a.rs", pos()).await.unwrap();
@@ -204,7 +204,7 @@ async fn initialize_hover_definition_and_references() {
     let cached = client.get_diagnostics("file:///tmp/a.rs").await.unwrap();
     assert_eq!(cached.len(), 1);
     client
-        .open_document("file:///tmp/a.rs", Some("fn main() {}"))
+        .sync_document("file:///tmp/a.rs", Some("fn main() {}"))
         .await
         .unwrap();
 }
@@ -326,11 +326,11 @@ async fn initialized_notification_fails_when_server_exits() {
 }
 
 #[tokio::test]
-async fn open_document_fails_after_child_exits() {
+async fn sync_document_fails_after_child_exits() {
     let client = start_fake("ok").await;
     client.kill_for_test().await;
     let err = client
-        .open_document("file:///tmp/a.rs", Some("fn main() {}"))
+        .sync_document("file:///tmp/a.rs", Some("fn main() {}"))
         .await
         .unwrap_err();
     assert!(!err.to_string().is_empty());
@@ -365,12 +365,7 @@ async fn hover_times_out_when_server_hangs() {
 #[tokio::test]
 async fn background_reader_stores_publish_diagnostics() {
     let client = start_fake("diag_notify").await;
-    consume_stdout(
-        client.stdout.clone(),
-        client.diagnostics.clone(),
-        "fake".into(),
-    )
-    .await;
+    consume_stdout(client.stdout.clone(), client.reader_state(), "fake".into()).await;
     let diags = client.get_diagnostics("file:///tmp/a.rs").await.unwrap();
     assert_eq!(diags[0].message, "boom");
 }
@@ -399,12 +394,7 @@ async fn background_reader_handles_malformed_and_other_messages() {
         "bg_bad_len",
     ] {
         let client = start_fake(mode).await;
-        consume_stdout(
-            client.stdout.clone(),
-            client.diagnostics.clone(),
-            "fake".into(),
-        )
-        .await;
+        consume_stdout(client.stdout.clone(), client.reader_state(), "fake".into()).await;
     }
 }
 
@@ -433,7 +423,8 @@ async fn consume_stdout_breaks_on_read_error() {
         fn consume(self: std::pin::Pin<&mut Self>, _amt: usize) {}
     }
     let stdout = Arc::new(Mutex::new(ErrReader));
-    consume_stdout(stdout, Arc::new(Mutex::new(HashMap::new())), "err".into()).await;
+    let client = start_fake("ok").await;
+    consume_stdout(stdout, client.reader_state(), "err".into()).await;
     let mut reader = ErrReader;
     let mut buf = [0u8; 1];
     let mut read_buf = tokio::io::ReadBuf::new(&mut buf);
@@ -695,23 +686,23 @@ async fn did_change_configuration_fails_when_server_exits() {
 }
 
 #[tokio::test]
-async fn open_document_reads_missing_uri_as_empty() {
+async fn sync_document_reads_missing_uri_as_empty() {
     let client = start_fake("ok").await;
-    client.open_document("not-a-file-uri", None).await.unwrap();
+    client.sync_document("not-a-file-uri", None).await.unwrap();
     client
-        .open_document("file:///whycodes-lsp-missing-file.rs", None)
+        .sync_document("file:///whycodes-lsp-missing-file.rs", None)
         .await
         .unwrap();
 }
 
 #[tokio::test]
-async fn open_document_reads_existing_file() {
+async fn sync_document_reads_existing_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a.rs");
     std::fs::write(&path, "fn main() {}").unwrap();
     let client = start_fake("ok").await;
     client
-        .open_document(&crate::detect::file_uri(&path), None)
+        .sync_document(&crate::detect::file_uri(&path), None)
         .await
         .unwrap();
 }
@@ -780,7 +771,8 @@ async fn consume_stdout_breaks_when_separator_read_fails() {
         fn consume(self: std::pin::Pin<&mut Self>, _amt: usize) {}
     }
     let stdout = Arc::new(Mutex::new(HeaderThenErr { n: 0 }));
-    consume_stdout(stdout, Arc::new(Mutex::new(HashMap::new())), "sep".into()).await;
+    let client = start_fake("ok").await;
+    consume_stdout(stdout, client.reader_state(), "sep".into()).await;
     let mut reader = HeaderThenErr { n: 0 };
     let mut buf = [0u8; 32];
     let mut read_buf = tokio::io::ReadBuf::new(&mut buf);
@@ -876,4 +868,181 @@ async fn read_rpc_response_fails_when_separator_read_errors() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("sep boom"));
+}
+
+async fn start_reader(mode: &str) -> LspClient {
+    start_test_client(mode, true).await.unwrap()
+}
+
+#[tokio::test]
+async fn requests_work_while_background_reader_owns_stdout() {
+    let client = start_reader("ok").await;
+    let hover = client.hover("file:///tmp/a.rs", pos()).await.unwrap();
+    assert_eq!(hover.unwrap().contents_string(), "hello");
+    let defs = client.definition("file:///tmp/a.rs", pos()).await.unwrap();
+    assert_eq!(defs[0].uri, "file:///tmp/a.rs");
+    let diags = client.get_diagnostics("file:///tmp/a.rs").await.unwrap();
+    assert_eq!(diags[0].message, "boom");
+}
+
+#[tokio::test]
+async fn pull_diagnostics_accepts_a_document_report() {
+    let client = start_fake("report").await;
+    let diags = client.get_diagnostics("file:///tmp/a.rs").await.unwrap();
+    assert_eq!(diags[0].message, "boom");
+}
+
+#[tokio::test]
+async fn sync_document_opens_then_sends_versioned_changes() {
+    let client = start_reader("publish_on_change").await;
+    let uri = "file:///tmp/sync.rs";
+    assert_eq!(client.publish_count(uri).await, 0);
+
+    client.sync_document(uri, Some("fn a() {}")).await.unwrap();
+    let wait = std::time::Duration::from_secs(5);
+    let first = client.wait_for_diagnostics(uri, 0, wait).await.unwrap();
+    assert!(first.iter().any(|d| d.message == "v1"));
+    assert_eq!(
+        first[1].severity,
+        Some(crate::types::DiagnosticSeverity::Error)
+    );
+
+    let seen = client.publish_count(uri).await;
+    client.sync_document(uri, Some("fn b() {}")).await.unwrap();
+    let second = client.wait_for_diagnostics(uri, seen, wait).await.unwrap();
+    assert!(second.iter().any(|d| d.message == "v2"), "{second:?}");
+}
+
+#[tokio::test]
+async fn wait_for_diagnostics_gives_up_when_the_server_is_quiet() {
+    let client = start_reader("ok").await;
+    let got = client
+        .wait_for_diagnostics(
+            "file:///tmp/quiet.rs",
+            0,
+            std::time::Duration::from_millis(60),
+        )
+        .await;
+    assert!(got.is_none());
+}
+
+#[tokio::test]
+async fn server_requests_are_answered_from_settings() {
+    let settings = json!({ "fake": { "opt": 7 } });
+    let client = LspClient::start_reader_with_settings(
+        test_python(),
+        &fake_args("server_request"),
+        &settings,
+    )
+    .await
+    .unwrap();
+    let wait = std::time::Duration::from_secs(5);
+    let cfg = client
+        .wait_for_diagnostics("file:///tmp/cfg.rs", 0, wait)
+        .await
+        .unwrap();
+    assert_eq!(cfg[0].message, "[7, null]");
+    let progress = client
+        .wait_for_diagnostics("file:///tmp/progress.rs", 0, wait)
+        .await
+        .unwrap();
+    assert_eq!(progress[0].message, "null");
+}
+
+#[tokio::test]
+async fn reader_request_times_out() {
+    let mut client = start_reader("hang").await;
+    client.set_request_timeout(std::time::Duration::from_millis(100));
+    let err = client.hover("file:///tmp/a.rs", pos()).await.unwrap_err();
+    assert!(err.to_string().contains("timed out"), "{err}");
+    assert!(client.pending.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn reader_request_after_stdout_closed_fails_fast() {
+    let client = start_reader("init_then_eof").await;
+    for _ in 0..100 {
+        if client.reader_closed.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let err = client.hover("file:///tmp/a.rs", pos()).await.unwrap_err();
+    assert!(err.to_string().contains("closed stdout"), "{err}");
+    assert!(client.pending.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn reader_request_in_flight_when_server_dies() {
+    let client = start_reader("trunc_req_sep").await;
+    let err = client.hover("file:///tmp/a.rs", pos()).await.unwrap_err();
+    assert!(err.to_string().contains("closed stdout"), "{err}");
+}
+
+#[tokio::test]
+async fn reader_request_send_failure_clears_pending() {
+    let client = start_reader("stdin_closed_later").await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let err = client.hover("file:///tmp/a.rs", pos()).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        !msg.contains("timed out") && !msg.contains("closed stdout"),
+        "expected a write error, got {msg}"
+    );
+    assert!(client.pending.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn deliver_drops_late_and_unsolicited_responses() {
+    let client = start_fake("ok").await;
+    let state = client.reader_state();
+    let (tx, rx) = oneshot::channel();
+    drop(rx);
+    state.pending.lock().await.insert(99, tx);
+    let late = JsonRpcResponse {
+        jsonrpc: "2.0".into(),
+        id: Some(99),
+        result: None,
+        error: None,
+    };
+    state.deliver(late).await;
+    assert!(state.pending.lock().await.is_empty());
+    let anonymous = JsonRpcResponse {
+        jsonrpc: "2.0".into(),
+        id: None,
+        result: None,
+        error: None,
+    };
+    state.deliver(anonymous).await;
+}
+
+#[tokio::test]
+async fn answer_logs_when_the_server_is_gone() {
+    let client = start_fake("ok").await;
+    let state = client.reader_state();
+    client.kill_for_test().await;
+    let req = ServerRequest {
+        id: json!(1),
+        method: "window/workDoneProgress/create".into(),
+        params: None,
+    };
+    state.answer(req).await;
+}
+
+#[test]
+fn configuration_result_walks_dotted_sections() {
+    let settings = json!({ "a": { "b": { "c": 1 } }, "top": true });
+    let params = json!({ "items": [
+        { "section": "a.b" },
+        { "section": "a.missing" },
+        { "section": "" },
+        {}
+    ] });
+    let out = configuration_result(Some(&params), Some(&settings));
+    assert_eq!(out, json!([{ "c": 1 }, null, settings, settings]));
+    assert_eq!(configuration_result(None, Some(&settings)), json!([]));
+    assert_eq!(
+        configuration_result(Some(&json!({ "items": [{ "section": "a" }] })), None),
+        json!([null])
+    );
 }

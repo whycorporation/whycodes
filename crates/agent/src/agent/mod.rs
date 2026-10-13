@@ -57,6 +57,10 @@ pub struct Agent {
     /// First-token race: `off` / `auto` / `provider/model`.
     model_race: String,
     race_after: std::time::Duration,
+    /// `[session] fallback_models`: `provider/model` tried when a stream fails to open.
+    fallback_models: Vec<String>,
+    /// Config `api_key` per provider, for fallback targets on another provider.
+    fallback_config_keys: std::collections::HashMap<String, String>,
     /// Process-local text-only response cache.
     response_cache: bool,
     /// Cross-session memory settings (from config).
@@ -366,6 +370,8 @@ impl Agent {
             model_fast: None,
             model_race: "off".into(),
             race_after: std::time::Duration::from_millis(800),
+            fallback_models: Vec::new(),
+            fallback_config_keys: std::collections::HashMap::new(),
             response_cache: true,
             memory: whycodes_memory::MemorySettings::default(),
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
@@ -587,6 +593,13 @@ impl Agent {
         self.model_race = config.session.model_race.clone();
         self.price_overrides = price_overrides_from_config(&config.pricing);
         self.race_after = std::time::Duration::from_millis(config.session.race_after_ms);
+        self.fallback_models = config.session.fallback_models.clone();
+        self.fallback_config_keys = config
+            .providers
+            .iter()
+            .filter_map(|(name, pc)| Some((name.clone(), pc.api_key.clone()?)))
+            .filter(|(_, key)| !key.is_empty())
+            .collect();
         self.response_cache = !matches!(
             config
                 .session
@@ -817,6 +830,56 @@ impl Agent {
         Some(price.cost(usage))
     }
 
+    /// First `[session] fallback_models` entry at or after `from` that names a
+    /// registered provider, differs from the active target, and has a key.
+    ///
+    /// Key order: the active key (same provider), config `api_key`, then
+    /// `<PROVIDER>_API_KEY`. OAuth-only providers on another provider are
+    /// skipped — the agent does not reach the token store.
+    pub(crate) fn next_fallback(
+        &self,
+        from: usize,
+        active_provider: &str,
+        active_model: &str,
+        active_key: &str,
+    ) -> Option<(usize, FallbackTarget)> {
+        for (idx, raw) in self.fallback_models.iter().enumerate().skip(from) {
+            let Some((provider, model)) = raw.trim().split_once('/') else {
+                tracing::warn!(entry = %raw, "fallback_models entry is not provider/model");
+                continue;
+            };
+            if (provider == active_provider && model == active_model)
+                || self.provider_registry.get(provider).is_none()
+            {
+                continue;
+            }
+            let api_key = if provider == active_provider {
+                active_key.to_string()
+            } else if let Some(key) = self.fallback_config_keys.get(provider) {
+                key.clone()
+            } else {
+                let var = format!("{}_API_KEY", provider.to_uppercase());
+                match std::env::var(&var) {
+                    Ok(key) if !key.is_empty() => key,
+                    Ok(_) => continue,
+                    Err(missing) => {
+                        tracing::debug!(%var, "fallback skipped, no key: {missing}");
+                        continue;
+                    }
+                }
+            };
+            return Some((
+                idx,
+                FallbackTarget {
+                    provider: provider.to_string(),
+                    model: model.to_string(),
+                    api_key,
+                },
+            ));
+        }
+        None
+    }
+
     /// Resolve an optional first-token race partner (`off` / `auto` / ref).
     pub(crate) fn race_partner(
         &self,
@@ -908,9 +971,7 @@ impl Agent {
         } else {
             crate::mcp_load::register_mcp_tools(&mut full, config).await
         };
-        let lsp_custom =
-            !self.lsp_overlay.servers.is_empty() || self.lsp_overlay.idle_timeout_ms.is_some();
-        if n_plug > 0 || n_mcp > 0 || lsp_custom {
+        if n_plug > 0 || n_mcp > 0 || lsp_overlay_is_custom(&self.lsp_overlay) {
             self.tool_executor = Arc::new(full);
             log_registered_count(n_plug, "shell plugins registered");
             log_registered_count(n_mcp, "MCP tools registered");
@@ -927,7 +988,7 @@ impl Agent {
     }
 
     fn apply_lsp_overlay(&self, exec: &mut ToolExecutor) {
-        if self.lsp_overlay.servers.is_empty() && self.lsp_overlay.idle_timeout_ms.is_none() {
+        if !lsp_overlay_is_custom(&self.lsp_overlay) {
             return;
         }
         exec.configure_lsp(&self.lsp_overlay);
@@ -1166,9 +1227,7 @@ impl Agent {
 
 fn apply_plugin_count(agent: &mut Agent, mut exec: ToolExecutor, n: usize) {
     agent.apply_lsp_overlay(&mut exec);
-    let lsp_custom =
-        !agent.lsp_overlay.servers.is_empty() || agent.lsp_overlay.idle_timeout_ms.is_some();
-    if n == 0 && !lsp_custom {
+    if n == 0 && !lsp_overlay_is_custom(&agent.lsp_overlay) {
         return;
     }
     agent.tool_executor = Arc::new(exec);
@@ -1200,10 +1259,26 @@ fn price_overrides_from_config(
         .collect()
 }
 
+/// A model to switch to after the active one failed to open a stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FallbackTarget {
+    pub provider: String,
+    pub model: String,
+    pub api_key: String,
+}
+
+/// Any `[lsp]` key set: the executor must carry a configured `lsp` tool.
+fn lsp_overlay_is_custom(overlay: &whycodes_tools::LspSettings) -> bool {
+    !overlay.servers.is_empty()
+        || overlay.idle_timeout_ms.is_some()
+        || overlay.edit_diagnostics_ms.is_some()
+}
+
 fn lsp_overlay_from_config(cfg: &whycodes_config::LspConfig) -> whycodes_tools::LspSettings {
     let (idle_timeout_ms, servers) = cfg.to_runtime_settings();
     whycodes_tools::LspSettings {
         idle_timeout_ms,
+        edit_diagnostics_ms: cfg.edit_diagnostics_ms,
         servers: servers
             .into_iter()
             .map(|(name, s)| {
