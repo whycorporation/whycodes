@@ -1,14 +1,7 @@
-//! ACP, PR, and GitHub subcommands.
+//! PR and GitHub subcommands.
 use crate::Cli;
 use crate::args::*;
 use colored::*;
-
-pub(crate) fn acp_stub_lines() -> Vec<String> {
-    let mut lines = Vec::new();
-    lines.push(format!("{} ACP mode — not yet implemented.", "ℹ".cyan()));
-    lines.push("Agent Client Protocol (editor ↔ agent) is planned after product launch.".into());
-    lines
-}
 
 pub(crate) fn pr_create_header_lines(title: &str, base: &str) -> Vec<String> {
     let mut lines = Vec::new();
@@ -111,13 +104,6 @@ impl Drop for TestGhGuard {
     fn drop(&mut self) {
         TEST_GH.with(|slot| *slot.borrow_mut() = self.0.take());
     }
-}
-
-pub(crate) async fn cmd_acp(_cli: &Cli) -> anyhow::Result<()> {
-    for line in acp_stub_lines() {
-        println!("{line}");
-    }
-    Ok(())
 }
 
 /// `pr` — Create a pull request from current changes

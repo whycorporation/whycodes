@@ -32,7 +32,7 @@ Usage: whycodes [OPTIONS] [COMMAND]
 Commands:
   run       Start an interactive session (default)
   generate  One-shot, non-interactive turn
-  acp       Agent Client Protocol (not yet implemented)
+  acp       Agent Client Protocol server on stdio, for editors
   pr        Create a pull request from current changes
   github    GitHub operations
   serve     Start the local API / share server
@@ -354,6 +354,43 @@ whycodes connect                 # new session on 127.0.0.1:3030
 whycodes connect 127.0.0.1:3030 --session <id>
 whycodes serve --no-takeover     # scripts / CI: fail if a lock is live
 ```
+
+## Editors (Agent Client Protocol)
+
+`whycodes acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com)
+on stdin/stdout, so editors with ACP support (Zed, Neovim and Emacs plugins)
+can run WhyCodes as their agent. In Zed's `settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "WhyCodes": {
+      "type": "custom",
+      "command": "whycodes",
+      "args": ["acp"],
+      "env": {}
+    }
+  }
+}
+```
+
+Each editor session gets an agent rooted at the editor's project directory,
+with that directory's layered config, provider, model and credentials, as
+`whycodes generate` resolves them (`-P` / `-m` / `--agent` before `acp` apply
+to every session). A missing API key fails `session/new` with the usual setup
+hint.
+
+- Replies, reasoning, tool calls (with their output) and the todo list stream
+  into the editor.
+- A tool call that needs approval becomes the editor's permission prompt:
+  allow once, always allow that tool for the session, or reject.
+- The `question` tool picks its first option, as in headless runs.
+- Mentions and attached files arrive as `@path` / embedded context. Images
+  are not accepted yet, and MCP servers sent by the editor are ignored: use
+  `[mcp]` in config.
+- Sessions are saved like any other. The editor can reopen one
+  (`session/load` replays the conversation), and `whycodes --resume <id>`
+  continues it in the terminal.
 
 ## Embed via the SDK (protocol v1)
 

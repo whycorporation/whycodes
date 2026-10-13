@@ -332,13 +332,42 @@ fn run_home(home: &std::path::Path, args: &[&str]) -> Output {
 }
 
 #[test]
-fn test_acp_and_web_are_offline_stubs() {
+fn test_acp_answers_initialize_and_exits_on_eof() {
+    use std::io::Write;
+    use std::process::Stdio;
     let home = tempfile::tempdir().unwrap();
-    let acp = run_home(home.path(), &["acp"]);
-    assert_ok(&["acp"], &acp);
-    let s = String::from_utf8_lossy(&acp.stdout);
-    assert!(s.contains("not yet implemented"), "{s}");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_whycodes"))
+        .arg("acp")
+        .env("WHYCODES_HOME", home.path())
+        .env("HOME", home.path())
+        .current_dir(home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn whycodes acp");
+    let mut stdin = child.stdin.take().unwrap();
+    stdin
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1}}
+")
+        .unwrap();
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    assert_ok(&["acp"], &out);
+    let s = String::from_utf8_lossy(&out.stdout);
+    let reply: serde_json::Value = serde_json::from_str(s.lines().next().unwrap_or("")).unwrap();
+    assert_eq!(reply["id"], 0, "{s}");
+    assert_eq!(reply["result"]["protocolVersion"], 1, "{s}");
+    assert_eq!(
+        s.lines().count(),
+        1,
+        "stdout carries only protocol messages: {s}"
+    );
+}
 
+#[test]
+fn test_web_is_an_offline_stub() {
+    let home = tempfile::tempdir().unwrap();
     let web = run_home(home.path(), &["web"]);
     assert_ok(&["web"], &web);
     let s = String::from_utf8_lossy(&web.stdout);
