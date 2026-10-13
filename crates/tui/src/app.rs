@@ -1355,6 +1355,8 @@ pub struct TuiApp {
     pub(crate) running: bool,
     pub(crate) mode: AppMode,
     pub(crate) key_context: KeymapContext,
+    /// Default bindings plus `[tui.key_bindings]` overrides.
+    pub(crate) keymap: crate::keymap::Keymap,
     /// Prompt or scrollback owns keys (Grok focus model).
     pub(crate) focus: FocusPane,
 
@@ -2209,6 +2211,7 @@ impl TuiApp {
             running: true,
             mode: AppMode::Normal,
             key_context: KeymapContext::Normal,
+            keymap: crate::keymap::Keymap::from_bindings(&config.key_bindings),
             focus: FocusPane::Prompt,
             messages: vec![],
             current_agent_state: AgentState::Idle,

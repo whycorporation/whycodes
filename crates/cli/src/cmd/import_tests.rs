@@ -59,6 +59,7 @@ fn print_helpers_do_not_panic() {
         tool_match: "bash".into(),
         command: "echo hi".into(),
         block_on_failure: true,
+        feedback: false,
         timeout_secs: 30,
     });
     plan.hooks_skip.push("pre_tool echo hi".into());

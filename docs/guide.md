@@ -219,6 +219,37 @@ Contributors checking a TUI change on Alacritty / Kitty / WezTerm / VTE: see
 | `[` / `]` | Cycle sidebar tabs (scrollback focus) |
 | `Ctrl+C` / `Ctrl+Q` | Clear draft or quit |
 
+Rebind keys under `[tui.key_bindings]` as `"key" = "action"`; `"none"`
+unbinds a default:
+
+```toml
+[tui.key_bindings]
+"ctrl+e" = "toggle_sidebar"
+"f2" = "model_dialog"
+"alt+k" = "scroll_up"
+"ctrl+l" = "none"          # keep Ctrl+L from clearing the session
+```
+
+Keys: `ctrl` / `alt` / `shift` joined with `+` or `-`, then a character or
+`enter`, `esc`, `tab`, `space`, `backspace`, `delete`, `insert`, `home`, `end`,
+`pageup`, `pagedown`, `up` / `down` / `left` / `right`, `f1`–`f24`. A plain
+character (no Ctrl/Alt) only applies outside the prompt, so typing is never
+captured. Dialogs (approvals, pickers) keep their fixed keys, and the session
+keys handled before the keymap (`Ctrl+O`, `Ctrl+N`, `Ctrl+Tab`,
+`Ctrl+PgUp/PgDn`) cannot be rebound. Unknown keys or actions are logged and
+skipped.
+
+Actions: `quit`, `force_quit`, `escape`, `submit`, `scroll_up`, `scroll_down`,
+`page_up`, `page_down`, `scroll_to_top`, `scroll_to_bottom`,
+`toggle_auto_scroll`, `clear_session`, `toggle_sidebar`, `sidebar_next_tab`,
+`sidebar_prev_tab`, `sidebar_tab_1`–`sidebar_tab_6`, `toggle_tasks`,
+`provider_dialog`, `model_dialog`, `input_home`, `input_end`, `input_left`,
+`input_right`, `history_prev`, `history_next`, `newline`, `clear_input`,
+`kill_word_back`, `kill_word_forward`, `word_left`, `word_right`,
+`toggle_thinking`, `toggle_tool_result`, `toggle_todos`, `switch_agent`,
+`toggle_focus`, `file_complete`, `focus_prompt`, `select_prev`, `select_next`,
+`prev_turn`, `next_turn`, `copy_selection`, `paste_clipboard`.
+
 Input prefixes (TUI and `--plain`):
 
 - `!ls -la` runs a shell command and attaches its output to the conversation.
@@ -758,6 +789,20 @@ key (for example an OAuth-only login on another provider) are skipped.
 fallback_models = ["anthropic/claude-sonnet-5-5", "openrouter/qwen/qwen3-coder"]
 ```
 
+`/cost` also shows an estimated USD total for the current run. Prices come
+from the provider's model catalog when it publishes them (OpenRouter does)
+or from `[pricing."provider/model"]` in USD per million tokens; config wins.
+A step on a model with no known price is counted, never guessed, so the line
+reads "at least ~$X" when some steps were unpriced. Cache rates default to the
+input rate. The total starts at zero when a session is resumed.
+
+```toml
+[pricing."openai/gpt-4o"]
+input = 2.5
+output = 10.0
+cache_read = 1.25   # optional
+```
+
 Long tool notes live at `agent://tools/<name>` (`read agent://tools/bash`).
 The default tool schema keeps a one-line description.
 
@@ -827,7 +872,7 @@ apply inside the sandboxed shell. If you set an allowlist and still want
 search, include the provider hosts (`serpapi.com` and/or
 `html.duckduckgo.com`).
 
-### Tool hooks
+### Hooks
 
 ```toml
 [[hooks]]
@@ -841,13 +886,46 @@ timeout_secs = 30
 event = "post_tool"
 match = "*"
 command = "logger -t whycodes \"done $WHYCODES_TOOL_NAME err=$WHYCODES_TOOL_IS_ERROR\""
+
+[[hooks]]
+event = "post_tool"
+match = "edit"
+command = "cargo clippy -q 2>&1 | tail -20"
+feedback = true             # stdout is appended to the tool result
 ```
 
 Environment: `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`, `WHYCODES_TOOL_ID`,
 `WHYCODES_TOOL_INPUT` (JSON), `WHYCODES_SESSION_ID`, `WHYCODES_WORKING_DIR`.
 Post-tool also sets `WHYCODES_TOOL_IS_ERROR` (`0`/`1`) and
 `WHYCODES_TOOL_OUTPUT` (truncated). Hooks run after the risk gate and
-permission prompt, before execution. Subagent loops do not invoke hooks yet.
+permission prompt, before execution. `task` and `swarm` subagents run the same
+tool hooks. With a `read` hook configured, reads are no longer started early
+while the model is still streaming, so the hook sees every read.
+
+Lifecycle events use the same `[[hooks]]` table:
+
+| `event` | When | Extra environment | Block | `feedback` |
+|---|---|---|---|---|
+| `session_start` | Before the first turn of a session in this process (new or resumed) | — | no | added to the turn |
+| `user_prompt_submit` | Before each user turn | `WHYCODES_PROMPT` | yes | added to the turn |
+| `stop` | After a turn produced its reply | `WHYCODES_RESPONSE` | no | — |
+| `pre_compact` | Before the transcript is compacted (auto, overflow, `/compact`) | — | no | — |
+| `subagent_stop` | After a `task` / `swarm` worker finishes; `match` filters the agent type | `WHYCODES_SUBAGENT_TYPE`, `_GOAL`, `_SUCCESS`, `_OUTPUT` | no | — |
+
+`match` is ignored for `session_start`, `user_prompt_submit`, `stop`, and
+`pre_compact`. `feedback = true` appends a successful hook's stdout to the
+user turn inside `<hook-context>` tags. A `user_prompt_submit` hook with
+`block_on_failure = true` refuses the turn when it exits non-zero.
+
+```toml
+[[hooks]]
+event = "session_start"
+command = "git status --short | head -20"
+feedback = true
+```
+
+`whycodes import` maps Claude Code's `SessionStart`, `UserPromptSubmit`,
+`Stop`, `PreCompact`, and `SubagentStop` hooks to these events.
 
 ### Session notifications (Discord / Telegram)
 

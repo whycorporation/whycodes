@@ -624,9 +624,31 @@ pub(super) fn cost_report(session: &Session, app: &TuiApp, credential: Option<&s
     if let Some(name) = credential.filter(|n| !n.is_empty()) {
         lines.push(format!("  credential: {name}"));
     }
-    lines
-        .push("  note:      providers bill differently; figures are token counts, not USD.".into());
+    lines.push(cost_line(&session.cost));
     lines.join("\n")
+}
+
+/// USD only from known prices; unpriced steps are reported, never guessed.
+fn cost_line(cost: &whycodes_session::SessionCost) -> String {
+    let usd = |v: f64| {
+        if v < 1.0 {
+            format!("${v:.4}")
+        } else {
+            format!("${v:.2}")
+        }
+    };
+    match (cost.usd > 0.0, cost.unpriced_steps) {
+        (true, 0) => format!("  cost:      ~{} this run (estimate)", usd(cost.usd)),
+        (true, n) => format!(
+            "  cost:      at least ~{} this run · {n} step(s) had no price",
+            usd(cost.usd)
+        ),
+        (false, 0) => "  cost:      (none yet)".into(),
+        (false, _) => {
+            "  cost:      unknown — no price for this model (set [pricing.\"provider/model\"])"
+                .into()
+        }
+    }
 }
 
 /// Claude Code–style environment check: keys, sandbox, git, tools, jobs.

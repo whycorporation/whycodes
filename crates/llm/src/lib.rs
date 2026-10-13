@@ -10,6 +10,7 @@ pub(crate) mod line_buffer;
 pub mod model_catalog;
 pub mod oauth_refresh;
 pub mod openai_compat;
+pub mod pricing;
 pub mod provider;
 pub mod providers;
 pub mod race;
@@ -43,9 +44,10 @@ pub use model_catalog::{
     CATALOG_TTL, CatalogFetchRequest, ModelCatalog, base_url_from_provider_config,
     catalog_request_from_config, context_window_for_model_id, fetch_model_catalog,
     fetch_model_catalog_from_request, fetch_model_context_window, normalize_models_url,
-    parse_models_json,
+    parse_models_json, price_for_model_id,
 };
 pub use openai_compat::{error_source_chain, stream_chunk_error};
+pub use pricing::{ModelPrice, lookup_price, remember_price};
 pub use provider::{LlmProvider, ProviderRegistry};
 pub use providers::ollama::{DEFAULT_OLLAMA_HOST, normalize_ollama_chat_url};
 pub use race::{RaceOutcome, StreamTarget, stream_raced};

@@ -77,6 +77,13 @@ fn dispatch_helpers_cover_poison_and_optional_sinks() {
     };
     fold_pending_usage(&pending, &usage);
     assert_eq!(super::super::recover_lock(&pending).input_tokens, 3);
+
+    let cost = poison_mutex(whycodes_session::SessionCost::default());
+    fold_pending_cost(&cost, &whycodes_core::types::Usage::default(), Some(9.0));
+    fold_pending_cost(&cost, &usage, Some(0.5));
+    fold_pending_cost(&cost, &usage, None);
+    let c = super::super::recover_lock(&cost).clone();
+    assert_eq!((c.usd, c.unpriced_steps), (0.5, 1));
 }
 
 #[test]
