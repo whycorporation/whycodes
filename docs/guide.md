@@ -724,7 +724,10 @@ webfetch = "allow"
 ```
 
 `allow` runs immediately, `deny` blocks. `ask` prompts — a y/n dialog in
-the TUI, a stdin prompt in `--plain` — unless overridden:
+the TUI, a stdin prompt in `--plain` — unless overridden. An `edit` or
+`write` prompt shows the change it would make (the diff for an edit, the new
+content and line counts for a write), computed without touching the file;
+when the edit would not apply, the prompt lists the arguments instead.
 
 | Condition | Result for `ask` |
 |---|---|

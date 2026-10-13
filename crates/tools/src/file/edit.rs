@@ -140,58 +140,28 @@ impl EditTool {
     ) -> ToolResult {
         match std::fs::read_to_string(&full_path) {
             Ok(original) => {
-                let tagged = from.is_some() || insert_after.is_some();
-                if tagged {
-                    match apply_tagged(
-                        &original,
-                        from.as_deref(),
-                        to.as_deref(),
-                        insert_after.as_deref(),
+                let target = EditTarget {
+                    old_string: &old_string,
+                    replace_all,
+                    from: from.as_deref(),
+                    to: to.as_deref(),
+                    insert_after: insert_after.as_deref(),
+                };
+                match plan_edit(&original, &target, &new_string) {
+                    Ok(plan) => write_edit(
+                        &full_path,
+                        &shown,
+                        &plan.matched,
                         &new_string,
-                    ) {
-                        Ok((matched, modified, start)) => write_edit(
-                            &full_path,
-                            &shown,
-                            &matched,
-                            &new_string,
-                            1,
-                            start,
-                            &modified,
-                        ),
-                        Err(msg) => ToolResult {
-                            tool_call_id: String::new(),
-                            content: msg,
-                            is_error: true,
-                        },
-                    }
-                } else {
-                    match locate_spans(&original, &old_string, replace_all) {
-                        Locate::None => ToolResult {
-                            tool_call_id: String::new(),
-                            content: miss_with_snippet(&original, &old_string),
-                            is_error: true,
-                        },
-                        Locate::Ambiguous(count) => ToolResult {
-                            tool_call_id: String::new(),
-                            content: ambiguous_with_tags(&original, &old_string, count),
-                            is_error: true,
-                        },
-                        Locate::Hits(spans) => {
-                            let matched = original[spans[0].0..spans[0].1].to_string();
-                            let count = spans.len();
-                            let modified = apply_spans(&original, &spans, &new_string);
-                            let start = first_line_number(&original, &matched);
-                            write_edit(
-                                &full_path,
-                                &shown,
-                                &matched,
-                                &new_string,
-                                count,
-                                start,
-                                &modified,
-                            )
-                        }
-                    }
+                        plan.count,
+                        plan.start,
+                        &plan.modified,
+                    ),
+                    Err(msg) => ToolResult {
+                        tool_call_id: String::new(),
+                        content: msg,
+                        is_error: true,
+                    },
                 }
             }
             Err(e) => ToolResult {
@@ -200,6 +170,88 @@ impl EditTool {
                 is_error: true,
             },
         }
+    }
+}
+
+/// Which text an edit replaces: `old_string`, or content tags.
+struct EditTarget<'a> {
+    old_string: &'a str,
+    replace_all: bool,
+    from: Option<&'a str>,
+    to: Option<&'a str>,
+    insert_after: Option<&'a str>,
+}
+
+/// The change an edit makes to `original`, before anything is written.
+struct EditPlan {
+    matched: String,
+    modified: String,
+    count: usize,
+    start: Option<usize>,
+}
+
+fn plan_edit(
+    original: &str,
+    target: &EditTarget<'_>,
+    new_string: &str,
+) -> Result<EditPlan, String> {
+    if target.from.is_some() || target.insert_after.is_some() {
+        let (matched, modified, start) = apply_tagged(
+            original,
+            target.from,
+            target.to,
+            target.insert_after,
+            new_string,
+        )?;
+        return Ok(EditPlan {
+            matched,
+            modified,
+            count: 1,
+            start,
+        });
+    }
+    match locate_spans(original, target.old_string, target.replace_all) {
+        Locate::None => Err(miss_with_snippet(original, target.old_string)),
+        Locate::Ambiguous(count) => Err(ambiguous_with_tags(original, target.old_string, count)),
+        Locate::Hits(spans) => {
+            let matched = original[spans[0].0..spans[0].1].to_string();
+            Ok(EditPlan {
+                start: first_line_number(original, &matched),
+                modified: apply_spans(original, &spans, new_string),
+                count: spans.len(),
+                matched,
+            })
+        }
+    }
+}
+
+/// The diff an `edit` call would apply, without writing (approval prompt).
+/// `None` when the file cannot be read or the edit would not apply; the tool
+/// reports that error itself once it runs.
+pub fn preview_edit(args: &serde_json::Value, working_dir: &str) -> Option<String> {
+    let full = resolve_path(args["path"].as_str()?, working_dir);
+    let original = std::fs::read_to_string(&full).ok()?;
+    let new_string = args["new_string"].as_str()?;
+    let target = EditTarget {
+        old_string: args["old_string"].as_str().unwrap_or(""),
+        replace_all: args["replace_all"].as_bool().unwrap_or(false),
+        from: args["from"].as_str(),
+        to: args["to"].as_str(),
+        insert_after: args["insert_after"].as_str(),
+    };
+    let plan = plan_edit(&original, &target, new_string).ok()?;
+    let shown = display_path(&full, working_dir);
+    let preview = format_edit_preview_at(&shown, &plan.matched, new_string, plan.count, plan.start);
+    Some(preview.replacen("Edited ", "Edit ", 1))
+}
+
+/// `path` joined to `working_dir` unless it is absolute.
+pub(crate) fn resolve_path(path: &str, working_dir: &str) -> std::path::PathBuf {
+    let path = std::path::Path::new(path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::path::Path::new(working_dir).join(path)
     }
 }
 

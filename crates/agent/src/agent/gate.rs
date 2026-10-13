@@ -610,7 +610,7 @@ impl Agent {
                 if risk_confirmed {
                     continue_confirmed();
                 } else {
-                    let detail = format_permission_detail(&tc.arguments);
+                    let detail = permission_detail_for(tc, &tool_ctx.working_dir);
                     let allowed = self
                         .ask_permission(tc, &tool_ctx.working_dir, &detail)
                         .await;
