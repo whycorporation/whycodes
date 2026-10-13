@@ -43,6 +43,10 @@ pub struct Config {
     /// Model configurations
     #[serde(default)]
     pub models: HashMap<String, ModelConfig>,
+    /// USD per million tokens, keyed `"provider/model"`. Overrides prices
+    /// learned from the provider's `/v1/models` catalog.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub pricing: HashMap<String, PriceConfig>,
 
     /// Agent definitions
     #[serde(default)]
@@ -315,6 +319,36 @@ pub enum HookEvent {
     PreTool,
     /// After the tool finishes. Failures are logged only.
     PostTool,
+    /// Once per session in this process (new or resumed), before its first turn.
+    SessionStart,
+    /// Before each user turn. Non-zero exit can block the turn when `block_on_failure`.
+    UserPromptSubmit,
+    /// After a user turn finishes with a reply.
+    Stop,
+    /// Before the transcript is compacted (auto, overflow, or `/compact`).
+    PreCompact,
+    /// After a `task` / `swarm` subagent finishes. `match` filters the agent type.
+    SubagentStop,
+}
+
+impl HookEvent {
+    /// Config spelling (`pre_tool`, `session_start`, …).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PreTool => "pre_tool",
+            Self::PostTool => "post_tool",
+            Self::SessionStart => "session_start",
+            Self::UserPromptSubmit => "user_prompt_submit",
+            Self::Stop => "stop",
+            Self::PreCompact => "pre_compact",
+            Self::SubagentStop => "subagent_stop",
+        }
+    }
+
+    /// Whether `block_on_failure` can refuse the action (tool call / turn).
+    pub fn can_block(self) -> bool {
+        matches!(self, Self::PreTool | Self::UserPromptSubmit)
+    }
 }
 
 /// A single shell hook attached to tool execution.
@@ -324,17 +358,20 @@ pub enum HookEvent {
 /// event = "pre_tool"
 /// match = "bash"           # tool name; `*` or `prefix*` / `*suffix`
 /// command = "echo check"
-/// block_on_failure = true  # pre_tool only: non-zero exit refuses the tool
+/// block_on_failure = true  # pre_tool / user_prompt_submit: non-zero exit refuses
+/// feedback = false         # stdout of a successful hook goes to the model
 /// timeout_secs = 30
 /// ```
 ///
 /// Environment for the command: `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`,
 /// `WHYCODES_TOOL_INPUT` (JSON), `WHYCODES_TOOL_ID`, `WHYCODES_SESSION_ID`,
 /// `WHYCODES_WORKING_DIR`. Post-tool also sets `WHYCODES_TOOL_IS_ERROR` and
-/// `WHYCODES_TOOL_OUTPUT` (truncated).
+/// `WHYCODES_TOOL_OUTPUT` (truncated). Lifecycle events add their own
+/// variables (`WHYCODES_PROMPT`, `WHYCODES_RESPONSE`, `WHYCODES_SUBAGENT_*`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookConfig {
-    /// `pre_tool` or `post_tool`.
+    /// `pre_tool`, `post_tool`, `session_start`, `user_prompt_submit`, `stop`,
+    /// `pre_compact`, or `subagent_stop`.
     #[serde(default)]
     pub event: HookEvent,
 
@@ -345,9 +382,16 @@ pub struct HookConfig {
     /// Shell command (run via `sh -c` / `cmd /C`).
     pub command: String,
 
-    /// When true on `pre_tool`, a non-zero exit refuses the tool call.
+    /// When true on `pre_tool` / `user_prompt_submit`, a non-zero exit refuses
+    /// the tool call / the turn.
     #[serde(default)]
     pub block_on_failure: bool,
+
+    /// When true, a successful hook's stdout is shown to the model: appended
+    /// to the tool result (`post_tool`) or to the user turn (`session_start`,
+    /// `user_prompt_submit`). Ignored for other events.
+    #[serde(default)]
+    pub feedback: bool,
 
     /// Kill the hook after this many seconds. Default 30.
     #[serde(default = "default_hook_timeout")]
@@ -369,6 +413,7 @@ impl Default for HookConfig {
             tool_match: default_hook_match(),
             command: String::new(),
             block_on_failure: false,
+            feedback: false,
             timeout_secs: default_hook_timeout(),
         }
     }
@@ -518,6 +563,17 @@ pub struct LspConfig {
     pub edit_diagnostics_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub servers: HashMap<String, LspServerConfig>,
+}
+
+/// `[pricing."provider/model"]`: USD per million tokens.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct PriceConfig {
+    pub input: f64,
+    pub output: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write: Option<f64>,
 }
 
 /// One language-server overlay entry.
@@ -862,6 +918,7 @@ impl Default for Config {
         Config {
             providers: HashMap::new(),
             models: HashMap::new(),
+            pricing: HashMap::new(),
             agents: vec![
                 build_agent,
                 plan_agent,

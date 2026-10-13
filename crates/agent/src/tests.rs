@@ -1367,6 +1367,7 @@ async fn pre_tool_hook_can_block_execution() {
         tool_match: "read".into(),
         command: "exit 1".into(),
         block_on_failure: true,
+        feedback: false,
         timeout_secs: 5,
     });
     let agent = Agent::new(make_test_agent_info("build")).with_config(&cfg);

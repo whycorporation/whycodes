@@ -302,6 +302,11 @@ pub fn hook_event_from_name(name: &str) -> Option<HookEvent> {
     match name.trim() {
         "PreToolUse" | "pre_tool" | "pre-tool" | "PreTool" => Some(HookEvent::PreTool),
         "PostToolUse" | "post_tool" | "post-tool" | "PostTool" => Some(HookEvent::PostTool),
+        "SessionStart" | "session_start" => Some(HookEvent::SessionStart),
+        "UserPromptSubmit" | "user_prompt_submit" => Some(HookEvent::UserPromptSubmit),
+        "Stop" | "stop" => Some(HookEvent::Stop),
+        "PreCompact" | "pre_compact" => Some(HookEvent::PreCompact),
+        "SubagentStop" | "subagent_stop" => Some(HookEvent::SubagentStop),
         _ => None,
     }
 }
@@ -321,7 +326,9 @@ pub fn hook_from_command(
             map_tool_name(tool_match)
         },
         command,
-        block_on_failure: block_on_failure && event == HookEvent::PreTool,
+        block_on_failure: block_on_failure && event.can_block(),
+        // Claude Code adds SessionStart / UserPromptSubmit stdout to context.
+        feedback: matches!(event, HookEvent::SessionStart | HookEvent::UserPromptSubmit),
         timeout_secs: timeout_secs.unwrap_or(30).clamp(1, 300),
     }
 }
@@ -363,7 +370,7 @@ pub fn hooks_from_claude_object(value: &Value, skipped: &mut Vec<String>) -> Vec
                     continue;
                 };
                 let timeout = hook.get("timeout").and_then(Value::as_u64);
-                let block = event == HookEvent::PreTool;
+                let block = event.can_block();
                 out.push(hook_from_command(
                     event,
                     matcher,
@@ -422,7 +429,7 @@ fn collect_grok_hooks(
                     event,
                     matcher,
                     command.to_string(),
-                    event == HookEvent::PreTool,
+                    event.can_block(),
                     timeout,
                 ));
                 return;
@@ -438,7 +445,7 @@ fn collect_grok_hooks(
                 event,
                 "*",
                 command.clone(),
-                event == HookEvent::PreTool,
+                event.can_block(),
                 None,
             ));
         }
@@ -579,12 +586,25 @@ mod tests {
         let mut skipped = Vec::new();
         let claude = serde_json::json!({
             "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo pre"}]}],
-            "SessionStart": [{"hooks": [{"type": "command", "command": "echo no"}]}]
+            "SessionStart": [{"hooks": [{"type": "command", "command": "echo ctx"}]}],
+            "Notification": [{"hooks": [{"type": "command", "command": "echo no"}]}]
         });
         let hooks = hooks_from_claude_object(&claude, &mut skipped);
-        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks.len(), 2);
         assert_eq!(hooks[0].event, HookEvent::PreTool);
         assert_eq!(hooks[0].tool_match, "bash");
+        assert!(!hooks[0].feedback);
+        assert_eq!(hooks[1].event, HookEvent::SessionStart);
+        assert!(hooks[1].feedback && !hooks[1].block_on_failure);
+        for (name, event) in [
+            ("UserPromptSubmit", HookEvent::UserPromptSubmit),
+            ("Stop", HookEvent::Stop),
+            ("PreCompact", HookEvent::PreCompact),
+            ("SubagentStop", HookEvent::SubagentStop),
+        ] {
+            assert_eq!(hook_event_from_name(name), Some(event));
+            assert_eq!(hook_event_from_name(event.as_str()), Some(event));
+        }
         let grok = serde_json::json!({
             "pre_tool": {"command": "echo g", "matcher": "edit"},
             "PostToolUse": [{"command": "echo p"}]
