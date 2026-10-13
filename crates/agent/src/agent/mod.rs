@@ -57,6 +57,10 @@ pub struct Agent {
     /// First-token race: `off` / `auto` / `provider/model`.
     model_race: String,
     race_after: std::time::Duration,
+    /// `[session] fallback_models`: `provider/model` tried when a stream fails to open.
+    fallback_models: Vec<String>,
+    /// Config `api_key` per provider, for fallback targets on another provider.
+    fallback_config_keys: std::collections::HashMap<String, String>,
     /// Process-local text-only response cache.
     response_cache: bool,
     /// Cross-session memory settings (from config).
@@ -362,6 +366,8 @@ impl Agent {
             model_fast: None,
             model_race: "off".into(),
             race_after: std::time::Duration::from_millis(800),
+            fallback_models: Vec::new(),
+            fallback_config_keys: std::collections::HashMap::new(),
             response_cache: true,
             memory: whycodes_memory::MemorySettings::default(),
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
@@ -578,6 +584,13 @@ impl Agent {
         self.model_fast = config.session.model_fast.clone();
         self.model_race = config.session.model_race.clone();
         self.race_after = std::time::Duration::from_millis(config.session.race_after_ms);
+        self.fallback_models = config.session.fallback_models.clone();
+        self.fallback_config_keys = config
+            .providers
+            .iter()
+            .filter_map(|(name, pc)| Some((name.clone(), pc.api_key.clone()?)))
+            .filter(|(_, key)| !key.is_empty())
+            .collect();
         self.response_cache = !matches!(
             config
                 .session
@@ -791,6 +804,56 @@ impl Agent {
 
     pub fn model_fast(&self) -> Option<&str> {
         self.model_fast.as_deref()
+    }
+
+    /// First `[session] fallback_models` entry at or after `from` that names a
+    /// registered provider, differs from the active target, and has a key.
+    ///
+    /// Key order: the active key (same provider), config `api_key`, then
+    /// `<PROVIDER>_API_KEY`. OAuth-only providers on another provider are
+    /// skipped — the agent does not reach the token store.
+    pub(crate) fn next_fallback(
+        &self,
+        from: usize,
+        active_provider: &str,
+        active_model: &str,
+        active_key: &str,
+    ) -> Option<(usize, FallbackTarget)> {
+        for (idx, raw) in self.fallback_models.iter().enumerate().skip(from) {
+            let Some((provider, model)) = raw.trim().split_once('/') else {
+                tracing::warn!(entry = %raw, "fallback_models entry is not provider/model");
+                continue;
+            };
+            if (provider == active_provider && model == active_model)
+                || self.provider_registry.get(provider).is_none()
+            {
+                continue;
+            }
+            let api_key = if provider == active_provider {
+                active_key.to_string()
+            } else if let Some(key) = self.fallback_config_keys.get(provider) {
+                key.clone()
+            } else {
+                let var = format!("{}_API_KEY", provider.to_uppercase());
+                match std::env::var(&var) {
+                    Ok(key) if !key.is_empty() => key,
+                    Ok(_) => continue,
+                    Err(missing) => {
+                        tracing::debug!(%var, "fallback skipped, no key: {missing}");
+                        continue;
+                    }
+                }
+            };
+            return Some((
+                idx,
+                FallbackTarget {
+                    provider: provider.to_string(),
+                    model: model.to_string(),
+                    api_key,
+                },
+            ));
+        }
+        None
     }
 
     /// Resolve an optional first-token race partner (`off` / `auto` / ref).
@@ -1149,6 +1212,14 @@ fn apply_plugin_count(agent: &mut Agent, mut exec: ToolExecutor, n: usize) {
     }
     agent.tool_executor = Arc::new(exec);
     log_registered_count(n, "shell plugins registered");
+}
+
+/// A model to switch to after the active one failed to open a stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FallbackTarget {
+    pub provider: String,
+    pub model: String,
+    pub api_key: String,
 }
 
 fn lsp_overlay_from_config(cfg: &whycodes_config::LspConfig) -> whycodes_tools::LspSettings {

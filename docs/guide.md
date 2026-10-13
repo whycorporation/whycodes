@@ -732,6 +732,20 @@ reserve = 0.10
 env = { interactive = "OPENAI_API_KEY", ci = "OPENAI_CI_API_KEY" }
 ```
 
+When the active model still cannot open a stream — a 429 after the named
+credentials are used up, a 5xx, a network error or a timeout, each after the
+normal retries — the turn switches to the next `session.fallback_models`
+entry and stays there for the rest of that turn. The next turn starts on the
+primary again. Auth and request errors (401, 400) never fall back. Each
+entry needs a key: a model on the same provider reuses the active key, another
+provider uses its config `api_key` or `<PROVIDER>_API_KEY`. Entries with no
+key (for example an OAuth-only login on another provider) are skipped.
+
+```toml
+[session]
+fallback_models = ["anthropic/claude-sonnet-5-5", "openrouter/qwen/qwen3-coder"]
+```
+
 Long tool notes live at `agent://tools/<name>` (`read agent://tools/bash`).
 The default tool schema keeps a one-line description.
 
