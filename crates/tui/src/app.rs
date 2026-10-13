@@ -1986,6 +1986,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "[title] Continue in a copy; the original session stays as is",
     },
     SlashCommand {
+        name: "/mcp",
+        hint: "List MCP servers and their prompts (/mcp__<server>__<prompt>)",
+    },
+    SlashCommand {
         name: "/rename",
         hint: "[args] Set the session title (locks auto-title)",
     },

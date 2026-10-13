@@ -219,7 +219,7 @@ for line in sys.stdin:
     if method == "initialize":
         send({"jsonrpc":"2.0","id":rid,"result":{
             "protocolVersion":"2025-03-26",
-            "capabilities":{"tools":{}},
+            "capabilities":{"tools":{},"prompts":{},"resources":{}},
             "serverInfo":{"name":"mock-stdio","version":"0.0.1"}
         }})
     elif method == "notifications/initialized":
@@ -244,6 +244,19 @@ for line in sys.stdin:
         send({"jsonrpc":"2.0","id":rid,"result":{"prompts":[{
             "name":"review"
         }]}})
+    elif method == "resources/read":
+        uri = (msg.get("params") or {}).get("uri")
+        send({"jsonrpc":"2.0","id":rid,"result":{"contents":[
+            {"uri":uri,"mimeType":"text/markdown","text":"Guide text"}
+        ]}})
+    elif method == "prompts/get":
+        p = msg.get("params") or {}
+        topic = (p.get("arguments") or {}).get("topic","")
+        send({"jsonrpc":"2.0","id":rid,"result":{"description":"d","messages":[
+            {"role":"user","content":{"type":"text","text":p.get("name") + ":" + topic}},
+            {"role":"user","content":{"type":"resource","resource":{"uri":"x://a","text":"ctx"}}},
+            {"role":"user","content":{"type":"image","data":"AA==","mimeType":"image/png"}}
+        ]}})
     elif method == "boom":
         send({"jsonrpc":"2.0","id":rid,"error":{"code":-32000,"message":"nope"}})
     else:
@@ -280,6 +293,19 @@ async fn connect_stdio_lists_calls_and_ping() {
     assert_eq!(resources[0].name, "guide");
     let prompts = client.list_prompts().await.unwrap();
     assert_eq!(prompts[0].name, "review");
+    assert!(client.supports_prompts() && client.supports_resources());
+    let contents = client.read_resource("file:///guide.md").await.unwrap();
+    assert_eq!(contents[0].uri, "file:///guide.md");
+    assert_eq!(contents[0].text.as_deref(), Some("Guide text"));
+    let args = HashMap::from([("topic".to_string(), "auth".to_string())]);
+    let prompt = client.get_prompt("review", &args).await.unwrap();
+    assert_eq!(prompt.description.as_deref(), Some("d"));
+    assert_eq!(
+        prompt.text(),
+        "review:auth
+
+ctx"
+    );
     drop(client);
 
     let client = McpClient::connect_stdio(python(), &["-u", script.to_str().unwrap()])
@@ -371,6 +397,12 @@ for line in sys.stdin:
         send({"jsonrpc":"2.0","id":rid,"result":[]})
     elif method == "prompts/list":
         send({"jsonrpc":"2.0","id":rid,"result":[]})
+    elif method in ("resources/read", "prompts/get"):
+        p = msg.get("params") or {}
+        if p.get("uri") == "bad" or p.get("name") == "bad":
+            send({"jsonrpc":"2.0","id":rid,"result":{"nope":True}})
+        else:
+            send({"jsonrpc":"2.0","id":rid,"error":{"code":-1,"message":"missing"}})
     elif method == "ping":
         send({"jsonrpc":"2.0","id":rid,"error":{"code":-1,"message":"pong-fail"}})
 "#,
@@ -390,6 +422,20 @@ for line in sys.stdin:
     assert!(err.contains("failed to parse resources/list"), "{err}");
     let err = client.list_prompts().await.unwrap_err().to_string();
     assert!(err.contains("failed to parse prompts/list"), "{err}");
+    assert!(!client.supports_prompts() && !client.supports_resources());
+    let none = HashMap::new();
+    let err = client.read_resource("bad").await.unwrap_err().to_string();
+    assert!(err.contains("failed to parse resources/read"), "{err}");
+    let err = client.read_resource("x").await.unwrap_err().to_string();
+    assert!(err.contains("resources/read failed"), "{err}");
+    let err = client
+        .get_prompt("bad", &none)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("failed to parse prompts/get"), "{err}");
+    let err = client.get_prompt("x", &none).await.unwrap_err().to_string();
+    assert!(err.contains("prompts/get failed"), "{err}");
     let err = client.ping().await.unwrap_err().to_string();
     assert!(err.contains("pong-fail"), "{err}");
 }
