@@ -2029,12 +2029,11 @@ mod upgrade_helpers {
 }
 
 #[tokio::test]
-async fn stub_commands_web_acp_pr_github() {
+async fn stub_commands_web_pr_github() {
     let _home = IsolatedHome::new();
     let _gh = IsolatedGh::new(0);
     let c = cli(None);
     cmd_web().await.unwrap();
-    cmd_acp(&c).await.unwrap();
     cmd_pr(&c, None, None).await.unwrap();
     cmd_pr(&c, Some("feat"), Some("dev")).await.unwrap();
     cmd_github(&c, &GithubCmd::Pr { action: None })
@@ -2152,7 +2151,6 @@ async fn dispatch_offline_commands() {
     c.no_memory = true;
 
     dispatch_command(&Commands::Web, &c).await.unwrap();
-    dispatch_command(&Commands::Acp, &c).await.unwrap();
     dispatch_command(
         &Commands::Pr {
             title: None,
@@ -3040,7 +3038,6 @@ async fn dispatch_upgrade_and_web() {
     let c = cli(None);
     let _ = dispatch_command(&Commands::Upgrade, &c).await;
     dispatch_command(&Commands::Web, &c).await.unwrap();
-    dispatch_command(&Commands::Acp, &c).await.unwrap();
     unsafe { std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE") };
 }
 

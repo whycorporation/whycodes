@@ -160,7 +160,7 @@ pub enum Commands {
         approve_tools: bool,
     },
 
-    /// Agent Client Protocol (not yet implemented)
+    /// Agent Client Protocol server on stdio, for editors (Zed, Neovim, …)
     Acp,
 
     /// Create a pull request from current changes
