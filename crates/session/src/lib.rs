@@ -2,12 +2,14 @@ pub mod error;
 pub mod history;
 pub mod import;
 pub mod pairing;
+pub mod search;
 pub mod session;
 pub mod title;
 
 pub use error::{Result, SessionError};
 pub use history::{SessionHistory, StashSlot};
 pub use import::{ImportKind, import_messages};
+pub use search::{SessionSearchHit, query_terms, search_sessions};
 pub use session::{
     COMPACT_CONTINUATION_PREAMBLE, CheckpointState, CompactOutcome, Session, SessionCost,
     compact_summary_display_text, format_compact_summary, format_compact_summary_content,

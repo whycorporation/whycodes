@@ -540,10 +540,24 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 );
             }
         }
-        "/sessions" => {
+        "/sessions" if rest.is_empty() => {
             ctx.app.session_list.sessions = load_session_entries();
             ctx.app.session_list.selected = 0;
             crate::input::open_dialog(ctx.app, DialogKind::SessionList);
+        }
+        "/sessions" => {
+            let found = search_session_entries(rest);
+            if found.is_empty() {
+                ctx.app.toasts.push(
+                    crate::toast::ToastKind::Warning,
+                    format!("No session mentions \"{rest}\""),
+                );
+            } else {
+                ctx.app.status_message = format!("{} session(s) mention \"{rest}\"", found.len());
+                ctx.app.session_list.sessions = found;
+                ctx.app.session_list.selected = 0;
+                crate::input::open_dialog(ctx.app, DialogKind::SessionList);
+            }
         }
         "/resume" | "/continue" => {
             // With an id (or prefix): resume immediately. Bare: open picker.

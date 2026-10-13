@@ -1971,7 +1971,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     },
     SlashCommand {
         name: "/sessions",
-        hint: "Pick a stored session and resume (Enter)",
+        hint: "[words] Pick a stored session (filter by message text) and resume",
     },
     SlashCommand {
         name: "/resume",
