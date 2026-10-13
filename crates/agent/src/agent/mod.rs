@@ -111,6 +111,10 @@ pub struct Agent {
     cwd_override: Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
     /// Subagent token usage waiting to be folded into the parent session.
     subagent_usage_pending: Arc<std::sync::Mutex<whycodes_core::types::Usage>>,
+    /// USD for that subagent usage, priced with the subagent's own model.
+    subagent_cost_pending: Arc<std::sync::Mutex<whycodes_session::SessionCost>>,
+    /// `[pricing]` from config; wins over catalog prices.
+    price_overrides: std::collections::HashMap<String, whycodes_llm::ModelPrice>,
     /// Resident workspace file index shared with file tools (warm fast path
     /// for glob/grep/list enumeration). Started by the host (TUI/CLI).
     file_index: Option<Arc<whycodes_index::WorkspaceIndex>>,
@@ -398,6 +402,10 @@ impl Agent {
             subagent_usage_pending: Arc::new(std::sync::Mutex::new(
                 whycodes_core::types::Usage::default(),
             )),
+            subagent_cost_pending: Arc::new(std::sync::Mutex::new(
+                whycodes_session::SessionCost::default(),
+            )),
+            price_overrides: std::collections::HashMap::new(),
             file_index: None,
             session_claims: None,
             swarm_hub: None,
@@ -587,6 +595,7 @@ impl Agent {
         );
         self.model_fast = config.session.model_fast.clone();
         self.model_race = config.session.model_race.clone();
+        self.price_overrides = price_overrides_from_config(&config.pricing);
         self.race_after = std::time::Duration::from_millis(config.session.race_after_ms);
         self.fallback_models = config.session.fallback_models.clone();
         self.fallback_config_keys = config
@@ -808,6 +817,21 @@ impl Agent {
 
     pub fn model_fast(&self) -> Option<&str> {
         self.model_fast.as_deref()
+    }
+
+    /// USD for one usage record on `provider/model`; `None` when unpriced.
+    pub(crate) fn step_cost(
+        &self,
+        provider: &str,
+        model: &str,
+        usage: &whycodes_core::types::Usage,
+    ) -> Option<f64> {
+        let price = self
+            .price_overrides
+            .get(&format!("{provider}/{model}"))
+            .copied()
+            .or_else(|| whycodes_llm::lookup_price(provider, model))?;
+        Some(price.cost(usage))
     }
 
     /// First `[session] fallback_models` entry at or after `from` that names a
@@ -1212,6 +1236,31 @@ fn apply_plugin_count(agent: &mut Agent, mut exec: ToolExecutor, n: usize) {
     }
     agent.tool_executor = Arc::new(exec);
     log_registered_count(n, "shell plugins registered");
+}
+
+/// `[pricing."provider/model"]` → prices keyed the same way.
+fn price_overrides_from_config(
+    pricing: &std::collections::HashMap<String, whycodes_config::PriceConfig>,
+) -> std::collections::HashMap<String, whycodes_llm::ModelPrice> {
+    pricing
+        .iter()
+        .filter(|(key, _)| {
+            let valid = key.split_once('/').is_some();
+            if !valid {
+                tracing::warn!(key = %key, "[pricing] key is not provider/model");
+            }
+            valid
+        })
+        .map(|(key, p)| {
+            let price = whycodes_llm::ModelPrice {
+                input: p.input,
+                output: p.output,
+                cache_read: p.cache_read,
+                cache_write: p.cache_write,
+            };
+            (key.clone(), price)
+        })
+        .collect()
 }
 
 /// A model to switch to after the active one failed to open a stream.

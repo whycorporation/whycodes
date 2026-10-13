@@ -755,6 +755,20 @@ key (for example an OAuth-only login on another provider) are skipped.
 fallback_models = ["anthropic/claude-sonnet-5-5", "openrouter/qwen/qwen3-coder"]
 ```
 
+`/cost` also shows an estimated USD total for the current run. Prices come
+from the provider's model catalog when it publishes them (OpenRouter does)
+or from `[pricing."provider/model"]` in USD per million tokens; config wins.
+A step on a model with no known price is counted, never guessed, so the line
+reads "at least ~$X" when some steps were unpriced. Cache rates default to the
+input rate. The total starts at zero when a session is resumed.
+
+```toml
+[pricing."openai/gpt-4o"]
+input = 2.5
+output = 10.0
+cache_read = 1.25   # optional
+```
+
 Long tool notes live at `agent://tools/<name>` (`read agent://tools/bash`).
 The default tool schema keeps a one-line description.
 

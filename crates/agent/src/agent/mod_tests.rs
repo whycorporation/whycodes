@@ -3372,3 +3372,50 @@ fn which_python() -> Option<&'static str> {
         None
     }
 }
+
+#[test]
+fn step_cost_prefers_config_prices_over_the_catalog() {
+    let mut config = whycodes_config::Config::default();
+    config.pricing.insert(
+        "wc-cost-p/m".into(),
+        whycodes_config::PriceConfig {
+            input: 10.0,
+            output: 20.0,
+            cache_read: Some(1.0),
+            cache_write: None,
+        },
+    );
+    config
+        .pricing
+        .insert("no-slash".into(), whycodes_config::PriceConfig::default());
+    whycodes_llm::remember_price(
+        "wc-cost-p",
+        "m",
+        whycodes_llm::ModelPrice {
+            input: 99.0,
+            output: 99.0,
+            cache_read: None,
+            cache_write: None,
+        },
+    );
+    whycodes_llm::remember_price(
+        "wc-cost-p",
+        "catalog-only",
+        whycodes_llm::ModelPrice {
+            input: 1.0,
+            output: 1.0,
+            cache_read: None,
+            cache_write: None,
+        },
+    );
+    let a = test_agent().with_config(&config);
+    assert_eq!(a.price_overrides.len(), 1, "invalid keys are dropped");
+    let usage = whycodes_core::types::Usage {
+        input_tokens: 1_000_000,
+        output_tokens: 1_000_000,
+        ..Default::default()
+    };
+    assert_eq!(a.step_cost("wc-cost-p", "m", &usage), Some(30.0));
+    assert_eq!(a.step_cost("wc-cost-p", "catalog-only", &usage), Some(2.0));
+    assert_eq!(a.step_cost("wc-cost-p", "unknown", &usage), None);
+}
