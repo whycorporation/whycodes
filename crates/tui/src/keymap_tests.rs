@@ -725,3 +725,151 @@ fn bindings_for_context_are_nonempty_and_attributed() {
             < bindings_for_context(KeymapContext::Normal).len()
     );
 }
+
+fn bindings(pairs: &[(&str, &str)]) -> Keymap {
+    let map: HashMap<String, String> = pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    Keymap::from_bindings(&map)
+}
+
+#[test]
+fn chords_parse_modifiers_names_and_capitals() {
+    let c = |code, mods| Some(Chord::new(code, mods));
+    assert_eq!(
+        Chord::parse("ctrl+k"),
+        c(KeyCode::Char('k'), KeyModifiers::CONTROL)
+    );
+    assert_eq!(
+        Chord::parse("Ctrl-K"),
+        c(
+            KeyCode::Char('k'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )
+    );
+    assert_eq!(
+        Chord::parse("control+alt+shift+g"),
+        c(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT
+        )
+    );
+    assert_eq!(Chord::parse("G"), Chord::parse("shift+g"));
+    assert_eq!(
+        Chord::parse("meta+enter"),
+        c(KeyCode::Enter, KeyModifiers::ALT)
+    );
+    assert_eq!(
+        Chord::parse("ctrl++"),
+        c(KeyCode::Char('+'), KeyModifiers::CONTROL)
+    );
+    assert_eq!(Chord::parse("-"), c(KeyCode::Char('-'), KeyModifiers::NONE));
+    assert_eq!(Chord::parse("shift+?"), Chord::parse("?"));
+    assert_eq!(Chord::parse("backtab"), Chord::parse("shift+tab"));
+    assert_eq!(Chord::parse(" f12 "), c(KeyCode::F(12), KeyModifiers::NONE));
+    for (name, code) in [
+        ("return", KeyCode::Enter),
+        ("escape", KeyCode::Esc),
+        ("space", KeyCode::Char(' ')),
+        ("backspace", KeyCode::Backspace),
+        ("del", KeyCode::Delete),
+        ("ins", KeyCode::Insert),
+        ("home", KeyCode::Home),
+        ("end", KeyCode::End),
+        ("pgup", KeyCode::PageUp),
+        ("pgdn", KeyCode::PageDown),
+        ("up", KeyCode::Up),
+        ("down", KeyCode::Down),
+        ("left", KeyCode::Left),
+        ("right", KeyCode::Right),
+    ] {
+        assert_eq!(Chord::parse(name), c(code, KeyModifiers::NONE), "{name}");
+    }
+    for bad in ["hyper+k", "ctrl+nope", "f0", "f25", "fx", ""] {
+        assert_eq!(Chord::parse(bad), None, "{bad}");
+    }
+}
+
+#[test]
+fn user_bindings_override_add_and_unbind_in_normal_context() {
+    let k = bindings(&[
+        ("ctrl+o", "toggle_sidebar"),
+        ("ctrl+l", "none"),
+        ("f2", "Model-Dialog"),
+        ("alt+k", "scroll_up"),
+        ("ctrl+z", "not_an_action"),
+        ("hyper+x", "quit"),
+    ]);
+    let n = KeymapContext::Normal;
+    let p = FocusPane::Prompt;
+    assert_eq!(
+        k.resolve(n, p, &ctrl(KeyCode::Char('o'))),
+        Some(Action::ToggleSidebar)
+    );
+    assert_eq!(k.resolve(n, p, &ctrl(KeyCode::Char('l'))), None, "unbound");
+    assert_eq!(
+        k.resolve(KeymapContext::Session, p, &key(KeyCode::F(2))),
+        Some(Action::OpenModelDialog)
+    );
+    let alt_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::ALT);
+    assert_eq!(k.resolve(n, p, &alt_k), Some(Action::ScrollDown));
+    // Bad entries are skipped; defaults still apply.
+    assert_eq!(k.resolve(n, p, &ctrl(KeyCode::Char('z'))), None);
+    assert_eq!(
+        k.resolve(n, p, &ctrl(KeyCode::Char('b'))),
+        Some(Action::ToggleSidebar)
+    );
+    // Dialogs keep their fixed keys.
+    assert_eq!(
+        k.resolve(KeymapContext::Dialog, p, &ctrl(KeyCode::Char('l'))),
+        None
+    );
+    assert_eq!(
+        k.resolve(KeymapContext::Dialog, p, &key(KeyCode::Enter)),
+        Some(Action::DialogConfirm)
+    );
+}
+
+#[test]
+fn printable_bindings_never_capture_prompt_typing() {
+    let k = bindings(&[("x", "copy_selection"), ("G", "scroll_to_top")]);
+    let n = KeymapContext::Normal;
+    assert_eq!(
+        k.resolve(n, FocusPane::Prompt, &key(KeyCode::Char('x'))),
+        None
+    );
+    assert_eq!(
+        k.resolve(n, FocusPane::Scrollback, &key(KeyCode::Char('x'))),
+        Some(Action::CopySelection)
+    );
+    assert_eq!(
+        k.resolve(n, FocusPane::Scrollback, &shift(KeyCode::Char('G'))),
+        Some(Action::ScrollToTop)
+    );
+}
+
+#[test]
+fn every_bindable_action_name_resolves() {
+    for (name, action) in ACTION_NAMES {
+        assert_eq!(action_from_name(name), Some(*action), "{name}");
+    }
+    assert_eq!(action_from_name("dialog_confirm"), None);
+}
+
+#[test]
+fn app_keymap_comes_from_tui_config() {
+    let config = crate::config::TuiAppConfig {
+        key_bindings: [("ctrl+o".to_string(), "toggle_sidebar".to_string())].into(),
+        ..Default::default()
+    };
+    let app = crate::app::TuiApp::from_config(config);
+    assert_eq!(
+        app.keymap.resolve(
+            KeymapContext::Normal,
+            FocusPane::Prompt,
+            &ctrl(KeyCode::Char('o'))
+        ),
+        Some(Action::ToggleSidebar)
+    );
+}
