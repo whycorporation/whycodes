@@ -177,6 +177,16 @@ fn model_items(json: &Value) -> Vec<&Value> {
 ///
 /// Prefer exact `id` match, then suffix `…/{model}`.
 pub fn context_window_for_model_id(json: &Value, model: &str) -> Option<u32> {
+    model_field(json, model, context_window_from_model_value)
+}
+
+/// `model`'s USD price from an OpenRouter-style catalog (same id matching).
+pub fn price_for_model_id(json: &Value, model: &str) -> Option<super::pricing::ModelPrice> {
+    model_field(json, model, super::pricing::price_from_model_value)
+}
+
+/// First model entry carrying `extract`: exact `id`, else suffix `…/{model}`.
+fn model_field<T>(json: &Value, model: &str, extract: impl Fn(&Value) -> Option<T>) -> Option<T> {
     if model.is_empty() {
         return None;
     }
@@ -186,14 +196,14 @@ pub fn context_window_for_model_id(json: &Value, model: &str) -> Option<u32> {
         if id.is_empty() {
             continue;
         }
-        let Some(cw) = context_window_from_model_value(m) else {
+        let Some(value) = extract(m) else {
             continue;
         };
         if id == model {
-            return Some(cw);
+            return Some(value);
         }
         if suffix_hit.is_none() && (id.ends_with(&format!("/{model}")) || id.ends_with(model)) {
-            suffix_hit = Some(cw);
+            suffix_hit = Some(value);
         }
     }
     suffix_hit
@@ -313,6 +323,10 @@ pub async fn fetch_model_context_window(
     }
 
     let json: Value = serde_json::from_slice(&bytes).map_err(catalog_json_error)?;
+    // Same body, no extra request: keep the active model's price for `/cost`.
+    if let Some(price) = price_for_model_id(&json, model) {
+        super::pricing::remember_price(&req.provider_name, model, price);
+    }
     Ok(context_window_for_model_id(&json, model))
 }
 

@@ -62,10 +62,7 @@ trait HookEventLabel {
 
 impl HookEventLabel for whycodes_config::HookConfig {
     fn event_label(&self) -> &'static str {
-        match self.event {
-            whycodes_config::HookEvent::PreTool => "pre_tool",
-            whycodes_config::HookEvent::PostTool => "post_tool",
-        }
+        self.event.as_str()
     }
 }
 
@@ -125,6 +122,7 @@ mod tests {
             tool_match: "bash".into(),
             command: "echo hi".into(),
             block_on_failure: true,
+            feedback: false,
             timeout_secs: 30,
         });
         let extracted = Extracted {
@@ -143,6 +141,7 @@ mod tests {
                     tool_match: "bash".into(),
                     command: "echo hi".into(),
                     block_on_failure: true,
+                    feedback: false,
                     timeout_secs: 30,
                 },
                 HookConfig {
@@ -150,6 +149,7 @@ mod tests {
                     tool_match: "*".into(),
                     command: "echo after".into(),
                     block_on_failure: false,
+                    feedback: false,
                     timeout_secs: 30,
                 },
             ],
@@ -233,6 +233,7 @@ mod tests {
             tool_match: tool.into(),
             command: command.into(),
             block_on_failure: event == HookEvent::PreTool,
+            feedback: false,
             timeout_secs: 30,
         }
     }

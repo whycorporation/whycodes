@@ -46,7 +46,29 @@ impl Agent {
     }
 
     /// Run a turn, optionally streaming `TurnEvent`s and honouring a cancel flag (Esc).
+    ///
+    /// `session_start` / `user_prompt_submit` hooks run first; `stop` hooks
+    /// run after a reply.
     pub async fn run_turn_with_events(
+        &self,
+        session: &mut Session,
+        opts: TurnOpts<'_>,
+    ) -> whycodes_core::Result<String> {
+        let prompt = session
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == whycodes_core::types::Role::User)
+            .and_then(|m| m.content.as_text().map(str::to_string))
+            .unwrap_or_default();
+        self.run_prompt_hooks(session, &prompt).await?;
+        let reply = self.run_turn_steps(session, opts).await?;
+        self.run_stop_hooks(session, &reply).await;
+        Ok(reply)
+    }
+
+    /// The model/tool step loop of one user turn.
+    async fn run_turn_steps(
         &self,
         session: &mut Session,
         opts: TurnOpts<'_>,
@@ -652,6 +674,9 @@ impl Agent {
             // provider is distinguishable from a zero-cost turn.
             if !turn_usage.is_empty() {
                 session.add_usage(&turn_usage);
+                session
+                    .cost
+                    .add(self.step_cost(provider_name, model, &turn_usage));
                 emit(&events, TurnEvent::Usage(turn_usage.clone()));
                 if let Some(note) = self.note_cache_read(&session.id, &turn_usage, skip_cache) {
                     tracing::info!(session = %session.id, "{note}");
@@ -840,6 +865,9 @@ impl Agent {
             if !fold.is_empty() {
                 turn_usage.add(&fold);
                 session.add_usage(&fold);
+                let fold_cost =
+                    std::mem::take(&mut *super::recover_lock(&self.subagent_cost_pending));
+                session.cost.merge(&fold_cost);
                 tracing::debug!(
                     input = fold.input_tokens,
                     output = fold.output_tokens,

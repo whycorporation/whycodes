@@ -278,3 +278,27 @@ fn doctor_helpers_and_short_id() {
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(unshare_session(dir.path(), "nope"), 0);
 }
+
+#[test]
+fn cost_line_reports_only_known_prices() {
+    use whycodes_session::SessionCost;
+    let line = |usd: f64, unpriced_steps: u32| {
+        cost_line(&SessionCost {
+            usd,
+            unpriced_steps,
+        })
+    };
+    assert_eq!(line(0.0, 0), "  cost:      (none yet)");
+    assert_eq!(
+        line(0.01234, 0),
+        "  cost:      ~$0.0123 this run (estimate)"
+    );
+    assert_eq!(line(12.5, 0), "  cost:      ~$12.50 this run (estimate)");
+    assert!(line(0.5, 2).contains("at least ~$0.5000 this run · 2 step(s) had no price"));
+    assert!(line(0.0, 3).contains("unknown — no price for this model"));
+
+    let mut session = Session::new("/tmp/p".into(), "sys".into());
+    session.cost.add(Some(0.02));
+    let app = TuiApp::new(TuiAppConfig::default());
+    assert!(cost_report(&session, &app, None).contains("~$0.0200 this run"));
+}
