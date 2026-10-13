@@ -14,6 +14,16 @@ pub struct SessionRow {
     pub usage: Usage,
 }
 
+/// A session whose messages contain every search term.
+#[derive(Debug, Clone)]
+pub struct SessionTextHit {
+    pub session: SessionRow,
+    /// Messages in the session that matched.
+    pub hits: usize,
+    /// Raw stored content (message JSON) of one matching message.
+    pub sample: String,
+}
+
 /// Aggregated usage across all sessions (for `whycodes stats`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UsageTotals {

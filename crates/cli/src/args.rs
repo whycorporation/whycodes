@@ -554,6 +554,16 @@ pub enum SessionCmd {
         /// New name for the session
         name: String,
     },
+    /// Find saved sessions whose messages contain every word of a query
+    #[command(visible_alias = "grep")]
+    Search {
+        /// Words to look for (all must appear in one message)
+        #[arg(required = true, num_args = 1..)]
+        query: Vec<String>,
+        /// Most sessions to show
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Export a session to JSON (shareable)
     Share {
         /// Session ID

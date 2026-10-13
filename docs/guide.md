@@ -93,9 +93,15 @@ whycodes generate "Explain the error handling in main.rs" -d ./my-project
 whycodes run "Where is the retry logic?" -d ./my-project
 whycodes --continue
 whycodes --resume a1b2c3d4
+whycodes session search retry loop   # sessions whose messages mention both words
 whycodes session import ./transcript.jsonl --from auto
 whycodes -P openai -m gpt-4o generate "Refactor this module"
 ```
+
+`session search` (alias `grep`) scans saved transcripts: every word must
+appear in one message (ASCII case-insensitive), newest sessions first, with
+an excerpt. It reads messages at search time instead of keeping an index,
+so saving a long session stays fast.
 
 `session import` accepts `--from auto|whycodes|claude|codex|opencode|pi`. Tools do
 not replay; resume with `whycodes --resume <id>`.
@@ -250,7 +256,7 @@ Both TUI and `--plain`:
 | `/context` | Context window breakdown |
 | `/cost` `/usage` | Session + last-turn token usage (credential **name** only, never the secret) |
 | `/slop` | ΔLOC / verbosity / erosion vs git base (not a test score) |
-| `/sessions` | Session picker (Enter to resume) |
+| `/sessions [words]` | Session picker (Enter to resume); with words, only sessions whose messages mention all of them |
 | `/resume [id]` | Resume by id/prefix, or open the picker |
 | `/continue` | Resume the most recently updated session |
 | `/models [provider/id]` | Show or switch the model |

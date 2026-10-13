@@ -1,6 +1,6 @@
 use crate::migrations::run_migrations;
 use crate::models::{
-    CodeChunkRow, MemoryRow, MessageRow, SessionChunkRow, SessionRow, UsageTotals,
+    CodeChunkRow, MemoryRow, MessageRow, SessionChunkRow, SessionRow, SessionTextHit, UsageTotals,
 };
 use rusqlite::Connection;
 use whycodes_core::types::Usage;
@@ -148,6 +148,46 @@ impl Database {
             result.push(row?);
         }
         Ok(result)
+    }
+
+    /// Sessions with a message containing every term (ASCII case-insensitive),
+    /// most recently updated first.
+    ///
+    /// A scan rather than an FTS index: every save rewrites a session's
+    /// messages, and an index made a 500-message save ~15x slower, while a
+    /// scan of a 120k-message database takes ~0.3 s at search time only.
+    pub fn search_sessions_text(
+        &self,
+        terms: &[String],
+        limit: usize,
+    ) -> crate::error::Result<Vec<SessionTextHit>> {
+        if terms.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let clauses = (1..=terms.len())
+            .map(|i| format!("m.content LIKE ?{i} ESCAPE '\\'"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let sql = format!(
+            "SELECT s.id, s.title, s.created_at, s.updated_at, s.project_path,
+                    s.input_tokens, s.output_tokens,
+                    s.cache_creation_input_tokens, s.cache_read_input_tokens,
+                    COUNT(*), MIN(m.content)
+             FROM messages m JOIN sessions s ON s.id = m.session_id
+             WHERE {clauses}
+             GROUP BY s.id ORDER BY s.updated_at DESC LIMIT {limit}"
+        );
+        let patterns: Vec<String> = terms.iter().map(|t| like_pattern(t)).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(patterns.iter()), |row| {
+            let hits: i64 = row.get(9)?;
+            Ok(SessionTextHit {
+                session: map_session_row(row)?,
+                hits: hits as usize,
+                sample: row.get(10)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Sum provider-reported usage and message counts across all sessions.
@@ -768,6 +808,20 @@ fn map_code_chunk_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CodeChunkRow>
         updated_at: row.get(7)?,
     })
 }
+/// `%term%` with LIKE wildcards in the term escaped (`\` is the escape).
+/// `%term%` with LIKE wildcards in the term escaped (`\\` is the escape).
+fn like_pattern(term: &str) -> String {
+    let mut out = String::with_capacity(term.len() + 2);
+    out.push('%');
+    for c in term.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('%');
+    out
+}
 
 fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
     let input: i64 = row.get(5)?;
@@ -1005,6 +1059,66 @@ mod tests {
 
         assert!(Database::open(tmp.path().to_str().unwrap()).is_err());
         assert!(Database::open("/no/such/whycodes-storage-dir/db.sqlite").is_err());
+    }
+
+    #[test]
+    fn search_sessions_text_ands_terms_and_escapes_wildcards() {
+        let db = test_db();
+        db.create_session("s1", "Retry", "/tmp").unwrap();
+        db.create_session("s2", "Other", "/tmp").unwrap();
+        db.insert_message("a", "s1", "user", "fix the RETRY loop", None, None)
+            .unwrap();
+        db.insert_message("b", "s1", "assistant", "retry loop done", None, None)
+            .unwrap();
+        db.insert_message("c", "s2", "user", "retry only", None, None)
+            .unwrap();
+        db.insert_message("d", "s2", "user", r"50%_off \path", None, None)
+            .unwrap();
+        let terms = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        let hits = db
+            .search_sessions_text(&terms(&["retry", "loop"]), 10)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session.title, "Retry");
+        assert_eq!(hits[0].hits, 2);
+        assert_eq!(hits[0].sample, "fix the RETRY loop");
+        assert_eq!(
+            db.search_sessions_text(&terms(&["retry"]), 1)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            db.search_sessions_text(&terms(&["retry"]), 10)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(db.search_sessions_text(&[], 10).unwrap().is_empty());
+        assert!(
+            db.search_sessions_text(&terms(&["retry"]), 0)
+                .unwrap()
+                .is_empty()
+        );
+        for literal in ["50%_off", r"\path"] {
+            assert_eq!(
+                db.search_sessions_text(&terms(&[literal]), 10)
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        assert!(
+            db.search_sessions_text(&terms(&["5%f"]), 10)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            db.search_sessions_text(&terms(&["50_"]), 10)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

@@ -154,6 +154,24 @@ pub(super) fn parse_session_rfc3339(s: &str) -> Option<chrono::DateTime<chrono::
 /// While building the list, backfill placeholder titles (`New session - …`,
 /// `project-ab`) from the first user message so the picker stays useful for
 /// sessions created before auto-title or never refined.
+/// Picker rows for sessions whose messages mention every word of `query`,
+/// most recently updated first.
+pub(super) fn search_session_entries(query: &str) -> Vec<crate::app::SessionEntry> {
+    let hits = with_session_db(|d| whycodes_session::search_sessions(d, query, 50))
+        .and_then(|r| {
+            r.map_err(|e| tracing::warn!(error = %e, "session search failed"))
+                .ok()
+        })
+        .unwrap_or_default();
+    let ids: Vec<&str> = hits.iter().map(|h| h.id.as_str()).collect();
+    let mut entries: Vec<_> = load_session_entries()
+        .into_iter()
+        .filter(|e| ids.contains(&e.id.as_str()))
+        .collect();
+    entries.sort_by_key(|e| ids.iter().position(|id| *id == e.id));
+    entries
+}
+
 pub(super) fn load_session_entries() -> Vec<crate::app::SessionEntry> {
     let Some((rows, counts)) = session_list_rows(with_session_db(|d| {
         // Clone rows we need while the lock is held; do backfill with a second

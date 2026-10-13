@@ -6708,3 +6708,30 @@ async fn cmd_run_empty_one_shot_then_missing_key() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn session_search_lists_matching_sessions() {
+    let _home = IsolatedHome::new();
+    let db = open_db().unwrap();
+    let mut saved = whycodes_session::session::Session::new(PathBuf::from("/p"), "s".into());
+    saved.set_title_manual("retry work");
+    saved.add_user_message("explain the retry loop");
+    saved.save_to_db(&db).unwrap();
+    cmd_session(&SessionCmd::Search {
+        query: vec!["retry".into(), "loop".into()],
+        limit: 5,
+    })
+    .await
+    .unwrap();
+
+    let hits = whycodes_session::search_sessions(&db, "retry loop", 5).unwrap();
+    let report = session_search_report("retry loop", &hits);
+    assert!(report.contains("1 session(s) mention"), "{report}");
+    assert!(report.contains(&saved.id[..8]), "{report}");
+    assert!(
+        report.contains("retry work (1 matching message(s)"),
+        "{report}"
+    );
+    assert!(report.contains("explain the retry loop"), "{report}");
+    assert!(session_search_report("nope", &[]).contains("No session mentions \"nope\""));
+}

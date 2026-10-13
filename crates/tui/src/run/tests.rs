@@ -10863,3 +10863,40 @@ fn goal_save_and_restore_round_trip_through_the_state_table() {
     assert!(crate::goal::restore(Some(&db), &session).is_none());
     crate::goal::save(None, &session.id, Some(&goal));
 }
+
+#[tokio::test]
+async fn sessions_slash_with_words_filters_the_picker() {
+    let mut h = SlashHarness::new();
+    let mut a = Session::new(h.session.project_path.clone(), "sys".into());
+    a.add_user_message("explain the retry loop");
+    persist_session_best_effort(&a, "search-a");
+    let mut b = Session::new(h.session.project_path.clone(), "sys".into());
+    b.add_user_message("unrelated chat");
+    persist_session_best_effort(&b, "search-b");
+
+    h.run("/sessions retry loop").await;
+    let ids: Vec<&str> = h
+        .app
+        .session_list
+        .sessions
+        .iter()
+        .map(|e| e.id.as_str())
+        .collect();
+    assert_eq!(ids, [a.id.as_str()]);
+    assert!(
+        h.app.status_message.contains("1 session(s)"),
+        "{}",
+        h.app.status_message
+    );
+
+    h.run("/sessions zzqx-no-match").await;
+    assert!(
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("No session mentions"))
+    );
+    h.run("/sessions").await;
+    assert!(h.app.session_list.sessions.len() >= 2);
+}

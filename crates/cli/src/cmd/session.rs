@@ -128,6 +128,12 @@ pub(crate) async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
             );
             println!("Resume with: whycodes --resume {}", &session.id[..8]);
         }
+        SessionCmd::Search { query, limit } => {
+            let query = query.join(" ");
+            let hits = whycodes_session::search_sessions(&db, &query, *limit)
+                .map_err(|e| anyhow::anyhow!("Search failed: {e}"))?;
+            println!("{}", session_search_report(&query, &hits));
+        }
         SessionCmd::Share { id } => {
             match db.get_session(id).map_err(|e| anyhow::anyhow!("{}", e))? {
                 Some(s) => {
@@ -260,6 +266,37 @@ pub(crate) async fn cmd_stats() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// `session search` output: one block per matching session.
+pub(crate) fn session_search_report(
+    query: &str,
+    hits: &[whycodes_session::SessionSearchHit],
+) -> String {
+    if hits.is_empty() {
+        return format!("{} No session mentions \"{query}\".", "ℹ".cyan());
+    }
+    let mut out = format!(
+        "{} {} session(s) mention \"{query}\":",
+        "🔎".bold(),
+        hits.len()
+    );
+    for h in hits {
+        let short: String = h.id.chars().take(8).collect();
+        out.push_str(&format!(
+            "\n  {} — {} ({} matching message(s), updated {})\n    {}",
+            short.cyan(),
+            h.title,
+            h.hits,
+            h.updated_at,
+            h.snippet.dimmed()
+        ));
+    }
+    out.push_str(&format!(
+        "\n{}",
+        "Resume with: whycodes --resume <id>".dimmed()
+    ));
+    out
 }
 
 pub(crate) fn session_list_line(id: &str, title: &str, msg_count: usize) -> String {
