@@ -276,6 +276,7 @@ Both TUI and `--plain`:
 | `/new` `/clear` | Start a new session |
 | `/rename [name]` | Set the session title (locks auto-title) |
 | `/fork [title]` | Continue in a copy under a new id; the original stays as saved |
+| `/mcp` | List connected MCP servers, their prompts (`/mcp__<server>__<prompt>`) and resources |
 | `/init` | Create or update `AGENTS.md` |
 | `/review` | AI review of git changes (read-only) |
 | `/security-review` | Security-focused review of changes |
@@ -387,7 +388,7 @@ hint.
 - The `question` tool picks its first option, as in headless runs.
 - Mentions and attached files arrive as `@path` / embedded context. Images
   are not accepted yet, and MCP servers sent by the editor are ignored: use
-  `[mcp]` in config.
+  `[mcp_servers]` in config.
 - Sessions are saved like any other. The editor can reopen one
   (`session/load` replays the conversation), and `whycodes --resume <id>`
   continues it in the terminal.
@@ -480,6 +481,15 @@ model answers instead of over-eager edits. Set
 
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
+
+MCP servers that offer **resources** add two tools: `mcp_list_resources`
+(optionally for one `server`) and `mcp_read_resource` (`server` + `uri`).
+Text comes back as is; binary contents are summarized by MIME type and size.
+Servers that offer **prompts** become slash commands in the TUI:
+`/mcp__<server>__<prompt> args`. Words fill the prompt's arguments in
+order, the last argument takes the rest of the line, and the rendered prompt
+is sent as your message. `/mcp` lists the connected servers with their
+prompts and argument names. (The plain REPL does not run MCP prompts.)
 
 `lsp` talks to language servers already on PATH (or in project-local bins:
 `node_modules/.bin`, `.venv`). It auto-detects from cwd markers such as

@@ -10,6 +10,13 @@ use whycodes_mcp::client::McpClient;
 use whycodes_tools::executor::ToolExecutor;
 use whycodes_tools::mcp::{McpCaller, McpToolBridge};
 
+/// A connected MCP server, kept for its prompts and resources.
+#[derive(Clone)]
+pub struct McpServerHandle {
+    pub name: String,
+    pub client: Arc<Mutex<McpClient>>,
+}
+
 struct SharedMcpCaller {
     client: Arc<Mutex<McpClient>>,
     remote_name: String,
@@ -62,7 +69,13 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
     }
 }
 
-pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) -> usize {
+/// Connect every configured server and register its tools, plus the
+/// resource tools when a server offers resources. Returns the number of
+/// tools registered and the connected servers.
+pub async fn register_mcp_tools(
+    executor: &mut ToolExecutor,
+    config: &Config,
+) -> (usize, Vec<McpServerHandle>) {
     // Connect all servers concurrently so multi-MCP cold start is max(latency),
     // not sum — list_tools still runs after each connect succeeds.
     let connect_futs: Vec<_> = config
@@ -80,6 +93,7 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
     let connected = futures::future::join_all(connect_futs).await;
 
     let mut count = 0usize;
+    let mut servers = Vec::new();
     for (server_name, server, result) in connected {
         match result {
             Ok(client) => {
@@ -95,6 +109,10 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
                         }
                     }
                 };
+                servers.push(McpServerHandle {
+                    name: server_name.clone(),
+                    client: Arc::clone(&client),
+                });
                 for tool in tools {
                     let bridge_name = bridge_tool_name(&server_name, &tool.name);
                     let description = tool
@@ -142,7 +160,8 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
             }
         }
     }
-    count
+    count += crate::mcp_content::register_resource_tools(executor, &servers).await;
+    (count, servers)
 }
 
 fn mcp_call_error(result: Result<String, whycodes_mcp::McpError>) -> Result<String, String> {

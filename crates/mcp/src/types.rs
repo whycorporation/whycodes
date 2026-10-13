@@ -101,7 +101,7 @@ pub struct InitializeResult {
     pub server_info: ServerInfo,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ServerCapabilities {
     #[serde(default)]
     pub tools: Option<ServerCapabilityTools>,
@@ -271,6 +271,47 @@ pub struct ListPromptsResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "nextCursor")]
     pub next_cursor: Option<String>,
+}
+
+/// Result of `resources/read`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadResourceResult {
+    pub contents: Vec<McpResourceContent>,
+}
+
+/// One message of a rendered prompt (`prompts/get`)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptMessage {
+    pub role: String,
+    pub content: ToolContent,
+}
+
+/// Result of `prompts/get`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetPromptResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub messages: Vec<PromptMessage>,
+}
+
+impl GetPromptResult {
+    /// Message text joined by blank lines; embedded resources contribute
+    /// their text, images are left out.
+    pub fn text(&self) -> String {
+        self.messages
+            .iter()
+            .filter_map(|m| match &m.content {
+                ToolContent::Text { text } => Some(text.as_str()),
+                ToolContent::Resource { resource } => resource.text.as_deref(),
+                ToolContent::Image { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join(
+                "
+
+",
+            )
+    }
 }
 
 /// Notification that the client sends after initialize to signal readiness

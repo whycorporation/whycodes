@@ -10,8 +10,9 @@ use tracing::{debug, info, warn};
 
 use crate::http::{LegacySseTransport, StreamableHttpTransport};
 use crate::types::{
-    CallToolParams, CallToolResult, InitializeParams, InitializeResult, InitializedNotification,
-    JsonRpcRequest, JsonRpcResponse, ListToolsResult, McpTool,
+    CallToolParams, CallToolResult, GetPromptResult, InitializeParams, InitializeResult,
+    InitializedNotification, JsonRpcRequest, JsonRpcResponse, ListToolsResult, McpResourceContent,
+    McpTool, ReadResourceResult, ServerCapabilities,
 };
 
 const PROTOCOL_VERSION: &str = "2025-03-26";
@@ -34,6 +35,8 @@ enum Transport {
 /// MCP client supporting stdio, Streamable HTTP, and legacy HTTP+SSE.
 pub struct McpClient {
     transport: Transport,
+    /// What the server advertised in `initialize`.
+    capabilities: ServerCapabilities,
 }
 
 impl McpClient {
@@ -76,6 +79,7 @@ impl McpClient {
                 reader,
                 next_id: 1,
             },
+            capabilities: ServerCapabilities::default(),
         };
         client.initialize_handshake().await?;
         Ok(client)
@@ -85,6 +89,7 @@ impl McpClient {
         let transport = StreamableHttpTransport::new(url, headers)?;
         let mut client = Self {
             transport: Transport::StreamableHttp(transport),
+            capabilities: ServerCapabilities::default(),
         };
         client.initialize_handshake().await?;
         Ok(client)
@@ -94,6 +99,7 @@ impl McpClient {
         let transport = LegacySseTransport::connect(sse_url, headers).await?;
         let mut client = Self {
             transport: Transport::LegacySse(transport),
+            capabilities: ServerCapabilities::default(),
         };
         client.initialize_handshake().await?;
         Ok(client)
@@ -154,6 +160,7 @@ impl McpClient {
         self.send_notification("notifications/initialized", None)
             .await
             .map_err(|e| McpError::msg(&format!("failed to send initialized notification: {e}")))?;
+        self.capabilities = init_result.capabilities.clone();
         Ok(init_result)
     }
 
@@ -264,6 +271,43 @@ impl McpClient {
             .map_err(|e| McpError::msg(&format!("failed to parse prompts/list result: {e}")))?;
         info!(count = list.prompts.len(), "MCP prompts listed");
         Ok(list.prompts)
+    }
+
+    /// Contents of one resource (`resources/read`).
+    pub async fn read_resource(&mut self, uri: &str) -> Result<Vec<McpResourceContent>> {
+        let params = serde_json::json!({"uri": uri});
+        let result = self
+            .send_request("resources/read", Some(params))
+            .await
+            .map_err(|e| McpError::msg(&format!("resources/read failed: {e}")))?;
+        let read: ReadResourceResult = serde_json::from_value(result)
+            .map_err(|e| McpError::msg(&format!("failed to parse resources/read result: {e}")))?;
+        Ok(read.contents)
+    }
+
+    /// A prompt rendered with `arguments` (`prompts/get`).
+    pub async fn get_prompt(
+        &mut self,
+        name: &str,
+        arguments: &HashMap<String, String>,
+    ) -> Result<GetPromptResult> {
+        let params = serde_json::json!({"name": name, "arguments": arguments});
+        let result = self
+            .send_request("prompts/get", Some(params))
+            .await
+            .map_err(|e| McpError::msg(&format!("prompts/get failed: {e}")))?;
+        serde_json::from_value(result)
+            .map_err(|e| McpError::msg(&format!("failed to parse prompts/get result: {e}")))
+    }
+
+    /// The server advertised `prompts` in `initialize`.
+    pub fn supports_prompts(&self) -> bool {
+        self.capabilities.prompts.is_some()
+    }
+
+    /// The server advertised `resources` in `initialize`.
+    pub fn supports_resources(&self) -> bool {
+        self.capabilities.resources.is_some()
     }
 
     pub fn transport_name(&self) -> &'static str {

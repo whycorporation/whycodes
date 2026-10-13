@@ -10968,3 +10968,80 @@ async fn boot_fork_flag_forks_only_a_resumed_session() {
         "nothing resumed, nothing forked"
     );
 }
+
+const MCP_PROMPT_SERVER: &str = r#"
+import json, sys
+def send(rid, result):
+    sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":rid,"result":result}) + "\n")
+    sys.stdout.flush()
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    msg = json.loads(line)
+    method = msg.get("method")
+    rid = msg.get("id")
+    p = msg.get("params") or {}
+    if method == "initialize":
+        send(rid, {"protocolVersion":"2025-03-26","capabilities":{"tools":{},"prompts":{}},
+                   "serverInfo":{"name":"docs","version":"1"}})
+    elif method == "notifications/initialized":
+        continue
+    elif method == "tools/list":
+        send(rid, {"tools":[]})
+    elif method == "prompts/list":
+        send(rid, {"prompts":[{"name":"review","arguments":[{"name":"path","required":True}]},
+                              {"name":"empty"}]})
+    elif method == "prompts/get":
+        text = "" if p.get("name") == "empty" else "Review " + p["arguments"]["path"]
+        send(rid, {"messages":[{"role":"user","content":{"type":"text","text":text}}]})
+    else:
+        send(rid, {})
+"#;
+
+#[tokio::test]
+async fn mcp_slash_lists_servers_and_runs_prompts() {
+    let mut h = SlashHarness::new();
+    let last = |h: &SlashHarness| h.app.messages.last().unwrap().content.clone();
+    h.run("/mcp").await;
+    assert!(last(&h).contains("No MCP servers"), "{}", last(&h));
+    h.run("/mcp__docs__review x").await;
+    assert!(last(&h).contains("Unknown MCP prompt"), "{}", last(&h));
+
+    let script = h._tmp.path().join("mcp.py");
+    std::fs::write(&script, MCP_PROMPT_SERVER).unwrap();
+    let mut config = Config::default();
+    config.mcp_servers.insert(
+        "docs".into(),
+        whycodes_config::McpServerConfig {
+            transport: Some(whycodes_config::McpTransportKind::Stdio),
+            command: Some(if cfg!(windows) { "python" } else { "python3" }.into()),
+            args: vec!["-u".into(), script.to_string_lossy().into_owned()],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    );
+    h.agent.load_mcp(&config).await;
+    h.run("/mcp").await;
+    assert!(
+        last(&h).contains("/mcp__docs__review <path>"),
+        "{}",
+        last(&h)
+    );
+
+    h.run("/mcp__docs__review src/a.rs").await;
+    assert_eq!(last(&h), "Review src/a.rs");
+    assert!(
+        h.app.take_pending_turn().is_some(),
+        "prompt queued as a turn"
+    );
+    h.run("/mcp__docs__review").await;
+    assert!(last(&h).contains("missing argument 'path'"), "{}", last(&h));
+    h.run("/mcp__docs__empty").await;
+    assert!(
+        last(&h).contains("returned an empty prompt"),
+        "{}",
+        last(&h)
+    );
+}

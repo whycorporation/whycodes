@@ -35,6 +35,8 @@ pub struct Agent {
     pub info: AgentInfo,
     provider_registry: Arc<ProviderRegistry>,
     tool_executor: Arc<ToolExecutor>,
+    /// MCP servers connected by [`Self::load_mcp`] (prompts, resources).
+    mcp_servers: Vec<crate::mcp_load::McpServerHandle>,
     permission_prompter: Arc<dyn PermissionPrompter>,
     question_prompter: Arc<dyn QuestionPrompter>,
     risk_threshold: RiskThreshold,
@@ -360,6 +362,7 @@ impl Agent {
             info,
             provider_registry: Arc::new(ProviderRegistry::default()),
             tool_executor: Arc::new(ToolExecutor::new()),
+            mcp_servers: Vec::new(),
             permission_prompter: default_prompter(),
             question_prompter: default_question_prompter(),
             risk_threshold: RiskThreshold::default(),
@@ -976,13 +979,20 @@ impl Agent {
         let n_mcp = if config.mcp_servers.is_empty() {
             0
         } else {
-            crate::mcp_load::register_mcp_tools(&mut full, config).await
+            let (n, servers) = crate::mcp_load::register_mcp_tools(&mut full, config).await;
+            self.mcp_servers = servers;
+            n
         };
         if n_plug > 0 || n_mcp > 0 || lsp_overlay_is_custom(&self.lsp_overlay) {
             self.tool_executor = Arc::new(full);
             log_registered_count(n_plug, "shell plugins registered");
             log_registered_count(n_mcp, "MCP tools registered");
         }
+    }
+
+    /// MCP servers connected by [`Self::with_mcp`] / [`Self::load_mcp`].
+    pub fn mcp_servers(&self) -> &[crate::mcp_load::McpServerHandle] {
+        &self.mcp_servers
     }
 
     /// Load shell plugins only (when not calling [`Self::with_mcp`]).

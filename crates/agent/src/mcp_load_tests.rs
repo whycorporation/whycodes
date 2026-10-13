@@ -57,7 +57,7 @@ async fn register_with_no_servers_returns_zero() {
     let mut executor = ToolExecutor::new();
     let config = Config::default();
     assert_eq!(config.mcp_servers.len(), 0);
-    let count = register_mcp_tools(&mut executor, &config).await;
+    let (count, _servers) = register_mcp_tools(&mut executor, &config).await;
     assert_eq!(count, 0);
 }
 
@@ -92,7 +92,7 @@ async fn register_failing_stdio_command_returns_zero() {
             headers: None,
         },
     );
-    let count = register_mcp_tools(&mut executor, &config).await;
+    let (count, _servers) = register_mcp_tools(&mut executor, &config).await;
     assert_eq!(count, 0);
 }
 
@@ -127,7 +127,7 @@ async fn register_failing_url_logs_url_detail() {
             headers: None,
         },
     );
-    let count = register_mcp_tools(&mut executor, &config).await;
+    let (count, _servers) = register_mcp_tools(&mut executor, &config).await;
     assert_eq!(count, 0);
 }
 
@@ -335,7 +335,7 @@ async fn register_stdio_success_and_call_bridged_tool() {
     config
         .mcp_servers
         .insert("ghost".into(), stdio_config(dir.path(), &script));
-    let count = register_mcp_tools(&mut executor, &config).await;
+    let (count, _servers) = register_mcp_tools(&mut executor, &config).await;
     assert!(count >= 1, "expected at least one MCP tool, got {count}");
     assert!(executor.get("ghost_echo").is_some());
     assert!(executor.get("ghost_bare").is_some());
@@ -421,7 +421,7 @@ async fn register_stdio_list_tools_error_skips_server() {
     config
         .mcp_servers
         .insert("ghost".into(), stdio_config(dir.path(), &script));
-    let count = register_mcp_tools(&mut executor, &config).await;
+    let (count, _servers) = register_mcp_tools(&mut executor, &config).await;
     assert_eq!(count, 0);
     assert!(executor.get("ghost_echo").is_none());
 }
@@ -442,7 +442,7 @@ async fn register_unresolved_transport_logs_err_detail() {
             headers: None,
         },
     );
-    let count = register_mcp_tools(&mut executor, &config).await;
+    let (count, _servers) = register_mcp_tools(&mut executor, &config).await;
     assert_eq!(count, 0);
 }
 
