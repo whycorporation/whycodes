@@ -14,6 +14,10 @@ struct Mock {
     base: String,
     /// Publish protected-resource metadata (and hint it in the 401).
     prm: bool,
+    /// Protected-resource metadata without `resource` / servers.
+    prm_empty: bool,
+    /// Metadata documents that do not parse.
+    garbage_meta: bool,
     registration: bool,
     register_ok: bool,
     secret: bool,
@@ -27,6 +31,8 @@ impl Mock {
         Self {
             base: String::new(),
             prm: true,
+            prm_empty: false,
+            garbage_meta: false,
             registration: true,
             register_ok: true,
             secret: false,
@@ -54,6 +60,12 @@ async fn prm(State(m): State<Mock>) -> Response {
     if !m.prm {
         return StatusCode::NOT_FOUND.into_response();
     }
+    if m.prm_empty {
+        return Json(json!({})).into_response();
+    }
+    if m.garbage_meta {
+        return Json(json!({"authorization_servers": 5})).into_response();
+    }
     Json(json!({
         "resource": format!("{}/mcp", m.base),
         "authorization_servers": [format!("{}/as", m.base)],
@@ -78,9 +90,16 @@ async fn as_meta_issuer(State(m): State<Mock>) -> Response {
     Json(as_metadata(&m)).into_response()
 }
 
+fn origin_serves_metadata(m: &Mock) -> bool {
+    !m.prm || m.prm_empty || m.garbage_meta
+}
+
 async fn as_meta_origin(State(m): State<Mock>) -> Response {
-    if m.prm {
+    if !origin_serves_metadata(&m) {
         return StatusCode::NOT_FOUND.into_response();
+    }
+    if m.garbage_meta {
+        return Json(json!({"token_endpoint": 1})).into_response();
     }
     Json(as_metadata(&m)).into_response()
 }
@@ -136,7 +155,11 @@ async fn start(mut mock: Mock) -> Mock {
 }
 
 /// An `open` callback that plays the browser: redirect back with `code`.
-fn browser(code: &'static str, wrong_state: bool, seen: Arc<Mutex<String>>) -> impl FnOnce(&str) {
+fn browser(
+    code: &'static str,
+    wrong_state: bool,
+    seen: Arc<Mutex<String>>,
+) -> impl Fn(&str) + Sync {
     move |url: &str| {
         *seen.lock().unwrap() = url.to_string();
         let query: HashMap<String, String> =
@@ -175,7 +198,7 @@ async fn login_stores_a_token_that_refreshes() {
         "docs",
         &url,
         dir.path(),
-        browser("good", false, seen.clone()),
+        &browser("good", false, seen.clone()),
     )
     .await
     .unwrap();
@@ -215,7 +238,7 @@ async fn refresh_failures_leave_no_token() {
     let dir = tempfile::tempdir().unwrap();
     let url = format!("{}/mcp", mock.base);
     let seen = Arc::new(Mutex::new(String::new()));
-    login("docs", &url, dir.path(), browser("good", false, seen))
+    login("docs", &url, dir.path(), &browser("good", false, seen))
         .await
         .unwrap();
     expire(dir.path());
@@ -243,7 +266,7 @@ async fn refreshed_token_is_returned_even_if_saving_fails() {
         "docs",
         &format!("{}/mcp", mock.base),
         dir.path(),
-        browser("good", false, seen),
+        &browser("good", false, seen),
     )
     .await
     .unwrap();
@@ -278,15 +301,41 @@ async fn discovery_falls_back_to_the_server_origin() {
     );
 }
 
+#[tokio::test]
+async fn sparse_resource_metadata_defaults_to_the_server() {
+    let mut mock = Mock::new();
+    mock.prm_empty = true;
+    let mock = start(mock).await;
+    let url = format!("{}/mcp", mock.base);
+    let found = discover(&reqwest::Client::new(), &url).await.unwrap();
+    assert_eq!(found.resource, url);
+    assert_eq!(found.scopes, ["origin.scope"]);
+}
+
+#[tokio::test]
+async fn unparsable_metadata_is_skipped() {
+    let mut mock = Mock::new();
+    mock.garbage_meta = true;
+    let mock = start(mock).await;
+    let err = discover(&reqwest::Client::new(), &format!("{}/mcp", mock.base))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("no OAuth authorization server metadata"),
+        "{err}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn login_errors() {
     let dir = tempfile::tempdir().unwrap();
     let seen = || Arc::new(Mutex::new(String::new()));
 
-    let bad_url = login("docs", "not a url", dir.path(), |_| {}).await;
+    let bad_url = login("docs", "not a url", dir.path(), &|_| {}).await;
     assert!(bad_url.unwrap_err().to_string().contains("invalid URL"));
     // Nothing listening: discovery finds no metadata.
-    let closed = login("docs", "http://127.0.0.1:9/mcp", dir.path(), |_| {}).await;
+    let closed = login("docs", "http://127.0.0.1:9/mcp", dir.path(), &|_| {}).await;
     assert!(
         closed
             .unwrap_err()
@@ -297,7 +346,7 @@ async fn login_errors() {
     let mut no_dcr = Mock::new();
     no_dcr.registration = false;
     let no_dcr = start(no_dcr).await;
-    let err = login("docs", &format!("{}/mcp", no_dcr.base), dir.path(), |_| {})
+    let err = login("docs", &format!("{}/mcp", no_dcr.base), dir.path(), &|_| {})
         .await
         .unwrap_err();
     assert!(
@@ -308,9 +357,14 @@ async fn login_errors() {
     let mut refused = Mock::new();
     refused.register_ok = false;
     let refused = start(refused).await;
-    let err = login("docs", &format!("{}/mcp", refused.base), dir.path(), |_| {})
-        .await
-        .unwrap_err();
+    let err = login(
+        "docs",
+        &format!("{}/mcp", refused.base),
+        dir.path(),
+        &|_| {},
+    )
+    .await
+    .unwrap_err();
     assert!(
         err.to_string().contains("client registration returned 400"),
         "{err}"
@@ -318,14 +372,14 @@ async fn login_errors() {
 
     let mock = start(Mock::new()).await;
     let url = format!("{}/mcp", mock.base);
-    let err = login("docs", &url, dir.path(), browser("bad", false, seen()))
+    let err = login("docs", &url, dir.path(), &browser("bad", false, seen()))
         .await
         .unwrap_err();
     assert!(
         err.to_string().contains("token endpoint returned 400"),
         "{err}"
     );
-    let err = login("docs", &url, dir.path(), browser("good", true, seen()))
+    let err = login("docs", &url, dir.path(), &browser("good", true, seen()))
         .await
         .unwrap_err();
     assert!(err.to_string().contains("state mismatch"), "{err}");
@@ -337,7 +391,7 @@ async fn login_errors() {
         "docs",
         &format!("{}/mcp", garbled.base),
         dir.path(),
-        browser("good", false, seen()),
+        &browser("good", false, seen()),
     )
     .await
     .unwrap_err();

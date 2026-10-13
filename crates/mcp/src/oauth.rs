@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use reqwest::header::{ACCEPT, CONTENT_TYPE, WWW_AUTHENTICATE};
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use whycodes_auth::flow::{authorize_url, bind_loopback, wait_for_callback};
 use whycodes_auth::pkce::Pkce;
@@ -91,7 +90,8 @@ fn origin_and_path(url: &str) -> Result<(String, String)> {
     Ok((parsed.origin().ascii_serialization(), path))
 }
 
-async fn get_json<T: DeserializeOwned>(http: &reqwest::Client, url: &str) -> Option<T> {
+/// GET `url` as JSON; `None` on any failure (the caller tries the next path).
+async fn get_json(http: &reqwest::Client, url: &str) -> Option<Value> {
     let response = http
         .get(url)
         .header(ACCEPT, "application/json")
@@ -136,9 +136,15 @@ pub async fn discover(http: &reqwest::Client, server_url: &str) -> Result<Discov
     candidates.dedup();
     let mut found = None;
     for url in &candidates {
-        if let Some(meta) = get_json::<ResourceMetadata>(http, url).await {
-            found = Some(meta);
-            break;
+        let Some(meta) = get_json(http, url).await else {
+            continue;
+        };
+        match serde_json::from_value::<ResourceMetadata>(meta) {
+            Ok(meta) => {
+                found = Some(meta);
+                break;
+            }
+            Err(e) => tracing::debug!(%url, error = %e, "bad protected-resource metadata"),
         }
     }
     let (issuer, resource, scopes) = match found {
@@ -174,8 +180,12 @@ async fn auth_server_metadata(http: &reqwest::Client, issuer: &str) -> Result<Au
     ];
     candidates.dedup();
     for url in &candidates {
-        if let Some(meta) = get_json(http, url).await {
-            return Ok(meta);
+        let Some(meta) = get_json(http, url).await else {
+            continue;
+        };
+        match serde_json::from_value::<AuthServerMetadata>(meta) {
+            Ok(meta) => return Ok(meta),
+            Err(e) => tracing::debug!(%url, error = %e, "bad authorization server metadata"),
         }
     }
     Err(McpError::msg(&format!(
@@ -266,7 +276,7 @@ pub async fn login(
     server: &str,
     server_url: &str,
     data_dir: &Path,
-    open: impl FnOnce(&str),
+    open: &(dyn Fn(&str) + Sync),
 ) -> Result<()> {
     let http = reqwest::Client::new();
     let found = discover(&http, server_url).await?;

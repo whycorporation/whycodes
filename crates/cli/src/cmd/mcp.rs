@@ -258,7 +258,7 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                 name,
                 &url,
                 &whycodes_core::paths::data_dir(),
-                open_login_url,
+                &open_login_url,
             )
             .await?;
             println!("{}", mcp_login_done_line(name));
