@@ -43,6 +43,10 @@ pub struct Config {
     /// Model configurations
     #[serde(default)]
     pub models: HashMap<String, ModelConfig>,
+    /// USD per million tokens, keyed `"provider/model"`. Overrides prices
+    /// learned from the provider's `/v1/models` catalog.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub pricing: HashMap<String, PriceConfig>,
 
     /// Agent definitions
     #[serde(default)]
@@ -520,6 +524,17 @@ pub struct LspConfig {
     pub servers: HashMap<String, LspServerConfig>,
 }
 
+/// `[pricing."provider/model"]`: USD per million tokens.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct PriceConfig {
+    pub input: f64,
+    pub output: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write: Option<f64>,
+}
+
 /// One language-server overlay entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct LspServerConfig {
@@ -862,6 +877,7 @@ impl Default for Config {
         Config {
             providers: HashMap::new(),
             models: HashMap::new(),
+            pricing: HashMap::new(),
             agents: vec![
                 build_agent,
                 plan_agent,

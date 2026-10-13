@@ -2295,3 +2295,78 @@ async fn non_retryable_errors_and_an_exhausted_chain_surface_the_error() {
         .expect_err("every target is down");
     assert!(err.to_string().contains("503"), "{err}");
 }
+
+/// Reports 1M input tokens per step, then answers.
+struct PricedUsageProvider;
+
+impl LlmProvider for PricedUsageProvider {
+    fn name(&self) -> &str {
+        "openai"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::Provider("unused".into())) })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        Box::pin(async {
+            Ok(Box::pin(futures::stream::iter([
+                Ok(whycodes_core::types::StreamEvent::Usage {
+                    input_tokens: 1_000_000,
+                    output_tokens: 0,
+                }),
+                Ok(whycodes_core::types::StreamEvent::TextDelta {
+                    text: "priced".into(),
+                }),
+                Ok(whycodes_core::types::StreamEvent::MessageStop),
+            ]))
+                as whycodes_llm::provider::ProviderEventStream)
+        })
+    }
+}
+
+#[tokio::test]
+async fn turn_accumulates_cost_only_for_priced_models() {
+    let mut config = whycodes_config::Config::default();
+    config.pricing.insert(
+        "openai/gpt-cost".into(),
+        whycodes_config::PriceConfig {
+            input: 2.0,
+            output: 8.0,
+            cache_read: None,
+            cache_write: None,
+        },
+    );
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(PricedUsageProvider));
+    let agent = Agent::new(info("build"))
+        .with_config(&config)
+        .with_provider_registry(registry);
+    let mut session = session_user("please explain the retry loop");
+    let text = agent
+        .run_turn(&mut session, "openai", "gpt-cost", "sk", Some(2))
+        .await
+        .unwrap();
+    assert_eq!(text, "priced");
+    assert!((session.cost.usd - 2.0).abs() < 1e-9, "{:?}", session.cost);
+    assert_eq!(session.cost.unpriced_steps, 0);
+
+    let mut unpriced = session_user("please explain the retry loop");
+    agent
+        .run_turn(&mut unpriced, "openai", "no-price", "sk", Some(2))
+        .await
+        .unwrap();
+    assert_eq!(unpriced.cost.usd, 0.0);
+    assert_eq!(unpriced.cost.unpriced_steps, 1);
+}

@@ -652,6 +652,9 @@ impl Agent {
             // provider is distinguishable from a zero-cost turn.
             if !turn_usage.is_empty() {
                 session.add_usage(&turn_usage);
+                session
+                    .cost
+                    .add(self.step_cost(provider_name, model, &turn_usage));
                 emit(&events, TurnEvent::Usage(turn_usage.clone()));
             }
 
@@ -836,6 +839,9 @@ impl Agent {
             if !fold.is_empty() {
                 turn_usage.add(&fold);
                 session.add_usage(&fold);
+                let fold_cost =
+                    std::mem::take(&mut *super::recover_lock(&self.subagent_cost_pending));
+                session.cost.merge(&fold_cost);
                 tracing::debug!(
                     input = fold.input_tokens,
                     output = fold.output_tokens,

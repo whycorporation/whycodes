@@ -1157,6 +1157,11 @@ impl Agent {
                     label,
                 )) => {
                     fold_pending_usage(&self.subagent_usage_pending, &worker_usage);
+                    fold_pending_cost(
+                        &self.subagent_cost_pending,
+                        &worker_usage,
+                        self.step_cost(&provider_name, &model, &worker_usage),
+                    );
                     match worktree {
                         Some(wt) => {
                             let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
@@ -1385,6 +1390,11 @@ impl Agent {
             .run(task, &worker_provider, &worker_model, api_key)
             .await;
         fold_pending_usage(&self.subagent_usage_pending, &result.usage);
+        fold_pending_cost(
+            &self.subagent_cost_pending,
+            &result.usage,
+            self.step_cost(&worker_provider, &worker_model, &result.usage),
+        );
         let usage_note = if result.usage.is_empty() {
             String::new()
         } else {
@@ -1465,6 +1475,17 @@ fn fold_pending_usage(
         return;
     }
     super::recover_lock(pending).add(usage);
+}
+
+fn fold_pending_cost(
+    pending: &std::sync::Mutex<whycodes_session::SessionCost>,
+    usage: &whycodes_core::types::Usage,
+    usd: Option<f64>,
+) {
+    if usage.is_empty() {
+        return;
+    }
+    super::recover_lock(pending).add(usd);
 }
 
 fn background_turn_listener(tx: EventSink) -> crate::background::BackgroundListener {
