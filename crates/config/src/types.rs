@@ -1290,6 +1290,12 @@ pub struct SessionConfig {
     /// How long to wait for the primary first token before opening `model_race`.
     #[serde(default = "default_race_after_ms")]
     pub race_after_ms: u64,
+    /// `provider/model` refs tried in order when the active model fails to
+    /// open a stream (rate limit after named credentials, 5xx, network,
+    /// timeout). Each needs a key: same provider, config `api_key`, or
+    /// `<PROVIDER>_API_KEY`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback_models: Vec<String>,
     /// Process-local text-only response cache: `auto` (default) or `off`.
     #[serde(default = "default_response_cache")]
     pub response_cache: String,
@@ -1405,6 +1411,7 @@ impl Default for SessionConfig {
             model_plan: None,
             model_race: default_model_race(),
             race_after_ms: default_race_after_ms(),
+            fallback_models: Vec::new(),
             response_cache: default_response_cache(),
             intent_guidance: default_intent_guidance(),
             compaction_llm: default_compaction_llm(),
