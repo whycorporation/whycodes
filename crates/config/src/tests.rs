@@ -475,6 +475,7 @@ fn merge_hooks_nonempty_replaces() {
         tool_match: "bash".into(),
         command: "base".into(),
         block_on_failure: false,
+        feedback: false,
         timeout_secs: 5,
     });
     let mut overlay = Config::default();
@@ -483,6 +484,7 @@ fn merge_hooks_nonempty_replaces() {
         tool_match: "*".into(),
         command: "overlay".into(),
         block_on_failure: false,
+        feedback: false,
         timeout_secs: 5,
     });
     let merged = base.merge_with(&overlay);

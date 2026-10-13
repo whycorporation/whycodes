@@ -6,6 +6,7 @@
 mod compact;
 mod dispatch;
 mod gate;
+mod lifecycle;
 mod spawn;
 mod turn;
 
@@ -39,8 +40,10 @@ pub struct Agent {
     risk_threshold: RiskThreshold,
     sandbox: SandboxSettings,
     network: NetworkPolicy,
-    /// Config-driven pre/post tool hooks (empty by default).
+    /// Config-driven tool and lifecycle hooks (empty by default).
     hooks: Vec<HookConfig>,
+    /// Session ids whose `session_start` hooks already ran in this process.
+    session_starts: Mutex<std::collections::HashSet<String>>,
     /// Discord / Telegram session notifications (off by default).
     notify: NotifyConfig,
     /// When session estimate exceeds this, compact before the next LLM call
@@ -357,6 +360,7 @@ impl Agent {
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
             hooks: Vec::new(),
+            session_starts: Mutex::new(std::collections::HashSet::new()),
             notify: NotifyConfig::default(),
             // Match config default when `with_config` is not used.
             compaction_threshold: 150_000,

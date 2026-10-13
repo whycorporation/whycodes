@@ -46,7 +46,29 @@ impl Agent {
     }
 
     /// Run a turn, optionally streaming `TurnEvent`s and honouring a cancel flag (Esc).
+    ///
+    /// `session_start` / `user_prompt_submit` hooks run first; `stop` hooks
+    /// run after a reply.
     pub async fn run_turn_with_events(
+        &self,
+        session: &mut Session,
+        opts: TurnOpts<'_>,
+    ) -> whycodes_core::Result<String> {
+        let prompt = session
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == whycodes_core::types::Role::User)
+            .and_then(|m| m.content.as_text().map(str::to_string))
+            .unwrap_or_default();
+        self.run_prompt_hooks(session, &prompt).await?;
+        let reply = self.run_turn_steps(session, opts).await?;
+        self.run_stop_hooks(session, &reply).await;
+        Ok(reply)
+    }
+
+    /// The model/tool step loop of one user turn.
+    async fn run_turn_steps(
         &self,
         session: &mut Session,
         opts: TurnOpts<'_>,

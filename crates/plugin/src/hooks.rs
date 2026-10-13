@@ -1,4 +1,5 @@
-//! Pre/post tool hooks: shell commands from config that run around tool calls.
+//! Config hooks: shell commands that run around tool calls and at session
+//! lifecycle points (session start, prompt submit, stop, compaction, subagent).
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -21,6 +22,8 @@ pub struct HookContext {
     pub tool_is_error: Option<bool>,
     /// Only meaningful for `PostTool` (truncated).
     pub tool_output: Option<String>,
+    /// Event-specific variables (`WHYCODES_PROMPT`, …).
+    pub extra_env: Vec<(&'static str, String)>,
 }
 
 impl HookContext {
@@ -41,6 +44,7 @@ impl HookContext {
             working_dir: working_dir.into(),
             tool_is_error: None,
             tool_output: None,
+            extra_env: Vec::new(),
         }
     }
 
@@ -63,7 +67,54 @@ impl HookContext {
             working_dir: working_dir.into(),
             tool_is_error: Some(is_error),
             tool_output: Some(truncate_output(output)),
+            extra_env: Vec::new(),
         }
+    }
+
+    /// Context for a lifecycle event. `subject` is what `match` filters
+    /// (the agent type for `SubagentStop`; empty otherwise).
+    pub fn lifecycle(
+        event: HookEvent,
+        subject: impl Into<String>,
+        session_id: Option<String>,
+        working_dir: impl Into<String>,
+    ) -> Self {
+        Self {
+            event,
+            tool_name: subject.into(),
+            tool_id: String::new(),
+            tool_input: String::new(),
+            session_id,
+            working_dir: working_dir.into(),
+            tool_is_error: None,
+            tool_output: None,
+            extra_env: Vec::new(),
+        }
+    }
+
+    /// Add an event variable; long values are truncated like tool output.
+    pub fn with_env(mut self, key: &'static str, value: &str) -> Self {
+        self.extra_env.push((key, truncate_output(value)));
+        self
+    }
+}
+
+/// What a hook chain asks of the caller.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HookOutcome {
+    /// First blocking failure (`pre_tool` / `user_prompt_submit` only).
+    pub block: Option<String>,
+    /// Trimmed stdout of successful `feedback = true` hooks, in order.
+    pub feedback: Vec<String>,
+}
+
+impl HookOutcome {
+    /// Feedback joined for the model, or `None` when no hook spoke.
+    pub fn feedback_text(&self) -> Option<String> {
+        if self.feedback.is_empty() {
+            return None;
+        }
+        Some(self.feedback.join("\n\n"))
     }
 }
 
@@ -120,9 +171,13 @@ pub fn matching_hooks<'a>(
     event: HookEvent,
     tool_name: &str,
 ) -> Vec<&'a HookConfig> {
+    let uses_match = matches!(
+        event,
+        HookEvent::PreTool | HookEvent::PostTool | HookEvent::SubagentStop
+    );
     hooks
         .iter()
-        .filter(|h| h.event == event && tool_matches(&h.tool_match, tool_name))
+        .filter(|h| h.event == event && (!uses_match || tool_matches(&h.tool_match, tool_name)))
         .collect()
 }
 
@@ -151,10 +206,14 @@ pub async fn run_hook(hook: &HookConfig, ctx: &HookContext) -> HookRunResult {
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .env("WHYCODES_HOOK_EVENT", event_env(ctx.event))
-        .env("WHYCODES_TOOL_NAME", &ctx.tool_name)
-        .env("WHYCODES_TOOL_ID", &ctx.tool_id)
-        .env("WHYCODES_TOOL_INPUT", &ctx.tool_input)
-        .env("WHYCODES_WORKING_DIR", &ctx.working_dir);
+        .env("WHYCODES_WORKING_DIR", &ctx.working_dir)
+        .envs(ctx.extra_env.iter().map(|(k, v)| (*k, v.as_str())));
+
+    if matches!(ctx.event, HookEvent::PreTool | HookEvent::PostTool) {
+        cmd.env("WHYCODES_TOOL_NAME", &ctx.tool_name)
+            .env("WHYCODES_TOOL_ID", &ctx.tool_id)
+            .env("WHYCODES_TOOL_INPUT", &ctx.tool_input);
+    }
 
     if let Some(ref sid) = ctx.session_id {
         cmd.env("WHYCODES_SESSION_ID", sid);
@@ -211,10 +270,7 @@ fn hook_timeout_result(timeout_secs: u64) -> HookRunResult {
 }
 
 fn event_env(event: HookEvent) -> &'static str {
-    match event {
-        HookEvent::PreTool => "pre_tool",
-        HookEvent::PostTool => "post_tool",
-    }
+    event.as_str()
 }
 
 /// Truncate tool output for env injection.
@@ -228,67 +284,63 @@ pub fn truncate_output(s: &str) -> String {
     out
 }
 
-/// Run all matching pre-tool hooks. First blocking failure wins.
-pub async fn run_pre_hooks(hooks: &[HookConfig], ctx: &HookContext) -> PreHookDecision {
-    let matched = matching_hooks(hooks, HookEvent::PreTool, &ctx.tool_name);
-    if matched.is_empty() {
-        return PreHookDecision::Allow;
-    }
-
-    for hook in matched {
+/// Run every hook matching `ctx`. First blocking failure wins.
+///
+/// Blocking applies to `pre_tool` / `user_prompt_submit`; feedback to
+/// `post_tool` / `session_start` / `user_prompt_submit`. Other failures are
+/// logged only.
+pub async fn run_hooks(hooks: &[HookConfig], ctx: &HookContext) -> HookOutcome {
+    let label = event_env(ctx.event);
+    let blockable = ctx.event.can_block();
+    let speaks = matches!(
+        ctx.event,
+        HookEvent::PostTool | HookEvent::SessionStart | HookEvent::UserPromptSubmit
+    );
+    let mut outcome = HookOutcome::default();
+    for hook in matching_hooks(hooks, ctx.event, &ctx.tool_name) {
         if hook.command.trim().is_empty() {
             continue;
         }
-        tracing::debug!(
-            tool = %ctx.tool_name,
-            command = %hook.command,
-            "running pre_tool hook"
-        );
+        tracing::debug!(event = label, subject = %ctx.tool_name, command = %hook.command, "running hook");
         let result = run_hook(hook, ctx).await;
         if result.success() {
+            let out = result.stdout.trim();
+            if hook.feedback && speaks && !out.is_empty() {
+                outcome.feedback.push(truncate_output(out));
+            }
             continue;
         }
         let detail = format_failure(hook, &result);
-        if hook.block_on_failure {
-            tracing::warn!(tool = %ctx.tool_name, %detail, "pre_tool hook blocked tool");
-            return PreHookDecision::Block {
-                reason: format!("pre_tool hook blocked `{}`: {detail}", ctx.tool_name),
-            };
+        if hook.block_on_failure && blockable {
+            tracing::warn!(event = label, subject = %ctx.tool_name, %detail, "hook blocked");
+            outcome.block = Some(detail);
+            return outcome;
         }
-        tracing::warn!(
-            tool = %ctx.tool_name,
-            %detail,
-            "pre_tool hook failed (non-blocking)"
-        );
+        tracing::warn!(event = label, subject = %ctx.tool_name, %detail, "hook failed (non-blocking)");
     }
-    PreHookDecision::Allow
+    outcome
 }
 
-/// Run all matching post-tool hooks. Failures are logged only.
-pub async fn run_post_hooks(hooks: &[HookConfig], ctx: &HookContext) {
-    let matched = matching_hooks(hooks, HookEvent::PostTool, &ctx.tool_name);
-    if matched.is_empty() {
-        return;
+/// Run all matching pre-tool hooks. First blocking failure wins.
+pub async fn run_pre_hooks(hooks: &[HookConfig], ctx: &HookContext) -> PreHookDecision {
+    match run_hooks(hooks, ctx).await.block {
+        None => PreHookDecision::Allow,
+        Some(detail) => PreHookDecision::Block {
+            reason: format!("pre_tool hook blocked `{}`: {detail}", ctx.tool_name),
+        },
     }
+}
 
-    for hook in matched {
-        if hook.command.trim().is_empty() {
-            continue;
-        }
-        tracing::debug!(
-            tool = %ctx.tool_name,
-            command = %hook.command,
-            "running post_tool hook"
-        );
-        let result = run_hook(hook, ctx).await;
-        if !result.success() {
-            let detail = format_failure(hook, &result);
-            tracing::warn!(
-                tool = %ctx.tool_name,
-                %detail,
-                "post_tool hook failed"
-            );
-        }
+/// Run all matching post-tool hooks; returns feedback for the tool result.
+pub async fn run_post_hooks(hooks: &[HookConfig], ctx: &HookContext) -> Option<String> {
+    run_hooks(hooks, ctx).await.feedback_text()
+}
+
+/// Append post-tool hook feedback to a tool result body.
+pub fn append_feedback(content: &mut String, feedback: Option<String>) {
+    if let Some(text) = feedback {
+        content.push_str("\n\n[post_tool hook]\n");
+        content.push_str(&text);
     }
 }
 
@@ -338,6 +390,7 @@ mod tests {
                 tool_match: "bash".into(),
                 command: "true".into(),
                 block_on_failure: true,
+                feedback: false,
                 timeout_secs: 5,
             },
             HookConfig {
@@ -345,6 +398,7 @@ mod tests {
                 tool_match: "*".into(),
                 command: "true".into(),
                 block_on_failure: false,
+                feedback: false,
                 timeout_secs: 5,
             },
             HookConfig {
@@ -352,6 +406,7 @@ mod tests {
                 tool_match: "write".into(),
                 command: "true".into(),
                 block_on_failure: false,
+                feedback: false,
                 timeout_secs: 5,
             },
         ];
@@ -369,6 +424,7 @@ mod tests {
             tool_match: "*".into(),
             command: "exit 1".into(),
             block_on_failure: true,
+            feedback: false,
             timeout_secs: 5,
         }];
         let ctx = HookContext::pre("bash", "id1", "{}", None, work_dir());
@@ -383,6 +439,7 @@ mod tests {
             tool_match: "*".into(),
             command: "exit 1".into(),
             block_on_failure: false,
+            feedback: false,
             timeout_secs: 5,
         }];
         let ctx = HookContext::pre("bash", "id1", "{}", None, work_dir());
@@ -399,6 +456,7 @@ mod tests {
             tool_match: "bash".into(),
             command: "true".into(),
             block_on_failure: true,
+            feedback: false,
             timeout_secs: 5,
         }];
         let ctx = HookContext::pre("bash", "id1", "{}", None, work_dir());
@@ -415,6 +473,7 @@ mod tests {
             tool_match: "*".into(),
             command: "true".into(),
             block_on_failure: false,
+            feedback: false,
             timeout_secs: 5,
         }];
         let ctx = HookContext::post(
@@ -455,6 +514,7 @@ mod tests {
             tool_match: tool_match.into(),
             command: command.into(),
             block_on_failure,
+            feedback: false,
             timeout_secs,
         }
     }
@@ -604,5 +664,120 @@ mod tests {
             out.chars().count(),
             OUTPUT_ENV_MAX + "\n…[truncated]".chars().count()
         );
+    }
+
+    /// Shell snippet that prints an env var (sh vs cmd).
+    fn echo_var(name: &str) -> String {
+        if cfg!(windows) {
+            format!("echo %{name}%")
+        } else {
+            format!("echo \"${name}\"")
+        }
+    }
+
+    fn speaking(event: HookEvent, tool_match: &str, command: &str) -> HookConfig {
+        HookConfig {
+            feedback: true,
+            ..hook(event, tool_match, command, false, 5)
+        }
+    }
+
+    #[tokio::test]
+    async fn lifecycle_hooks_see_event_env_and_ignore_match() {
+        let hooks = vec![
+            speaking(
+                HookEvent::UserPromptSubmit,
+                "bash",
+                &echo_var("WHYCODES_PROMPT"),
+            ),
+            speaking(
+                HookEvent::UserPromptSubmit,
+                "*",
+                &echo_var("WHYCODES_HOOK_EVENT"),
+            ),
+            hook(HookEvent::PreTool, "*", "echo not-me", false, 5),
+        ];
+        let ctx = HookContext::lifecycle(HookEvent::UserPromptSubmit, "", None, work_dir())
+            .with_env("WHYCODES_PROMPT", "fix the build");
+        let outcome = run_hooks(&hooks, &ctx).await;
+        assert_eq!(outcome.block, None);
+        assert_eq!(
+            outcome.feedback,
+            vec!["fix the build", "user_prompt_submit"]
+        );
+        assert_eq!(
+            outcome.feedback_text().as_deref(),
+            Some("fix the build\n\nuser_prompt_submit")
+        );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_hooks_do_not_get_tool_variables() {
+        let hooks = vec![speaking(
+            HookEvent::SessionStart,
+            "*",
+            &echo_var("WHYCODES_TOOL_NAME"),
+        )];
+        let ctx = HookContext::lifecycle(HookEvent::SessionStart, "subject", None, work_dir());
+        let out = run_hooks(&hooks, &ctx).await.feedback;
+        assert!(out.iter().all(|line| !line.contains("subject")), "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn only_prompt_and_tool_events_can_block() {
+        for event in [HookEvent::UserPromptSubmit, HookEvent::PreTool] {
+            let hooks = vec![
+                hook(event, "*", "exit 3", true, 5),
+                speaking(event, "*", "echo after"),
+            ];
+            let ctx = HookContext::lifecycle(event, "bash", None, work_dir());
+            let outcome = run_hooks(&hooks, &ctx).await;
+            assert!(outcome.block.unwrap().contains("exit 3"));
+            assert!(outcome.feedback.is_empty(), "stops at the block");
+        }
+        for event in [HookEvent::Stop, HookEvent::PreCompact, HookEvent::PostTool] {
+            let hooks = vec![hook(event, "*", "exit 3", true, 5)];
+            let ctx = HookContext::lifecycle(event, "", None, work_dir());
+            assert_eq!(run_hooks(&hooks, &ctx).await, HookOutcome::default());
+        }
+    }
+
+    #[tokio::test]
+    async fn feedback_needs_the_flag_a_speaking_event_and_output() {
+        let hooks = vec![
+            hook(HookEvent::PostTool, "*", "echo quiet", false, 5),
+            speaking(HookEvent::PostTool, "*", "exit 0"),
+            speaking(HookEvent::PostTool, "*", "echo lint: 2 warnings"),
+            speaking(HookEvent::Stop, "*", "echo ignored"),
+        ];
+        let ctx = HookContext::post("edit", "id", "{}", None, work_dir(), false, "ok");
+        let feedback = run_post_hooks(&hooks, &ctx).await;
+        assert_eq!(feedback.as_deref(), Some("lint: 2 warnings"));
+        let stop = HookContext::lifecycle(HookEvent::Stop, "", None, work_dir());
+        assert_eq!(run_hooks(&hooks, &stop).await.feedback_text(), None);
+
+        let mut body = "edited".to_string();
+        append_feedback(&mut body, None);
+        assert_eq!(body, "edited");
+        append_feedback(&mut body, feedback);
+        assert_eq!(body, "edited\n\n[post_tool hook]\nlint: 2 warnings");
+    }
+
+    #[test]
+    fn subagent_stop_filters_by_agent_type() {
+        let hooks = vec![
+            hook(HookEvent::SubagentStop, "explore", "echo x", false, 5),
+            hook(HookEvent::SessionStart, "explore", "echo x", false, 5),
+        ];
+        assert_eq!(
+            matching_hooks(&hooks, HookEvent::SubagentStop, "explore").len(),
+            1
+        );
+        assert!(matching_hooks(&hooks, HookEvent::SubagentStop, "build").is_empty());
+        assert_eq!(matching_hooks(&hooks, HookEvent::SessionStart, "").len(), 1);
+        let ctx = HookContext::lifecycle(HookEvent::Stop, "", None, ".")
+            .with_env("WHYCODES_RESPONSE", &"r".repeat(OUTPUT_ENV_MAX + 1));
+        assert!(ctx.extra_env[0].1.ends_with("…[truncated]"));
+        assert_eq!(event_env(HookEvent::SubagentStop), "subagent_stop");
     }
 }

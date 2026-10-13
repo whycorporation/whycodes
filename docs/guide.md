@@ -824,7 +824,7 @@ apply inside the sandboxed shell. If you set an allowlist and still want
 search, include the provider hosts (`serpapi.com` and/or
 `html.duckduckgo.com`).
 
-### Tool hooks
+### Hooks
 
 ```toml
 [[hooks]]
@@ -838,13 +838,46 @@ timeout_secs = 30
 event = "post_tool"
 match = "*"
 command = "logger -t whycodes \"done $WHYCODES_TOOL_NAME err=$WHYCODES_TOOL_IS_ERROR\""
+
+[[hooks]]
+event = "post_tool"
+match = "edit"
+command = "cargo clippy -q 2>&1 | tail -20"
+feedback = true             # stdout is appended to the tool result
 ```
 
 Environment: `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`, `WHYCODES_TOOL_ID`,
 `WHYCODES_TOOL_INPUT` (JSON), `WHYCODES_SESSION_ID`, `WHYCODES_WORKING_DIR`.
 Post-tool also sets `WHYCODES_TOOL_IS_ERROR` (`0`/`1`) and
 `WHYCODES_TOOL_OUTPUT` (truncated). Hooks run after the risk gate and
-permission prompt, before execution. Subagent loops do not invoke hooks yet.
+permission prompt, before execution. `task` and `swarm` subagents run the same
+tool hooks. With a `read` hook configured, reads are no longer started early
+while the model is still streaming, so the hook sees every read.
+
+Lifecycle events use the same `[[hooks]]` table:
+
+| `event` | When | Extra environment | Block | `feedback` |
+|---|---|---|---|---|
+| `session_start` | Before the first turn of a session in this process (new or resumed) | — | no | added to the turn |
+| `user_prompt_submit` | Before each user turn | `WHYCODES_PROMPT` | yes | added to the turn |
+| `stop` | After a turn produced its reply | `WHYCODES_RESPONSE` | no | — |
+| `pre_compact` | Before the transcript is compacted (auto, overflow, `/compact`) | — | no | — |
+| `subagent_stop` | After a `task` / `swarm` worker finishes; `match` filters the agent type | `WHYCODES_SUBAGENT_TYPE`, `_GOAL`, `_SUCCESS`, `_OUTPUT` | no | — |
+
+`match` is ignored for `session_start`, `user_prompt_submit`, `stop`, and
+`pre_compact`. `feedback = true` appends a successful hook's stdout to the
+user turn inside `<hook-context>` tags. A `user_prompt_submit` hook with
+`block_on_failure = true` refuses the turn when it exits non-zero.
+
+```toml
+[[hooks]]
+event = "session_start"
+command = "git status --short | head -20"
+feedback = true
+```
+
+`whycodes import` maps Claude Code's `SessionStart`, `UserPromptSubmit`,
+`Stop`, `PreCompact`, and `SubagentStop` hooks to these events.
 
 ### Session notifications (Discord / Telegram)
 
