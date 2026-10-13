@@ -666,13 +666,16 @@ mod tests {
         );
     }
 
-    /// Shell snippet that prints an env var (sh vs cmd).
+    /// Shell snippet that prints an env var (cmd).
+    #[cfg(windows)]
     fn echo_var(name: &str) -> String {
-        if cfg!(windows) {
-            format!("echo %{name}%")
-        } else {
-            format!("echo \"${name}\"")
-        }
+        format!("echo %{name}%")
+    }
+
+    /// Shell snippet that prints an env var (sh).
+    #[cfg(not(windows))]
+    fn echo_var(name: &str) -> String {
+        format!("echo \"${name}\"")
     }
 
     fn speaking(event: HookEvent, tool_match: &str, command: &str) -> HookConfig {
@@ -720,7 +723,7 @@ mod tests {
         )];
         let ctx = HookContext::lifecycle(HookEvent::SessionStart, "subject", None, work_dir());
         let out = run_hooks(&hooks, &ctx).await.feedback;
-        assert!(out.iter().all(|line| !line.contains("subject")), "{out:?}");
+        assert!(!out.concat().contains("subject"), "{out:?}");
     }
 
     #[tokio::test]
