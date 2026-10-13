@@ -164,30 +164,28 @@ impl Database {
         if terms.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
-        let clauses = (1..=terms.len())
-            .map(|i| format!("m.content LIKE ?{i} ESCAPE '\\'"))
-            .collect::<Vec<_>>()
-            .join(" AND ");
-        let sql = format!(
+        let mut sql = String::from(
             "SELECT s.id, s.title, s.created_at, s.updated_at, s.project_path,
                     s.input_tokens, s.output_tokens,
                     s.cache_creation_input_tokens, s.cache_read_input_tokens,
                     COUNT(*), MIN(m.content)
              FROM messages m JOIN sessions s ON s.id = m.session_id
-             WHERE {clauses}
-             GROUP BY s.id ORDER BY s.updated_at DESC LIMIT {limit}"
+             WHERE m.content LIKE ?1 ESCAPE '\\'",
         );
+        for i in 2..=terms.len() {
+            sql.push_str(&format!(" AND m.content LIKE ?{i} ESCAPE '\\'"));
+        }
+        sql.push_str(&format!(
+            " GROUP BY s.id ORDER BY s.updated_at DESC LIMIT {limit}"
+        ));
         let patterns: Vec<String> = terms.iter().map(|t| like_pattern(t)).collect();
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(patterns.iter()), |row| {
-            let hits: i64 = row.get(9)?;
-            Ok(SessionTextHit {
-                session: map_session_row(row)?,
-                hits: hits as usize,
-                sample: row.get(10)?,
-            })
-        })?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        let rows = stmt.query_map(rusqlite::params_from_iter(&patterns), map_session_text_hit)?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
     }
 
     /// Sum provider-reported usage and message counts across all sessions.
@@ -821,6 +819,15 @@ fn like_pattern(term: &str) -> String {
     }
     out.push('%');
     out
+}
+
+fn map_session_text_hit(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionTextHit> {
+    let hits: i64 = row.get(9)?;
+    Ok(SessionTextHit {
+        session: map_session_row(row)?,
+        hits: hits as usize,
+        sample: row.get(10)?,
+    })
 }
 
 fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
