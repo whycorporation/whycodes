@@ -41,6 +41,8 @@ pub struct Agent {
     network: NetworkPolicy,
     /// Config-driven pre/post tool hooks (empty by default).
     hooks: Vec<HookConfig>,
+    /// Last LLM step's prompt-cache read per session id (cache-miss notice).
+    cache_reads: Mutex<std::collections::HashMap<String, u64>>,
     /// Discord / Telegram session notifications (off by default).
     notify: NotifyConfig,
     /// When session estimate exceeds this, compact before the next LLM call
@@ -357,6 +359,7 @@ impl Agent {
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
             hooks: Vec::new(),
+            cache_reads: Mutex::new(std::collections::HashMap::new()),
             notify: NotifyConfig::default(),
             // Match config default when `with_config` is not used.
             compaction_threshold: 150_000,
@@ -1216,6 +1219,24 @@ pub(crate) struct FallbackTarget {
     pub provider: String,
     pub model: String,
     pub api_key: String,
+}
+
+impl Agent {
+    /// Record this step's prompt-cache read; a notice when it dropped from
+    /// the previous step's. `/fresh` (`skip_cache`) misses on purpose.
+    pub(crate) fn note_cache_read(
+        &self,
+        session_id: &str,
+        usage: &whycodes_core::types::Usage,
+        skip_cache: bool,
+    ) -> Option<String> {
+        let read = usage.cache_read_input_tokens.unwrap_or(0);
+        let prev = recover_lock(&self.cache_reads).insert(session_id.to_string(), read)?;
+        if skip_cache {
+            return None;
+        }
+        crate::cache_watch::cache_miss_notice(prev, usage)
+    }
 }
 
 /// Any `[lsp]` key set: the executor must carry a configured `lsp` tool.

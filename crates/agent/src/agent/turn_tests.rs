@@ -2295,3 +2295,42 @@ async fn non_retryable_errors_and_an_exhausted_chain_surface_the_error() {
         .expect_err("every target is down");
     assert!(err.to_string().contains("503"), "{err}");
 }
+
+#[tokio::test]
+async fn a_dropped_prompt_cache_shows_a_status_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let agent = batched([
+        vec![
+            ScriptedStep::CacheUsage {
+                creation_input_tokens: 0,
+                read_input_tokens: 40_000,
+            },
+            ScriptedStep::ToolCall {
+                id: "r1".into(),
+                name: "read".into(),
+                input: json!({"path": "n.txt"}),
+            },
+        ],
+        vec![
+            ScriptedStep::Usage {
+                input_tokens: 41_000,
+                output_tokens: 5,
+            },
+            ScriptedStep::Text("cache went cold".into()),
+        ],
+    ]);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut session = session_at(dir.path(), "please read n.txt and summarize it");
+    agent
+        .run_turn_with_events(&mut session, opts(Some(tx)))
+        .await
+        .unwrap();
+    let status = drain_status(&mut rx);
+    assert!(
+        status
+            .iter()
+            .any(|s| s.starts_with("Prompt cache miss: 41.0k tokens")),
+        "{status:?}"
+    );
+}

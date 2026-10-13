@@ -265,6 +265,12 @@ Both TUI and `--plain`:
 | `/info` `/details` | Session details |
 | `/doctor` | Environment / config diagnostics |
 
+When a step reads far less from the provider's prompt cache than the step
+before (the cache TTL ran out, the prompt prefix changed, or the model
+switched), the status line says how many tokens went uncached:
+`Prompt cache miss: 48.4k tokens sent uncached (last step read 46.0k from
+cache)`. A `/fresh` turn misses on purpose and is not reported.
+
 TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
 `/loop` (`/loop 3 <prompt>`; `/loop stop`), `/goal` (below).
 
