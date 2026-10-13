@@ -1516,7 +1516,8 @@ pub(crate) fn default_compaction_threshold() -> usize {
     150_000
 }
 
-/// Session notifications over Discord Incoming Webhooks and/or Telegram bots.
+/// Session notifications over Discord Incoming Webhooks, Telegram bots, and/or
+/// the terminal (desktop notification via OSC 9 / OSC 777).
 ///
 /// Off until `on` is non-empty **and** at least one channel is configured.
 /// Secrets should live in env (`WHYCODES_NOTIFY_*`) or `${VAR}` substitution,
@@ -1528,6 +1529,7 @@ pub(crate) fn default_compaction_threshold() -> usize {
 /// discord_webhook = "${DISCORD_WEBHOOK_URL}"
 /// telegram_bot_token = "${TELEGRAM_BOT_TOKEN}"
 /// telegram_chat_id = "${TELEGRAM_CHAT_ID}"
+/// desktop = true   # TUI only, while the terminal window is not focused
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NotifyConfig {
@@ -1547,6 +1549,10 @@ pub struct NotifyConfig {
     /// HTTP timeout per channel. Default 8s, clamped 1–60.
     #[serde(default = "default_notify_timeout_secs")]
     pub timeout_secs: u64,
+    /// Desktop notification from the TUI through the terminal (OSC 9 / 777),
+    /// sent only while the terminal window is not focused. Omitted = off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop: Option<bool>,
 }
 
 pub(crate) fn default_notify_timeout_secs() -> u64 {
@@ -1561,6 +1567,7 @@ impl Default for NotifyConfig {
             telegram_bot_token: None,
             telegram_chat_id: None,
             timeout_secs: default_notify_timeout_secs(),
+            desktop: None,
         }
     }
 }
@@ -1597,6 +1604,11 @@ impl NotifyConfig {
         self.wants(event) && self.has_channel()
     }
 
+    /// True when the TUI should raise a desktop notification for this event.
+    pub fn desktop_for(&self, event: NotifyEvent) -> bool {
+        self.desktop == Some(true) && self.wants(event)
+    }
+
     pub(crate) fn merge_with(&self, other: &NotifyConfig) -> NotifyConfig {
         let mut merged = self.clone();
         if !other.on.is_empty() {
@@ -1613,6 +1625,9 @@ impl NotifyConfig {
         }
         if other.timeout_secs != default_notify_timeout_secs() {
             merged.timeout_secs = other.timeout_secs;
+        }
+        if other.desktop.is_some() {
+            merged.desktop = other.desktop;
         }
         merged
     }
@@ -1898,9 +1913,17 @@ mod tests {
             telegram_bot_token: Some("b".into()),
             telegram_chat_id: Some("c".into()),
             timeout_secs: 12,
+            desktop: Some(true),
         };
         let merged = notify.merge_with(&overlay);
         assert_eq!(merged.timeout_secs, 12);
+        assert!(merged.desktop_for(NotifyEvent::TurnDone));
+        assert!(!merged.desktop_for(NotifyEvent::NeedInput), "not in `on`");
+        assert_eq!(
+            merged.merge_with(&NotifyConfig::default()).desktop,
+            Some(true)
+        );
+        assert!(!NotifyConfig::default().desktop_for(NotifyEvent::TurnDone));
     }
 
     fn assert_notify_events_and_discord() {

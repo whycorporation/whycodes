@@ -967,6 +967,29 @@ loop, and never block a turn. Discord URLs must be real Incoming Webhook URLs
 (`https://discord.com/api/webhooks/…`); Telegram always posts to
 `api.telegram.org`.
 
+### Desktop notifications
+
+The TUI can raise a desktop notification through the terminal for the same
+`on` events, without Discord or Telegram:
+
+```toml
+[notify]
+on = ["turn_done", "need_input"]
+desktop = true          # or WHYCODES_NOTIFY_DESKTOP=1
+```
+
+It fires only while the terminal window is not focused, so WhyCodes asks the
+terminal for focus reports when `desktop` is on (and only then).
+`need_input` covers permission prompts and `question` tool prompts;
+`turn_done` sends the first line of the reply, or the error. Both include
+background sessions. A turn you cancel yourself does not notify.
+
+The notification is OSC 9 (iTerm2, WezTerm, Ghostty and others) or OSC 777
+on `rxvt*` / `foot*` terminals, as `$TERM` reports them. Inside tmux it is
+wrapped for passthrough, which needs `set -g allow-passthrough on` and
+`set -g focus-events on`. Terminals that understand neither sequence ignore
+it.
+
 ### Custom commands
 
 Markdown files become slash commands named after the file, from
