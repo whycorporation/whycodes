@@ -2,6 +2,8 @@
 // Context-aware bindings (normal / session / dialog modes).
 // Focus-aware: Prompt vs Scrollback vs overflowing Todos.
 
+use std::collections::HashMap;
+
 use crate::app::FocusPane;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -143,21 +145,234 @@ pub fn bindings_for_context(context: KeymapContext) -> Vec<KeyBinding> {
     all
 }
 
-// ── Keymap ─────────────────────────────────────────────────────────────
-pub struct Keymap;
+// ── User bindings ([tui.key_bindings]) ────────────────────────────────
 
-impl Default for Keymap {
-    fn default() -> Self {
-        Self::new()
+/// Config names for actions a user may bind. Named by what the key does,
+/// so `scroll_up` is [`Action::ScrollDown`] (the offset counts from the bottom).
+/// Dialog actions are not bindable: approval prompts keep fixed keys.
+const ACTION_NAMES: &[(&str, Action)] = &[
+    ("quit", Action::Quit),
+    ("force_quit", Action::ForceQuit),
+    ("escape", Action::EscapeMode),
+    ("submit", Action::SubmitInput),
+    ("scroll_up", Action::ScrollDown),
+    ("scroll_down", Action::ScrollUp),
+    ("page_up", Action::ScrollPageUp),
+    ("page_down", Action::ScrollPageDown),
+    ("scroll_to_top", Action::ScrollToTop),
+    ("scroll_to_bottom", Action::ScrollToBottom),
+    ("toggle_auto_scroll", Action::ToggleAutoScroll),
+    ("clear_session", Action::ClearSession),
+    ("toggle_sidebar", Action::ToggleSidebar),
+    ("sidebar_next_tab", Action::SidebarNextTab),
+    ("sidebar_prev_tab", Action::SidebarPrevTab),
+    ("sidebar_tab_1", Action::SidebarTab1),
+    ("sidebar_tab_2", Action::SidebarTab2),
+    ("sidebar_tab_3", Action::SidebarTab3),
+    ("sidebar_tab_4", Action::SidebarTab4),
+    ("sidebar_tab_5", Action::SidebarTab5),
+    ("sidebar_tab_6", Action::SidebarTab6),
+    ("toggle_tasks", Action::ToggleTasksPane),
+    ("provider_dialog", Action::OpenProviderDialog),
+    ("model_dialog", Action::OpenModelDialog),
+    ("input_home", Action::InputHome),
+    ("input_end", Action::InputEnd),
+    ("input_left", Action::InputLeft),
+    ("input_right", Action::InputRight),
+    ("history_prev", Action::InputHistoryPrev),
+    ("history_next", Action::InputHistoryNext),
+    ("newline", Action::InputNewline),
+    ("clear_input", Action::InputClear),
+    ("kill_word_back", Action::InputKillWordBack),
+    ("kill_word_forward", Action::InputKillWordForward),
+    ("word_left", Action::InputWordLeft),
+    ("word_right", Action::InputWordRight),
+    ("toggle_thinking", Action::ToggleThinking),
+    ("toggle_tool_result", Action::ToggleToolResult),
+    ("toggle_todos", Action::ToggleTodosPanel),
+    ("switch_agent", Action::SwitchAgent),
+    ("toggle_focus", Action::ToggleFocus),
+    ("file_complete", Action::FileComplete),
+    ("focus_prompt", Action::FocusPrompt),
+    ("select_prev", Action::SelectPrev),
+    ("select_next", Action::SelectNext),
+    ("prev_turn", Action::JumpPrevTurn),
+    ("next_turn", Action::JumpNextTurn),
+    ("copy_selection", Action::CopySelection),
+    ("paste_clipboard", Action::PasteClipboard),
+];
+
+/// Bindable action for a config name (`"none"` is handled by the caller).
+pub fn action_from_name(name: &str) -> Option<Action> {
+    let name = name.trim().to_ascii_lowercase().replace('-', "_");
+    ACTION_NAMES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, action)| *action)
+}
+
+/// A key plus Ctrl / Alt / Shift. Letters are stored lowercase with Shift
+/// set for capitals; Shift is dropped for other characters (`?`, `+`) since
+/// terminals disagree on reporting it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Chord {
+    code: KeyCode,
+    mods: KeyModifiers,
+}
+
+impl Chord {
+    fn new(code: KeyCode, mods: KeyModifiers) -> Self {
+        let mut mods = mods & (KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT);
+        let code = match code {
+            KeyCode::Char(c) if c.is_ascii_uppercase() => {
+                mods |= KeyModifiers::SHIFT;
+                KeyCode::Char(c.to_ascii_lowercase())
+            }
+            KeyCode::Char(c) => {
+                if !c.is_ascii_alphabetic() {
+                    mods -= KeyModifiers::SHIFT;
+                }
+                KeyCode::Char(c)
+            }
+            KeyCode::BackTab => {
+                mods |= KeyModifiers::SHIFT;
+                KeyCode::Tab
+            }
+            other => other,
+        };
+        Self { code, mods }
     }
+
+    fn from_event(key: &KeyEvent) -> Self {
+        Self::new(key.code, key.modifiers)
+    }
+
+    /// Parse `ctrl+k`, `ctrl-shift-g`, `alt+enter`, `f2`, `G`, `ctrl++`.
+    pub fn parse(spec: &str) -> Option<Self> {
+        let spec = spec.trim();
+        let split = spec
+            .char_indices()
+            .rev()
+            .skip(1)
+            .find(|(_, c)| *c == '+' || *c == '-');
+        let (mods_part, key) = match split {
+            Some((i, _)) => (&spec[..i], &spec[i + 1..]),
+            None => ("", spec),
+        };
+        let mut mods = KeyModifiers::NONE;
+        for m in mods_part.split(['+', '-']).filter(|m| !m.is_empty()) {
+            mods |= match m.to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => KeyModifiers::CONTROL,
+                "alt" | "meta" | "option" => KeyModifiers::ALT,
+                "shift" => KeyModifiers::SHIFT,
+                _ => return None,
+            };
+        }
+        Some(Self::new(key_code_from_name(key)?, mods))
+    }
+}
+
+fn key_code_from_name(key: &str) -> Option<KeyCode> {
+    let mut chars = key.chars();
+    if let (Some(c), None) = (chars.next(), chars.next()) {
+        return Some(KeyCode::Char(c));
+    }
+    let lower = key.to_ascii_lowercase();
+    let code = match lower.as_str() {
+        "enter" | "return" => KeyCode::Enter,
+        "esc" | "escape" => KeyCode::Esc,
+        "tab" => KeyCode::Tab,
+        "backtab" => KeyCode::BackTab,
+        "space" => KeyCode::Char(' '),
+        "backspace" => KeyCode::Backspace,
+        "delete" | "del" => KeyCode::Delete,
+        "insert" | "ins" => KeyCode::Insert,
+        "home" => KeyCode::Home,
+        "end" => KeyCode::End,
+        "pageup" | "pgup" => KeyCode::PageUp,
+        "pagedown" | "pgdn" => KeyCode::PageDown,
+        "up" => KeyCode::Up,
+        "down" => KeyCode::Down,
+        "left" => KeyCode::Left,
+        "right" => KeyCode::Right,
+        _ => {
+            let n: u8 = lower.strip_prefix('f')?.parse().ok()?;
+            if !(1..=24).contains(&n) {
+                return None;
+            }
+            KeyCode::F(n)
+        }
+    };
+    Some(code)
+}
+
+// ── Keymap ─────────────────────────────────────────────────────────────
+
+/// Default bindings plus `[tui.key_bindings]` overrides.
+#[derive(Debug, Clone, Default)]
+pub struct Keymap {
+    /// Chord → action; `None` unbinds the chord.
+    overrides: HashMap<Chord, Option<Action>>,
 }
 
 impl Keymap {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Build from `[tui.key_bindings]` (`"ctrl+o" = "toggle_sidebar"`,
+    /// `"ctrl+l" = "none"`). Unknown keys or actions are logged and skipped.
+    pub fn from_bindings(bindings: &HashMap<String, String>) -> Self {
+        let mut overrides = HashMap::new();
+        for (key, name) in bindings {
+            let Some(chord) = Chord::parse(key) else {
+                tracing::warn!(key = %key, "[tui.key_bindings] unknown key");
+                continue;
+            };
+            let action = match name.trim().to_ascii_lowercase().as_str() {
+                "none" | "unbind" | "" => None,
+                _ => match action_from_name(name) {
+                    Some(action) => Some(action),
+                    None => {
+                        tracing::warn!(key = %key, action = %name, "[tui.key_bindings] unknown action");
+                        continue;
+                    }
+                },
+            };
+            overrides.insert(chord, action);
+        }
+        Self { overrides }
+    }
+
+    /// A user binding for `key`, if any. Plain printable keys only apply
+    /// outside the prompt so typing is never captured.
+    fn custom(&self, focus: FocusPane, key: &KeyEvent) -> Option<Option<Action>> {
+        let chord = Chord::from_event(key);
+        let printable = matches!(chord.code, KeyCode::Char(_))
+            && !chord
+                .mods
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        if printable && focus == FocusPane::Prompt {
+            return None;
+        }
+        self.overrides.get(&chord).copied()
     }
 
     pub fn resolve(&self, ctx: KeymapContext, focus: FocusPane, key: &KeyEvent) -> Option<Action> {
+        if matches!(ctx, KeymapContext::Normal | KeymapContext::Session)
+            && let Some(found) = self.custom(focus, key)
+        {
+            return found;
+        }
+        self.resolve_default(ctx, focus, key)
+    }
+
+    fn resolve_default(
+        &self,
+        ctx: KeymapContext,
+        focus: FocusPane,
+        key: &KeyEvent,
+    ) -> Option<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let alt = key.modifiers.contains(KeyModifiers::ALT);

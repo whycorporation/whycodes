@@ -78,6 +78,7 @@ pub(crate) async fn cmd_connect(
         initial_prompt: None,
         config,
         resume_session_id: None,
+        fork_session: false,
         remote: Some(whycodes_tui::RemoteAttach::new(base, session_id)),
         defer_config_load: false,
         provider_from_cli: true,

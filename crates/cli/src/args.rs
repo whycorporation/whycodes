@@ -85,6 +85,11 @@ pub struct Cli {
     )]
     pub resume: Option<String>,
 
+    /// With --continue / --resume: continue in a copy under a new id and
+    /// leave the saved session untouched
+    #[arg(long = "fork", global = true)]
+    pub fork_session: bool,
+
     /// Write debug logs under the data dir (`debug/whycodes-*.log` + `debug/latest.log`)
     #[arg(long, global = true)]
     pub debug: bool,
@@ -553,6 +558,16 @@ pub enum SessionCmd {
         id: String,
         /// New name for the session
         name: String,
+    },
+    /// Find saved sessions whose messages contain every word of a query
+    #[command(visible_alias = "grep")]
+    Search {
+        /// Words to look for (all must appear in one message)
+        #[arg(required = true, num_args = 1..)]
+        query: Vec<String>,
+        /// Most sessions to show
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: usize,
     },
     /// Export a session to JSON (shareable)
     Share {

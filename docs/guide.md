@@ -61,6 +61,7 @@ Options (global):
   -d, --dir <DIR>            Project directory (defaults to cwd)
   -c, --continue             Resume the most recently updated session
   -r, --resume <SESSION_ID>  Resume a saved session (full id or unique prefix)
+      --fork                 With -c / -r: continue in a copy, keep the original
       --plain                Line-based stdin REPL instead of the TUI
       --debug                Write debug logs under the data dir
       --no-memory            Disable cross-session memory for this process
@@ -93,9 +94,16 @@ whycodes generate "Explain the error handling in main.rs" -d ./my-project
 whycodes run "Where is the retry logic?" -d ./my-project
 whycodes --continue
 whycodes --resume a1b2c3d4
+whycodes --resume a1b2c3d4 --fork   # branch off; a1b2c3d4 stays as it was
+whycodes session search retry loop   # sessions whose messages mention both words
 whycodes session import ./transcript.jsonl --from auto
 whycodes -P openai -m gpt-4o generate "Refactor this module"
 ```
+
+`session search` (alias `grep`) scans saved transcripts: every word must
+appear in one message (ASCII case-insensitive), newest sessions first, with
+an excerpt. It reads messages at search time instead of keeping an index,
+so saving a long session stays fast.
 
 `session import` accepts `--from auto|whycodes|claude|codex|opencode|pi`. Tools do
 not replay; resume with `whycodes --resume <id>`.
@@ -217,6 +225,37 @@ Contributors checking a TUI change on Alacritty / Kitty / WezTerm / VTE: see
 | `[` / `]` | Cycle sidebar tabs (scrollback focus) |
 | `Ctrl+C` / `Ctrl+Q` | Clear draft or quit |
 
+Rebind keys under `[tui.key_bindings]` as `"key" = "action"`; `"none"`
+unbinds a default:
+
+```toml
+[tui.key_bindings]
+"ctrl+e" = "toggle_sidebar"
+"f2" = "model_dialog"
+"alt+k" = "scroll_up"
+"ctrl+l" = "none"          # keep Ctrl+L from clearing the session
+```
+
+Keys: `ctrl` / `alt` / `shift` joined with `+` or `-`, then a character or
+`enter`, `esc`, `tab`, `space`, `backspace`, `delete`, `insert`, `home`, `end`,
+`pageup`, `pagedown`, `up` / `down` / `left` / `right`, `f1`–`f24`. A plain
+character (no Ctrl/Alt) only applies outside the prompt, so typing is never
+captured. Dialogs (approvals, pickers) keep their fixed keys, and the session
+keys handled before the keymap (`Ctrl+O`, `Ctrl+N`, `Ctrl+Tab`,
+`Ctrl+PgUp/PgDn`) cannot be rebound. Unknown keys or actions are logged and
+skipped.
+
+Actions: `quit`, `force_quit`, `escape`, `submit`, `scroll_up`, `scroll_down`,
+`page_up`, `page_down`, `scroll_to_top`, `scroll_to_bottom`,
+`toggle_auto_scroll`, `clear_session`, `toggle_sidebar`, `sidebar_next_tab`,
+`sidebar_prev_tab`, `sidebar_tab_1`–`sidebar_tab_6`, `toggle_tasks`,
+`provider_dialog`, `model_dialog`, `input_home`, `input_end`, `input_left`,
+`input_right`, `history_prev`, `history_next`, `newline`, `clear_input`,
+`kill_word_back`, `kill_word_forward`, `word_left`, `word_right`,
+`toggle_thinking`, `toggle_tool_result`, `toggle_todos`, `switch_agent`,
+`toggle_focus`, `file_complete`, `focus_prompt`, `select_prev`, `select_next`,
+`prev_turn`, `next_turn`, `copy_selection`, `paste_clipboard`.
+
 Input prefixes (TUI and `--plain`):
 
 - `!ls -la` runs a shell command and attaches its output to the conversation.
@@ -236,6 +275,7 @@ Both TUI and `--plain`:
 | `/exit` `/quit` `/q` | Exit |
 | `/new` `/clear` | Start a new session |
 | `/rename [name]` | Set the session title (locks auto-title) |
+| `/fork [title]` | Continue in a copy under a new id; the original stays as saved |
 | `/init` | Create or update `AGENTS.md` |
 | `/review` | AI review of git changes (read-only) |
 | `/security-review` | Security-focused review of changes |
@@ -250,7 +290,7 @@ Both TUI and `--plain`:
 | `/context` | Context window breakdown |
 | `/cost` `/usage` | Session + last-turn token usage (credential **name** only, never the secret) |
 | `/slop` | ΔLOC / verbosity / erosion vs git base (not a test score) |
-| `/sessions` | Session picker (Enter to resume) |
+| `/sessions [words]` | Session picker (Enter to resume); with words, only sessions whose messages mention all of them |
 | `/resume [id]` | Resume by id/prefix, or open the picker |
 | `/continue` | Resume the most recently updated session |
 | `/models [provider/id]` | Show or switch the model |
