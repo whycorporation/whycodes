@@ -98,6 +98,53 @@ pub(crate) fn mcp_configured_header() -> String {
     format!("{} Configured MCP servers:", "🔌".bold())
 }
 
+/// The URL to sign in to: `name` must be a configured remote server.
+pub(crate) fn mcp_login_url(config: &Config, name: &str) -> anyhow::Result<String> {
+    let server = config
+        .mcp_servers
+        .get(name)
+        .ok_or_else(|| anyhow::anyhow!("no MCP server named '{name}' (see `whycodes mcp list`)"))?;
+    match (&server.url, server.is_remote()) {
+        (Some(url), true) => Ok(url.clone()),
+        _ => anyhow::bail!("'{name}' is a local (stdio) server; OAuth applies to remote servers"),
+    }
+}
+
+pub(crate) fn mcp_login_start_line(name: &str) -> String {
+    format!(
+        "{} Signing in to MCP server '{}' — finish in the browser.",
+        "🔑".bold(),
+        name.cyan()
+    )
+}
+
+pub(crate) fn mcp_login_done_line(name: &str) -> String {
+    format!(
+        "{} Signed in to '{}'. The token is used from the next session on.",
+        "✓".green(),
+        name.cyan()
+    )
+}
+
+pub(crate) fn mcp_logout_line(name: &str, removed: bool) -> String {
+    if removed {
+        format!(
+            "{} Removed the OAuth token for '{}'.",
+            "✓".green(),
+            name.cyan()
+        )
+    } else {
+        format!("No OAuth token stored for '{name}'.")
+    }
+}
+
+fn open_login_url(url: &str) {
+    println!("  {url}");
+    if let Err(e) = whycodes_auth::flow::open_browser(url) {
+        eprintln!("  (could not open a browser: {e}; open the link above)");
+    }
+}
+
 /// Working directory for `mcp serve` when `--cwd` is omitted. A deleted cwd
 /// (Linux) falls back to `.` instead of failing the server start.
 fn mcp_serve_cwd() -> String {
@@ -203,6 +250,22 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                     mcp_saved_stdio_line(name, command, &arg_vec.join(" "))
                 );
             }
+        }
+        McpCmd::Login { name } => {
+            let url = mcp_login_url(&config, name)?;
+            println!("{}", mcp_login_start_line(name));
+            whycodes_mcp::oauth::login(
+                name,
+                &url,
+                &whycodes_core::paths::data_dir(),
+                open_login_url,
+            )
+            .await?;
+            println!("{}", mcp_login_done_line(name));
+        }
+        McpCmd::Logout { name } => {
+            let removed = whycodes_mcp::oauth::logout(name, &whycodes_core::paths::data_dir())?;
+            println!("{}", mcp_logout_line(name, removed));
         }
         McpCmd::Remove { name } => {
             if config.mcp_servers.remove(name).is_some() {
