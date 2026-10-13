@@ -881,6 +881,7 @@ impl Agent {
         let hub = hub.clone();
         let question_prompter = Arc::clone(&self.question_prompter);
         let approval_mode = self.approval_mode;
+        let hooks = self.hooks.clone();
         let overlays = self.system_prompt_overlays.clone();
 
         let mut handles = Vec::with_capacity(specs.len());
@@ -908,6 +909,7 @@ impl Agent {
             let panel = panel.clone();
             let hub = hub.clone();
             let question_prompter = Arc::clone(&question_prompter);
+            let hooks = hooks.clone();
             let overlays = overlays.clone();
             hub.ensure(&worker_id);
 
@@ -1070,7 +1072,8 @@ impl Agent {
                         .with_panel(panel.clone())
                         .with_swarm_hub(Some(hub.clone()))
                         .with_question_prompter(question_prompter)
-                        .with_approval_mode(approval_mode);
+                        .with_approval_mode(approval_mode)
+                        .with_hooks(hooks);
                 if !use_worktrees {
                     runner =
                         runner.with_file_claims(claims.clone(), worker_id.clone(), label.clone());
@@ -1369,7 +1372,8 @@ impl Agent {
         .with_file_index(self.file_index.clone())
         .with_panel(self.panel_sink())
         .with_question_prompter(Arc::clone(&self.question_prompter))
-        .with_approval_mode(self.approval_mode);
+        .with_approval_mode(self.approval_mode)
+        .with_hooks(self.hooks.clone());
 
         let child_id = format!("task-{}", call.id);
         let started = std::time::Instant::now();

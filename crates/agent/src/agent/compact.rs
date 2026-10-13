@@ -80,6 +80,7 @@ impl Agent {
         if session.messages.is_empty() {
             return whycodes_session::CompactOutcome::default();
         }
+        self.run_pre_compact_hooks(session).await;
 
         let transcript = session.transcript_for_full_summary(0);
         let local = session.local_full_replace_summary();
