@@ -266,6 +266,7 @@ async fn workspace_symbols_without_file_starts_rust_when_available() {
     let py = crate::client::FAKE_LSP_PY;
     let settings = LspSettings {
         idle_timeout_ms: None,
+        edit_diagnostics_ms: None,
         servers: std::collections::HashMap::from([(
             "rs-fake".into(),
             LspServerSpec {
@@ -314,6 +315,7 @@ async fn workspace_symbols_without_client_reports_missing_rust_server() {
 async fn overlay_can_disable_a_builtin_and_set_idle_timeout() {
     let mut overlay = LspSettings {
         idle_timeout_ms: Some(1),
+        edit_diagnostics_ms: None,
         ..LspSettings::default()
     };
     overlay.servers.insert(
@@ -343,6 +345,7 @@ async fn overlay_can_disable_a_builtin_and_set_idle_timeout() {
 async fn idle_timeout_evicts_cached_clients() {
     let overlay = LspSettings {
         idle_timeout_ms: Some(1),
+        edit_diagnostics_ms: None,
         ..LspSettings::default()
     };
     let tool = LspTool::with_overlay(&overlay);
@@ -425,6 +428,7 @@ async fn start_resolved_falls_back_to_extension_language_id() {
     let py = crate::client::FAKE_LSP_PY;
     let settings = LspSettings {
         idle_timeout_ms: None,
+        edit_diagnostics_ms: None,
         servers: std::collections::HashMap::from([(
             "noid".into(),
             LspServerSpec {
@@ -453,6 +457,7 @@ async fn start_resolved_falls_back_to_extension_language_id() {
 async fn zero_idle_timeout_does_not_evict() {
     let overlay = LspSettings {
         idle_timeout_ms: Some(0),
+        edit_diagnostics_ms: None,
         ..LspSettings::default()
     };
     let tool = LspTool::with_overlay(&overlay);
@@ -530,4 +535,145 @@ async fn zero_line_and_character_saturate_to_origin() {
         .await;
     assert!(!result.is_error, "{}", result.content);
     assert_eq!(result.content, "hello");
+}
+
+fn ok_result() -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: "Edited a.wcpub".into(),
+        is_error: false,
+    }
+}
+
+fn quick_settings(ms: u64) -> LspSettings {
+    LspSettings {
+        edit_diagnostics_ms: Some(ms),
+        ..LspSettings::builtins()
+    }
+}
+
+#[tokio::test]
+async fn write_result_gets_fresh_diagnostics_appended() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.wcpub"), "fn a() {}").unwrap();
+    let tool = LspTool::with_settings(quick_settings(5_000));
+    let client = crate::client::start_test_client("publish_on_change", true)
+        .await
+        .unwrap();
+    tool.insert_client("wcpub", Arc::new(client)).await;
+    let root = dir.path().to_string_lossy().to_string();
+
+    let mut first = ok_result();
+    tool.annotate_write_result(Some("a.wcpub"), &root, &mut first)
+        .await;
+    assert!(
+        first
+            .content
+            .ends_with("\n\nLSP diagnostics after this change:\n  L1:1 error: v1"),
+        "{}",
+        first.content
+    );
+
+    // Second write is a didChange: the newer version must be reported.
+    let mut second = ok_result();
+    tool.annotate_write_result(Some("a.wcpub"), &root, &mut second)
+        .await;
+    assert!(second.content.contains("error: v2"), "{}", second.content);
+}
+
+#[tokio::test]
+async fn write_result_is_left_alone_when_nothing_applies() {
+    let tool = LspTool::with_settings(quick_settings(50));
+    let root = std::env::temp_dir().to_string_lossy().to_string();
+    let check = |r: &ToolResult| assert_eq!(r.content, "Edited a.wcpub");
+
+    // Error results, missing or empty paths.
+    let mut err = ToolResult {
+        is_error: true,
+        ..ok_result()
+    };
+    tool.annotate_write_result(Some("a.wcpub"), &root, &mut err)
+        .await;
+    assert_eq!(err.content, "Edited a.wcpub");
+    for path in [None, Some("")] {
+        let mut r = ok_result();
+        tool.annotate_write_result(path, &root, &mut r).await;
+        check(&r);
+    }
+
+    // No extension, and an extension with no server.
+    for path in ["Makefile", "x.zzz_no_server"] {
+        let mut r = ok_result();
+        tool.annotate_write_result(Some(path), &root, &mut r).await;
+        check(&r);
+    }
+
+    // Disabled by config.
+    let off = LspTool::with_settings(quick_settings(0));
+    let mut r = ok_result();
+    off.annotate_write_result(Some("a.wcpub"), &root, &mut r)
+        .await;
+    check(&r);
+
+    // Dead client: sync fails.
+    let dead = crate::client::start_test_client("ok", false).await.unwrap();
+    dead.kill_for_test().await;
+    tool.insert_client("wcdead", Arc::new(dead)).await;
+    let mut r = ok_result();
+    tool.annotate_write_result(Some("a.wcdead"), &root, &mut r)
+        .await;
+    check(&r);
+
+    // Quiet server: no publish within the budget.
+    let quiet = crate::client::start_test_client("ok", true).await.unwrap();
+    tool.insert_client("wcquiet", Arc::new(quiet)).await;
+    let mut r = ok_result();
+    tool.annotate_write_result(Some("a.wcquiet"), &root, &mut r)
+        .await;
+    check(&r);
+}
+
+fn diag_at(
+    line: u32,
+    severity: Option<crate::types::DiagnosticSeverity>,
+    msg: &str,
+) -> crate::types::Diagnostic {
+    let p = Position { line, character: 2 };
+    crate::types::Diagnostic {
+        range: crate::types::Range {
+            start: p.clone(),
+            end: p,
+        },
+        severity,
+        message: msg.into(),
+        source: None,
+        code: None,
+    }
+}
+
+#[test]
+fn write_diagnostics_show_errors_first_and_cap_the_list() {
+    use crate::types::DiagnosticSeverity as Sev;
+    assert_eq!(format_write_diagnostics_for_test(&[]), None);
+    let quiet = [
+        diag_at(0, Some(Sev::Hint), "h"),
+        diag_at(1, Some(Sev::Information), "i"),
+        diag_at(2, None, "n"),
+    ];
+    assert_eq!(format_write_diagnostics_for_test(&quiet), None);
+
+    let mixed = [
+        diag_at(4, Some(Sev::Warning), "unused"),
+        diag_at(9, Some(Sev::Error), "mismatched types\nexpected u8"),
+        diag_at(1, Some(Sev::Error), "unknown name"),
+    ];
+    assert_eq!(
+        format_write_diagnostics_for_test(&mixed).unwrap(),
+        "LSP diagnostics after this change:\n  L2:3 error: unknown name\n  L10:3 error: mismatched types\n  L5:3 warning: unused"
+    );
+
+    let many: Vec<_> = (0..13).map(|i| diag_at(i, Some(Sev::Error), "e")).collect();
+    let text = format_write_diagnostics_for_test(&many).unwrap();
+    assert_eq!(text.lines().count(), 12);
+    assert!(text.ends_with("\n  (+3 more)"));
 }

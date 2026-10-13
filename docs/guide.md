@@ -402,11 +402,20 @@ directories and binary files. MCP server tools bind as `{server}_{tool}`.
 `node_modules/.bin`, `.venv`). It auto-detects from cwd markers such as
 `Cargo.toml` / `package.json` / `go.mod`. Actions: `diagnostics`, `hover`,
 `definition`, `references`, `type_definition`, `implementation`, `symbols`.
+
+After a successful `edit` or `write`, the matching server (started on first
+use) gets the new text and errors/warnings for that file are appended to the
+tool result, so the model sees type errors without a separate `lsp` call. It
+waits up to `edit_diagnostics_ms` (default 1500) for the server's
+`publishDiagnostics`; a cold server that is still indexing just adds nothing.
+Set `edit_diagnostics_ms = 0` to turn it off.
+
 Override or disable a server in `config.toml`:
 
 ```toml
 [lsp]
 idle_timeout_ms = 300000
+edit_diagnostics_ms = 1500
 
 [lsp.servers.pylsp]
 disabled = true
