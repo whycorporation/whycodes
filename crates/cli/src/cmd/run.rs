@@ -485,6 +485,7 @@ pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
                 initial_prompt: None,
                 config: Config::default(),
                 resume_session_id: None,
+                fork_session: false,
                 remote: None,
                 defer_config_load: true,
                 provider_from_cli: false,
@@ -622,6 +623,7 @@ pub(crate) async fn cmd_run(
             initial_prompt: prompt.map(|s| s.to_string()),
             config,
             resume_session_id: resume_want,
+            fork_session: cli.fork_session,
             remote: None,
             defer_config_load: true,
             provider_from_cli: cli.provider.is_some(),
@@ -674,7 +676,7 @@ pub(crate) async fn cmd_run(
 
     // Plain-mode resume (same flags as TUI).
     if let Some(ref want) = resume_want {
-        match resume_session_into(&mut session, want) {
+        match resume_session_into(&mut session, want, cli.fork_session) {
             Ok(true) => {
                 println!(
                     "{} Resumed session {} ({}) — {} messages",
@@ -1135,7 +1137,7 @@ pub(crate) async fn cmd_run(
                             continue;
                         }
                     };
-                    match resume_session_into(&mut session, &want) {
+                    match resume_session_into(&mut session, &want, false) {
                         Ok(true) => {
                             history = whycodes_session::SessionHistory::new();
                             println!(

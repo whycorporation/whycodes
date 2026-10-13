@@ -76,6 +76,35 @@ impl Tool for WriteTool {
     }
 }
 
+/// What a `write` call would do, without writing (approval prompt): the new
+/// file's lines, or for an existing file the line counts and new content.
+/// `None` when the target exists but cannot be read (the tool reports it).
+pub fn preview_write(args: &serde_json::Value, working_dir: &str) -> Option<String> {
+    let content = args["content"].as_str()?;
+    let full = crate::file::edit::resolve_path(args["path"].as_str()?, working_dir);
+    let shown = display_path(&full, working_dir);
+    let preview = format_write_preview(&shown, content);
+    let old = match std::fs::read_to_string(&full) {
+        Ok(old) => old,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Some(preview.replacen("Wrote ", "Create ", 1));
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "write preview: target not readable");
+            return None;
+        }
+    };
+    if old == content {
+        return Some(format!("Overwrite {shown}  ·  no change"));
+    }
+    let body = preview.split_once("\n\n").map_or("", |(_, body)| body);
+    Some(format!(
+        "Overwrite {shown}  ·  {} → {} lines\n\n{body}",
+        old.lines().count(),
+        content.lines().count()
+    ))
+}
+
 impl WriteTool {
     fn run(full_path: String, shown: String, content: String) -> ToolResult {
         if let Some(parent) = std::path::Path::new(&full_path).parent()
