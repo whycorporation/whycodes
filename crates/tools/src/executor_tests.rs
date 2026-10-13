@@ -167,6 +167,7 @@ fn configure_lsp_replaces_the_builtin_lsp_tool() {
     let mut ex = ToolExecutor::new();
     let overlay = whycodes_lsp::LspSettings {
         idle_timeout_ms: Some(1_000),
+        edit_diagnostics_ms: None,
         servers: Default::default(),
     };
     ex.configure_lsp(&overlay);
@@ -643,4 +644,28 @@ fn register_config_plugins_loads_plugin_json() {
             None => std::env::remove_var("WHYCODES_HOME"),
         }
     }
+}
+
+#[tokio::test]
+async fn write_goes_through_post_write_lsp_hook() {
+    // No server handles `.txt`, so the hook runs and leaves the result as is.
+    let dir = tempfile::tempdir().unwrap();
+    let ex = ToolExecutor::new();
+    let call = ToolCall {
+        id: "w1".into(),
+        name: "write".into(),
+        arguments: json!({ "path": "note.txt", "content": "hi\n" }),
+    };
+    let ctx = ToolContext::new(dir.path().display().to_string());
+    let perms = PermissionSet {
+        allow_file_writes: true,
+        ..PermissionSet::default()
+    };
+    let res = ex.execute(&call, &ctx, &perms).await;
+    assert!(!res.is_error, "{}", res.content);
+    assert!(!res.content.contains("LSP diagnostics"));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+        "hi\n"
+    );
 }

@@ -508,6 +508,14 @@ pub struct LspConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub idle_timeout_ms: Option<u64>,
+    /// Wait (ms) for language-server diagnostics after `edit` / `write`;
+    /// `0` turns it off. Unset uses the runtime default.
+    #[serde(
+        default,
+        alias = "editDiagnosticsMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub edit_diagnostics_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub servers: HashMap<String, LspServerConfig>,
 }

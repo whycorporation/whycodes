@@ -20,6 +20,9 @@ pub struct ToolExecutor {
     /// Memoized [`Tool::definition`] JSON for (permissions, profile, extra).
     /// Invalidated on [`Self::register`] / [`Self::register_as`].
     defs_cache: Mutex<FxHashMap<DefsCacheKey, Arc<[ToolDefinition]>>>,
+    /// Shares the registered `lsp` tool's server cache; feeds post-write
+    /// diagnostics back into `edit` / `write` results.
+    lsp: lsp::LspTool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -53,6 +56,7 @@ impl ToolExecutor {
         let mut executor = Self {
             tools: FxHashMap::default(),
             defs_cache: Mutex::new(FxHashMap::default()),
+            lsp: lsp::LspTool::new(),
         };
 
         executor.register(Box::new(read::ReadTool::new()));
@@ -95,7 +99,7 @@ impl ToolExecutor {
         executor.register(Box::new(external_directory::ExternalDirectoryTool::new()));
         executor.register(Box::new(truncate::TruncateTool::new()));
         executor.register(Box::new(skill::SkillTool::new()));
-        executor.register(Box::new(lsp::LspTool::new()));
+        executor.register(Box::new(executor.lsp.clone()));
 
         // Alias for common model tool names
         executor.register(Box::new(todo_write::TodoWriteTool::as_todo()));
@@ -218,7 +222,8 @@ impl ToolExecutor {
 
     /// Replace the built-in `lsp` tool with a configured overlay.
     pub fn configure_lsp(&mut self, overlay: &whycodes_lsp::LspSettings) {
-        self.register(Box::new(lsp::LspTool::with_overlay(overlay)));
+        self.lsp = lsp::LspTool::with_overlay(overlay);
+        self.register(Box::new(self.lsp.clone()));
     }
 
     /// Load shell plugins from `plugins.toml` then `plugin.json` trees.
@@ -279,7 +284,17 @@ impl ToolExecutor {
                         is_error: true,
                     }
                 } else {
-                    tool.execute(call.arguments.clone(), ctx).await
+                    let mut result = tool.execute(call.arguments.clone(), ctx).await;
+                    if matches!(call.name.as_str(), "edit" | "write") {
+                        self.lsp
+                            .annotate_write_result(
+                                call.arguments["path"].as_str(),
+                                &ctx.working_dir,
+                                &mut result,
+                            )
+                            .await;
+                    }
+                    result
                 }
             }
             None => ToolResult {

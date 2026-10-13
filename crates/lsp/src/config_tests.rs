@@ -23,6 +23,7 @@ fn builtins_cover_the_existing_languages() {
 fn overlay_replaces_nested_objects_and_can_disable() {
     let mut overlay = LspSettings {
         idle_timeout_ms: Some(60_000),
+        edit_diagnostics_ms: None,
         ..LspSettings::default()
     };
     overlay.servers.insert(
@@ -78,6 +79,7 @@ fn resolve_skips_missing_binaries() {
     let _ = settings.resolve("rs", cwd);
     let missing = LspSettings {
         idle_timeout_ms: None,
+        edit_diagnostics_ms: None,
         servers: HashMap::from([(
             "nope".into(),
             LspServerSpec {
@@ -153,6 +155,7 @@ fn resolve_accepts_empty_markers_when_binary_exists() {
     let dir = tempfile::tempdir().unwrap();
     let settings = LspSettings {
         idle_timeout_ms: None,
+        edit_diagnostics_ms: None,
         servers: HashMap::from([(
             "local".into(),
             LspServerSpec {
@@ -196,6 +199,7 @@ fn resolve_skips_specs_without_a_command() {
     let dir = tempfile::tempdir().unwrap();
     let settings = LspSettings {
         idle_timeout_ms: None,
+        edit_diagnostics_ms: None,
         servers: HashMap::from([(
             "nocmd".into(),
             LspServerSpec {
@@ -214,6 +218,7 @@ fn missing_server_message_uses_name_when_command_is_absent() {
     let dir = tempfile::tempdir().unwrap();
     let settings = LspSettings {
         idle_timeout_ms: None,
+        edit_diagnostics_ms: None,
         servers: HashMap::from([(
             "ghost".into(),
             LspServerSpec {
@@ -226,4 +231,31 @@ fn missing_server_message_uses_name_when_command_is_absent() {
     let msg = crate::tool::missing_server_message_for_test(&settings, "zzz", dir.path());
     assert!(msg.contains("'ghost'"), "{msg}");
     assert!(msg.contains("was not found on PATH"), "{msg}");
+}
+
+#[test]
+fn edit_diagnostics_wait_defaults_and_overlays() {
+    let base = LspSettings::builtins();
+    assert_eq!(
+        base.edit_diagnostics_wait(),
+        Some(std::time::Duration::from_millis(
+            DEFAULT_EDIT_DIAGNOSTICS_MS
+        ))
+    );
+    let off = LspSettings {
+        edit_diagnostics_ms: Some(0),
+        ..LspSettings::default()
+    };
+    assert_eq!(off.edit_diagnostics_wait(), None);
+    assert_eq!(LspSettings::resolved(&off).edit_diagnostics_ms, Some(0));
+    assert_eq!(
+        LspSettings::resolved(&LspSettings::default()).edit_diagnostics_ms,
+        None
+    );
+
+    let parsed: LspSettings = serde_json::from_str(r#"{"editDiagnosticsMs": 250}"#).unwrap();
+    assert_eq!(
+        parsed.edit_diagnostics_wait(),
+        Some(std::time::Duration::from_millis(250))
+    );
 }

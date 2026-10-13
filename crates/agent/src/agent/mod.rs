@@ -884,9 +884,7 @@ impl Agent {
         } else {
             crate::mcp_load::register_mcp_tools(&mut full, config).await
         };
-        let lsp_custom =
-            !self.lsp_overlay.servers.is_empty() || self.lsp_overlay.idle_timeout_ms.is_some();
-        if n_plug > 0 || n_mcp > 0 || lsp_custom {
+        if n_plug > 0 || n_mcp > 0 || lsp_overlay_is_custom(&self.lsp_overlay) {
             self.tool_executor = Arc::new(full);
             log_registered_count(n_plug, "shell plugins registered");
             log_registered_count(n_mcp, "MCP tools registered");
@@ -903,7 +901,7 @@ impl Agent {
     }
 
     fn apply_lsp_overlay(&self, exec: &mut ToolExecutor) {
-        if self.lsp_overlay.servers.is_empty() && self.lsp_overlay.idle_timeout_ms.is_none() {
+        if !lsp_overlay_is_custom(&self.lsp_overlay) {
             return;
         }
         exec.configure_lsp(&self.lsp_overlay);
@@ -1142,19 +1140,25 @@ impl Agent {
 
 fn apply_plugin_count(agent: &mut Agent, mut exec: ToolExecutor, n: usize) {
     agent.apply_lsp_overlay(&mut exec);
-    let lsp_custom =
-        !agent.lsp_overlay.servers.is_empty() || agent.lsp_overlay.idle_timeout_ms.is_some();
-    if n == 0 && !lsp_custom {
+    if n == 0 && !lsp_overlay_is_custom(&agent.lsp_overlay) {
         return;
     }
     agent.tool_executor = Arc::new(exec);
     log_registered_count(n, "shell plugins registered");
 }
 
+/// Any `[lsp]` key set: the executor must carry a configured `lsp` tool.
+fn lsp_overlay_is_custom(overlay: &whycodes_tools::LspSettings) -> bool {
+    !overlay.servers.is_empty()
+        || overlay.idle_timeout_ms.is_some()
+        || overlay.edit_diagnostics_ms.is_some()
+}
+
 fn lsp_overlay_from_config(cfg: &whycodes_config::LspConfig) -> whycodes_tools::LspSettings {
     let (idle_timeout_ms, servers) = cfg.to_runtime_settings();
     whycodes_tools::LspSettings {
         idle_timeout_ms,
+        edit_diagnostics_ms: cfg.edit_diagnostics_ms,
         servers: servers
             .into_iter()
             .map(|(name, s)| {
