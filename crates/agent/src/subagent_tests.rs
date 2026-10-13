@@ -531,3 +531,133 @@ async fn run_tool_loop_serializes_mutator_batch() {
         "{result:?}"
     );
 }
+
+fn hook(
+    event: HookEvent,
+    tool_match: &str,
+    command: &str,
+    block: bool,
+    feedback: bool,
+) -> HookConfig {
+    HookConfig {
+        event,
+        tool_match: tool_match.into(),
+        command: command.into(),
+        block_on_failure: block,
+        feedback,
+        timeout_secs: 10,
+    }
+}
+
+#[tokio::test]
+async fn subagent_tool_calls_run_parent_tool_hooks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let runner = SubagentRunner::new(
+        Arc::new(ProviderRegistry::default()),
+        Arc::new(ToolExecutor::new()),
+        make_info(),
+        dir.path().to_path_buf(),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    )
+    .with_hooks(vec![
+        hook(HookEvent::PreTool, "write", "exit 1", true, false),
+        hook(HookEvent::PostTool, "read", "echo checked", false, true),
+    ]);
+    let ctx = ToolContext::new(dir.path().display().to_string());
+    let permission = PermissionSet {
+        allow_file_writes: true,
+        ..Default::default()
+    };
+    let read = whycodes_core::types::ToolCall {
+        id: "r1".into(),
+        name: "read".into(),
+        arguments: serde_json::json!({"path": "n.txt"}),
+    };
+    let result = runner.execute_tool_call(&read, &ctx, &permission).await;
+    assert!(
+        result.content.ends_with("[post_tool hook]\nchecked"),
+        "{}",
+        result.content
+    );
+
+    let write = whycodes_core::types::ToolCall {
+        id: "w1".into(),
+        name: "write".into(),
+        arguments: serde_json::json!({"path": "x.txt", "content": "x"}),
+    };
+    let blocked = runner.execute_tool_call(&write, &ctx, &permission).await;
+    assert!(blocked.is_error);
+    assert!(
+        blocked.content.contains("pre_tool hook blocked `write`"),
+        "{}",
+        blocked.content
+    );
+    assert!(!dir.path().join("x.txt").exists());
+}
+
+#[tokio::test]
+async fn finished_subagent_runs_matching_stop_hooks() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("log.txt");
+    // `cmd /C` mangles quoted args; temp dirs have no spaces.
+    let log = |word: &str| {
+        if cfg!(windows) {
+            format!("echo {word}>>{}", marker.display())
+        } else {
+            format!("echo {word} >> '{}'", marker.display())
+        }
+    };
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        [whycodes_llm::ScriptedStep::Text(
+            "worker summary of the retry loop".into(),
+        )],
+    )));
+    let runner = SubagentRunner::new(
+        Arc::new(registry),
+        Arc::new(ToolExecutor::new()),
+        make_info(),
+        dir.path().to_path_buf(),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    )
+    .with_hooks(vec![
+        hook(
+            HookEvent::SubagentStop,
+            "worker",
+            &log("worker"),
+            false,
+            false,
+        ),
+        hook(
+            HookEvent::SubagentStop,
+            "explore",
+            &log("explore"),
+            false,
+            false,
+        ),
+    ]);
+    let result = runner
+        .run(
+            SubagentTask {
+                goal: "summarize the retry loop in crates/agent".into(),
+                context: None,
+                tools: None,
+                max_turns: 2,
+            },
+            "script",
+            "m",
+            "k",
+        )
+        .await;
+    assert!(result.success, "{result:?}");
+    let lines: Vec<String> = std::fs::read_to_string(&marker)
+        .unwrap()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .collect();
+    assert_eq!(lines, ["worker"]);
+}

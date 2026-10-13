@@ -547,7 +547,7 @@ deny = ["Bash"]
         std::fs::write(
             &path,
             r#"
-[hooks.SessionStart]
+[hooks.Notification]
 command = "echo no"
 "#,
         )

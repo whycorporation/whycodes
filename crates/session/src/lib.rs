@@ -9,7 +9,7 @@ pub use error::{Result, SessionError};
 pub use history::{SessionHistory, StashSlot};
 pub use import::{ImportKind, import_messages};
 pub use session::{
-    COMPACT_CONTINUATION_PREAMBLE, CheckpointState, CompactOutcome, Session,
+    COMPACT_CONTINUATION_PREAMBLE, CheckpointState, CompactOutcome, Session, SessionCost,
     compact_summary_display_text, format_compact_summary, format_compact_summary_content,
     is_compact_summary_text,
 };

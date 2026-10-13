@@ -42,7 +42,8 @@ impl Agent {
         .with_file_index(self.file_index.clone())
         .with_panel(self.panel_sink())
         .with_question_prompter(Arc::clone(&self.question_prompter))
-        .with_approval_mode(self.approval_mode);
+        .with_approval_mode(self.approval_mode)
+        .with_hooks(self.hooks.clone());
 
         let result = runner.run(task, provider_name, model, api_key).await;
         Ok(result.output)
@@ -82,7 +83,8 @@ impl Agent {
             .with_file_index(self.file_index.clone())
             .with_panel(self.panel_sink())
             .with_question_prompter(Arc::clone(&self.question_prompter))
-            .with_approval_mode(self.approval_mode),
+            .with_approval_mode(self.approval_mode)
+            .with_hooks(self.hooks.clone()),
         );
 
         let mut handles = Vec::with_capacity(goals.len());
