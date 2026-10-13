@@ -562,3 +562,33 @@ fn as_u32_accepts_positive_i64() {
     let m = json!({"context_length": 4096_i64});
     assert_eq!(context_window_from_model_value(&m), Some(4096));
 }
+
+#[tokio::test]
+async fn context_window_fetch_also_remembers_the_model_price() {
+    let body = r#"{"data":[{"id":"vendor/priced-m","context_length":1000,"pricing":{"prompt":"0.000002","completion":"0.000008"}},{"id":"unpriced-m","context_length":5}]}"#;
+    let req = |base_url: String| CatalogFetchRequest {
+        base_url,
+        api_key: None,
+        headers: HashMap::new(),
+        provider_name: "wc-price-gw".into(),
+    };
+    let priced = req(serve_once("200 OK", body, "application/json"));
+    assert_eq!(
+        fetch_model_context_window(&priced, "priced-m")
+            .await
+            .unwrap(),
+        Some(1000)
+    );
+    let p = crate::pricing::lookup_price("wc-price-gw", "priced-m").unwrap();
+    assert!((p.input - 2.0).abs() < 1e-9 && (p.output - 8.0).abs() < 1e-9);
+
+    let unpriced = req(serve_once("200 OK", body, "application/json"));
+    assert_eq!(
+        fetch_model_context_window(&unpriced, "unpriced-m")
+            .await
+            .unwrap(),
+        Some(5)
+    );
+    assert!(crate::pricing::lookup_price("wc-price-gw", "unpriced-m").is_none());
+    assert!(price_for_model_id(&serde_json::json!({ "data": [] }), "").is_none());
+}

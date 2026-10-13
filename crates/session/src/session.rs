@@ -564,6 +564,10 @@ pub struct Session {
     /// `#[serde(default)]` so sessions exported before this existed still load.
     #[serde(default)]
     pub usage: whycodes_core::types::Usage,
+    /// Estimated USD for this run (`/cost`). Not stored in the database, so a
+    /// resumed session starts from zero.
+    #[serde(default)]
+    pub cost: SessionCost,
     /// Incremental char/4 estimate (system + per-message). Not persisted.
     #[serde(skip)]
     token_cache: SessionTokenCache,
@@ -584,6 +588,66 @@ pub struct Session {
     /// a resumed session sees each once more.
     #[serde(skip)]
     pub instruction_dirs: std::collections::BTreeSet<PathBuf>,
+}
+
+/// Running USD estimate. Steps whose model has no known price are counted,
+/// not guessed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SessionCost {
+    pub usd: f64,
+    pub unpriced_steps: u32,
+}
+
+impl SessionCost {
+    /// One step: `Some(usd)` when the model was priced, else counted as unpriced.
+    pub fn add(&mut self, usd: Option<f64>) {
+        match usd {
+            Some(c) => self.usd += c,
+            None => self.unpriced_steps += 1,
+        }
+    }
+
+    pub fn merge(&mut self, other: &SessionCost) {
+        self.usd += other.usd;
+        self.unpriced_steps += other.unpriced_steps;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.usd == 0.0 && self.unpriced_steps == 0
+    }
+}
+
+#[cfg(test)]
+mod cost_tests {
+    use super::*;
+
+    #[test]
+    fn session_cost_adds_priced_steps_and_counts_the_rest() {
+        let mut c = SessionCost::default();
+        assert!(c.is_empty());
+        c.add(Some(0.25));
+        c.add(None);
+        assert!(!c.is_empty());
+        let mut total = SessionCost::default();
+        total.add(Some(1.0));
+        total.merge(&c);
+        assert_eq!(
+            total,
+            SessionCost {
+                usd: 1.25,
+                unpriced_steps: 1
+            }
+        );
+    }
+
+    #[test]
+    fn sessions_without_a_cost_field_still_load() {
+        let s = Session::new("/tmp/p".into(), "sys".into());
+        let mut v = serde_json::to_value(&s).unwrap();
+        v.as_object_mut().unwrap().remove("cost");
+        let back: Session = serde_json::from_value(v).unwrap();
+        assert!(back.cost.is_empty());
+    }
 }
 
 /// Boundary recorded by the `checkpoint` tool for a later `rewind`.
@@ -639,12 +703,27 @@ impl Session {
             created_at: now,
             updated_at: now,
             usage: Default::default(),
+            cost: SessionCost::default(),
             token_cache,
             checkpoint: None,
             last_rewind_report: None,
             turn_context: None,
             instruction_dirs: Default::default(),
         }
+    }
+
+    /// Copy of this conversation under a new id, so it can diverge while the
+    /// original stays as saved. Usage restarts at zero (the history's tokens
+    /// were spent by the original); the title gets a `(fork)` suffix.
+    pub fn fork(&self) -> Self {
+        let now = chrono::Utc::now();
+        let mut forked = self.clone();
+        forked.id = uuid::Uuid::new_v4().to_string();
+        forked.title = crate::title::sanitize_title(&format!("{} (fork)", self.title));
+        forked.created_at = now;
+        forked.updated_at = now;
+        forked.usage = Default::default();
+        forked
     }
 
     /// User-facing rename; locks the title against further auto updates.
@@ -1450,6 +1529,8 @@ impl Session {
             created_at,
             updated_at,
             usage: row.usage,
+            // Not stored yet: a resumed session's estimate starts at zero.
+            cost: SessionCost::default(),
             token_cache,
             checkpoint: None,
             last_rewind_report: None,
@@ -1771,6 +1852,26 @@ mod tests {
 
     fn test_system_prompt() -> String {
         "You are a helpful assistant.".to_string()
+    }
+
+    #[test]
+    fn fork_copies_history_under_a_new_id() {
+        let mut s = Session::new(test_project_path(), test_system_prompt());
+        s.set_title_manual("retry loop");
+        s.add_user_message("explain the retry loop");
+        s.add_usage(&whycodes_core::types::Usage {
+            input_tokens: 5,
+            ..Default::default()
+        });
+        let f = s.fork();
+        assert_ne!(f.id, s.id);
+        assert_eq!(f.title, "retry loop (fork)");
+        assert_eq!(f.title_source, s.title_source);
+        assert_eq!(f.messages.len(), 1);
+        assert_eq!(f.system_prompt, s.system_prompt);
+        assert!(f.usage.is_empty());
+        assert!(f.created_at >= s.created_at);
+        assert_eq!(s.usage.input_tokens, 5, "original untouched");
     }
 
     #[test]

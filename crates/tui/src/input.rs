@@ -512,7 +512,7 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
     }
 
     // Resolve and dispatch (focus-aware).
-    let action = crate::keymap::Keymap::new().resolve(ctx, app.focus, &key);
+    let action = app.keymap.resolve(ctx, app.focus, &key);
     dispatch_resolved_action(app, action, &key)
 }
 
@@ -2247,7 +2247,7 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
 
 // ── Dialog Key Handling ────────────────────────────────────────────────
 fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
-    let action = crate::keymap::Keymap::new().resolve(KeymapContext::Dialog, app.focus, key);
+    let action = app.keymap.resolve(KeymapContext::Dialog, app.focus, key);
 
     let active = match app.dialogs.active() {
         Some(d) => d.clone(),

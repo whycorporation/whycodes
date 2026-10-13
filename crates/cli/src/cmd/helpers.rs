@@ -318,12 +318,14 @@ pub(crate) fn resolve_resume_want(cli: &Cli) -> Option<String> {
     None
 }
 
-/// Load `want` into `session`, preserving the current system prompt.
+/// Load `want` into `session`, preserving the current system prompt. With
+/// `fork`, continue in a saved copy under a new id (the original is untouched).
 ///
 /// Returns `Ok(true)` when a session was loaded, `Ok(false)` when none matched.
 pub(crate) fn resume_session_into(
     session: &mut whycodes_session::session::Session,
     want: &str,
+    fork: bool,
 ) -> anyhow::Result<bool> {
     let db = open_db()?;
     let Some(loaded) =
@@ -337,6 +339,10 @@ pub(crate) fn resume_session_into(
     // Legacy `New session - …` / placeholder titles: name from first user msg.
     if session.maybe_upgrade_title_from_history() {
         note_backfill_persist(session.save_to_db(&db));
+    }
+    if fork {
+        *session = session.fork();
+        session.save_to_db(&db)?;
     }
     Ok(true)
 }

@@ -2,6 +2,25 @@
 use super::*;
 
 /// Best-effort session flush (success, error, or cancel) + structured log.
+/// Continue in a fork of `session`: save the original, switch to a copy with
+/// a new id (optional `title`), and save that too.
+pub(super) fn fork_session_in_place(app: &mut TuiApp, session: &mut Session, title: &str) {
+    persist_session_best_effort(session, "fork_source");
+    let from: String = session.id.chars().take(8).collect();
+    *session = session.fork();
+    if !title.trim().is_empty() {
+        session.set_title_manual(title.trim());
+    }
+    persist_session_best_effort(session, "fork");
+    app.session_title = session.title.clone();
+    app.session_id = session.id.clone();
+    app.turn_usage = None;
+    app.toasts.push(
+        crate::toast::ToastKind::Success,
+        format!("Forked → {} · original {from} unchanged", session.title),
+    );
+}
+
 pub(super) fn persist_session_best_effort(session: &Session, reason: &str) {
     persist_session_outcome(
         session,
@@ -623,9 +642,31 @@ pub(super) fn cost_report(session: &Session, app: &TuiApp, credential: Option<&s
     if let Some(name) = credential.filter(|n| !n.is_empty()) {
         lines.push(format!("  credential: {name}"));
     }
-    lines
-        .push("  note:      providers bill differently; figures are token counts, not USD.".into());
+    lines.push(cost_line(&session.cost));
     lines.join("\n")
+}
+
+/// USD only from known prices; unpriced steps are reported, never guessed.
+fn cost_line(cost: &whycodes_session::SessionCost) -> String {
+    let usd = |v: f64| {
+        if v < 1.0 {
+            format!("${v:.4}")
+        } else {
+            format!("${v:.2}")
+        }
+    };
+    match (cost.usd > 0.0, cost.unpriced_steps) {
+        (true, 0) => format!("  cost:      ~{} this run (estimate)", usd(cost.usd)),
+        (true, n) => format!(
+            "  cost:      at least ~{} this run · {n} step(s) had no price",
+            usd(cost.usd)
+        ),
+        (false, 0) => "  cost:      (none yet)".into(),
+        (false, _) => {
+            "  cost:      unknown — no price for this model (set [pricing.\"provider/model\"])"
+                .into()
+        }
+    }
 }
 
 /// Claude Code–style environment check: keys, sandbox, git, tools, jobs.

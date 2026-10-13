@@ -294,6 +294,8 @@ pub struct TuiRunOptions {
     /// Used by CLI `--continue` / `--resume <id>`. In-session resume uses
     /// `pending_session_id` on the app instead.
     pub resume_session_id: Option<String>,
+    /// CLI `--fork`: continue a resumed session in a copy with a new id.
+    pub fork_session: bool,
     /// When set, turns go to `whycodes serve` over HTTP instead of an in-process agent.
     pub remote: Option<crate::remote::RemoteAttach>,
     /// Load layered config after first paint (CLI TUI path). Tests / `connect`
@@ -646,6 +648,7 @@ async fn prepare_tui_runtime(opts: &TuiRunOptions, app: &mut TuiApp) -> TuiRunti
     let history = SessionHistory::new();
 
     if let Some(ref want) = opts.resume_session_id {
+        let fresh_id = session.id.clone();
         apply_resume(
             app,
             &mut session,
@@ -653,6 +656,9 @@ async fn prepare_tui_runtime(opts: &TuiRunOptions, app: &mut TuiApp) -> TuiRunti
             want,
             opts.config.session.auto_title,
         );
+        if opts.fork_session && session.id != fresh_id {
+            fork_session_in_place(app, &mut session, "");
+        }
     }
 
     if let Some(ref rem) = opts.remote {
