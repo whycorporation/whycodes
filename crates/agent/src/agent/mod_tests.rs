@@ -3374,6 +3374,33 @@ fn which_python() -> Option<&'static str> {
 }
 
 #[test]
+fn cache_read_notes_compare_with_the_last_step_of_the_same_session() {
+    let a = test_agent();
+    let cached = whycodes_core::types::Usage {
+        input_tokens: 100,
+        cache_read_input_tokens: Some(30_000),
+        ..Default::default()
+    };
+    let missed = whycodes_core::types::Usage {
+        input_tokens: 31_000,
+        ..Default::default()
+    };
+    assert_eq!(a.note_cache_read("s1", &cached, false), None, "first step");
+    assert!(a.note_cache_read("s1", &missed, false).is_some());
+    assert_eq!(
+        a.note_cache_read("s2", &missed, false),
+        None,
+        "other session"
+    );
+    a.note_cache_read("s1", &cached, false);
+    assert_eq!(
+        a.note_cache_read("s1", &missed, true),
+        None,
+        "/fresh misses on purpose"
+    );
+}
+
+#[test]
 fn permission_detail_shows_the_pending_edit_diff() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();

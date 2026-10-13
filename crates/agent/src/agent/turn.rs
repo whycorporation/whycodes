@@ -678,6 +678,10 @@ impl Agent {
                     .cost
                     .add(self.step_cost(provider_name, model, &turn_usage));
                 emit(&events, TurnEvent::Usage(turn_usage.clone()));
+                if let Some(note) = self.note_cache_read(&session.id, &turn_usage, skip_cache) {
+                    tracing::info!(session = %session.id, "{note}");
+                    emit(&events, TurnEvent::Status(note));
+                }
             }
 
             let mut blocks: Vec<ContentBlock> = thinking_acc.into_blocks();

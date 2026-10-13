@@ -10,6 +10,7 @@ pub mod background;
 #[cfg(test)]
 #[path = "behavior_eval_tests.rs"]
 mod behavior_eval;
+mod cache_watch;
 pub mod context_files;
 pub mod events;
 pub mod intent;
