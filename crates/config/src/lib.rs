@@ -14,11 +14,11 @@ pub use whycodes_core::sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
 
 pub use types::{
     AutomationConfig, BashConfig, CONFIG_SCHEMA_VERSION, CommandConfig, Config,
-    CustomCommandConfig, CustomToolConfig, DEFAULT_MODEL_ID, DEFAULT_PROVIDER, GeneralConfig,
-    HeadlessAskMode, HookConfig, HookEvent, LspConfig, LspServerConfig, MagicKeywordsConfig,
-    McpServerConfig, McpTransportKind, MemoryConfig, NotifyConfig, NotifyEvent, PriceConfig,
-    QuestionToolConfig, RuntimeLspServer, SecurityConfig, SessionConfig, SlopConfig,
-    StreamRuleConfig, SwarmConfig, SystemPromptOverlays, ToolsConfig, TuiConfig,
+    CustomCommandConfig, CustomToolConfig, DEFAULT_MODEL_ID, DEFAULT_PROVIDER, FormatConfig,
+    GeneralConfig, HeadlessAskMode, HookConfig, HookEvent, LspConfig, LspServerConfig,
+    MagicKeywordsConfig, McpServerConfig, McpTransportKind, MemoryConfig, NotifyConfig,
+    NotifyEvent, PriceConfig, QuestionToolConfig, RuntimeLspServer, SecurityConfig, SessionConfig,
+    SlopConfig, StreamRuleConfig, SwarmConfig, SystemPromptOverlays, ToolsConfig, TuiConfig,
     is_discord_webhook_url,
 };
 

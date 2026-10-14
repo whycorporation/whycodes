@@ -130,6 +130,8 @@ pub struct Agent {
     swarm_hub: Option<whycodes_core::SwarmHub>,
     /// `[lsp]` overlay from config (empty = built-in auto-detect).
     lsp_overlay: whycodes_tools::LspSettings,
+    /// `[tools.format] enabled`, re-applied to every rebuilt executor.
+    format_after_write: bool,
     /// Provider/model extras from `prompts/*.md`.
     system_prompt_overlays: SystemPromptOverlays,
     /// Active provider id for overlay lookup (`/models`, session route).
@@ -269,6 +271,14 @@ pub(crate) fn first_stream_rule_hit<'a>(
 fn append_skills_catalog(system_prompt: &str, project_path: &std::path::Path) -> String {
     // `load_project` is infallible today (unreadable skill dirs are skipped).
     let catalog = catalog_from_load(whycodes_skill::SkillRegistry::load_project(project_path));
+    if catalog.is_empty() {
+        return system_prompt.to_string();
+    }
+    format!("{system_prompt}\n\n{catalog}")
+}
+
+fn append_custom_agents_catalog(system_prompt: &str, project_path: &std::path::Path) -> String {
+    let catalog = crate::custom_agents::catalog_markdown(&crate::custom_agents::load(project_path));
     if catalog.is_empty() {
         return system_prompt.to_string();
     }
@@ -419,6 +429,7 @@ impl Agent {
             session_claims: None,
             swarm_hub: None,
             lsp_overlay: whycodes_tools::LspSettings::default(),
+            format_after_write: true,
             system_prompt_overlays: SystemPromptOverlays::default(),
             route_provider: String::new(),
             route_model: String::new(),
@@ -655,6 +666,9 @@ impl Agent {
             .map(|(k, v)| (k.clone(), v.credentials.clone()))
             .collect();
         self.lsp_overlay = lsp_overlay_from_config(&config.lsp);
+        self.format_after_write = config.tools.format.enabled;
+        self.tool_executor
+            .set_format_after_write(self.format_after_write);
         self.system_prompt_overlays = config.system_prompt_overlays.clone();
         let sandbox_desc = whycodes_sandbox::describe_backend(&self.sandbox);
         let network_allow = self.network.allowlist.len();
@@ -1026,6 +1040,7 @@ impl Agent {
     }
 
     fn apply_lsp_overlay(&self, exec: &mut ToolExecutor) {
+        exec.set_format_after_write(self.format_after_write);
         if !lsp_overlay_is_custom(&self.lsp_overlay) {
             return;
         }
@@ -1120,7 +1135,8 @@ impl Agent {
         let with_files =
             crate::context_files::append_project_instructions(system_prompt, project_path);
         let with_skills = append_skills_catalog(&with_files, project_path);
-        Self::with_runtime_context(&with_skills)
+        let with_agents = append_custom_agents_catalog(&with_skills, project_path);
+        Self::with_runtime_context(&with_agents)
     }
 
     /// Resolve provider + model + key for a title refine call, or `None` if

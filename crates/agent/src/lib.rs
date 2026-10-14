@@ -12,6 +12,7 @@ pub mod background;
 mod behavior_eval;
 mod cache_watch;
 pub mod context_files;
+pub mod custom_agents;
 pub mod events;
 pub mod intent;
 pub mod magic_keywords;

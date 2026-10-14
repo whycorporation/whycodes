@@ -10,6 +10,7 @@ pub mod list;
 pub mod paths;
 pub mod read;
 pub mod repomap;
+pub(crate) mod tolerant;
 pub mod truncate;
 pub mod truncation_dir;
 pub mod write;

@@ -1,8 +1,8 @@
 //! Layered config merge.
 
 use crate::types::{
-    BashConfig, Config, MagicKeywordsConfig, QuestionToolConfig, SlopConfig, ToolsConfig,
-    default_agent, default_auto_background_after_secs, default_auto_index_chunks,
+    BashConfig, Config, FormatConfig, MagicKeywordsConfig, QuestionToolConfig, SlopConfig,
+    ToolsConfig, default_agent, default_auto_background_after_secs, default_auto_index_chunks,
     default_auto_index_files, default_code_min_score, default_code_top_k, default_compaction_llm,
     default_compaction_threshold, default_consolidate_max, default_intent_guidance,
     default_max_background_jobs, default_max_tokens, default_memory_backend,
@@ -506,6 +506,9 @@ impl ToolsConfig {
         }
         if other.bash.auto_background_after_secs != default_auto_background_after_secs() {
             merged.bash.auto_background_after_secs = other.bash.auto_background_after_secs;
+        }
+        if other.format != FormatConfig::default() {
+            merged.format = other.format.clone();
         }
 
         if !other.disabled_tools.is_empty() {

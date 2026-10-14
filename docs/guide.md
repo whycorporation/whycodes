@@ -470,6 +470,45 @@ In **build**, high-confidence questions get an ephemeral intent hint so the
 model answers instead of over-eager edits. Set
 `session.intent_guidance = "off"` to disable.
 
+### Custom subagents
+
+A Markdown file with frontmatter defines a subagent that `task` and `swarm`
+accept as `subagent_type`. Existing `.claude/agents/` files work
+unchanged:
+
+```markdown
+---
+name: reviewer
+description: Reviews a diff for bugs and missing tests
+tools: Read, Grep, Glob
+model: inherit
+---
+You are a careful reviewer. Report findings with file:line references.
+```
+
+Files are read from `~/.whycodes/agents/`, `~/.claude/agents/`,
+`<project>/.claude/agents/`, and `<project>/.whycodes/agents/`; a later
+directory wins on a name clash. `name` defaults to the file name, and a
+file without a `description` is ignored (finished workers' `agent://`
+output lives in `.whycodes/agents/` too). Built-in names (`general`,
+`explore`, `scout`) cannot be redefined.
+
+- `tools` (comma list or YAML list) limits the agent to those tools.
+  PascalCase names map to ours (`Bash` → `bash`, `LS` → `list`,
+  `mcp__server__tool` → `server_tool`). Without it the agent keeps the
+  parent's tools; `disallowedTools` removes tools.
+- A definition only narrows the parent's permissions: tools the parent may
+  not use stay unavailable, and the todo and nesting tools are removed as
+  for `general`.
+- `model`: `inherit` uses the session model, `provider/model` or a bare id
+  picks one, and no value (or the tier aliases `sonnet` / `opus` /
+  `haiku`) uses the normal worker model (`session.model_smol`).
+- The body is the agent's system prompt; AGENTS.md and the skill catalog
+  are appended as for built-in workers.
+
+The system prompt lists custom agents by name and description. An unknown
+`subagent_type` is an error that names the available ones.
+
 ## Tools
 
 | Category | Tools |
@@ -507,6 +546,26 @@ tool result, so the model sees type errors without a separate `lsp` call. It
 waits up to `edit_diagnostics_ms` (default 1500) for the server's
 `publishDiagnostics`; a cold server that is still indexing just adds nothing.
 Set `edit_diagnostics_ms = 0` to turn it off.
+
+Before that, the file is run through the project's own formatter when the
+project shows it uses one, and the result says so:
+
+| Files | Formatter | Used when |
+|---|---|---|
+| `.rs` | `rustfmt` (edition from `Cargo.toml`) | `rustfmt.toml` / `.rustfmt.toml` |
+| `.go` | `gofmt` | `go.mod` |
+| `.py`, `.pyi` | `ruff format`, else `black` | `ruff.toml`, `[tool.ruff]` / `[tool.black]` in `pyproject.toml` |
+| JS/TS, JSON, CSS, HTML, Markdown, YAML, … | `node_modules/.bin/prettier` | a Prettier config, or `prettier` in `package.json` |
+
+Markers count from the file's directory up to the project root. The
+formatter reads the file on stdin, so nothing else is rewritten; a missing
+binary, a syntax error or a 10 s timeout leaves the file as written. Turn it
+off with:
+
+```toml
+[tools.format]
+enabled = false
+```
 
 Override or disable a server in `config.toml`:
 

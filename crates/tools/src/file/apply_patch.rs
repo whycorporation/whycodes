@@ -2,6 +2,7 @@ use serde_json::json;
 use std::path::Path;
 
 use crate::file::paths::display_path;
+use crate::file::tolerant;
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
@@ -324,32 +325,38 @@ fn apply_unified_diff(original: &str, patch: &str) -> Result<String, String> {
         .collect();
     pop_empty_split(&mut lines);
     // `split_inclusive` keeps `\n` on every line except a possible last line
-    // without terminator. Normalize to content-without-newline + flag.
-    let mut file: Vec<(String, bool)> = lines
+    // without terminator. Normalize to content-without-newline + its line end,
+    // so CRLF files match `\n` patches and keep their endings.
+    let mut file: Vec<(String, &str)> = lines
         .into_iter()
         .map(|l| {
-            if let Some(stripped) = l.strip_suffix('\n') {
-                (stripped.to_string(), true)
+            if let Some(stripped) = l.strip_suffix("\r\n") {
+                (stripped.to_string(), "\r\n")
+            } else if let Some(stripped) = l.strip_suffix('\n') {
+                (stripped.to_string(), "\n")
             } else {
-                (l, false)
+                (l, "")
             }
         })
         .collect();
+    let eol = if tolerant::is_crlf(original) {
+        "\r\n"
+    } else {
+        "\n"
+    };
 
     // Apply from the end so earlier hunk line numbers stay valid.
     let mut ordered: Vec<(usize, Hunk)> = hunks.into_iter().enumerate().collect();
     ordered.sort_by_key(|(i, h)| (std::cmp::Reverse(h.old_start), std::cmp::Reverse(*i)));
 
     for (_i, hunk) in ordered {
-        apply_hunk(&mut file, &hunk)?;
+        apply_hunk(&mut file, &hunk, eol)?;
     }
 
     let mut out = String::new();
-    for (text, nl) in file {
+    for (text, line_end) in file {
         out.push_str(&text);
-        if nl {
-            out.push('\n');
-        }
+        out.push_str(line_end);
     }
     Ok(out)
 }
@@ -450,7 +457,17 @@ fn parse_hunk_header(line: &str) -> Result<usize, String> {
         .map_err(|_| malformed_hunk_header(line))
 }
 
-fn apply_hunk(file: &mut Vec<(String, bool)>, hunk: &Hunk) -> Result<(), String> {
+/// A patch line matches a file line exactly, or once trailing whitespace is
+/// ignored and typographic punctuation is folded to ASCII on both sides.
+fn same_line(existing: &str, text: &str) -> bool {
+    existing == text || tolerant::fold(existing.trim_end()).0 == tolerant::fold(text.trim_end()).0
+}
+
+fn apply_hunk<'a>(
+    file: &mut Vec<(String, &'a str)>,
+    hunk: &Hunk,
+    eol: &'a str,
+) -> Result<(), String> {
     let start = if hunk.old_start == 0 {
         0
     } else {
@@ -477,7 +494,7 @@ fn apply_hunk(file: &mut Vec<(String, bool)>, hunk: &Hunk) -> Result<(), String>
                         i + 1
                     ));
                 };
-                if existing != text {
+                if !same_line(existing, text) {
                     return Err(format!(
                         "context mismatch at line {}: expected `{text}`, found `{existing}`",
                         i + 1
@@ -492,7 +509,7 @@ fn apply_hunk(file: &mut Vec<(String, bool)>, hunk: &Hunk) -> Result<(), String>
                         i + 1
                     ));
                 };
-                if existing != text {
+                if !same_line(existing, text) {
                     return Err(format!(
                         "removal mismatch at line {}: expected `{text}`, found `{existing}`",
                         i + 1
@@ -518,7 +535,7 @@ fn apply_hunk(file: &mut Vec<(String, bool)>, hunk: &Hunk) -> Result<(), String>
     }
     // Reverse so consecutive adds at the same index keep source order.
     for (idx, text) in inserts.into_iter().rev() {
-        file.insert(idx, (text, true));
+        file.insert(idx, (text, eol));
     }
     Ok(())
 }
