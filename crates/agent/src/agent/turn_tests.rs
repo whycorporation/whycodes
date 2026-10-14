@@ -2409,3 +2409,90 @@ async fn turn_accumulates_cost_only_for_priced_models() {
     assert_eq!(unpriced.cost.usd, 0.0);
     assert_eq!(unpriced.cost.unpriced_steps, 1);
 }
+
+/// Pushes one steering message while the first request is in flight.
+struct SteerDuringFirstRequest {
+    inner: ScriptedProvider,
+    inbox: crate::steer::SteerInbox,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl LlmProvider for SteerDuringFirstRequest {
+    fn name(&self) -> &str {
+        "script"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        self.inner.complete(request, api_key, model)
+    }
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n == 0 {
+            self.inbox.push("also count the words".into());
+        }
+        self.inner.stream(request, api_key, model)
+    }
+}
+
+#[tokio::test]
+async fn steering_message_reaches_the_next_step_after_tool_results() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
+    let agent = Agent::new(info("build"));
+    let inbox = agent.steer_inbox();
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(SteerDuringFirstRequest {
+        inner: ScriptedProvider::new([
+            ScriptedStep::ToolCall {
+                id: "c1".into(),
+                name: "read".into(),
+                input: json!({"path": "note.txt"}),
+            },
+            ScriptedStep::Text("done".into()),
+        ]),
+        inbox: inbox.clone(),
+        calls: Default::default(),
+    }));
+    let agent = agent.with_provider_registry(registry);
+    let mut session = session_at(dir.path(), "please read note.txt and summarize it");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = agent
+        .run_turn_with_events(&mut session, opts(Some(tx)))
+        .await
+        .expect("turn");
+    assert!(out.contains("done"), "{out}");
+    assert!(inbox.drain().is_empty(), "the turn read the message");
+    let mut delivered = false;
+    while let Ok(ev) = rx.try_recv() {
+        delivered |= matches!(ev, TurnEvent::Status(s) if s.contains("delivered"));
+    }
+    assert!(delivered);
+    let steer_at = session
+        .messages
+        .iter()
+        .position(|m| m.role == Role::User && m.content.as_text() == Some("also count the words"))
+        .expect("steering message in history");
+    let result_at = session
+        .messages
+        .iter()
+        .position(|m| match &m.content {
+            whycodes_core::types::MessageContent::Blocks(b) => b
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolResult { .. })),
+            whycodes_core::types::MessageContent::Text(_) => m.tool_call_id.is_some(),
+        })
+        .expect("tool result in history");
+    assert!(steer_at > result_at, "steering lands after the tool result");
+}

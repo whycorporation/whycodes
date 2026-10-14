@@ -225,6 +225,11 @@ Contributors checking a TUI change on Alacritty / Kitty / WezTerm / VTE: see
 | `[` / `]` | Cycle sidebar tabs (scrollback focus) |
 | `Ctrl+C` / `Ctrl+Q` | Clear draft or quit |
 
+A message sent while a turn is running steers it: the agent reads it before
+its next request, after the current tool calls finish. If the turn ends
+before that, the message runs as the next turn. Messages with images, and
+sessions attached to a daemon, still wait for the turn to end.
+
 Rebind keys under `[tui.key_bindings]` as `"key" = "action"`; `"none"`
 unbinds a default:
 

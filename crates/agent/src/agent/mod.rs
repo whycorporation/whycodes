@@ -97,6 +97,8 @@ pub struct Agent {
     swarm_worktrees: bool,
     /// Background shell jobs (`bash` background=true, `bg`, `schedule`).
     background: crate::background::BackgroundRegistry,
+    /// User messages sent while a turn runs (read at the next step).
+    steer: crate::steer::SteerInbox,
     /// Optional long-lived event sink (TUI) for bg completion + enqueue.
     event_sink: Option<EventSink>,
     /// Max concurrent background jobs.
@@ -397,6 +399,7 @@ impl Agent {
             swarm_max_agents: 4,
             swarm_worktrees: true,
             background: crate::background::BackgroundRegistry::default(),
+            steer: crate::steer::SteerInbox::default(),
             event_sink: None,
             max_background_jobs: crate::background::DEFAULT_MAX_BACKGROUND_JOBS,
             bash_auto_background: true,
@@ -808,6 +811,24 @@ impl Agent {
                 "Background job `{id}` finished ({status}). Output:\n{tail}",
                 status = status.as_str()
             ));
+        }
+    }
+
+    /// Inbox for messages sent while a turn runs; keep a clone before the
+    /// agent moves into the turn task.
+    pub fn steer_inbox(&self) -> crate::steer::SteerInbox {
+        self.steer.clone()
+    }
+
+    /// Add messages the user sent during this turn, so the next request
+    /// carries them. Called at the start of a step, after tool results.
+    pub(crate) fn inject_steering(&self, session: &mut Session, events: &Option<EventSink>) {
+        for text in self.steer.drain() {
+            session.add_user_message(&text);
+            crate::events::emit(
+                events,
+                TurnEvent::Status("message delivered to the running turn".into()),
+            );
         }
     }
 

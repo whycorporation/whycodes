@@ -143,6 +143,8 @@ pub struct SessionRuntime {
     /// True while a turn task owns the real agent/session (moved out).
     pub(crate) agent_busy: bool,
     pub(crate) cancel_flag: Option<CancelFlag>,
+    /// Inbox of the agent running the current turn: messages typed meanwhile.
+    pub(crate) steer: whycodes_agent::steer::SteerInbox,
     /// Live turn task — aborted on force-stop so a hung LLM/tool cannot pin UI.
     pub(crate) turn_join: Option<JoinHandle<()>>,
     /// Session clone taken just before the turn task starts (after user msg).
@@ -213,12 +215,14 @@ impl SessionRuntime {
         let db = open_runtime_db();
         let goal = crate::goal::restore(db.as_ref(), &session);
         let (goal_tx, goal_rx) = mpsc::unbounded_channel();
+        let steer = agent.steer_inbox();
         Self {
             agent,
             session,
             history,
             agent_busy: false,
             cancel_flag: None,
+            steer,
             turn_join: None,
             session_backup: None,
             pending_compact: None,
