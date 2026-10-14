@@ -160,6 +160,21 @@ pub async fn stream_chat(
     Ok(text)
 }
 
+/// Hand `message` to the turn running on the daemon; it is read at the next
+/// step, or comes back as an `enqueue_prompt` event if the turn ends first.
+pub async fn steer(remote: &RemoteAttach, message: &str) -> anyhow::Result<()> {
+    let url = format!(
+        "{}/api/session/{}/steer",
+        remote.base_url, remote.session_id
+    );
+    let body = serde_json::json!({ "message": message });
+    let res = client()?.post(&url).json(&body).send().await?;
+    if !res.status().is_success() {
+        anyhow::bail!("steer {}: {}", res.status(), url);
+    }
+    Ok(())
+}
+
 fn parse_sse_data(frame: &str) -> Option<serde_json::Value> {
     for line in frame.lines() {
         let line = line.trim();
@@ -198,6 +213,9 @@ pub fn json_to_turn_event(v: &serde_json::Value) -> Option<TurnEvent> {
             is_error: v.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false),
         },
         "status" => TurnEvent::Status(v.get("message")?.as_str()?.to_string()),
+        "enqueue_prompt" => TurnEvent::EnqueuePrompt {
+            text: v.get("text")?.as_str()?.to_string(),
+        },
         "usage" => return None,
         "error" => TurnEvent::Status(format!(
             "error:{}",

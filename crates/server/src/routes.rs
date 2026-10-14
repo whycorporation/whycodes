@@ -406,6 +406,7 @@ pub async fn chat(
     let agent = Arc::clone(&state.agent);
     let warm_minutes = state.config.session.cache_warm_minutes;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+    let steer_id = session_id.clone();
     let scope = RunScope {
         session_id: session_id.clone(),
         auto_approve: true,
@@ -440,6 +441,7 @@ pub async fn chat(
         );
         let route = (provider.clone(), model.clone(), api_key.clone());
         crate::keep_warm::spawn(Arc::clone(&agent), Arc::clone(&handle), route, warm_minutes);
+        replay_unread_steering(&agent, &steer_id, &tx);
         match result {
             Ok(text) => {
                 emit_status(&tx, &format!("done:{}chars", text.len()));
@@ -474,9 +476,46 @@ pub async fn chat(
 }
 
 fn emit_status(tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>, status: &str) {
-    if let Err(e) = tx.send(TurnEvent::Status(status.to_string())) {
+    send_event(tx, TurnEvent::Status(status.to_string()));
+}
+
+fn send_event(tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>, event: TurnEvent) {
+    if let Err(e) = tx.send(event) {
         tracing::debug!(error = %e, "serve: chat event channel closed");
     }
+}
+
+/// Steering messages a finished turn never read go back to the client, which
+/// queues them as its next prompts.
+fn replay_unread_steering(
+    agent: &Agent,
+    session_id: &str,
+    tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>,
+) {
+    for content in agent.steer_inbox().drain(session_id) {
+        let text = whycodes_agent::steer::content_text(&content);
+        send_event(tx, TurnEvent::EnqueuePrompt { text });
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SteerRequest {
+    pub message: String,
+}
+
+/// Queue a message for the turn running on `session_id`; the agent reads it
+/// at its next step. Text only.
+pub async fn steer(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<SteerRequest>,
+) -> StatusCode {
+    if req.message.trim().is_empty() {
+        return StatusCode::BAD_REQUEST;
+    }
+    let content = whycodes_core::types::MessageContent::Text(req.message);
+    state.agent.steer_inbox().push(&session_id, content);
+    StatusCode::ACCEPTED
 }
 
 fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {

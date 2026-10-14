@@ -151,6 +151,11 @@ pub struct SessionRuntime {
     pub(crate) warm_job: Option<JoinHandle<Option<whycodes_core::types::Usage>>>,
     /// Inbox of the agent running the current turn: messages typed meanwhile.
     pub(crate) steer: whycodes_agent::steer::SteerInbox,
+    /// Session id the running turn reads its steering queue under.
+    pub(crate) steer_session: String,
+    /// Turns handed to the running turn, in order, so the ones it never read
+    /// can be queued again exactly as typed (images included).
+    pub(crate) steered: VecDeque<PendingTurn>,
     /// Live turn task — aborted on force-stop so a hung LLM/tool cannot pin UI.
     pub(crate) turn_join: Option<JoinHandle<()>>,
     /// Session clone taken just before the turn task starts (after user msg).
@@ -232,6 +237,8 @@ impl SessionRuntime {
             last_warm: None,
             warm_job: None,
             steer,
+            steer_session: String::new(),
+            steered: VecDeque::new(),
             turn_join: None,
             session_backup: None,
             pending_compact: None,

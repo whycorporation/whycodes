@@ -2813,24 +2813,25 @@ impl TuiApp {
         self.pending_turns.pop_front()
     }
 
-    /// Hand queued text turns to the running turn's inbox, oldest first.
-    /// A turn with images stops the hand-off; it and later ones wait.
-    pub fn steer_pending_turns(&mut self, inbox: &whycodes_agent::steer::SteerInbox) -> usize {
-        let n = self
-            .pending_turns
-            .iter()
-            .take_while(|t| t.images.is_empty())
-            .count();
-        for turn in self.pending_turns.drain(..n) {
-            inbox.push(turn.text);
-        }
-        n
+    /// Queued turns to hand to a running turn, oldest first. With
+    /// `text_only`, a turn with images stops the hand-off; it and later
+    /// ones wait for the turn to end.
+    pub fn take_steerable_turns(&mut self, text_only: bool) -> Vec<PendingTurn> {
+        let n = if text_only {
+            self.pending_turns
+                .iter()
+                .take_while(|t| t.images.is_empty())
+                .count()
+        } else {
+            self.pending_turns.len()
+        };
+        self.pending_turns.drain(..n).collect()
     }
 
-    /// Queue messages a finished turn never read, ahead of anything newer.
-    pub fn reclaim_steering(&mut self, texts: Vec<String>) {
-        for text in texts.into_iter().rev() {
-            self.pending_turns.push_front(PendingTurn::text_only(text));
+    /// Queue turns a finished turn never read, ahead of anything newer.
+    pub fn reclaim_steering(&mut self, turns: Vec<PendingTurn>) {
+        for turn in turns.into_iter().rev() {
+            self.pending_turns.push_front(turn);
         }
     }
 

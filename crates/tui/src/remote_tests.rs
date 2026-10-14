@@ -297,3 +297,32 @@ async fn http_error_paths() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     assert!(stream_chat(&remote, "x", tx, None).await.is_err());
 }
+
+#[test]
+fn enqueue_prompt_event_maps_to_a_queued_prompt() {
+    match json_to_turn_event(&serde_json::json!({"type": "enqueue_prompt", "text": "later"})) {
+        Some(TurnEvent::EnqueuePrompt { text }) => assert_eq!(text, "later"),
+        other => panic!("{other:?}"),
+    }
+    assert!(json_to_turn_event(&serde_json::json!({"type": "enqueue_prompt"})).is_none());
+}
+
+#[tokio::test]
+async fn steer_reports_an_http_error() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        for status in ["202 Accepted", "404 Not Found"] {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let reply =
+                format!("HTTP/1.1 {status}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+            sock.write_all(reply.as_bytes()).await.unwrap();
+        }
+    });
+    let rem = RemoteAttach::new(format!("http://{addr}"), "s1");
+    assert!(steer(&rem, "go").await.is_ok());
+    let err = steer(&rem, "go").await.unwrap_err();
+    assert!(err.to_string().contains("404"), "{err}");
+}
