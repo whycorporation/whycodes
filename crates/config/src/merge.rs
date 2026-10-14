@@ -181,6 +181,9 @@ impl Config {
         if other.session.prompt_cache != default_prompt_cache() {
             self.session.prompt_cache = other.session.prompt_cache.clone();
         }
+        if other.session.cache_warm_minutes != 0 {
+            self.session.cache_warm_minutes = other.session.cache_warm_minutes;
+        }
         if other.session.compaction_llm != default_compaction_llm() {
             self.session.compaction_llm = other.session.compaction_llm.clone();
         }

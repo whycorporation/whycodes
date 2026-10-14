@@ -18,6 +18,21 @@ use super::{
 };
 
 impl Agent {
+    /// Tool schemas sent with a step (cached; extra activations still apply).
+    pub(crate) fn step_tools(&self) -> std::sync::Arc<[whycodes_core::types::ToolDefinition]> {
+        let extra = self.activated_tools_snapshot();
+        let defs = self.tool_executor.get_definitions_profile_extra(
+            &self.info.permission,
+            self.tool_profile,
+            &extra,
+        );
+        if !self.swarm_enabled && defs_include_swarm(&defs) {
+            defs_without_swarm(&defs).into()
+        } else {
+            defs
+        }
+    }
+
     /// Run a single conversation turn (no streaming UI events).
     ///
     /// `max_turns` is a headless safety cap (`None` = unlimited, Grok TUI
@@ -174,17 +189,7 @@ impl Agent {
             let tools = if tools_free_chat {
                 std::sync::Arc::from([])
             } else {
-                let extra = self.activated_tools_snapshot();
-                let defs = self.tool_executor.get_definitions_profile_extra(
-                    &self.info.permission,
-                    self.tool_profile,
-                    &extra,
-                );
-                if !self.swarm_enabled && defs_include_swarm(&defs) {
-                    defs_without_swarm(&defs).into()
-                } else {
-                    defs
-                }
+                self.step_tools()
             };
             let tool_ctx = self.tool_context(session);
             if is_cancelled(&cancel) {

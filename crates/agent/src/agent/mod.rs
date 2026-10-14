@@ -3,6 +3,7 @@
 //! Turn execution, tool gates, compaction, and swarm/task dispatch live in
 //! sibling modules so this file stays the public surface.
 
+pub mod cache_warm;
 mod compact;
 mod dispatch;
 mod gate;

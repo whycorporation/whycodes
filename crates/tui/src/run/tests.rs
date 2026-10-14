@@ -11046,6 +11046,41 @@ async fn mcp_slash_lists_servers_and_runs_prompts() {
     );
 }
 
+#[tokio::test]
+async fn idle_session_sends_keep_alives_inside_the_window_and_records_them() {
+    let mut rt = test_runtime();
+    let mut registry = whycodes_llm::provider::ProviderRegistry::default();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        [
+            whycodes_llm::ScriptedStep::Usage {
+                input_tokens: 3,
+                output_tokens: 0,
+            },
+            whycodes_llm::ScriptedStep::Text("x".into()),
+        ],
+    )));
+    let agent = std::mem::replace(&mut rt.agent, test_runtime().agent);
+    rt.agent = agent.with_provider_registry(registry);
+    rt.session.add_user_message("hello");
+
+    // No finished turn yet, or keep-alive off: nothing goes out.
+    maybe_warm_cache(&mut rt, 30, "script", "m", "k");
+    assert!(rt.warm_job.is_none());
+    rt.last_turn_end = Some(Instant::now() - Duration::from_secs(300));
+    maybe_warm_cache(&mut rt, 0, "script", "m", "k");
+    assert!(rt.warm_job.is_none());
+
+    maybe_warm_cache(&mut rt, 30, "script", "m", "k");
+    assert!(rt.last_warm.is_some() && rt.warm_job.is_some());
+    while !rt.warm_job.as_ref().is_some_and(|j| j.is_finished()) {
+        tokio::task::yield_now().await;
+    }
+    maybe_warm_cache(&mut rt, 30, "script", "m", "k");
+    assert!(rt.warm_job.is_none(), "next one waits for the interval");
+    assert_eq!(rt.session.cost.unpriced_steps, 1, "usage recorded");
+}
+
 #[test]
 fn busy_turn_takes_queued_text_and_reclaims_what_it_did_not_read() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());

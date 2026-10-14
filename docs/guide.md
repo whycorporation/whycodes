@@ -317,6 +317,21 @@ switched), the status line says how many tokens went uncached:
 `Prompt cache miss: 48.4k tokens sent uncached (last step read 46.0k from
 cache)`. A `/fresh` turn misses on purpose and is not reported.
 
+Providers drop a cached prefix a few minutes after its last use, so the first
+turn after a pause pays for the whole history again. The TUI can keep it warm
+while you are idle:
+
+```toml
+[session]
+cache_warm_minutes = 30   # 0 (default) = off
+```
+
+Every 4.5 minutes of idleness, for up to that many minutes after the last
+turn, it repeats the last request and hangs up as soon as the provider reports
+usage. Each keep-alive is a paid request (cache-read price for the prefix plus
+a few output tokens), counted in `/cost`. Sessions attached to a daemon are not
+kept warm.
+
 TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
 `/loop` (`/loop 3 <prompt>`; `/loop stop`), `/goal` (below).
 

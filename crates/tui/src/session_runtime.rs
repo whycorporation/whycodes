@@ -143,6 +143,12 @@ pub struct SessionRuntime {
     /// True while a turn task owns the real agent/session (moved out).
     pub(crate) agent_busy: bool,
     pub(crate) cancel_flag: Option<CancelFlag>,
+    /// When the last turn finished (prompt-cache keep-alive clock).
+    pub(crate) last_turn_end: Option<std::time::Instant>,
+    /// When the last keep-alive went out.
+    pub(crate) last_warm: Option<std::time::Instant>,
+    /// Keep-alive in flight; yields the usage to record.
+    pub(crate) warm_job: Option<JoinHandle<Option<whycodes_core::types::Usage>>>,
     /// Inbox of the agent running the current turn: messages typed meanwhile.
     pub(crate) steer: whycodes_agent::steer::SteerInbox,
     /// Live turn task — aborted on force-stop so a hung LLM/tool cannot pin UI.
@@ -222,6 +228,9 @@ impl SessionRuntime {
             history,
             agent_busy: false,
             cancel_flag: None,
+            last_turn_end: None,
+            last_warm: None,
+            warm_job: None,
             steer,
             turn_join: None,
             session_backup: None,
