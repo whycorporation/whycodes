@@ -206,6 +206,7 @@ pub async fn run(
     let max_turns = req.max_turns.or(state.max_turns).map(|n| n.max(1));
     let auto_approve = req.auto_approve.unwrap_or(false);
     let agent = Arc::clone(&state.agent);
+    let warm_minutes = state.config.session.cache_warm_minutes;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
     let cancel = new_cancel_flag();
     state.register_cancel(&session_id, Arc::clone(&cancel));
@@ -243,6 +244,8 @@ pub async fn run(
             "v1: failed to save session after run",
             save_session(&*handle.lock().await),
         );
+        let route = (provider.clone(), model.clone(), api_key.clone());
+        crate::keep_warm::spawn(Arc::clone(&agent), Arc::clone(&handle), route, warm_minutes);
         state_done.take_cancel(&sid);
         state_done.perm.finish_run(&sid);
         result

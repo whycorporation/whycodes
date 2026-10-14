@@ -404,6 +404,7 @@ pub async fn chat(
 
     let max_turns = req.max_turns.or(state.max_turns).map(|n| n.max(1));
     let agent = Arc::clone(&state.agent);
+    let warm_minutes = state.config.session.cache_warm_minutes;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
     let steer_id = session_id.clone();
     let scope = RunScope {
@@ -438,6 +439,8 @@ pub async fn chat(
             "serve: failed to save session after chat",
             save_session(&*handle.lock().await),
         );
+        let route = (provider.clone(), model.clone(), api_key.clone());
+        crate::keep_warm::spawn(Arc::clone(&agent), Arc::clone(&handle), route, warm_minutes);
         replay_unread_steering(&agent, &steer_id, &tx);
         match result {
             Ok(text) => {

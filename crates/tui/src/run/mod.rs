@@ -1746,6 +1746,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             for bg in runtimes.iter_mut() {
                 drain_background_runtime(bg);
                 drain_background_goal(bg);
+                // Parked sessions keep their cache warm too (opt-in).
+                if remote.is_none() {
+                    maybe_warm_cache(
+                        bg,
+                        config.session.cache_warm_minutes,
+                        &provider,
+                        &model,
+                        &api_key,
+                    );
+                }
             }
             // Dashboard / picker: rebuild only when rows actually change.
             // Unconditional mark_dirty here used to lock the idle poll at
