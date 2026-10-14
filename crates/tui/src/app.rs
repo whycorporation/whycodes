@@ -2813,6 +2813,27 @@ impl TuiApp {
         self.pending_turns.pop_front()
     }
 
+    /// Hand queued text turns to the running turn's inbox, oldest first.
+    /// A turn with images stops the hand-off; it and later ones wait.
+    pub fn steer_pending_turns(&mut self, inbox: &whycodes_agent::steer::SteerInbox) -> usize {
+        let n = self
+            .pending_turns
+            .iter()
+            .take_while(|t| t.images.is_empty())
+            .count();
+        for turn in self.pending_turns.drain(..n) {
+            inbox.push(turn.text);
+        }
+        n
+    }
+
+    /// Queue messages a finished turn never read, ahead of anything newer.
+    pub fn reclaim_steering(&mut self, texts: Vec<String>) {
+        for text in texts.into_iter().rev() {
+            self.pending_turns.push_front(PendingTurn::text_only(text));
+        }
+    }
+
     /// Reset modal mouse targets (call at the start of each dialog paint).
     ///
     /// Does **not** clear `dialog_scrollbar_grab` — a drag spans frames and

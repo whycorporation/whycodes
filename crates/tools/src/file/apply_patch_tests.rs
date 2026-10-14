@@ -505,3 +505,21 @@ fn apply_unified_diff_pops_empty_last_split() {
     assert!(old_hunk_token(" +1 ", "@@ +1 @@").is_err());
     assert_eq!(old_hunk_token(" -3,1 +3,1 ", "@@").unwrap(), "-3,1");
 }
+
+#[test]
+fn crlf_file_matches_lf_patch_and_keeps_crlf() {
+    let original = "a\r\nb\r\nc\r\n";
+    let out = apply_unified_diff(original, "@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n").unwrap();
+    assert_eq!(out, "a\r\nB\r\nc\r\n");
+}
+
+#[test]
+fn patch_lines_ignore_trailing_space_and_typographic_quotes() {
+    let original = "say(\u{201C}hi\u{201D})  \nend\n";
+    let out = apply_unified_diff(
+        original,
+        "@@ -1,2 +1,2 @@\n-say(\"hi\")\n+say(\"bye\")\n end\n",
+    )
+    .unwrap();
+    assert_eq!(out, "say(\"bye\")\nend\n");
+}

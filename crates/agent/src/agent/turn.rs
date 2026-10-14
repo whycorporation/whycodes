@@ -184,6 +184,7 @@ impl Agent {
             };
             let harmony = whycodes_llm::uses_harmony_dialect(provider_name, model);
             self.inject_auto_background_completions(session);
+            self.inject_steering(session, &events);
             // Cached schemas; extra activations still apply per step.
             let tools = if tools_free_chat {
                 std::sync::Arc::from([])

@@ -11080,3 +11080,46 @@ async fn idle_session_sends_keep_alives_inside_the_window_and_records_them() {
     assert!(rt.warm_job.is_none(), "next one waits for the interval");
     assert_eq!(rt.session.cost.unpriced_steps, 1, "usage recorded");
 }
+
+#[test]
+fn busy_turn_takes_queued_text_and_reclaims_what_it_did_not_read() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.agent_busy = true;
+    app.enqueue_prompt_text("first");
+    app.enqueue_prompt_text("second");
+    app.enqueue_turn(crate::app::PendingTurn {
+        text: "with image".into(),
+        images: vec![crate::images::PromptImage {
+            path: PathBuf::from("a.png"),
+            label: "a.png".into(),
+            media_type: "image/png".into(),
+        }],
+    });
+    app.enqueue_prompt_text("after image");
+
+    steer_or_reclaim(&mut app, &rt);
+    assert_eq!(app.status_message, "sent to the running turn");
+    assert_eq!(app.pending_prompt(), Some("with image"));
+    assert_eq!(app.queued_turn_count(), 2);
+
+    // Nothing new to hand over: the status line is left alone.
+    app.status_message.clear();
+    let _ = app.take_pending_turn();
+    let _ = app.take_pending_turn();
+    steer_or_reclaim(&mut app, &rt);
+    assert!(app.status_message.is_empty());
+
+    // The turn ended without reading them: they run next, in order.
+    rt.agent_busy = false;
+    app.enqueue_prompt_text("newer");
+    steer_or_reclaim(&mut app, &rt);
+    let order: Vec<String> = std::iter::from_fn(|| app.take_pending_turn())
+        .map(|t| t.text)
+        .collect();
+    assert_eq!(order, ["first", "second", "newer"]);
+
+    // Idle with an empty inbox: the queue is untouched.
+    steer_or_reclaim(&mut app, &rt);
+    assert!(!app.has_pending_turn());
+}

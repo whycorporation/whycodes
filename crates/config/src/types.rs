@@ -1273,6 +1273,24 @@ pub struct ToolsConfig {
     /// Long-running `bash` auto-detach (issue #140).
     #[serde(default)]
     pub bash: BashConfig,
+    /// Project formatter after `edit` / `write`.
+    #[serde(default)]
+    pub format: FormatConfig,
+}
+
+/// `[tools.format]` — run the project's own formatter (rustfmt, prettier,
+/// ruff, black, gofmt) on a file `edit` / `write` changed, when the project
+/// shows it uses one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FormatConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for FormatConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// `[tools.bash]` — auto-background a still-running shell after idle.

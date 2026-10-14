@@ -599,3 +599,66 @@ fn preview_edit_shows_the_pending_diff_without_writing() {
         assert_eq!(preview_edit(&args, &wd), None, "{args}");
     }
 }
+
+#[test]
+fn crlf_file_matches_lf_old_string_and_keeps_crlf() {
+    let original = "fn run() {\r\n    let x = 1;\r\n}\r\n";
+    let target = EditTarget {
+        old_string: "fn run() {\n    let x = 1;",
+        replace_all: false,
+        from: None,
+        to: None,
+        insert_after: None,
+    };
+    let plan = plan_edit(original, &target, "fn run() {\n    let x = 2;").unwrap();
+    assert_eq!(plan.modified, "fn run() {\r\n    let x = 2;\r\n}\r\n");
+    assert_eq!(plan.new_text, "fn run() {\r\n    let x = 2;");
+}
+
+#[test]
+fn crlf_file_insert_after_tag_writes_crlf() {
+    let original = "a\r\nb\r\n";
+    let target = EditTarget {
+        old_string: "",
+        replace_all: false,
+        from: None,
+        to: None,
+        insert_after: Some(&crate::file::line_tag::tag_of("a", 2)),
+    };
+    let plan = plan_edit(original, &target, "x\ny").unwrap();
+    assert_eq!(plan.modified, "a\r\nx\r\ny\r\nb\r\n");
+}
+
+#[test]
+fn typographic_punctuation_matches_ascii_both_ways() {
+    let file = "let s = \u{201C}it\u{2019}s\u{201D}; // a \u{2014} b\n";
+    match locate_spans(file, "\"it's\"", false) {
+        Locate::Hits(spans) => {
+            assert_eq!(&file[spans[0].0..spans[0].1], "\u{201C}it\u{2019}s\u{201D}");
+        }
+        _ => panic!("expected folded hit"),
+    }
+    let ascii = "x = 'a' - b\n";
+    match locate_spans(ascii, "\u{2018}a\u{2019} \u{2013} b", false) {
+        Locate::Hits(spans) => assert_eq!(&ascii[spans[0].0..spans[0].1], "'a' - b"),
+        _ => panic!("expected folded hit"),
+    }
+}
+
+#[test]
+fn folded_match_also_tolerates_whitespace() {
+    let file = "say(\u{201C}hi\u{201D},    name)\n";
+    match locate_spans(file, "say(\"hi\", name)", false) {
+        Locate::Hits(spans) => {
+            assert_eq!(
+                &file[spans[0].0..spans[0].1],
+                "say(\u{201C}hi\u{201D},    name)"
+            );
+        }
+        _ => panic!("expected folded whitespace-tolerant hit"),
+    }
+    assert!(matches!(
+        locate_spans(file, "nothing here", false),
+        Locate::None
+    ));
+}

@@ -11,6 +11,7 @@ pub mod cards;
 pub mod display;
 pub mod executor;
 pub mod file;
+pub(crate) mod formatter;
 pub mod git;
 pub mod github;
 pub mod lsp;

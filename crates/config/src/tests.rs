@@ -1746,6 +1746,7 @@ fn hook_and_security_defaults_and_serde() {
     assert!(tools.enable_read && tools.enable_shell);
     assert!(tools.bash.auto_background);
     assert_eq!(tools.bash.auto_background_after_secs, 20);
+    assert!(tools.format.enabled);
     // serde defaults for session / tui / memory / swarm / hook match
     let cfg: Config = toml::from_str(
         r#"
@@ -2864,4 +2865,18 @@ fn provider_extra_body_round_trips_under_its_own_name() {
             .expect("serialize")
             .contains("extra")
     );
+}
+
+#[test]
+fn format_after_write_parses_and_a_layer_can_turn_it_off() {
+    let cfg: Config = toml::from_str("[tools.format]\nenabled = false\n").unwrap();
+    assert!(!cfg.tools.format.enabled);
+    let base = ToolsConfig {
+        format: FormatConfig::default(),
+        ..ToolsConfig::default()
+    };
+    assert!(!base.merge_with(&cfg.tools).format.enabled);
+    // A layer that does not mention it keeps the base value.
+    let off = cfg.tools.clone();
+    assert!(!off.merge_with(&ToolsConfig::default()).format.enabled);
 }
