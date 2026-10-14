@@ -118,6 +118,7 @@ pub fn create_router(state: AppState) -> Router {
             get(routes::get_session_messages),
         )
         .route("/api/session/{id}/chat", post(routes::chat))
+        .route("/api/session/{id}/steer", post(routes::steer))
         .route("/v1/health", get(v1::health))
         .route(
             "/v1/sessions",

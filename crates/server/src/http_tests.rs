@@ -836,3 +836,25 @@ fn lock_env_recovers_from_poison() {
     poison_mutex(&ENV_LOCK);
     let _g = lock_env();
 }
+
+#[tokio::test]
+async fn steer_queues_a_message_for_the_session() {
+    let state = test_state();
+    let agent = Arc::clone(&state.agent);
+    let app = crate::create_router(state);
+    let steer = |body: Value| {
+        Request::builder()
+            .method("POST")
+            .uri("/api/session/s1/steer")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+    let (st, _) = call(app.clone(), steer(serde_json::json!({"message": "  "}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, _) = call(app, steer(serde_json::json!({"message": "check X"}))).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    let queued = agent.steer_inbox().drain("s1");
+    assert_eq!(queued.len(), 1);
+    assert_eq!(whycodes_agent::steer::content_text(&queued[0]), "check X");
+}
