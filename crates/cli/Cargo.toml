@@ -71,7 +71,7 @@ reqwest.workspace = true
 sha2 = { version = "0.11", optional = true }
 flate2 = { version = "1", optional = true }
 tar = { version = "0.4", optional = true }
-zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
+zip = { version = "9", default-features = false, features = ["deflate"], optional = true }
 
 [dev-dependencies]
 whycodes-sdk = { path = "../sdk" }

@@ -251,7 +251,7 @@ pub(crate) fn extract(archive: &[u8], name: &str) -> Result<Vec<u8>> {
             .context("the downloaded archive is not a valid zip")?;
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i)?;
-            if entry.name().ends_with("whycodes.exe") {
+            if entry.name()?.ends_with("whycodes.exe") {
                 let mut out = Vec::new();
                 entry.read_to_end(&mut out)?;
                 return Ok(out);
