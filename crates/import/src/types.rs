@@ -179,10 +179,7 @@ impl ImportPlan {
             });
         }
         for hook in &self.hooks_add {
-            let event = match hook.event {
-                whycodes_config::HookEvent::PreTool => "pre_tool",
-                whycodes_config::HookEvent::PostTool => "post_tool",
-            };
+            let event = hook.event.as_str();
             items.push(ImportItem {
                 kind: ImportItemKind::Hook,
                 label: format!("hook {event} `{}`", hook.command),
@@ -321,6 +318,7 @@ mod tests {
             tool_match: "bash".into(),
             command: "echo hi".into(),
             block_on_failure: true,
+            feedback: false,
             timeout_secs: 30,
         });
         plan

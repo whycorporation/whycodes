@@ -1,6 +1,7 @@
 //! CLI command bodies. `Commands` stays in `args.rs`; this module owns dispatch.
 use crate::{Cli, Commands};
 
+mod acp;
 pub(crate) mod auth;
 pub(crate) mod complete;
 pub(crate) mod config;
@@ -64,7 +65,7 @@ pub(crate) async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Resul
             format,
             approve_tools,
         } => run::cmd_generate(cli, prompt, *max_turns, *jobs, *format, *approve_tools).await,
-        Commands::Acp => github::cmd_acp(cli).await,
+        Commands::Acp => acp::cmd_acp(cli).await,
         Commands::Pr { title, base } => {
             github::cmd_pr(cli, title.as_deref(), base.as_deref()).await
         }

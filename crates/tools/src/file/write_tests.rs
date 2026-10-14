@@ -153,3 +153,49 @@ async fn write_atomic_fails_on_readonly_parent() {
         out.content
     );
 }
+
+#[test]
+fn preview_write_says_create_overwrite_or_no_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let wd = dir.path().to_string_lossy().into_owned();
+    std::fs::write(dir.path().join("old.txt"), "a\nb\n").unwrap();
+
+    let create = preview_write(
+        &serde_json::json!({"path": "new.txt", "content": "x\ny\n"}),
+        &wd,
+    )
+    .unwrap();
+    assert!(create.starts_with("Create new.txt  ·  2 lines"), "{create}");
+    assert!(create.contains("1|+x"), "{create}");
+    assert!(!dir.path().join("new.txt").exists());
+
+    let over = preview_write(
+        &serde_json::json!({"path": "old.txt", "content": "c\n"}),
+        &wd,
+    )
+    .unwrap();
+    assert!(
+        over.starts_with("Overwrite old.txt  ·  2 → 1 lines\n\n"),
+        "{over}"
+    );
+    assert!(over.contains("1|+c"), "{over}");
+
+    let same = preview_write(
+        &serde_json::json!({"path": "old.txt", "content": "a\nb\n"}),
+        &wd,
+    )
+    .unwrap();
+    assert_eq!(same, "Overwrite old.txt  ·  no change");
+
+    // A directory exists but is not readable as a file.
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    assert_eq!(
+        preview_write(&serde_json::json!({"path": "sub", "content": "x"}), &wd),
+        None
+    );
+    assert_eq!(preview_write(&serde_json::json!({"path": "x"}), &wd), None);
+    assert_eq!(
+        preview_write(&serde_json::json!({"content": "x"}), &wd),
+        None
+    );
+}

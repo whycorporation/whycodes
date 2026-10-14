@@ -3068,6 +3068,7 @@ fn apply_plugin_count_replaces_executor_when_lsp_overlay_is_set() {
     let mut a = test_agent();
     a.lsp_overlay = whycodes_tools::LspSettings {
         idle_timeout_ms: Some(60_000),
+        edit_diagnostics_ms: None,
         servers: Default::default(),
     };
     let before = Arc::as_ptr(&a.tool_executor);
@@ -3186,6 +3187,17 @@ async fn load_mcp_replaces_executor_for_lsp_overlay_without_servers() {
     a.load_mcp(&config).await;
     assert_ne!(Arc::as_ptr(&a.tool_executor), before);
     assert!(a.tool_executor.get("lsp").is_some());
+}
+
+#[tokio::test]
+async fn edit_diagnostics_setting_alone_reconfigures_lsp() {
+    let mut config = whycodes_config::Config::default();
+    config.lsp.edit_diagnostics_ms = Some(0);
+    let mut a = test_agent().with_config(&config);
+    assert_eq!(a.lsp_overlay.edit_diagnostics_ms, Some(0));
+    let before = Arc::as_ptr(&a.tool_executor);
+    a.load_mcp(&config).await;
+    assert_ne!(Arc::as_ptr(&a.tool_executor), before);
 }
 
 #[test]
@@ -3403,4 +3415,117 @@ fn which_python() -> Option<&'static str> {
     } else {
         None
     }
+}
+
+#[test]
+fn cache_read_notes_compare_with_the_last_step_of_the_same_session() {
+    let a = test_agent();
+    let cached = whycodes_core::types::Usage {
+        input_tokens: 100,
+        cache_read_input_tokens: Some(30_000),
+        ..Default::default()
+    };
+    let missed = whycodes_core::types::Usage {
+        input_tokens: 31_000,
+        ..Default::default()
+    };
+    assert_eq!(a.note_cache_read("s1", &cached, false), None, "first step");
+    assert!(a.note_cache_read("s1", &missed, false).is_some());
+    assert_eq!(
+        a.note_cache_read("s2", &missed, false),
+        None,
+        "other session"
+    );
+    a.note_cache_read("s1", &cached, false);
+    assert_eq!(
+        a.note_cache_read("s1", &missed, true),
+        None,
+        "/fresh misses on purpose"
+    );
+}
+
+#[test]
+fn permission_detail_shows_the_pending_edit_diff() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
+    let wd = dir.path().to_string_lossy().into_owned();
+    let call = |name: &str, arguments: serde_json::Value| whycodes_core::types::ToolCall {
+        id: "c".into(),
+        name: name.into(),
+        arguments,
+    };
+    let edit = permission_detail_for(
+        &call(
+            "edit",
+            json!({"path": "a.txt", "old_string": "two", "new_string": "2"}),
+        ),
+        &wd,
+    );
+    assert!(edit.starts_with("Edit a.txt"), "{edit}");
+    assert!(edit.contains("|+2"), "{edit}");
+    let write = permission_detail_for(
+        &call("write", json!({"path": "b.txt", "content": "hi"})),
+        &wd,
+    );
+    assert!(write.starts_with("Create b.txt"), "{write}");
+    // No preview (edit would not apply, other tools) → the argument list.
+    let miss = permission_detail_for(
+        &call(
+            "edit",
+            json!({"path": "a.txt", "old_string": "zzz", "new_string": "2"}),
+        ),
+        &wd,
+    );
+    assert!(miss.contains("old_string: zzz"), "{miss}");
+    assert_eq!(
+        permission_detail_for(&call("read", json!({"path": "a.txt"})), &wd),
+        "path: a.txt"
+    );
+}
+
+#[test]
+fn step_cost_prefers_config_prices_over_the_catalog() {
+    let mut config = whycodes_config::Config::default();
+    config.pricing.insert(
+        "wc-cost-p/m".into(),
+        whycodes_config::PriceConfig {
+            input: 10.0,
+            output: 20.0,
+            cache_read: Some(1.0),
+            cache_write: None,
+        },
+    );
+    config
+        .pricing
+        .insert("no-slash".into(), whycodes_config::PriceConfig::default());
+    whycodes_llm::remember_price(
+        "wc-cost-p",
+        "m",
+        whycodes_llm::ModelPrice {
+            input: 99.0,
+            output: 99.0,
+            cache_read: None,
+            cache_write: None,
+        },
+    );
+    whycodes_llm::remember_price(
+        "wc-cost-p",
+        "catalog-only",
+        whycodes_llm::ModelPrice {
+            input: 1.0,
+            output: 1.0,
+            cache_read: None,
+            cache_write: None,
+        },
+    );
+    let a = test_agent().with_config(&config);
+    assert_eq!(a.price_overrides.len(), 1, "invalid keys are dropped");
+    let usage = whycodes_core::types::Usage {
+        input_tokens: 1_000_000,
+        output_tokens: 1_000_000,
+        ..Default::default()
+    };
+    assert_eq!(a.step_cost("wc-cost-p", "m", &usage), Some(30.0));
+    assert_eq!(a.step_cost("wc-cost-p", "catalog-only", &usage), Some(2.0));
+    assert_eq!(a.step_cost("wc-cost-p", "unknown", &usage), None);
 }

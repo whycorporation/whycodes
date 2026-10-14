@@ -2052,3 +2052,360 @@ async fn a_read_below_the_project_attaches_that_directory_s_agents_md_once() {
     );
     assert!(session.system_prompt == "test", "system prompt untouched");
 }
+
+type FallbackCalls = std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>>;
+
+/// Fails to open for `fail_models` with `err`; otherwise answers "from name/model".
+struct FallbackProbe {
+    name: &'static str,
+    fail_models: &'static [&'static str],
+    err: &'static str,
+    calls: FallbackCalls,
+}
+
+impl LlmProvider for FallbackProbe {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::Provider("unused".into())) })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        self.calls.lock().unwrap_or_else(|e| e.into_inner()).push((
+            self.name.to_string(),
+            api_key.to_string(),
+            model.to_string(),
+        ));
+        let fail = self.fail_models.contains(&model);
+        let err = self.err;
+        let text = format!("from {}/{model}", self.name);
+        Box::pin(async move {
+            if fail {
+                return Err(whycodes_core::Error::Provider(err.into()));
+            }
+            Ok(Box::pin(futures::stream::iter([
+                Ok(whycodes_core::types::StreamEvent::TextDelta { text }),
+                Ok(whycodes_core::types::StreamEvent::MessageStop),
+            ]))
+                as whycodes_llm::provider::ProviderEventStream)
+        })
+    }
+}
+
+const UNAVAILABLE: &str = "HTTP 503 service unavailable retry in 0 seconds";
+
+fn probe(
+    name: &'static str,
+    fail: &'static [&'static str],
+    calls: &FallbackCalls,
+) -> FallbackProbe {
+    FallbackProbe {
+        name,
+        fail_models: fail,
+        err: UNAVAILABLE,
+        calls: std::sync::Arc::clone(calls),
+    }
+}
+
+fn fallback_agent(config: &whycodes_config::Config, providers: Vec<FallbackProbe>) -> Agent {
+    let mut registry = ProviderRegistry::new();
+    for p in providers {
+        registry.register(Box::new(p));
+    }
+    Agent::new(info("build"))
+        .with_config(config)
+        .with_provider_registry(registry)
+}
+
+fn config_with_fallbacks(models: &[&str]) -> whycodes_config::Config {
+    let mut config = whycodes_config::Config::default();
+    config.session.fallback_models = models.iter().map(|m| m.to_string()).collect();
+    config
+}
+
+#[tokio::test]
+async fn unavailable_model_falls_back_to_a_sibling_on_the_same_key() {
+    let calls = FallbackCalls::default();
+    let config = config_with_fallbacks(&["openai/gpt-4o-mini"]);
+    let agent = fallback_agent(&config, vec![probe("openai", &["gpt-4o"], &calls)]);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut session = session_user("please explain the retry loop");
+    let text = agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "openai",
+                model: "gpt-4o",
+                api_key: "sk-a",
+                max_turns: Some(4),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(text, "from openai/gpt-4o-mini");
+    let status = drain_status(&mut rx);
+    assert!(
+        status
+            .iter()
+            .any(|s| s.contains("falling back to openai/gpt-4o-mini")),
+        "{status:?}"
+    );
+    let calls = calls.lock().unwrap().clone();
+    assert_eq!(
+        calls.last().unwrap().1,
+        "sk-a",
+        "same provider keeps the key"
+    );
+}
+
+#[tokio::test]
+async fn fallback_walks_the_chain_and_uses_config_keys_across_providers() {
+    let calls = FallbackCalls::default();
+    let mut config = config_with_fallbacks(&[
+        "no-slash-entry",
+        "unregistered/model",
+        "openai/gpt-4o",
+        "openai/gpt-4o-mini",
+        "anthropic/claude",
+    ]);
+    config.providers.insert(
+        "anthropic".into(),
+        ProviderConfig {
+            name: "anthropic".into(),
+            api_key: Some("sk-ant".into()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: ProviderCredentials::default(),
+        },
+    );
+    let agent = fallback_agent(
+        &config,
+        vec![
+            probe("openai", &["gpt-4o", "gpt-4o-mini"], &calls),
+            probe("anthropic", &[], &calls),
+        ],
+    );
+    let mut session = session_user("please explain the retry loop");
+    let text = agent
+        .run_turn(&mut session, "openai", "gpt-4o", "sk-a", Some(6))
+        .await
+        .unwrap();
+    assert_eq!(text, "from anthropic/claude");
+    let calls = calls.lock().unwrap().clone();
+    let last = calls.last().unwrap();
+    assert_eq!((last.0.as_str(), last.1.as_str()), ("anthropic", "sk-ant"));
+    assert!(
+        calls.iter().any(|c| c.2 == "gpt-4o-mini"),
+        "the failing mini fallback is tried first: {calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn fallback_reads_env_keys_and_skips_missing_ones() {
+    let _env = crate::CREDENTIAL_ENV_LOCK.lock().await;
+    let prev_empty = std::env::var_os("WCFBEMPTY_API_KEY");
+    let prev_ok = std::env::var_os("WCFBENV_API_KEY");
+    unsafe {
+        std::env::set_var("WCFBEMPTY_API_KEY", "");
+        std::env::set_var("WCFBENV_API_KEY", "sk-env");
+        std::env::remove_var("WCFBNONE_API_KEY");
+    }
+    let calls = FallbackCalls::default();
+    let config = config_with_fallbacks(&["wcfbnone/m", "wcfbempty/m", "wcfbenv/m"]);
+    let agent = fallback_agent(
+        &config,
+        vec![
+            probe("openai", &["gpt-4o"], &calls),
+            probe("wcfbnone", &[], &calls),
+            probe("wcfbempty", &[], &calls),
+            probe("wcfbenv", &[], &calls),
+        ],
+    );
+    let mut session = session_user("please explain the retry loop");
+    let result = agent
+        .run_turn(&mut session, "openai", "gpt-4o", "sk-a", Some(4))
+        .await;
+    unsafe {
+        match prev_empty {
+            Some(v) => std::env::set_var("WCFBEMPTY_API_KEY", v),
+            None => std::env::remove_var("WCFBEMPTY_API_KEY"),
+        }
+        match prev_ok {
+            Some(v) => std::env::set_var("WCFBENV_API_KEY", v),
+            None => std::env::remove_var("WCFBENV_API_KEY"),
+        }
+    }
+    assert_eq!(result.unwrap(), "from wcfbenv/m");
+    let calls = calls.lock().unwrap().clone();
+    assert_eq!(calls.last().unwrap().1, "sk-env");
+    assert!(
+        calls
+            .iter()
+            .all(|c| c.0 != "wcfbnone" && c.0 != "wcfbempty")
+    );
+}
+
+#[tokio::test]
+async fn non_retryable_errors_and_an_exhausted_chain_surface_the_error() {
+    let calls = FallbackCalls::default();
+    let config = config_with_fallbacks(&["openai/gpt-4o-mini"]);
+    let auth_fail = FallbackProbe {
+        name: "openai",
+        fail_models: &["gpt-4o"],
+        err: "HTTP 401 unauthorized: invalid api key",
+        calls: std::sync::Arc::clone(&calls),
+    };
+    let agent = fallback_agent(&config, vec![auth_fail]);
+    let mut session = session_user("please explain the retry loop");
+    let err = agent
+        .run_turn(&mut session, "openai", "gpt-4o", "sk-a", Some(4))
+        .await
+        .expect_err("401 must not fall back");
+    assert!(err.to_string().contains("401"), "{err}");
+    assert!(calls.lock().unwrap().iter().all(|c| c.2 == "gpt-4o"));
+
+    let calls = FallbackCalls::default();
+    let agent = fallback_agent(
+        &config,
+        vec![probe("openai", &["gpt-4o", "gpt-4o-mini"], &calls)],
+    );
+    let mut session = session_user("please explain the retry loop");
+    let err = agent
+        .run_turn(&mut session, "openai", "gpt-4o", "sk-a", Some(4))
+        .await
+        .expect_err("every target is down");
+    assert!(err.to_string().contains("503"), "{err}");
+}
+
+#[tokio::test]
+async fn a_dropped_prompt_cache_shows_a_status_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let agent = batched([
+        vec![
+            ScriptedStep::CacheUsage {
+                creation_input_tokens: 0,
+                read_input_tokens: 40_000,
+            },
+            ScriptedStep::ToolCall {
+                id: "r1".into(),
+                name: "read".into(),
+                input: json!({"path": "n.txt"}),
+            },
+        ],
+        vec![
+            ScriptedStep::Usage {
+                input_tokens: 41_000,
+                output_tokens: 5,
+            },
+            ScriptedStep::Text("cache went cold".into()),
+        ],
+    ]);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut session = session_at(dir.path(), "please read n.txt and summarize it");
+    agent
+        .run_turn_with_events(&mut session, opts(Some(tx)))
+        .await
+        .unwrap();
+    let status = drain_status(&mut rx);
+    assert!(
+        status
+            .iter()
+            .any(|s| s.starts_with("Prompt cache miss: 41.0k tokens")),
+        "{status:?}"
+    );
+}
+
+/// Reports 1M input tokens per step, then answers.
+struct PricedUsageProvider;
+
+impl LlmProvider for PricedUsageProvider {
+    fn name(&self) -> &str {
+        "openai"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::Provider("unused".into())) })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        Box::pin(async {
+            Ok(Box::pin(futures::stream::iter([
+                Ok(whycodes_core::types::StreamEvent::Usage {
+                    input_tokens: 1_000_000,
+                    output_tokens: 0,
+                }),
+                Ok(whycodes_core::types::StreamEvent::TextDelta {
+                    text: "priced".into(),
+                }),
+                Ok(whycodes_core::types::StreamEvent::MessageStop),
+            ]))
+                as whycodes_llm::provider::ProviderEventStream)
+        })
+    }
+}
+
+#[tokio::test]
+async fn turn_accumulates_cost_only_for_priced_models() {
+    let mut config = whycodes_config::Config::default();
+    config.pricing.insert(
+        "openai/gpt-cost".into(),
+        whycodes_config::PriceConfig {
+            input: 2.0,
+            output: 8.0,
+            cache_read: None,
+            cache_write: None,
+        },
+    );
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(PricedUsageProvider));
+    let agent = Agent::new(info("build"))
+        .with_config(&config)
+        .with_provider_registry(registry);
+    let mut session = session_user("please explain the retry loop");
+    let text = agent
+        .run_turn(&mut session, "openai", "gpt-cost", "sk", Some(2))
+        .await
+        .unwrap();
+    assert_eq!(text, "priced");
+    assert!((session.cost.usd - 2.0).abs() < 1e-9, "{:?}", session.cost);
+    assert_eq!(session.cost.unpriced_steps, 0);
+
+    let mut unpriced = session_user("please explain the retry loop");
+    agent
+        .run_turn(&mut unpriced, "openai", "no-price", "sk", Some(2))
+        .await
+        .unwrap();
+    assert_eq!(unpriced.cost.usd, 0.0);
+    assert_eq!(unpriced.cost.unpriced_steps, 1);
+}

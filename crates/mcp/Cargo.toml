@@ -15,6 +15,9 @@ thiserror.workspace = true
 tracing.workspace = true
 reqwest.workspace = true
 futures.workspace = true
+chrono.workspace = true
+url = "2"
+whycodes-auth = { path = "../auth" }
 whycodes-core = { path = "../core" }
 whycodes-tools = { path = "../tools" }
 

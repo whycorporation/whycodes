@@ -21,13 +21,43 @@ pub struct Location {
 }
 
 /// Diagnostic severity.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
     Error = 1,
     Warning = 2,
     Information = 3,
     Hint = 4,
+}
+
+/// The LSP wire format is an integer (1–4); snake_case names are accepted too.
+/// An out-of-range number maps to `Hint` so one odd entry cannot drop the
+/// whole `publishDiagnostics` batch.
+impl<'de> Deserialize<'de> for DiagnosticSeverity {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Num(i64),
+            Name(String),
+        }
+        match Raw::deserialize(d)? {
+            Raw::Num(1) => Ok(Self::Error),
+            Raw::Num(2) => Ok(Self::Warning),
+            Raw::Num(3) => Ok(Self::Information),
+            Raw::Num(_) => Ok(Self::Hint),
+            Raw::Name(name) => match name.as_str() {
+                "error" => Ok(Self::Error),
+                "warning" => Ok(Self::Warning),
+                "information" => Ok(Self::Information),
+                "hint" => Ok(Self::Hint),
+                other => Err(serde::de::Error::unknown_variant(
+                    other,
+                    &["error", "warning", "information", "hint"],
+                )),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,15 +300,26 @@ pub struct JsonRpcError {
 pub enum IncomingMessage {
     Response(JsonRpcResponse),
     Notification(JsonRpcNotification),
+    /// Server → client request (`id` and `method`). The id may be a string.
+    Request(ServerRequest),
+}
+
+/// A request the server sends us (e.g. `workspace/configuration`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerRequest {
+    pub id: serde_json::Value,
+    pub method: String,
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
 }
 
 impl IncomingMessage {
     pub fn from_line(line: &str) -> serde_json::Result<Self> {
         let val: serde_json::Value = serde_json::from_str(line)?;
-        if val.get("method").is_some() && val.get("id").is_none() {
-            Ok(IncomingMessage::Notification(serde_json::from_value(val)?))
-        } else {
-            Ok(IncomingMessage::Response(serde_json::from_value(val)?))
+        match (val.get("method").is_some(), val.get("id").is_some()) {
+            (true, false) => Ok(IncomingMessage::Notification(serde_json::from_value(val)?)),
+            (true, true) => Ok(IncomingMessage::Request(serde_json::from_value(val)?)),
+            _ => Ok(IncomingMessage::Response(serde_json::from_value(val)?)),
         }
     }
 }

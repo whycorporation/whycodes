@@ -1,18 +1,29 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use crate::error::{LspError, Result};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 use tracing::{debug, info, warn};
 
 use crate::types::{
     Diagnostic, HoverResult, IncomingMessage, InitializeParams, JsonRpcNotification,
-    JsonRpcRequest, JsonRpcResponse, Location, Position, TextDocumentItem,
-    TextDocumentPositionParams,
+    JsonRpcRequest, JsonRpcResponse, Location, Position, PublishDiagnosticsParams, ServerRequest,
+    TextDocumentItem, TextDocumentPositionParams,
 };
+
+/// Upper bound on one request once the background reader owns stdout.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Poll step while waiting for a fresh `publishDiagnostics`.
+const DIAGNOSTICS_POLL: Duration = Duration::from_millis(25);
+
+/// In-flight requests keyed by JSON-RPC id, completed by the background reader.
+type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<JsonRpcResponse>>>>;
+type DiagnosticsMap = Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>;
 
 /// Buffered LSP client — wraps a subprocess and talks JSON-RPC over stdin/stdout
 /// using `Content-Length`-delimited framing.
@@ -26,7 +37,18 @@ pub struct LspClient {
     next_id: Arc<Mutex<i64>>,
     /// Stored diagnostics per URI, updated from `textDocument/publishDiagnostics`
     /// notifications.
-    diagnostics: Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>,
+    diagnostics: DiagnosticsMap,
+    /// `publishDiagnostics` count per URI, so callers can wait for a fresh one.
+    published: Arc<Mutex<HashMap<String, u64>>>,
+    /// Document version per URI; absent means not opened yet.
+    doc_versions: Arc<Mutex<HashMap<String, i32>>>,
+    /// Requests waiting on the background reader (only used when it runs).
+    pending: Pending,
+    /// The background reader owns stdout: requests must go through `pending`.
+    reader_running: bool,
+    /// Set by the background reader when stdout closes.
+    reader_closed: Arc<AtomicBool>,
+    request_timeout: Duration,
     language_id: String,
     settings: Option<serde_json::Value>,
     last_used: Arc<Mutex<std::time::Instant>>,
@@ -157,12 +179,18 @@ impl LspClient {
         let reader = Arc::new(Mutex::new(BufReader::new(stdout)));
         let child = Arc::new(Mutex::new(child));
 
-        let client = Self {
+        let mut client = Self {
             writer,
             stdout: reader,
             child,
             next_id: Arc::new(Mutex::new(1)),
             diagnostics: Arc::new(Mutex::new(HashMap::new())),
+            published: Arc::new(Mutex::new(HashMap::new())),
+            doc_versions: Arc::new(Mutex::new(HashMap::new())),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            reader_running: false,
+            reader_closed: Arc::new(AtomicBool::new(false)),
+            request_timeout: REQUEST_TIMEOUT,
             language_id: language_id.to_string(),
             settings: settings.cloned(),
             last_used: Arc::new(Mutex::new(std::time::Instant::now())),
@@ -202,14 +230,15 @@ impl LspClient {
         info!("LSP server {command} initialized for {}", workspace_root);
 
         if spawn_background {
-            // Spawn a background reader loop to collect diagnostics (and swallow
-            // window/showMessage etc.).
+            // The reader owns stdout from here on: it stores diagnostics,
+            // completes pending requests, and answers server requests.
             let stdout_bg = client.stdout.clone();
-            let diags_bg = client.diagnostics.clone();
+            let state = client.reader_state();
             let cmd_name = command.to_string();
             tokio::spawn(async move {
-                consume_stdout(stdout_bg, diags_bg, cmd_name).await;
+                consume_stdout(stdout_bg, state, cmd_name).await;
             });
+            client.reader_running = true;
         }
 
         Ok(client)
@@ -279,22 +308,67 @@ impl LspClient {
         let _ = child.wait().await;
     }
 
-    /// Open a text document in the language server.
+    /// Sync a document: `didOpen` on first use, then full-text `didChange`
+    /// with a bumped version (servers ignore a second `didOpen`).
     ///
     /// When `text` is `None`, the file is read from disk. Missing files open as empty.
-    pub async fn open_document(&self, uri: &str, text: Option<&str>) -> Result<()> {
+    pub async fn sync_document(&self, uri: &str, text: Option<&str>) -> Result<()> {
         let body = match text {
             Some(t) => t.to_string(),
             None => read_uri_text(uri).unwrap_or_default(),
         };
-        let doc = TextDocumentItem {
-            uri: uri.to_string(),
-            language_id: self.language_id.clone(),
-            version: 1,
-            text: body,
+        let version = {
+            let mut versions = self.doc_versions.lock().await;
+            let v = versions.entry(uri.to_string()).or_insert(0);
+            *v += 1;
+            *v
         };
-        self.notify("textDocument/didOpen", json!({ "textDocument": doc }))
-            .await
+        if version == 1 {
+            let doc = TextDocumentItem {
+                uri: uri.to_string(),
+                language_id: self.language_id.clone(),
+                version,
+                text: body,
+            };
+            return self
+                .notify("textDocument/didOpen", json!({ "textDocument": doc }))
+                .await;
+        }
+        self.notify(
+            "textDocument/didChange",
+            json!({
+                "textDocument": { "uri": uri, "version": version },
+                "contentChanges": [{ "text": body }],
+            }),
+        )
+        .await
+    }
+
+    /// How many `publishDiagnostics` have arrived for `uri` so far.
+    pub async fn publish_count(&self, uri: &str) -> u64 {
+        self.published.lock().await.get(uri).copied().unwrap_or(0)
+    }
+
+    /// Wait up to `wait` for a `publishDiagnostics` newer than `seen`
+    /// (from [`Self::publish_count`]). `None` when the server stays quiet.
+    pub async fn wait_for_diagnostics(
+        &self,
+        uri: &str,
+        seen: u64,
+        wait: Duration,
+    ) -> Option<Vec<Diagnostic>> {
+        let deadline = tokio::time::Instant::now() + wait;
+        loop {
+            if self.publish_count(uri).await > seen {
+                let diags = self.diagnostics.lock().await;
+                return Some(diags.get(uri).cloned().unwrap_or_default());
+            }
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return None;
+            }
+            tokio::time::sleep((deadline - now).min(DIAGNOSTICS_POLL)).await;
+        }
     }
 
     /// Fetch diagnostics for a URI. Returns cached diagnostics if previously
@@ -321,7 +395,12 @@ impl LspClient {
             .map_err(|e| LspError::msg(format!("textDocument/diagnostic request failed: {e}")))?;
 
         if let Some(result) = resp.result {
-            let diagnostics: Vec<Diagnostic> = serde_json::from_value(result).unwrap_or_default();
+            // LSP 3.17 answers with a report `{kind, items}`; older fakes send a bare array.
+            let items = match result {
+                serde_json::Value::Object(mut report) => report.remove("items").unwrap_or_default(),
+                other => other,
+            };
+            let diagnostics: Vec<Diagnostic> = serde_json::from_value(items).unwrap_or_default();
             self.diagnostics
                 .lock()
                 .await
@@ -431,11 +510,159 @@ impl LspClient {
             id
         };
         let req = JsonRpcRequest::new(id, method, params);
-        self.send_message(&json!(req)).await?;
+        if !self.reader_running {
+            self.send_message(&json!(req)).await?;
+            let mut reader = self.stdout.lock().await;
+            return read_rpc_response(&mut *reader, id, method).await;
+        }
 
-        let mut reader = self.stdout.lock().await;
-        read_rpc_response(&mut *reader, id, method).await
+        // The background reader holds stdout for good; locking it here would
+        // deadlock. Register first so a fast reply cannot be missed.
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(id, tx);
+        if self.reader_closed.load(Ordering::SeqCst) {
+            self.pending.lock().await.remove(&id);
+            return Err(closed_stdout(method));
+        }
+        if let Err(e) = self.send_message(&json!(req)).await {
+            self.pending.lock().await.remove(&id);
+            return Err(e);
+        }
+        match tokio::time::timeout(self.request_timeout, rx).await {
+            Ok(Ok(resp)) => Ok(resp),
+            Ok(Err(dropped)) => {
+                debug!("LSP {method} waiter dropped: {dropped}");
+                Err(closed_stdout(method))
+            }
+            Err(elapsed) => {
+                self.pending.lock().await.remove(&id);
+                Err(LspError::msg(format!(
+                    "LSP {method} request timed out ({elapsed})"
+                )))
+            }
+        }
     }
+
+    fn reader_state(&self) -> ReaderState {
+        ReaderState {
+            diagnostics: self.diagnostics.clone(),
+            published: self.published.clone(),
+            pending: self.pending.clone(),
+            closed: self.reader_closed.clone(),
+            writer: self.writer.clone(),
+            settings: self.settings.clone(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_request_timeout(&mut self, timeout: Duration) {
+        self.request_timeout = timeout;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn start_reader_with_settings(
+        command: &str,
+        args: &[String],
+        settings: &serde_json::Value,
+    ) -> Result<Self> {
+        Self::boot(command, args, "/tmp", "rust", None, Some(settings), true).await
+    }
+}
+
+fn closed_stdout(method: &str) -> LspError {
+    LspError::msg(format!(
+        "LSP server closed stdout while waiting for response to {method}"
+    ))
+}
+
+/// What the background reader shares with the client.
+struct ReaderState {
+    diagnostics: DiagnosticsMap,
+    published: Arc<Mutex<HashMap<String, u64>>>,
+    pending: Pending,
+    closed: Arc<AtomicBool>,
+    writer: Arc<Mutex<ChildStdin>>,
+    settings: Option<serde_json::Value>,
+}
+
+impl ReaderState {
+    async fn store_diagnostics(&self, parsed: PublishDiagnosticsParams) {
+        // Diagnostics before the counter: a waiter that sees the bump reads them.
+        self.diagnostics
+            .lock()
+            .await
+            .insert(parsed.uri.clone(), parsed.diagnostics);
+        *self.published.lock().await.entry(parsed.uri).or_insert(0) += 1;
+    }
+
+    async fn deliver(&self, resp: JsonRpcResponse) {
+        // Our ids start at 1, so a missing id never matches a waiter.
+        let id = resp.id.unwrap_or_default();
+        let waiter = self.pending.lock().await.remove(&id);
+        match waiter {
+            Some(tx) => {
+                if tx.send(resp).is_err() {
+                    debug!("LSP response {id} arrived after its caller gave up");
+                }
+            }
+            None => debug!("Ignoring unsolicited LSP response id {id}"),
+        }
+    }
+
+    /// Servers block on some requests (`workspace/configuration`); answer all.
+    async fn answer(&self, req: ServerRequest) {
+        let result = match req.method.as_str() {
+            "workspace/configuration" => {
+                configuration_result(req.params.as_ref(), self.settings.as_ref())
+            }
+            _ => serde_json::Value::Null,
+        };
+        let reply = json!({ "jsonrpc": "2.0", "id": req.id, "result": result });
+        let mut writer = self.writer.lock().await;
+        if let Err(e) = write_framed(&mut *writer, &reply).await {
+            warn!("LSP reply to {} failed: {e}", req.method);
+        }
+    }
+
+    async fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        // Dropping the senders wakes every waiter with a closed-channel error.
+        self.pending.lock().await.clear();
+    }
+}
+
+/// One value per requested item: the `section` path looked up in `settings`.
+fn configuration_result(
+    params: Option<&serde_json::Value>,
+    settings: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let items = params
+        .and_then(|p| p.get("items"))
+        .and_then(serde_json::Value::as_array);
+    items
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            let section = item
+                .get("section")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            settings_section(settings, section)
+        })
+        .collect()
+}
+
+fn settings_section(settings: Option<&serde_json::Value>, section: &str) -> serde_json::Value {
+    let Some(mut cur) = settings else {
+        return serde_json::Value::Null;
+    };
+    for key in section.split('.').filter(|k| !k.is_empty()) {
+        match cur.get(key) {
+            Some(next) => cur = next,
+            None => return serde_json::Value::Null,
+        }
+    }
+    cur.clone()
 }
 
 async fn read_rpc_response(
@@ -679,6 +906,38 @@ while True:
             sys.stdout.buffer.write(b"Content-Length: 2\r\n")
             sys.stdout.buffer.flush()
         continue
+    if mode == "publish_on_change" and method in ("textDocument/didOpen", "textDocument/didChange"):
+        doc = msg["params"]["textDocument"]
+        write_msg({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {"uri": doc["uri"], "diagnostics": [
+                {"range": range0, "severity": 4, "message": "hint"},
+                {"range": range0, "severity": 1, "message": "v%d" % doc["version"]},
+            ]},
+        })
+        continue
+    if mode == "server_request" and method == "initialized":
+        write_msg({"jsonrpc": "2.0", "id": "cfg-1", "method": "workspace/configuration",
+                   "params": {"items": [{"section": "fake.opt"}, {"section": "nope"}]}})
+        write_msg({"jsonrpc": "2.0", "id": 41, "method": "window/workDoneProgress/create",
+                   "params": {"token": "t"}})
+        continue
+    if mode == "server_request" and method is None and mid in ("cfg-1", 41):
+        uri = "file:///tmp/cfg.rs" if mid == "cfg-1" else "file:///tmp/progress.rs"
+        write_msg({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {"uri": uri, "diagnostics": [
+                {"range": range0, "severity": 1, "message": json.dumps(msg.get("result"))},
+            ]},
+        })
+        continue
+    if mode == "stdin_closed_later" and method == "initialized":
+        os.close(0)
+        import time
+        time.sleep(3)
+        break
     if method == "initialized" or method == "textDocument/didOpen":
         if method == "initialized" and mode == "init_then_eof":
             break
@@ -755,6 +1014,8 @@ while True:
             write_msg({"jsonrpc": "2.0", "id": mid})
         elif mode == "bad_diag":
             write_msg({"jsonrpc": "2.0", "id": mid, "result": {"not": "array"}})
+        elif mode == "report":
+            write_msg({"jsonrpc": "2.0", "id": mid, "result": {"kind": "full", "items": [diag]}})
         else:
             write_msg({"jsonrpc": "2.0", "id": mid, "result": [diag]})
     else:
@@ -790,21 +1051,20 @@ pub(crate) async fn start_test_client(mode: &str, spawn_background: bool) -> Res
     }
 }
 
-async fn consume_stdout<R>(
-    stdout: Arc<Mutex<R>>,
-    diagnostics: Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>,
-    cmd_name: String,
-) where
+async fn consume_stdout<R>(stdout: Arc<Mutex<R>>, state: ReaderState, cmd_name: String)
+where
     R: tokio::io::AsyncBufRead + Send + Unpin,
 {
     let mut lock = stdout.lock().await;
-    consume_stdout_inner(&mut *lock, diagnostics, cmd_name).await;
+    consume_stdout_inner(&mut *lock, &state, &cmd_name).await;
+    state.close().await;
+    debug!("LSP background reader for {} exited", cmd_name);
 }
 
 async fn consume_stdout_inner(
     lock: &mut (dyn tokio::io::AsyncBufRead + Send + Unpin),
-    diagnostics: Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>,
-    cmd_name: String,
+    state: &ReaderState,
+    cmd_name: &str,
 ) {
     let mut buf = String::new();
     loop {
@@ -839,19 +1099,14 @@ async fn consume_stdout_inner(
                             Ok(IncomingMessage::Notification(notif)) => {
                                 if notif.method == "textDocument/publishDiagnostics"
                                     && let Some(params) = notif.params
-                                    && let Ok(parsed) = serde_json::from_value::<
-                                        crate::types::PublishDiagnosticsParams,
-                                    >(params)
+                                    && let Ok(parsed) =
+                                        serde_json::from_value::<PublishDiagnosticsParams>(params)
                                 {
-                                    diagnostics
-                                        .lock()
-                                        .await
-                                        .insert(parsed.uri, parsed.diagnostics);
+                                    state.store_diagnostics(parsed).await;
                                 }
                             }
-                            Ok(IncomingMessage::Response(_)) => {
-                                // silently discard — handled by `request()`
-                            }
+                            Ok(IncomingMessage::Response(resp)) => state.deliver(resp).await,
+                            Ok(IncomingMessage::Request(req)) => state.answer(req).await,
                             Err(e) => {
                                 warn!("Bad LSP message from {}: {}", cmd_name, e);
                             }
@@ -865,7 +1120,6 @@ async fn consume_stdout_inner(
             }
         }
     }
-    debug!("LSP background reader for {} exited", cmd_name);
 }
 fn line_strip_prefix<'a>(prefix: &str, line: &'a str) -> Option<&'a str> {
     line.strip_prefix(prefix)

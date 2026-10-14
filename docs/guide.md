@@ -32,7 +32,7 @@ Usage: whycodes [OPTIONS] [COMMAND]
 Commands:
   run       Start an interactive session (default)
   generate  One-shot, non-interactive turn
-  acp       Agent Client Protocol (not yet implemented)
+  acp       Agent Client Protocol server on stdio, for editors
   pr        Create a pull request from current changes
   github    GitHub operations
   serve     Start the local API / share server
@@ -61,6 +61,7 @@ Options (global):
   -d, --dir <DIR>            Project directory (defaults to cwd)
   -c, --continue             Resume the most recently updated session
   -r, --resume <SESSION_ID>  Resume a saved session (full id or unique prefix)
+      --fork                 With -c / -r: continue in a copy, keep the original
       --plain                Line-based stdin REPL instead of the TUI
       --debug                Write debug logs under the data dir
       --no-memory            Disable cross-session memory for this process
@@ -93,9 +94,16 @@ whycodes generate "Explain the error handling in main.rs" -d ./my-project
 whycodes run "Where is the retry logic?" -d ./my-project
 whycodes --continue
 whycodes --resume a1b2c3d4
+whycodes --resume a1b2c3d4 --fork   # branch off; a1b2c3d4 stays as it was
+whycodes session search retry loop   # sessions whose messages mention both words
 whycodes session import ./transcript.jsonl --from auto
 whycodes -P openai -m gpt-4o generate "Refactor this module"
 ```
+
+`session search` (alias `grep`) scans saved transcripts: every word must
+appear in one message (ASCII case-insensitive), newest sessions first, with
+an excerpt. It reads messages at search time instead of keeping an index,
+so saving a long session stays fast.
 
 `session import` accepts `--from auto|whycodes|claude|codex|opencode|pi`. Tools do
 not replay; resume with `whycodes --resume <id>`.
@@ -217,6 +225,37 @@ Contributors checking a TUI change on Alacritty / Kitty / WezTerm / VTE: see
 | `[` / `]` | Cycle sidebar tabs (scrollback focus) |
 | `Ctrl+C` / `Ctrl+Q` | Clear draft or quit |
 
+Rebind keys under `[tui.key_bindings]` as `"key" = "action"`; `"none"`
+unbinds a default:
+
+```toml
+[tui.key_bindings]
+"ctrl+e" = "toggle_sidebar"
+"f2" = "model_dialog"
+"alt+k" = "scroll_up"
+"ctrl+l" = "none"          # keep Ctrl+L from clearing the session
+```
+
+Keys: `ctrl` / `alt` / `shift` joined with `+` or `-`, then a character or
+`enter`, `esc`, `tab`, `space`, `backspace`, `delete`, `insert`, `home`, `end`,
+`pageup`, `pagedown`, `up` / `down` / `left` / `right`, `f1`–`f24`. A plain
+character (no Ctrl/Alt) only applies outside the prompt, so typing is never
+captured. Dialogs (approvals, pickers) keep their fixed keys, and the session
+keys handled before the keymap (`Ctrl+O`, `Ctrl+N`, `Ctrl+Tab`,
+`Ctrl+PgUp/PgDn`) cannot be rebound. Unknown keys or actions are logged and
+skipped.
+
+Actions: `quit`, `force_quit`, `escape`, `submit`, `scroll_up`, `scroll_down`,
+`page_up`, `page_down`, `scroll_to_top`, `scroll_to_bottom`,
+`toggle_auto_scroll`, `clear_session`, `toggle_sidebar`, `sidebar_next_tab`,
+`sidebar_prev_tab`, `sidebar_tab_1`–`sidebar_tab_6`, `toggle_tasks`,
+`provider_dialog`, `model_dialog`, `input_home`, `input_end`, `input_left`,
+`input_right`, `history_prev`, `history_next`, `newline`, `clear_input`,
+`kill_word_back`, `kill_word_forward`, `word_left`, `word_right`,
+`toggle_thinking`, `toggle_tool_result`, `toggle_todos`, `switch_agent`,
+`toggle_focus`, `file_complete`, `focus_prompt`, `select_prev`, `select_next`,
+`prev_turn`, `next_turn`, `copy_selection`, `paste_clipboard`.
+
 Input prefixes (TUI and `--plain`):
 
 - `!ls -la` runs a shell command and attaches its output to the conversation.
@@ -236,6 +275,8 @@ Both TUI and `--plain`:
 | `/exit` `/quit` `/q` | Exit |
 | `/new` `/clear` | Start a new session |
 | `/rename [name]` | Set the session title (locks auto-title) |
+| `/fork [title]` | Continue in a copy under a new id; the original stays as saved |
+| `/mcp` | List connected MCP servers, their prompts (`/mcp__<server>__<prompt>`) and resources |
 | `/init` | Create or update `AGENTS.md` |
 | `/review` | AI review of git changes (read-only) |
 | `/security-review` | Security-focused review of changes |
@@ -250,7 +291,7 @@ Both TUI and `--plain`:
 | `/context` | Context window breakdown |
 | `/cost` `/usage` | Session + last-turn token usage (credential **name** only, never the secret) |
 | `/slop` | ΔLOC / verbosity / erosion vs git base (not a test score) |
-| `/sessions` | Session picker (Enter to resume) |
+| `/sessions [words]` | Session picker (Enter to resume); with words, only sessions whose messages mention all of them |
 | `/resume [id]` | Resume by id/prefix, or open the picker |
 | `/continue` | Resume the most recently updated session |
 | `/models [provider/id]` | Show or switch the model |
@@ -264,6 +305,12 @@ Both TUI and `--plain`:
 | `/tools` | List tools for the current agent |
 | `/info` `/details` | Session details |
 | `/doctor` | Environment / config diagnostics |
+
+When a step reads far less from the provider's prompt cache than the step
+before (the cache TTL ran out, the prompt prefix changed, or the model
+switched), the status line says how many tokens went uncached:
+`Prompt cache miss: 48.4k tokens sent uncached (last step read 46.0k from
+cache)`. A `/fresh` turn misses on purpose and is not reported.
 
 TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
 `/loop` (`/loop 3 <prompt>`; `/loop stop`), `/goal` (below).
@@ -308,6 +355,43 @@ whycodes connect                 # new session on 127.0.0.1:3030
 whycodes connect 127.0.0.1:3030 --session <id>
 whycodes serve --no-takeover     # scripts / CI: fail if a lock is live
 ```
+
+## Editors (Agent Client Protocol)
+
+`whycodes acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com)
+on stdin/stdout, so editors with ACP support (Zed, Neovim and Emacs plugins)
+can run WhyCodes as their agent. In Zed's `settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "WhyCodes": {
+      "type": "custom",
+      "command": "whycodes",
+      "args": ["acp"],
+      "env": {}
+    }
+  }
+}
+```
+
+Each editor session gets an agent rooted at the editor's project directory,
+with that directory's layered config, provider, model and credentials, as
+`whycodes generate` resolves them (`-P` / `-m` / `--agent` before `acp` apply
+to every session). A missing API key fails `session/new` with the usual setup
+hint.
+
+- Replies, reasoning, tool calls (with their output) and the todo list stream
+  into the editor.
+- A tool call that needs approval becomes the editor's permission prompt:
+  allow once, always allow that tool for the session, or reject.
+- The `question` tool picks its first option, as in headless runs.
+- Mentions and attached files arrive as `@path` / embedded context. Images
+  are not accepted yet, and MCP servers sent by the editor are ignored: use
+  `[mcp_servers]` in config.
+- Sessions are saved like any other. The editor can reopen one
+  (`session/load` replays the conversation), and `whycodes --resume <id>`
+  continues it in the terminal.
 
 ## Embed via the SDK (protocol v1)
 
@@ -398,15 +482,33 @@ model answers instead of over-eager edits. Set
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
 
+MCP servers that offer **resources** add two tools: `mcp_list_resources`
+(optionally for one `server`) and `mcp_read_resource` (`server` + `uri`).
+Text comes back as is; binary contents are summarized by MIME type and size.
+Servers that offer **prompts** become slash commands in the TUI:
+`/mcp__<server>__<prompt> args`. Words fill the prompt's arguments in
+order, the last argument takes the rest of the line, and the rendered prompt
+is sent as your message. `/mcp` lists the connected servers with their
+prompts and argument names. (The plain REPL does not run MCP prompts.)
+
 `lsp` talks to language servers already on PATH (or in project-local bins:
 `node_modules/.bin`, `.venv`). It auto-detects from cwd markers such as
 `Cargo.toml` / `package.json` / `go.mod`. Actions: `diagnostics`, `hover`,
 `definition`, `references`, `type_definition`, `implementation`, `symbols`.
+
+After a successful `edit` or `write`, the matching server (started on first
+use) gets the new text and errors/warnings for that file are appended to the
+tool result, so the model sees type errors without a separate `lsp` call. It
+waits up to `edit_diagnostics_ms` (default 1500) for the server's
+`publishDiagnostics`; a cold server that is still indexing just adds nothing.
+Set `edit_diagnostics_ms = 0` to turn it off.
+
 Override or disable a server in `config.toml`:
 
 ```toml
 [lsp]
 idle_timeout_ms = 300000
+edit_diagnostics_ms = 1500
 
 [lsp.servers.pylsp]
 disabled = true
@@ -538,6 +640,17 @@ mode = "primary"
 # erosion = 0.50
 # delta_loc = 800
 ```
+
+Remote MCP servers that use OAuth: run `whycodes mcp login <name>`. WhyCodes
+finds the server's authorization server (protected-resource metadata, or
+the server's own origin for older servers), registers itself as a client,
+and opens the browser. The token is stored in `<data_dir>/mcp/auth.json`
+(owner-only, separate from provider logins), sent as
+`Authorization: Bearer …` on the next connect and refreshed when it
+expires. An `Authorization` header in config wins over a stored token. A
+server that answers 401 logs a hint to run `mcp login`; `whycodes mcp logout
+<name>` forgets the token. Servers whose authorization server does not offer
+dynamic client registration still need a header in config.
 
 Layers, each overriding the one above:
 
@@ -675,7 +788,10 @@ webfetch = "allow"
 ```
 
 `allow` runs immediately, `deny` blocks. `ask` prompts — a y/n dialog in
-the TUI, a stdin prompt in `--plain` — unless overridden:
+the TUI, a stdin prompt in `--plain` — unless overridden. An `edit` or
+`write` prompt shows the change it would make (the diff for an edit, the new
+content and line counts for a write), computed without touching the file;
+when the edit would not apply, the prompt lists the arguments instead.
 
 | Condition | Result for `ask` |
 |---|---|
@@ -730,6 +846,34 @@ interactive sessions try `interactive` before `ci`, and `CI=true` /
 order = ["interactive", "ci"]
 reserve = 0.10
 env = { interactive = "OPENAI_API_KEY", ci = "OPENAI_CI_API_KEY" }
+```
+
+When the active model still cannot open a stream — a 429 after the named
+credentials are used up, a 5xx, a network error or a timeout, each after the
+normal retries — the turn switches to the next `session.fallback_models`
+entry and stays there for the rest of that turn. The next turn starts on the
+primary again. Auth and request errors (401, 400) never fall back. Each
+entry needs a key: a model on the same provider reuses the active key, another
+provider uses its config `api_key` or `<PROVIDER>_API_KEY`. Entries with no
+key (for example an OAuth-only login on another provider) are skipped.
+
+```toml
+[session]
+fallback_models = ["anthropic/claude-sonnet-5-5", "openrouter/qwen/qwen3-coder"]
+```
+
+`/cost` also shows an estimated USD total for the current run. Prices come
+from the provider's model catalog when it publishes them (OpenRouter does)
+or from `[pricing."provider/model"]` in USD per million tokens; config wins.
+A step on a model with no known price is counted, never guessed, so the line
+reads "at least ~$X" when some steps were unpriced. Cache rates default to the
+input rate. The total starts at zero when a session is resumed.
+
+```toml
+[pricing."openai/gpt-4o"]
+input = 2.5
+output = 10.0
+cache_read = 1.25   # optional
 ```
 
 Long tool notes live at `agent://tools/<name>` (`read agent://tools/bash`).
@@ -801,7 +945,7 @@ apply inside the sandboxed shell. If you set an allowlist and still want
 search, include the provider hosts (`serpapi.com` and/or
 `html.duckduckgo.com`).
 
-### Tool hooks
+### Hooks
 
 ```toml
 [[hooks]]
@@ -815,13 +959,46 @@ timeout_secs = 30
 event = "post_tool"
 match = "*"
 command = "logger -t whycodes \"done $WHYCODES_TOOL_NAME err=$WHYCODES_TOOL_IS_ERROR\""
+
+[[hooks]]
+event = "post_tool"
+match = "edit"
+command = "cargo clippy -q 2>&1 | tail -20"
+feedback = true             # stdout is appended to the tool result
 ```
 
 Environment: `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`, `WHYCODES_TOOL_ID`,
 `WHYCODES_TOOL_INPUT` (JSON), `WHYCODES_SESSION_ID`, `WHYCODES_WORKING_DIR`.
 Post-tool also sets `WHYCODES_TOOL_IS_ERROR` (`0`/`1`) and
 `WHYCODES_TOOL_OUTPUT` (truncated). Hooks run after the risk gate and
-permission prompt, before execution. Subagent loops do not invoke hooks yet.
+permission prompt, before execution. `task` and `swarm` subagents run the same
+tool hooks. With a `read` hook configured, reads are no longer started early
+while the model is still streaming, so the hook sees every read.
+
+Lifecycle events use the same `[[hooks]]` table:
+
+| `event` | When | Extra environment | Block | `feedback` |
+|---|---|---|---|---|
+| `session_start` | Before the first turn of a session in this process (new or resumed) | — | no | added to the turn |
+| `user_prompt_submit` | Before each user turn | `WHYCODES_PROMPT` | yes | added to the turn |
+| `stop` | After a turn produced its reply | `WHYCODES_RESPONSE` | no | — |
+| `pre_compact` | Before the transcript is compacted (auto, overflow, `/compact`) | — | no | — |
+| `subagent_stop` | After a `task` / `swarm` worker finishes; `match` filters the agent type | `WHYCODES_SUBAGENT_TYPE`, `_GOAL`, `_SUCCESS`, `_OUTPUT` | no | — |
+
+`match` is ignored for `session_start`, `user_prompt_submit`, `stop`, and
+`pre_compact`. `feedback = true` appends a successful hook's stdout to the
+user turn inside `<hook-context>` tags. A `user_prompt_submit` hook with
+`block_on_failure = true` refuses the turn when it exits non-zero.
+
+```toml
+[[hooks]]
+event = "session_start"
+command = "git status --short | head -20"
+feedback = true
+```
+
+`whycodes import` maps Claude Code's `SessionStart`, `UserPromptSubmit`,
+`Stop`, `PreCompact`, and `SubagentStop` hooks to these events.
 
 ### Session notifications (Discord / Telegram)
 
@@ -847,6 +1024,29 @@ Sends are fire-and-forget: failures are logged, never surfaced to the agent
 loop, and never block a turn. Discord URLs must be real Incoming Webhook URLs
 (`https://discord.com/api/webhooks/…`); Telegram always posts to
 `api.telegram.org`.
+
+### Desktop notifications
+
+The TUI can raise a desktop notification through the terminal for the same
+`on` events, without Discord or Telegram:
+
+```toml
+[notify]
+on = ["turn_done", "need_input"]
+desktop = true          # or WHYCODES_NOTIFY_DESKTOP=1
+```
+
+It fires only while the terminal window is not focused, so WhyCodes asks the
+terminal for focus reports when `desktop` is on (and only then).
+`need_input` covers permission prompts and `question` tool prompts;
+`turn_done` sends the first line of the reply, or the error. Both include
+background sessions. A turn you cancel yourself does not notify.
+
+The notification is OSC 9 (iTerm2, WezTerm, Ghostty and others) or OSC 777
+on `rxvt*` / `foot*` terminals, as `$TERM` reports them. Inside tmux it is
+wrapped for passthrough, which needs `set -g allow-passthrough on` and
+`set -g focus-events on`. Terminals that understand neither sequence ignore
+it.
 
 ### Custom commands
 

@@ -25,6 +25,10 @@ const ACTIONS: &[&str] = &[
 ];
 
 /// Tool that delegates to language servers via LSP.
+///
+/// Clones share the client cache, so the executor can keep a handle for
+/// post-write diagnostics while the registered tool serves `lsp` calls.
+#[derive(Clone)]
 pub struct LspTool {
     settings: LspSettings,
     /// Lazy-initialized, cached LspClient per file extension.
@@ -80,6 +84,53 @@ impl LspTool {
         let limit = Duration::from_millis(ms);
         let mut clients = self.clients.lock().await;
         clients.retain(|_, c| c.idle_for() < limit);
+    }
+
+    /// Append diagnostics to a successful `edit` / `write` result so the model
+    /// sees type errors without a separate `lsp` call.
+    ///
+    /// Best-effort: no server, a quiet server, or a clean file leave the
+    /// result untouched.
+    pub async fn annotate_write_result(
+        &self,
+        path: Option<&str>,
+        working_dir: &str,
+        result: &mut ToolResult,
+    ) {
+        if result.is_error {
+            return;
+        }
+        let Some(path) = path.filter(|p| !p.is_empty()) else {
+            return;
+        };
+        let full = Path::new(working_dir).join(path);
+        if let Some(text) = self
+            .diagnostics_after_write(&full.to_string_lossy(), working_dir)
+            .await
+        {
+            result.content.push_str("\n\n");
+            result.content.push_str(&text);
+        }
+    }
+
+    async fn diagnostics_after_write(&self, file_path: &str, working_dir: &str) -> Option<String> {
+        let wait = self.settings.edit_diagnostics_wait()?;
+        let ext = Path::new(file_path).extension()?.to_str()?;
+        let client = match self.get_client(ext, working_dir).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!(file_path, "no LSP diagnostics after write: {e}");
+                return None;
+            }
+        };
+        let uri = detect::file_uri(file_path);
+        let seen = client.publish_count(&uri).await;
+        if let Err(e) = client.sync_document(&uri, None).await {
+            tracing::debug!(file_path, "LSP sync after write failed: {e}");
+            return None;
+        }
+        let diags = client.wait_for_diagnostics(&uri, seen, wait).await?;
+        format_write_diagnostics(&diags)
     }
 
     #[cfg(test)]
@@ -149,6 +200,46 @@ fn missing_server_message(settings: &LspSettings, ext: &str, cwd: &Path) -> Stri
             }
         }
     }
+}
+
+/// Shown after a write: errors first, then warnings. Info/hints are noise here.
+const MAX_WRITE_DIAGNOSTICS: usize = 10;
+
+fn format_write_diagnostics(diags: &[crate::types::Diagnostic]) -> Option<String> {
+    use crate::types::DiagnosticSeverity as Sev;
+    let mut shown: Vec<(&str, &crate::types::Diagnostic)> = diags
+        .iter()
+        .filter_map(|d| match d.severity {
+            Some(Sev::Error) => Some(("error", d)),
+            Some(Sev::Warning) => Some(("warning", d)),
+            _ => None,
+        })
+        .collect();
+    if shown.is_empty() {
+        return None;
+    }
+    shown.sort_by_key(|(sev, d)| (*sev != "error", d.range.start.line));
+    let total = shown.len();
+    let mut out = String::from("LSP diagnostics after this change:");
+    for (sev, d) in shown.iter().take(MAX_WRITE_DIAGNOSTICS) {
+        out.push_str(&format!(
+            "\n  L{}:{} {sev}: {}",
+            d.range.start.line + 1,
+            d.range.start.character + 1,
+            d.message.lines().next().unwrap_or("")
+        ));
+    }
+    if total > MAX_WRITE_DIAGNOSTICS {
+        out.push_str(&format!("\n  (+{} more)", total - MAX_WRITE_DIAGNOSTICS));
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+pub(crate) fn format_write_diagnostics_for_test(
+    diags: &[crate::types::Diagnostic],
+) -> Option<String> {
+    format_write_diagnostics(diags)
 }
 
 fn format_locations(locations: &[crate::types::Location]) -> String {
@@ -265,7 +356,7 @@ impl Tool for LspTool {
 
             let uri = detect::file_uri(file_path);
 
-            if let Err(e) = client.open_document(&uri, None).await {
+            if let Err(e) = client.sync_document(&uri, None).await {
                 return ToolResult {
                     tool_call_id: String::new(),
                     content: format!("Error opening document: {e}"),

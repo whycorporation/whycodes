@@ -37,7 +37,7 @@ Two rules keep the graph acyclic:
 | | `memory` | `MEMORY.md`, semantic recall, code index |
 | | `plugin` | Shell + auth plugin discovery (`plugin.json`) |
 | | `tools` | Tool system and built-ins |
-| | `mcp` | MCP client; tools bind as `{server}_{tool}` |
+| | `mcp` | MCP client; tools bind as `{server}_{tool}`; OAuth for remote servers (uses `auth`) |
 | Orchestration | `agent` | Agent loop, subagents, swarm, `AGENTS.md` |
 | Applications | `cli` | The only binary (`whycodes`) |
 | | `tui` | Full-screen terminal UI (ratatui) |

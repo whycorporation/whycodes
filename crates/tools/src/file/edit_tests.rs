@@ -558,3 +558,44 @@ fn io_and_missing_from_tag_are_named() {
     assert!(missing.contains("from is required"), "{missing}");
     assert_eq!(require_from_tag(Some("abc")).unwrap(), "abc");
 }
+
+#[test]
+fn preview_edit_shows_the_pending_diff_without_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("a.rs");
+    std::fs::write(&file, "fn run() {\n    let x = 1;\n}\n").unwrap();
+    let wd = dir.path().to_string_lossy().into_owned();
+
+    let by_text = preview_edit(
+        &serde_json::json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}),
+        &wd,
+    )
+    .unwrap();
+    assert!(by_text.starts_with("Edit a.rs\n"), "{by_text}");
+    assert!(
+        by_text.contains("2|-let x = 1;\n   2|+let x = 2;"),
+        "{by_text}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn run() {\n    let x = 1;\n}\n"
+    );
+
+    let tag = crate::file::line_tag::tag_of("    let x = 1;", 2);
+    let abs = file.to_string_lossy().into_owned();
+    let by_tag = preview_edit(
+        &serde_json::json!({"path": abs, "from": tag, "new_string": "    let x = 3;"}),
+        &wd,
+    )
+    .unwrap();
+    assert!(by_tag.contains("+    let x = 3;"), "{by_tag}");
+
+    for args in [
+        serde_json::json!({"path": "a.rs", "old_string": "missing", "new_string": "x"}),
+        serde_json::json!({"path": "gone.rs", "old_string": "x", "new_string": "y"}),
+        serde_json::json!({"path": "a.rs", "old_string": "let x = 1;"}),
+        serde_json::json!({"old_string": "x", "new_string": "y"}),
+    ] {
+        assert_eq!(preview_edit(&args, &wd), None, "{args}");
+    }
+}

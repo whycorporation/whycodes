@@ -566,6 +566,13 @@ impl Config {
         {
             self.notify.timeout_secs = n.clamp(1, 60);
         }
+        if let Ok(val) = std::env::var("WHYCODES_NOTIFY_DESKTOP") {
+            match val.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => self.notify.desktop = Some(true),
+                "0" | "false" | "no" | "off" => self.notify.desktop = Some(false),
+                _ => {}
+            }
+        }
     }
 
     /// Load custom commands from markdown files (OpenCode paths adapted):

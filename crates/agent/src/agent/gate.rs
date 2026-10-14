@@ -1,10 +1,13 @@
 //! Tool-call scheduling and permission / risk / hook / sandbox gates.
 
 use whycodes_command_risk::{Decision, assess, decide};
+use whycodes_config::HookEvent;
 use whycodes_core::todo::{has_open, load_todos};
 use whycodes_core::tool::ToolContext;
 use whycodes_core::types::{ApprovalMode, PermissionAction, ToolCall, ToolResult};
-use whycodes_plugin::hooks::{HookContext, PreHookDecision, run_post_hooks, run_pre_hooks};
+use whycodes_plugin::hooks::{
+    HookContext, PreHookDecision, append_feedback, matching_hooks, run_post_hooks, run_pre_hooks,
+};
 use whycodes_session::session::Session;
 
 use crate::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled, wait_until_cancelled};
@@ -246,7 +249,7 @@ impl Agent {
         tool_ctx: &ToolContext,
         speculative: &mut Vec<crate::speculative_read::SpeculativeRead>,
     ) -> Option<ToolResult> {
-        if tc.name != "read" || speculative.is_empty() {
+        if tc.name != "read" || speculative.is_empty() || self.read_has_hooks() {
             return None;
         }
         let path = tc.arguments.get("path")?.as_str()?;
@@ -262,6 +265,13 @@ impl Agent {
         .await?;
         tracing::debug!(id = %tc.id, path, "speculative early read hit");
         Some(result)
+    }
+
+    /// A `read` hook must see the call, so the early read is not used.
+    fn read_has_hooks(&self) -> bool {
+        [HookEvent::PreTool, HookEvent::PostTool]
+            .into_iter()
+            .any(|event| !matching_hooks(&self.hooks, event, "read").is_empty())
     }
 
     /// Whether this permission `ask` is high-risk under `important` mode.
@@ -600,7 +610,7 @@ impl Agent {
                 if risk_confirmed {
                     continue_confirmed();
                 } else {
-                    let detail = format_permission_detail(&tc.arguments);
+                    let detail = permission_detail_for(tc, &tool_ctx.working_dir);
                     let allowed = self
                         .ask_permission(tc, &tool_ctx.working_dir, &detail)
                         .await;
@@ -661,7 +671,7 @@ impl Agent {
             }
         }
 
-        // Post-tool hooks never block; failures are logged inside the runner.
+        // Post-tool hooks never block; `feedback = true` stdout reaches the model.
         let post_ctx = HookContext::post(
             tc.name.clone(),
             tc.id.clone(),
@@ -671,7 +681,8 @@ impl Agent {
             result.is_error,
             &result.content,
         );
-        run_post_hooks(&self.hooks, &post_ctx).await;
+        let feedback = run_post_hooks(&self.hooks, &post_ctx).await;
+        append_feedback(&mut result.content, feedback);
 
         result
     }

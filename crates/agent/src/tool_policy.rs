@@ -9,6 +9,20 @@ pub(crate) const SHELL_TOOLS: &[&str] = &["bash", "shell"];
 /// Soft cap for permission prompt detail (TUI wraps; avoid megabyte dumps).
 pub(crate) const PERMISSION_DETAIL_MAX: usize = 4_000;
 
+/// Permission-dialog detail: the pending diff for `edit` / `write` when it
+/// can be computed, else the formatted arguments.
+pub(crate) fn permission_detail_for(tc: &ToolCall, working_dir: &str) -> String {
+    let preview = match tc.name.as_str() {
+        "edit" => whycodes_tools::file::edit::preview_edit(&tc.arguments, working_dir),
+        "write" => whycodes_tools::file::write::preview_write(&tc.arguments, working_dir),
+        _ => None,
+    };
+    match preview {
+        Some(diff) => truncate_permission_detail(&diff),
+        None => format_permission_detail(&tc.arguments),
+    }
+}
+
 /// Human-readable tool arguments for the permission dialog (not compact JSON).
 pub(crate) fn format_permission_detail(args: &serde_json::Value) -> String {
     let text = match args {

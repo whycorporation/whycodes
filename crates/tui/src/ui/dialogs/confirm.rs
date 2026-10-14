@@ -10,6 +10,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
 };
+use whycodes_format::diff::{looks_like_diff, parse_diff_line};
 
 use super::base::DialogChrome;
 
@@ -117,6 +118,8 @@ pub fn render_permission_dialog(
         )));
 
         let mut command_prefix_used = false;
+        // Edit / write approvals carry the pending diff: paint +/- rows.
+        let is_diff = !parsed.is_command && looks_like_diff(&parsed.body);
         for line in parsed.body.lines() {
             if parsed.is_command {
                 if line.is_empty() {
@@ -137,9 +140,14 @@ pub fn render_permission_dialog(
                     ),
                 ]));
             } else {
+                let fg = match parse_diff_line(line).marker {
+                    Some('+') if is_diff => palette.diff_add,
+                    Some('-') if is_diff => palette.diff_remove,
+                    _ => palette.fg,
+                };
                 lines.push(Line::from(Span::styled(
                     format!("  {line}"),
-                    Style::default().fg(palette.fg),
+                    Style::default().fg(fg),
                 )));
             }
         }

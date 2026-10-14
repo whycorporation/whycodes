@@ -43,6 +43,10 @@ pub struct Config {
     /// Model configurations
     #[serde(default)]
     pub models: HashMap<String, ModelConfig>,
+    /// USD per million tokens, keyed `"provider/model"`. Overrides prices
+    /// learned from the provider's `/v1/models` catalog.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub pricing: HashMap<String, PriceConfig>,
 
     /// Agent definitions
     #[serde(default)]
@@ -315,6 +319,36 @@ pub enum HookEvent {
     PreTool,
     /// After the tool finishes. Failures are logged only.
     PostTool,
+    /// Once per session in this process (new or resumed), before its first turn.
+    SessionStart,
+    /// Before each user turn. Non-zero exit can block the turn when `block_on_failure`.
+    UserPromptSubmit,
+    /// After a user turn finishes with a reply.
+    Stop,
+    /// Before the transcript is compacted (auto, overflow, or `/compact`).
+    PreCompact,
+    /// After a `task` / `swarm` subagent finishes. `match` filters the agent type.
+    SubagentStop,
+}
+
+impl HookEvent {
+    /// Config spelling (`pre_tool`, `session_start`, …).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PreTool => "pre_tool",
+            Self::PostTool => "post_tool",
+            Self::SessionStart => "session_start",
+            Self::UserPromptSubmit => "user_prompt_submit",
+            Self::Stop => "stop",
+            Self::PreCompact => "pre_compact",
+            Self::SubagentStop => "subagent_stop",
+        }
+    }
+
+    /// Whether `block_on_failure` can refuse the action (tool call / turn).
+    pub fn can_block(self) -> bool {
+        matches!(self, Self::PreTool | Self::UserPromptSubmit)
+    }
 }
 
 /// A single shell hook attached to tool execution.
@@ -324,17 +358,20 @@ pub enum HookEvent {
 /// event = "pre_tool"
 /// match = "bash"           # tool name; `*` or `prefix*` / `*suffix`
 /// command = "echo check"
-/// block_on_failure = true  # pre_tool only: non-zero exit refuses the tool
+/// block_on_failure = true  # pre_tool / user_prompt_submit: non-zero exit refuses
+/// feedback = false         # stdout of a successful hook goes to the model
 /// timeout_secs = 30
 /// ```
 ///
 /// Environment for the command: `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`,
 /// `WHYCODES_TOOL_INPUT` (JSON), `WHYCODES_TOOL_ID`, `WHYCODES_SESSION_ID`,
 /// `WHYCODES_WORKING_DIR`. Post-tool also sets `WHYCODES_TOOL_IS_ERROR` and
-/// `WHYCODES_TOOL_OUTPUT` (truncated).
+/// `WHYCODES_TOOL_OUTPUT` (truncated). Lifecycle events add their own
+/// variables (`WHYCODES_PROMPT`, `WHYCODES_RESPONSE`, `WHYCODES_SUBAGENT_*`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookConfig {
-    /// `pre_tool` or `post_tool`.
+    /// `pre_tool`, `post_tool`, `session_start`, `user_prompt_submit`, `stop`,
+    /// `pre_compact`, or `subagent_stop`.
     #[serde(default)]
     pub event: HookEvent,
 
@@ -345,9 +382,16 @@ pub struct HookConfig {
     /// Shell command (run via `sh -c` / `cmd /C`).
     pub command: String,
 
-    /// When true on `pre_tool`, a non-zero exit refuses the tool call.
+    /// When true on `pre_tool` / `user_prompt_submit`, a non-zero exit refuses
+    /// the tool call / the turn.
     #[serde(default)]
     pub block_on_failure: bool,
+
+    /// When true, a successful hook's stdout is shown to the model: appended
+    /// to the tool result (`post_tool`) or to the user turn (`session_start`,
+    /// `user_prompt_submit`). Ignored for other events.
+    #[serde(default)]
+    pub feedback: bool,
 
     /// Kill the hook after this many seconds. Default 30.
     #[serde(default = "default_hook_timeout")]
@@ -369,6 +413,7 @@ impl Default for HookConfig {
             tool_match: default_hook_match(),
             command: String::new(),
             block_on_failure: false,
+            feedback: false,
             timeout_secs: default_hook_timeout(),
         }
     }
@@ -508,8 +553,27 @@ pub struct LspConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub idle_timeout_ms: Option<u64>,
+    /// Wait (ms) for language-server diagnostics after `edit` / `write`;
+    /// `0` turns it off. Unset uses the runtime default.
+    #[serde(
+        default,
+        alias = "editDiagnosticsMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub edit_diagnostics_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub servers: HashMap<String, LspServerConfig>,
+}
+
+/// `[pricing."provider/model"]`: USD per million tokens.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct PriceConfig {
+    pub input: f64,
+    pub output: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write: Option<f64>,
 }
 
 /// One language-server overlay entry.
@@ -854,6 +918,7 @@ impl Default for Config {
         Config {
             providers: HashMap::new(),
             models: HashMap::new(),
+            pricing: HashMap::new(),
             agents: vec![
                 build_agent,
                 plan_agent,
@@ -1282,6 +1347,12 @@ pub struct SessionConfig {
     /// How long to wait for the primary first token before opening `model_race`.
     #[serde(default = "default_race_after_ms")]
     pub race_after_ms: u64,
+    /// `provider/model` refs tried in order when the active model fails to
+    /// open a stream (rate limit after named credentials, 5xx, network,
+    /// timeout). Each needs a key: same provider, config `api_key`, or
+    /// `<PROVIDER>_API_KEY`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback_models: Vec<String>,
     /// Process-local text-only response cache: `auto` (default) or `off`.
     #[serde(default = "default_response_cache")]
     pub response_cache: String,
@@ -1397,6 +1468,7 @@ impl Default for SessionConfig {
             model_plan: None,
             model_race: default_model_race(),
             race_after_ms: default_race_after_ms(),
+            fallback_models: Vec::new(),
             response_cache: default_response_cache(),
             intent_guidance: default_intent_guidance(),
             compaction_llm: default_compaction_llm(),
@@ -1444,7 +1516,8 @@ pub(crate) fn default_compaction_threshold() -> usize {
     150_000
 }
 
-/// Session notifications over Discord Incoming Webhooks and/or Telegram bots.
+/// Session notifications over Discord Incoming Webhooks, Telegram bots, and/or
+/// the terminal (desktop notification via OSC 9 / OSC 777).
 ///
 /// Off until `on` is non-empty **and** at least one channel is configured.
 /// Secrets should live in env (`WHYCODES_NOTIFY_*`) or `${VAR}` substitution,
@@ -1456,6 +1529,7 @@ pub(crate) fn default_compaction_threshold() -> usize {
 /// discord_webhook = "${DISCORD_WEBHOOK_URL}"
 /// telegram_bot_token = "${TELEGRAM_BOT_TOKEN}"
 /// telegram_chat_id = "${TELEGRAM_CHAT_ID}"
+/// desktop = true   # TUI only, while the terminal window is not focused
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NotifyConfig {
@@ -1475,6 +1549,10 @@ pub struct NotifyConfig {
     /// HTTP timeout per channel. Default 8s, clamped 1–60.
     #[serde(default = "default_notify_timeout_secs")]
     pub timeout_secs: u64,
+    /// Desktop notification from the TUI through the terminal (OSC 9 / 777),
+    /// sent only while the terminal window is not focused. Omitted = off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop: Option<bool>,
 }
 
 pub(crate) fn default_notify_timeout_secs() -> u64 {
@@ -1489,6 +1567,7 @@ impl Default for NotifyConfig {
             telegram_bot_token: None,
             telegram_chat_id: None,
             timeout_secs: default_notify_timeout_secs(),
+            desktop: None,
         }
     }
 }
@@ -1525,6 +1604,11 @@ impl NotifyConfig {
         self.wants(event) && self.has_channel()
     }
 
+    /// True when the TUI should raise a desktop notification for this event.
+    pub fn desktop_for(&self, event: NotifyEvent) -> bool {
+        self.desktop == Some(true) && self.wants(event)
+    }
+
     pub(crate) fn merge_with(&self, other: &NotifyConfig) -> NotifyConfig {
         let mut merged = self.clone();
         if !other.on.is_empty() {
@@ -1541,6 +1625,9 @@ impl NotifyConfig {
         }
         if other.timeout_secs != default_notify_timeout_secs() {
             merged.timeout_secs = other.timeout_secs;
+        }
+        if other.desktop.is_some() {
+            merged.desktop = other.desktop;
         }
         merged
     }
@@ -1826,9 +1913,17 @@ mod tests {
             telegram_bot_token: Some("b".into()),
             telegram_chat_id: Some("c".into()),
             timeout_secs: 12,
+            desktop: Some(true),
         };
         let merged = notify.merge_with(&overlay);
         assert_eq!(merged.timeout_secs, 12);
+        assert!(merged.desktop_for(NotifyEvent::TurnDone));
+        assert!(!merged.desktop_for(NotifyEvent::NeedInput), "not in `on`");
+        assert_eq!(
+            merged.merge_with(&NotifyConfig::default()).desktop,
+            Some(true)
+        );
+        assert!(!NotifyConfig::default().desktop_for(NotifyEvent::TurnDone));
     }
 
     fn assert_notify_events_and_discord() {

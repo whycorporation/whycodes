@@ -938,3 +938,41 @@ fn help_mode_renders_via_standalone_entry() {
     assert!(text.contains("Keyboard Shortcuts"), "{text}");
     assert!(app.dialog_list_hit.is_some());
 }
+
+#[test]
+fn permission_dialog_paints_a_pending_diff() {
+    let palette = ThemeName::DefaultDark.palette();
+    let detail = "Edit a.rs\n\n   2|-let x = 1;\n   2|+let x = 2;";
+    let (buf, text) = paint(90, 30, |f| {
+        render_permission_dialog(f, "edit", detail, &palette, None);
+    });
+    assert!(text.contains("2|+let x = 2;"), "{text}");
+    let fg_of = |needle: &str| {
+        let area = buf.area;
+        for y in area.y..area.y + area.height {
+            let row: String = (area.x..area.x + area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect();
+            if let Some(col) = row.find(needle) {
+                return Some(buf[(area.x + col as u16, y)].fg);
+            }
+        }
+        None
+    };
+    assert_eq!(fg_of("2|+let"), Some(palette.diff_add));
+    assert_eq!(fg_of("2|-let"), Some(palette.diff_remove));
+
+    // A plain key: value detail with a `- item` line stays uncoloured.
+    let (buf, _) = paint(90, 30, |f| {
+        render_permission_dialog(f, "todo", "items:\n- first", &palette, None);
+    });
+    let area = buf.area;
+    let dash = (area.y..area.y + area.height).find_map(|y| {
+        let row: String = (area.x..area.x + area.width)
+            .map(|x| buf[(x, y)].symbol().to_string())
+            .collect();
+        row.find("- first")
+            .map(|col| buf[(area.x + col as u16, y)].fg)
+    });
+    assert_eq!(dash, Some(palette.fg));
+}

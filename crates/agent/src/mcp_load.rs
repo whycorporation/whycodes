@@ -10,6 +10,13 @@ use whycodes_mcp::client::McpClient;
 use whycodes_tools::executor::ToolExecutor;
 use whycodes_tools::mcp::{McpCaller, McpToolBridge};
 
+/// A connected MCP server, kept for its prompts and resources.
+#[derive(Clone)]
+pub struct McpServerHandle {
+    pub name: String,
+    pub client: Arc<Mutex<McpClient>>,
+}
+
 struct SharedMcpCaller {
     client: Arc<Mutex<McpClient>>,
     remote_name: String,
@@ -62,16 +69,25 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
     }
 }
 
-pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) -> usize {
+/// Connect every configured server and register its tools, plus the
+/// resource tools when a server offers resources. Returns the number of
+/// tools registered and the connected servers.
+pub async fn register_mcp_tools(
+    executor: &mut ToolExecutor,
+    config: &Config,
+) -> (usize, Vec<McpServerHandle>) {
     // Connect all servers concurrently so multi-MCP cold start is max(latency),
     // not sum — list_tools still runs after each connect succeeds.
+    let data_dir = whycodes_core::paths::data_dir();
     let connect_futs: Vec<_> = config
         .mcp_servers
         .iter()
         .map(|(server_name, server)| {
             let server_name = server_name.clone();
             let server = server.clone();
+            let data_dir = data_dir.clone();
             async move {
+                let server = with_oauth_header(&server_name, server, &data_dir).await;
                 let result = connect_mcp_server(&server).await;
                 (server_name, server, result)
             }
@@ -80,6 +96,7 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
     let connected = futures::future::join_all(connect_futs).await;
 
     let mut count = 0usize;
+    let mut servers = Vec::new();
     for (server_name, server, result) in connected {
         match result {
             Ok(client) => {
@@ -95,6 +112,10 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
                         }
                     }
                 };
+                servers.push(McpServerHandle {
+                    name: server_name.clone(),
+                    client: Arc::clone(&client),
+                });
                 for tool in tools {
                     let bridge_name = bridge_tool_name(&server_name, &tool.name);
                     let description = tool
@@ -133,16 +154,51 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
                     Ok(_) => format!("url={}", server.url.as_deref().unwrap_or("?")),
                     Err(msg) => msg,
                 };
+                let hint = login_hint(&server_name, &e.to_string());
                 warn!(
                     server = %server_name,
                     %detail,
                     error = %e,
+                    hint,
                     "Failed to connect MCP server"
                 );
             }
         }
     }
-    count
+    count += crate::mcp_content::register_resource_tools(executor, &servers).await;
+    (count, servers)
+}
+
+/// Add a stored OAuth bearer (`whycodes mcp login`) to a remote server's
+/// headers, unless the config already sets `Authorization`.
+pub(crate) async fn with_oauth_header(
+    name: &str,
+    mut server: McpServerConfig,
+    data_dir: &std::path::Path,
+) -> McpServerConfig {
+    if !server.is_remote() {
+        return server;
+    }
+    let headers = server.headers.get_or_insert_with(HashMap::new);
+    if headers
+        .keys()
+        .any(|k| k.eq_ignore_ascii_case("authorization"))
+    {
+        return server;
+    }
+    if let Some(token) = whycodes_mcp::oauth::bearer(name, data_dir).await {
+        headers.insert("Authorization".into(), format!("Bearer {token}"));
+    }
+    server
+}
+
+/// What to do about a connect error: a 401 means the server wants OAuth.
+pub(crate) fn login_hint(server: &str, error: &str) -> String {
+    if error.contains("401") {
+        format!("run `whycodes mcp login {server}`")
+    } else {
+        String::new()
+    }
 }
 
 fn mcp_call_error(result: Result<String, whycodes_mcp::McpError>) -> Result<String, String> {

@@ -881,6 +881,7 @@ impl Agent {
         let hub = hub.clone();
         let question_prompter = Arc::clone(&self.question_prompter);
         let approval_mode = self.approval_mode;
+        let hooks = self.hooks.clone();
         let overlays = self.system_prompt_overlays.clone();
 
         let mut handles = Vec::with_capacity(specs.len());
@@ -908,6 +909,7 @@ impl Agent {
             let panel = panel.clone();
             let hub = hub.clone();
             let question_prompter = Arc::clone(&question_prompter);
+            let hooks = hooks.clone();
             let overlays = overlays.clone();
             hub.ensure(&worker_id);
 
@@ -1072,7 +1074,8 @@ impl Agent {
                         .with_swarm_hub(Some(hub.clone()))
                         .with_identity(worker_id.clone(), label.clone())
                         .with_question_prompter(question_prompter)
-                        .with_approval_mode(approval_mode);
+                        .with_approval_mode(approval_mode)
+                        .with_hooks(hooks);
                 if !use_worktrees {
                     runner =
                         runner.with_file_claims(claims.clone(), worker_id.clone(), label.clone());
@@ -1159,6 +1162,11 @@ impl Agent {
                     label,
                 )) => {
                     fold_pending_usage(&self.subagent_usage_pending, &worker_usage);
+                    fold_pending_cost(
+                        &self.subagent_cost_pending,
+                        &worker_usage,
+                        self.step_cost(&provider_name, &model, &worker_usage),
+                    );
                     match worktree {
                         Some(wt) => {
                             let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
@@ -1369,7 +1377,8 @@ impl Agent {
         .with_file_index(self.file_index.clone())
         .with_panel(self.panel_sink())
         .with_question_prompter(Arc::clone(&self.question_prompter))
-        .with_approval_mode(self.approval_mode);
+        .with_approval_mode(self.approval_mode)
+        .with_hooks(self.hooks.clone());
 
         let child_id = format!("task-{}", call.id);
         let started = std::time::Instant::now();
@@ -1390,6 +1399,11 @@ impl Agent {
             .run(task, &worker_provider, &worker_model, api_key)
             .await;
         fold_pending_usage(&self.subagent_usage_pending, &result.usage);
+        fold_pending_cost(
+            &self.subagent_cost_pending,
+            &result.usage,
+            self.step_cost(&worker_provider, &worker_model, &result.usage),
+        );
         let usage_note = if result.usage.is_empty() {
             String::new()
         } else {
@@ -1470,6 +1484,17 @@ fn fold_pending_usage(
         return;
     }
     super::recover_lock(pending).add(usage);
+}
+
+fn fold_pending_cost(
+    pending: &std::sync::Mutex<whycodes_session::SessionCost>,
+    usage: &whycodes_core::types::Usage,
+    usd: Option<f64>,
+) {
+    if usage.is_empty() {
+        return;
+    }
+    super::recover_lock(pending).add(usd);
 }
 
 fn background_turn_listener(tx: EventSink) -> crate::background::BackgroundListener {

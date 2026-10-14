@@ -12,13 +12,14 @@ Nothing open. Later stays later.
 SDK protocol v1 (`whycodes serve` `/v1/*`, Rust `whycodes-sdk`,
 `sdk/typescript`) shipped. Not on the public npm registry yet.
 
+ACP (`whycodes acp`, editor ↔ agent over stdio) shipped.
+
 ## Later
 
 | Item | Notes |
 |---|---|
 | Public release | **Last.** Repo public, Windows install smoke. Homebrew binary formula auto-bumps from `release.yml`. Assets already cut as `v0.1.0`. |
-| ACP | Editor ↔ agent JSON-RPC. `whycodes acp` is a stub. |
-| `web` surface | Same band as ACP. Use `whycodes serve` + a browser for local share. |
+| `web` surface | Use `whycodes serve` + a browser for local share. |
 
 ## Out
 

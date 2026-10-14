@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use crate::color::{ColorMode, QuantizingBackend, detect_color_mode, set_active_color_mode};
 use crossterm::cursor::{Hide, SetCursorStyle};
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
-    KeyCode, KeyEventKind, KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+    EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags,
+    MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -294,6 +294,8 @@ pub struct TuiRunOptions {
     /// Used by CLI `--continue` / `--resume <id>`. In-session resume uses
     /// `pending_session_id` on the app instead.
     pub resume_session_id: Option<String>,
+    /// CLI `--fork`: continue a resumed session in a copy with a new id.
+    pub fork_session: bool,
     /// When set, turns go to `whycodes serve` over HTTP instead of an in-process agent.
     pub remote: Option<crate::remote::RemoteAttach>,
     /// Load layered config after first paint (CLI TUI path). Tests / `connect`
@@ -494,6 +496,7 @@ fn prepare_tui_chrome(opts: &TuiRunOptions) -> TuiChrome {
     app.reasoning_effort = opts.config.session.reasoning_effort.clone();
     app.approval_mode = opts.config.general.approval_mode.unwrap_or_default();
     app.agent_name = opts.agent_name.clone();
+    crate::desktop_notify::configure(&opts.config.notify);
     // Do not canonicalize here: Windows NTFS + Defender on a temp dir is
     // tens of ms and the first-frame harness uses exactly that.
     app.project_dir = opts.project_dir.clone();
@@ -646,6 +649,7 @@ async fn prepare_tui_runtime(opts: &TuiRunOptions, app: &mut TuiApp) -> TuiRunti
     let history = SessionHistory::new();
 
     if let Some(ref want) = opts.resume_session_id {
+        let fresh_id = session.id.clone();
         apply_resume(
             app,
             &mut session,
@@ -653,6 +657,9 @@ async fn prepare_tui_runtime(opts: &TuiRunOptions, app: &mut TuiApp) -> TuiRunti
             want,
             opts.config.session.auto_title,
         );
+        if opts.fork_session && session.id != fresh_id {
+            fork_session_in_place(app, &mut session, "");
+        }
     }
 
     if let Some(ref rem) = opts.remote {
@@ -1251,6 +1258,7 @@ fn maybe_idle_heap_trim(agent_busy: bool, idle_for: Duration, armed: &mut bool) 
 
 fn restore_terminal_on(out: &mut impl Write) {
     let _ = disable_raw_mode();
+    disable_focus_reports(out);
     let _ = execute!(
         out,
         PopKeyboardEnhancementFlags,
@@ -1376,10 +1384,25 @@ fn enable_mouse_paste_cursor(out: &mut impl Write) {
     ) {
         tracing::debug!(error = %e, "enable mouse/paste/cursor after first paint failed");
     }
+    if crate::desktop_notify::wants_focus_reports()
+        && let Err(e) = execute!(out, EnableFocusChange)
+    {
+        tracing::debug!(error = %e, "enable focus reports failed");
+    }
+}
+
+/// Undo [`enable_mouse_paste_cursor`]'s focus reports (desktop notify only).
+fn disable_focus_reports(out: &mut impl Write) {
+    if crate::desktop_notify::wants_focus_reports()
+        && let Err(e) = execute!(out, DisableFocusChange)
+    {
+        tracing::debug!(error = %e, "disable focus reports failed");
+    }
 }
 
 fn restore_live_backend(out: &mut impl Write, keyboard_enhanced: bool) {
     let _ = disable_raw_mode();
+    disable_focus_reports(out);
     if keyboard_enhanced {
         let _ = execute!(out, PopKeyboardEnhancementFlags);
     }
@@ -2135,6 +2158,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 input::coalesce_chat_wheels(&mut app, &mut batch);
                 input::coalesce_resizes(&mut batch);
                 input::coalesce_unbracketed_paste(&app, &mut batch);
+                crate::desktop_notify::note_focus_events(&batch);
                 if let Some(Event::Resize(w, h)) = batch
                     .iter()
                     .rev()
@@ -3322,10 +3346,12 @@ fn switch_to_runtime(
 /// duplicate the whole transcript every tick.
 fn drain_background_runtime(rt: &mut SessionRuntime) {
     while let Ok(req) = rt.perm_rx.try_recv() {
+        notify_permission(&req);
         rt.pending_perm_queue.push_back(req);
         rt.unread = true;
     }
     while let Ok(req) = rt.question_rx.try_recv() {
+        notify_question(&req);
         rt.pending_question_queue.push_back(req);
         rt.unread = true;
     }
@@ -3357,6 +3383,10 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                 rt.agent = a;
                 rt.session = s;
                 rt.last_error = false;
+                crate::desktop_notify::notify(
+                    whycodes_config::NotifyEvent::TurnDone,
+                    &crate::desktop_notify::turn_done_body(&text),
+                );
                 if !text.is_empty() {
                     with_view_scratch(&mut rt.view, |scratch| {
                         if let Some(last) = scratch.messages.last_mut()
@@ -3403,6 +3433,10 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                             error.clone(),
                         ));
                         scratch.add_message(ChatRole::System, format!("Error: {display}"));
+                        crate::desktop_notify::notify(
+                            whycodes_config::NotifyEvent::TurnDone,
+                            &format!("Turn failed: {display}"),
+                        );
                     }
                 });
             }
@@ -3551,6 +3585,10 @@ fn apply_turn_outcome(
             }
             app.finish_open_thinking();
             app.current_agent_state = AgentState::Idle;
+            crate::desktop_notify::notify(
+                whycodes_config::NotifyEvent::TurnDone,
+                &crate::desktop_notify::turn_done_body(&text),
+            );
             // Last-step prompt usage is billed fill for that request; after
             // tools/assistant land, the meter should track the live transcript.
             app.sync_context_estimate(&rt.session);
@@ -3643,6 +3681,10 @@ fn apply_turn_outcome(
                     .unwrap_or_default();
                 app.status_message = format!("{dur}error — see chat");
                 app.add_message(ChatRole::System, format!("Error: {display}"));
+                crate::desktop_notify::notify(
+                    whycodes_config::NotifyEvent::TurnDone,
+                    &format!("Turn failed: {display}"),
+                );
                 app.toasts
                     .push(crate::toast::ToastKind::Error, truncate_toast(&display, 48));
                 whycodes_core::logging::emit_sid(
@@ -4818,12 +4860,29 @@ fn maybe_open_queued_dialog(app: &mut TuiApp, rt: &SessionRuntime) {
     }
 }
 
+fn notify_permission(req: &whycodes_agent::PermissionRequest) {
+    crate::desktop_notify::notify(
+        whycodes_config::NotifyEvent::NeedInput,
+        &crate::desktop_notify::permission_body(&req.tool_name),
+    );
+}
+
+fn notify_question(req: &QuestionRequest) {
+    let first = req.questions.first().map(|q| q.prompt.as_str());
+    crate::desktop_notify::notify(
+        whycodes_config::NotifyEvent::NeedInput,
+        &crate::desktop_notify::question_body(first),
+    );
+}
+
 /// Move newly arrived prompter requests onto the runtime queues, then open one overlay.
 fn drain_prompter_queues(app: &mut TuiApp, rt: &mut SessionRuntime) {
     while let Ok(req) = rt.perm_rx.try_recv() {
+        notify_permission(&req);
         rt.pending_perm_queue.push_back(req);
     }
     while let Ok(req) = rt.question_rx.try_recv() {
+        notify_question(&req);
         rt.pending_question_queue.push_back(req);
     }
     maybe_open_queued_dialog(app, rt);

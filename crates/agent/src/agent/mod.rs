@@ -6,6 +6,7 @@
 mod compact;
 mod dispatch;
 mod gate;
+mod lifecycle;
 mod spawn;
 mod turn;
 
@@ -34,13 +35,19 @@ pub struct Agent {
     pub info: AgentInfo,
     provider_registry: Arc<ProviderRegistry>,
     tool_executor: Arc<ToolExecutor>,
+    /// MCP servers connected by [`Self::load_mcp`] (prompts, resources).
+    mcp_servers: Vec<crate::mcp_load::McpServerHandle>,
     permission_prompter: Arc<dyn PermissionPrompter>,
     question_prompter: Arc<dyn QuestionPrompter>,
     risk_threshold: RiskThreshold,
     sandbox: SandboxSettings,
     network: NetworkPolicy,
-    /// Config-driven pre/post tool hooks (empty by default).
+    /// Config-driven tool and lifecycle hooks (empty by default).
     hooks: Vec<HookConfig>,
+    /// Last LLM step's prompt-cache read per session id (cache-miss notice).
+    cache_reads: Mutex<std::collections::HashMap<String, u64>>,
+    /// Session ids whose `session_start` hooks already ran in this process.
+    session_starts: Mutex<std::collections::HashSet<String>>,
     /// Discord / Telegram session notifications (off by default).
     notify: NotifyConfig,
     /// When session estimate exceeds this, compact before the next LLM call
@@ -57,6 +64,10 @@ pub struct Agent {
     /// First-token race: `off` / `auto` / `provider/model`.
     model_race: String,
     race_after: std::time::Duration,
+    /// `[session] fallback_models`: `provider/model` tried when a stream fails to open.
+    fallback_models: Vec<String>,
+    /// Config `api_key` per provider, for fallback targets on another provider.
+    fallback_config_keys: std::collections::HashMap<String, String>,
     /// Process-local text-only response cache.
     response_cache: bool,
     /// Cross-session memory settings (from config).
@@ -104,6 +115,10 @@ pub struct Agent {
     cwd_override: Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
     /// Subagent token usage waiting to be folded into the parent session.
     subagent_usage_pending: Arc<std::sync::Mutex<whycodes_core::types::Usage>>,
+    /// USD for that subagent usage, priced with the subagent's own model.
+    subagent_cost_pending: Arc<std::sync::Mutex<whycodes_session::SessionCost>>,
+    /// `[pricing]` from config; wins over catalog prices.
+    price_overrides: std::collections::HashMap<String, whycodes_llm::ModelPrice>,
     /// Resident workspace file index shared with file tools (warm fast path
     /// for glob/grep/list enumeration). Started by the host (TUI/CLI).
     file_index: Option<Arc<whycodes_index::WorkspaceIndex>>,
@@ -347,12 +362,15 @@ impl Agent {
             info,
             provider_registry: Arc::new(ProviderRegistry::default()),
             tool_executor: Arc::new(ToolExecutor::new()),
+            mcp_servers: Vec::new(),
             permission_prompter: default_prompter(),
             question_prompter: default_question_prompter(),
             risk_threshold: RiskThreshold::default(),
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
             hooks: Vec::new(),
+            cache_reads: Mutex::new(std::collections::HashMap::new()),
+            session_starts: Mutex::new(std::collections::HashSet::new()),
             notify: NotifyConfig::default(),
             // Match config default when `with_config` is not used.
             compaction_threshold: 150_000,
@@ -362,6 +380,8 @@ impl Agent {
             model_fast: None,
             model_race: "off".into(),
             race_after: std::time::Duration::from_millis(800),
+            fallback_models: Vec::new(),
+            fallback_config_keys: std::collections::HashMap::new(),
             response_cache: true,
             memory: crate::subagent::default_memory(),
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
@@ -388,6 +408,10 @@ impl Agent {
             subagent_usage_pending: Arc::new(std::sync::Mutex::new(
                 whycodes_core::types::Usage::default(),
             )),
+            subagent_cost_pending: Arc::new(std::sync::Mutex::new(
+                whycodes_session::SessionCost::default(),
+            )),
+            price_overrides: std::collections::HashMap::new(),
             file_index: None,
             session_claims: None,
             swarm_hub: None,
@@ -577,7 +601,15 @@ impl Agent {
         );
         self.model_fast = config.session.model_fast.clone();
         self.model_race = config.session.model_race.clone();
+        self.price_overrides = price_overrides_from_config(&config.pricing);
         self.race_after = std::time::Duration::from_millis(config.session.race_after_ms);
+        self.fallback_models = config.session.fallback_models.clone();
+        self.fallback_config_keys = config
+            .providers
+            .iter()
+            .filter_map(|(name, pc)| Some((name.clone(), pc.api_key.clone()?)))
+            .filter(|(_, key)| !key.is_empty())
+            .collect();
         self.response_cache = !matches!(
             config
                 .session
@@ -793,6 +825,71 @@ impl Agent {
         self.model_fast.as_deref()
     }
 
+    /// USD for one usage record on `provider/model`; `None` when unpriced.
+    pub(crate) fn step_cost(
+        &self,
+        provider: &str,
+        model: &str,
+        usage: &whycodes_core::types::Usage,
+    ) -> Option<f64> {
+        let price = self
+            .price_overrides
+            .get(&format!("{provider}/{model}"))
+            .copied()
+            .or_else(|| whycodes_llm::lookup_price(provider, model))?;
+        Some(price.cost(usage))
+    }
+
+    /// First `[session] fallback_models` entry at or after `from` that names a
+    /// registered provider, differs from the active target, and has a key.
+    ///
+    /// Key order: the active key (same provider), config `api_key`, then
+    /// `<PROVIDER>_API_KEY`. OAuth-only providers on another provider are
+    /// skipped — the agent does not reach the token store.
+    pub(crate) fn next_fallback(
+        &self,
+        from: usize,
+        active_provider: &str,
+        active_model: &str,
+        active_key: &str,
+    ) -> Option<(usize, FallbackTarget)> {
+        for (idx, raw) in self.fallback_models.iter().enumerate().skip(from) {
+            let Some((provider, model)) = raw.trim().split_once('/') else {
+                tracing::warn!(entry = %raw, "fallback_models entry is not provider/model");
+                continue;
+            };
+            if (provider == active_provider && model == active_model)
+                || self.provider_registry.get(provider).is_none()
+            {
+                continue;
+            }
+            let api_key = if provider == active_provider {
+                active_key.to_string()
+            } else if let Some(key) = self.fallback_config_keys.get(provider) {
+                key.clone()
+            } else {
+                let var = format!("{}_API_KEY", provider.to_uppercase());
+                match std::env::var(&var) {
+                    Ok(key) if !key.is_empty() => key,
+                    Ok(_) => continue,
+                    Err(missing) => {
+                        tracing::debug!(%var, "fallback skipped, no key: {missing}");
+                        continue;
+                    }
+                }
+            };
+            return Some((
+                idx,
+                FallbackTarget {
+                    provider: provider.to_string(),
+                    model: model.to_string(),
+                    api_key,
+                },
+            ));
+        }
+        None
+    }
+
     /// Resolve an optional first-token race partner (`off` / `auto` / ref).
     pub(crate) fn race_partner(
         &self,
@@ -882,15 +979,20 @@ impl Agent {
         let n_mcp = if config.mcp_servers.is_empty() {
             0
         } else {
-            crate::mcp_load::register_mcp_tools(&mut full, config).await
+            let (n, servers) = crate::mcp_load::register_mcp_tools(&mut full, config).await;
+            self.mcp_servers = servers;
+            n
         };
-        let lsp_custom =
-            !self.lsp_overlay.servers.is_empty() || self.lsp_overlay.idle_timeout_ms.is_some();
-        if n_plug > 0 || n_mcp > 0 || lsp_custom {
+        if n_plug > 0 || n_mcp > 0 || lsp_overlay_is_custom(&self.lsp_overlay) {
             self.tool_executor = Arc::new(full);
             log_registered_count(n_plug, "shell plugins registered");
             log_registered_count(n_mcp, "MCP tools registered");
         }
+    }
+
+    /// MCP servers connected by [`Self::with_mcp`] / [`Self::load_mcp`].
+    pub fn mcp_servers(&self) -> &[crate::mcp_load::McpServerHandle] {
+        &self.mcp_servers
     }
 
     /// Load shell plugins only (when not calling [`Self::with_mcp`]).
@@ -903,7 +1005,7 @@ impl Agent {
     }
 
     fn apply_lsp_overlay(&self, exec: &mut ToolExecutor) {
-        if self.lsp_overlay.servers.is_empty() && self.lsp_overlay.idle_timeout_ms.is_none() {
+        if !lsp_overlay_is_custom(&self.lsp_overlay) {
             return;
         }
         exec.configure_lsp(&self.lsp_overlay);
@@ -1142,19 +1244,76 @@ impl Agent {
 
 fn apply_plugin_count(agent: &mut Agent, mut exec: ToolExecutor, n: usize) {
     agent.apply_lsp_overlay(&mut exec);
-    let lsp_custom =
-        !agent.lsp_overlay.servers.is_empty() || agent.lsp_overlay.idle_timeout_ms.is_some();
-    if n == 0 && !lsp_custom {
+    if n == 0 && !lsp_overlay_is_custom(&agent.lsp_overlay) {
         return;
     }
     agent.tool_executor = Arc::new(exec);
     log_registered_count(n, "shell plugins registered");
 }
 
+/// `[pricing."provider/model"]` → prices keyed the same way.
+fn price_overrides_from_config(
+    pricing: &std::collections::HashMap<String, whycodes_config::PriceConfig>,
+) -> std::collections::HashMap<String, whycodes_llm::ModelPrice> {
+    pricing
+        .iter()
+        .filter(|(key, _)| {
+            let valid = key.split_once('/').is_some();
+            if !valid {
+                tracing::warn!(key = %key, "[pricing] key is not provider/model");
+            }
+            valid
+        })
+        .map(|(key, p)| {
+            let price = whycodes_llm::ModelPrice {
+                input: p.input,
+                output: p.output,
+                cache_read: p.cache_read,
+                cache_write: p.cache_write,
+            };
+            (key.clone(), price)
+        })
+        .collect()
+}
+
+/// A model to switch to after the active one failed to open a stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FallbackTarget {
+    pub provider: String,
+    pub model: String,
+    pub api_key: String,
+}
+
+impl Agent {
+    /// Record this step's prompt-cache read; a notice when it dropped from
+    /// the previous step's. `/fresh` (`skip_cache`) misses on purpose.
+    pub(crate) fn note_cache_read(
+        &self,
+        session_id: &str,
+        usage: &whycodes_core::types::Usage,
+        skip_cache: bool,
+    ) -> Option<String> {
+        let read = usage.cache_read_input_tokens.unwrap_or(0);
+        let prev = recover_lock(&self.cache_reads).insert(session_id.to_string(), read)?;
+        if skip_cache {
+            return None;
+        }
+        crate::cache_watch::cache_miss_notice(prev, usage)
+    }
+}
+
+/// Any `[lsp]` key set: the executor must carry a configured `lsp` tool.
+fn lsp_overlay_is_custom(overlay: &whycodes_tools::LspSettings) -> bool {
+    !overlay.servers.is_empty()
+        || overlay.idle_timeout_ms.is_some()
+        || overlay.edit_diagnostics_ms.is_some()
+}
+
 fn lsp_overlay_from_config(cfg: &whycodes_config::LspConfig) -> whycodes_tools::LspSettings {
     let (idle_timeout_ms, servers) = cfg.to_runtime_settings();
     whycodes_tools::LspSettings {
         idle_timeout_ms,
+        edit_diagnostics_ms: cfg.edit_diagnostics_ms,
         servers: servers
             .into_iter()
             .map(|(name, s)| {

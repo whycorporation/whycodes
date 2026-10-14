@@ -475,6 +475,7 @@ fn merge_hooks_nonempty_replaces() {
         tool_match: "bash".into(),
         command: "base".into(),
         block_on_failure: false,
+        feedback: false,
         timeout_secs: 5,
     });
     let mut overlay = Config::default();
@@ -483,6 +484,7 @@ fn merge_hooks_nonempty_replaces() {
         tool_match: "*".into(),
         command: "overlay".into(),
         block_on_failure: false,
+        feedback: false,
         timeout_secs: 5,
     });
     let merged = base.merge_with(&overlay);
@@ -573,6 +575,17 @@ fn notify_env_overrides_and_secret_expand() {
     assert_eq!(cfg.notify.telegram_token(), Some("bot:token"));
     assert_eq!(cfg.notify.telegram_chat(), Some("-1001"));
     assert_eq!(cfg.notify.timeout_secs, 20);
+    assert_eq!(cfg.notify.desktop, None);
+    for (raw, want) in [
+        ("on", Some(true)),
+        ("maybe", Some(true)),
+        ("Off", Some(false)),
+    ] {
+        // SAFETY: serialized by ENV_LOCK.
+        unsafe { std::env::set_var("WHYCODES_NOTIFY_DESKTOP", raw) };
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.notify.desktop, want, "{raw}");
+    }
 
     cfg.notify.discord_webhook = Some("${WHYCODES_NOTIFY_EXPAND_URL}".into());
     cfg.notify.telegram_bot_token = Some("  ".into());
@@ -595,6 +608,7 @@ fn notify_env_overrides_and_secret_expand() {
         std::env::remove_var("WHYCODES_NOTIFY_TELEGRAM_CHAT_ID");
         std::env::remove_var("WHYCODES_NOTIFY_TIMEOUT_SECS");
         std::env::remove_var("WHYCODES_NOTIFY_EXPAND_URL");
+        std::env::remove_var("WHYCODES_NOTIFY_DESKTOP");
     }
 }
 

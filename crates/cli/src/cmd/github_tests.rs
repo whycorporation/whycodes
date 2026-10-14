@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn acp_stub_runs() {
+async fn pr_stub_runs() {
     let cli = crate::Cli {
         command: None,
         provider: None,
@@ -11,23 +11,16 @@ async fn acp_stub_runs() {
         plain: true,
         continue_session: false,
         resume: None,
+        fork_session: false,
         debug: false,
         no_auto_update: true,
         no_memory: true,
     };
-    super::cmd_acp(&cli).await.unwrap();
     super::cmd_pr(&cli, Some("t"), Some("dev")).await.unwrap();
 }
 
 #[test]
 fn github_printer_helpers() {
-    let mut saw_acp = false;
-    for line in acp_stub_lines() {
-        if line.contains("not yet implemented") {
-            saw_acp = true;
-        }
-    }
-    assert!(saw_acp);
     let header = pr_create_header_lines("fix", "dev");
     assert!(header[1].contains("fix"));
     assert!(header[2].contains("dev"));
@@ -58,6 +51,7 @@ fn test_cli() -> crate::Cli {
         plain: true,
         continue_session: false,
         resume: None,
+        fork_session: false,
         debug: false,
         no_auto_update: true,
         no_memory: true,

@@ -190,9 +190,37 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         return;
     }
 
+    // MCP prompts: `/mcp__<server>__<prompt> args`
+    if let Some(name) = cmd.strip_prefix('/')
+        && name.starts_with("mcp__")
+    {
+        let servers = ctx.agent.mcp_servers();
+        match whycodes_agent::mcp_content::render_mcp_prompt(servers, name, rest).await {
+            Some(Ok(text)) if !text.trim().is_empty() => {
+                ctx.app.add_message(ChatRole::User, &text);
+                ctx.app.enqueue_prompt_text(text);
+            }
+            Some(Ok(_)) => {
+                ctx.app
+                    .add_message(ChatRole::System, format!("{cmd} returned an empty prompt."));
+            }
+            Some(Err(e)) => ctx.app.add_message(ChatRole::System, format!("{cmd}: {e}")),
+            None => ctx.app.add_message(
+                ChatRole::System,
+                format!("Unknown MCP prompt {cmd}. /mcp lists the connected servers."),
+            ),
+        }
+        return;
+    }
+
     match cmd {
         "/exit" | "/quit" | "/q" => {
             ctx.app.running = false;
+        }
+        "/mcp" => {
+            let listing =
+                whycodes_agent::mcp_content::describe_mcp_servers(ctx.agent.mcp_servers()).await;
+            ctx.app.add_message(ChatRole::System, listing);
         }
         "/help" | "/h" => {
             ctx.app.mode = AppMode::Help;
@@ -228,6 +256,7 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 .toasts
                 .push(crate::toast::ToastKind::Success, "New session");
         }
+        "/fork" => fork_session_in_place(ctx.app, ctx.session, rest),
         "/rename" => {
             let name = rest.trim();
             if name.is_empty() {
@@ -539,10 +568,24 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 );
             }
         }
-        "/sessions" => {
+        "/sessions" if rest.is_empty() => {
             ctx.app.session_list.sessions = load_session_entries();
             ctx.app.session_list.selected = 0;
             crate::input::open_dialog(ctx.app, DialogKind::SessionList);
+        }
+        "/sessions" => {
+            let found = search_session_entries(rest);
+            if found.is_empty() {
+                ctx.app.toasts.push(
+                    crate::toast::ToastKind::Warning,
+                    format!("No session mentions \"{rest}\""),
+                );
+            } else {
+                ctx.app.status_message = format!("{} session(s) mention \"{rest}\"", found.len());
+                ctx.app.session_list.sessions = found;
+                ctx.app.session_list.selected = 0;
+                crate::input::open_dialog(ctx.app, DialogKind::SessionList);
+            }
         }
         "/resume" | "/continue" => {
             // With an id (or prefix): resume immediately. Bare: open picker.

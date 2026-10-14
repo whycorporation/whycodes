@@ -1,12 +1,16 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use whycodes_config::{HookConfig, HookEvent};
 use whycodes_core::SandboxSettings;
 use whycodes_core::network::NetworkPolicy;
 use whycodes_core::tool::ToolContext;
 use whycodes_core::types::{AgentInfo, ApprovalMode, PermissionSet};
 use whycodes_llm::provider::ProviderRegistry;
 use whycodes_memory::MemorySettings;
+use whycodes_plugin::hooks::{
+    HookContext, PreHookDecision, append_feedback, run_hooks, run_post_hooks, run_pre_hooks,
+};
 use whycodes_session::session::Session;
 use whycodes_tools::executor::ToolExecutor;
 use whycodes_tools::question::parse_questions;
@@ -69,6 +73,8 @@ pub struct SubagentRunner {
     swarm_hub: Option<whycodes_core::SwarmHub>,
     question_prompter: Arc<dyn QuestionPrompter>,
     approval_mode: ApprovalMode,
+    /// Parent config hooks: tool hooks run here too, plus `subagent_stop`.
+    hooks: Vec<HookConfig>,
 }
 
 impl SubagentRunner {
@@ -98,7 +104,14 @@ impl SubagentRunner {
             swarm_hub: None,
             question_prompter: default_question_prompter(),
             approval_mode: ApprovalMode::Auto,
+            hooks: Vec::new(),
         }
+    }
+
+    /// Inherit the parent's config hooks.
+    pub fn with_hooks(mut self, hooks: Vec<HookConfig>) -> Self {
+        self.hooks = hooks;
+        self
     }
 
     pub fn with_question_prompter(mut self, prompter: Arc<dyn QuestionPrompter>) -> Self {
@@ -231,7 +244,7 @@ impl SubagentRunner {
 
         let duration = start.elapsed();
 
-        match output {
+        let result = match output {
             Ok((text, usage)) => SubagentResult {
                 goal: task.goal,
                 output: text,
@@ -246,7 +259,30 @@ impl SubagentRunner {
                 duration,
                 usage: whycodes_core::types::Usage::default(),
             },
+        };
+        self.run_stop_hooks(&session, &result).await;
+        result
+    }
+
+    /// `subagent_stop` hooks; `match` filters the agent type. Never blocks.
+    async fn run_stop_hooks(&self, session: &Session, result: &SubagentResult) {
+        if self.hooks.is_empty() {
+            return;
         }
+        let ctx = HookContext::lifecycle(
+            HookEvent::SubagentStop,
+            self.info.name.clone(),
+            Some(session.id.clone()),
+            self.project_path.display().to_string(),
+        )
+        .with_env("WHYCODES_SUBAGENT_TYPE", &self.info.name)
+        .with_env("WHYCODES_SUBAGENT_GOAL", &result.goal)
+        .with_env(
+            "WHYCODES_SUBAGENT_SUCCESS",
+            if result.success { "1" } else { "0" },
+        )
+        .with_env("WHYCODES_SUBAGENT_OUTPUT", &result.output);
+        run_hooks(&self.hooks, &ctx).await;
     }
 
     /// Internal turn loop — mirrors `Agent::run_turn` but accepts an overridden
@@ -485,7 +521,37 @@ impl SubagentRunner {
             };
             return run_question_tool(prompter, &tc.arguments, &tc.id).await;
         }
-        self.tool_executor.execute(tc, tool_ctx, permission).await
+        if self.hooks.is_empty() {
+            return self.tool_executor.execute(tc, tool_ctx, permission).await;
+        }
+        let tool_input = tc.arguments.to_string();
+        let pre_ctx = HookContext::pre(
+            tc.name.clone(),
+            tc.id.clone(),
+            tool_input.clone(),
+            tool_ctx.session_id.clone(),
+            tool_ctx.working_dir.clone(),
+        );
+        if let PreHookDecision::Block { reason } = run_pre_hooks(&self.hooks, &pre_ctx).await {
+            return whycodes_core::types::ToolResult {
+                tool_call_id: tc.id.clone(),
+                content: reason,
+                is_error: true,
+            };
+        }
+        let mut result = self.tool_executor.execute(tc, tool_ctx, permission).await;
+        let post_ctx = HookContext::post(
+            tc.name.clone(),
+            tc.id.clone(),
+            tool_input,
+            tool_ctx.session_id.clone(),
+            tool_ctx.working_dir.clone(),
+            result.is_error,
+            &result.content,
+        );
+        let feedback = run_post_hooks(&self.hooks, &post_ctx).await;
+        append_feedback(&mut result.content, feedback);
+        result
     }
 }
 
