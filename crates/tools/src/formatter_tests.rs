@@ -114,6 +114,155 @@ fn prettier_needs_config_and_a_local_install() {
 }
 
 #[test]
+fn biome_config_wins_over_prettier_and_prefers_the_local_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let file = root.join("web/src/app.ts");
+    touch(&root.join(".prettierrc"), "{}");
+    touch(&root.join("node_modules/.bin").join(PRETTIER_BIN), "");
+    assert_eq!(detect(&file, root).unwrap().name, "prettier");
+
+    touch(&root.join("biome.jsonc"), "{}");
+    let f = detect(&file, root).unwrap();
+    assert_eq!(f.name, "biome");
+    assert_eq!(f.program, PathBuf::from("biome"));
+    let shown = file.to_string_lossy();
+    assert_eq!(
+        f.args,
+        ["format".to_string(), format!("--stdin-file-path={shown}")]
+    );
+
+    let bin = root.join("node_modules/.bin").join(BIOME_BIN);
+    touch(&bin, "");
+    assert_eq!(detect(&file, root).unwrap().program, bin);
+
+    // Biome does not format Markdown: Prettier keeps it.
+    assert_eq!(
+        detect(&root.join("README.md"), root).unwrap().name,
+        "prettier"
+    );
+}
+
+#[test]
+fn deno_config_formats_its_extensions_through_deno_fmt() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    touch(&root.join("deno.json"), "{}");
+    let f = detect(&root.join("src/mod.TS"), root).unwrap();
+    assert_eq!(f.name, "deno");
+    assert_eq!(f.program, PathBuf::from("deno"));
+    assert_eq!(f.args, ["fmt", "--ext=ts", "-"]);
+    assert_eq!(
+        detect(&root.join("README.md"), root).unwrap().args[1],
+        "--ext=md"
+    );
+    assert_eq!(detect(&root.join("a.mjs"), root), None, "not a deno --ext");
+
+    touch(&root.join("biome.json"), "{}");
+    assert_eq!(
+        detect(&root.join("src/mod.ts"), root).unwrap().name,
+        "biome"
+    );
+}
+
+#[test]
+fn clang_format_needs_a_clang_format_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let file = root.join("src/main.cpp");
+    assert_eq!(detect(&file, root), None);
+    touch(&root.join("_clang-format"), "BasedOnStyle: LLVM\n");
+    let f = detect(&file, root).unwrap();
+    assert_eq!(f.name, "clang-format");
+    assert_eq!(f.program, PathBuf::from("clang-format"));
+    let shown = file.to_string_lossy();
+    assert_eq!(f.args, [format!("--assume-filename={shown}")]);
+    for ext in ["c", "h", "hpp", "m", "mm", "proto"] {
+        let other = root.join(format!("src/x.{ext}"));
+        assert_eq!(detect(&other, root).unwrap().name, "clang-format", "{ext}");
+    }
+}
+
+#[test]
+fn zig_needs_a_build_zig() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("src/main.zig");
+    assert_eq!(detect(&file, dir.path()), None);
+    touch(&dir.path().join("build.zig"), "");
+    let f = detect(&file, dir.path()).unwrap();
+    assert_eq!((f.name, f.program), ("zig fmt", PathBuf::from("zig")));
+    assert_eq!(f.args, ["fmt", "--stdin"]);
+}
+
+#[test]
+fn terraform_needs_a_lock_file_or_an_initialized_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let file = root.join("infra/main.tf");
+    touch(&file, "");
+    assert_eq!(detect(&file, root), None);
+
+    std::fs::create_dir_all(root.join("infra/.terraform")).unwrap();
+    let f = detect(&file, root).unwrap();
+    assert_eq!(
+        (f.name, f.program),
+        ("terraform fmt", PathBuf::from("terraform"))
+    );
+    assert_eq!(f.args, ["fmt", "-"]);
+
+    let other = tempfile::tempdir().unwrap();
+    let vars = other.path().join("prod.tfvars");
+    assert_eq!(detect(&vars, other.path()), None);
+    touch(&other.path().join(".terraform.lock.hcl"), "");
+    assert_eq!(detect(&vars, other.path()).unwrap().name, "terraform fmt");
+}
+
+#[test]
+fn stylua_needs_a_stylua_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("lua/init.lua");
+    assert_eq!(detect(&file, dir.path()), None);
+    touch(&dir.path().join(".stylua.toml"), "");
+    let f = detect(&file, dir.path()).unwrap();
+    assert_eq!((f.name, f.program), ("stylua", PathBuf::from("stylua")));
+    let shown = file.to_string_lossy().into_owned();
+    assert_eq!(
+        f.args,
+        ["--stdin-filepath".to_string(), shown, "-".to_string()]
+    );
+}
+
+#[test]
+fn taplo_needs_a_taplo_config_and_runs_beside_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let file = root.join("crates/a/Cargo.toml");
+    assert_eq!(detect(&file, root), None);
+    touch(&root.join("taplo.toml"), "");
+    let f = detect(&file, root).unwrap();
+    assert_eq!((f.name, f.program), ("taplo", PathBuf::from("taplo")));
+    assert_eq!(f.args, ["fmt", "-"]);
+    assert_eq!(f.dir, root);
+}
+
+#[test]
+fn mix_format_needs_a_formatter_exs_and_runs_beside_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let file = root.join("app/lib/app/page.heex");
+    assert_eq!(detect(&file, root), None);
+    touch(&root.join("app/.formatter.exs"), "[]\n");
+    let f = detect(&file, root).unwrap();
+    assert_eq!((f.name, f.program), ("mix format", PathBuf::from("mix")));
+    let shown = file.to_string_lossy().into_owned();
+    let want = ["format", "--stdin-filename", &shown, "-"];
+    assert_eq!(f.args, want);
+    assert_eq!(f.dir, root.join("app"));
+    assert!(detect(&root.join("app/lib/app.ex"), root).is_some());
+    assert!(detect(&root.join("app/mix.exs"), root).is_some());
+}
+
+#[test]
 fn other_files_have_no_formatter() {
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(detect(&dir.path().join("notes.txt"), dir.path()), None);
