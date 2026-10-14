@@ -670,8 +670,18 @@ async fn write_goes_through_post_write_lsp_hook() {
     );
 }
 
-#[tokio::test]
-async fn write_runs_the_project_formatter_unless_disabled() {
+#[test]
+fn write_runs_the_project_formatter_unless_disabled() {
+    // Sibling tests empty `PATH` under ENV_LOCK; this one spawns `rustfmt`.
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(write_runs_the_project_formatter_body());
+}
+
+async fn write_runs_the_project_formatter_body() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("rustfmt.toml"), "edition = \"2024\"\n").unwrap();
     let ex = ToolExecutor::new();

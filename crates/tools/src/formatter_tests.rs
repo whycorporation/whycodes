@@ -120,6 +120,17 @@ fn other_files_have_no_formatter() {
     assert_eq!(detect(&dir.path().join("Makefile"), dir.path()), None);
 }
 
+/// Run `f` while holding `ENV_LOCK`: sibling tests empty `PATH` under it, and
+/// these spawn `rustfmt` from `PATH`.
+fn with_env_lock<F: std::future::Future>(f: F) -> F::Output {
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(f)
+}
+
 fn rustfmt_in(dir: &Path) -> Formatter {
     Formatter {
         name: "rustfmt",
@@ -129,8 +140,12 @@ fn rustfmt_in(dir: &Path) -> Formatter {
     }
 }
 
-#[tokio::test]
-async fn run_formats_stdin_and_fails_soft() {
+#[test]
+fn run_formats_stdin_and_fails_soft() {
+    with_env_lock(run_formats_stdin_and_fails_soft_body());
+}
+
+async fn run_formats_stdin_and_fails_soft_body() {
     let dir = tempfile::tempdir().unwrap();
     let f = rustfmt_in(dir.path());
     assert_eq!(
@@ -145,8 +160,12 @@ async fn run_formats_stdin_and_fails_soft() {
     assert_eq!(run(&missing, "fn main() {}").await, None);
 }
 
-#[tokio::test]
-async fn written_file_is_formatted_and_the_result_says_so() {
+#[test]
+fn written_file_is_formatted_and_the_result_says_so() {
+    with_env_lock(written_file_is_formatted_and_the_result_says_so_body());
+}
+
+async fn written_file_is_formatted_and_the_result_says_so_body() {
     let dir = tempfile::tempdir().unwrap();
     let wd = dir.path().to_string_lossy().into_owned();
     touch(&dir.path().join("rustfmt.toml"), "edition = \"2024\"\n");
@@ -171,8 +190,12 @@ async fn written_file_is_formatted_and_the_result_says_so() {
     assert_eq!(out.content, "Edited");
 }
 
-#[tokio::test]
-async fn nothing_happens_when_formatting_cannot_apply() {
+#[test]
+fn nothing_happens_when_formatting_cannot_apply() {
+    with_env_lock(nothing_happens_when_formatting_cannot_apply_body());
+}
+
+async fn nothing_happens_when_formatting_cannot_apply_body() {
     let dir = tempfile::tempdir().unwrap();
     let wd = dir.path().to_string_lossy().into_owned();
     touch(&dir.path().join("rustfmt.toml"), "");
@@ -205,8 +228,13 @@ async fn nothing_happens_when_formatting_cannot_apply() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn unwritable_directory_leaves_the_file_alone() {
+#[test]
+fn unwritable_directory_leaves_the_file_alone() {
+    with_env_lock(unwritable_directory_leaves_the_file_alone_body());
+}
+
+#[cfg(unix)]
+async fn unwritable_directory_leaves_the_file_alone_body() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let wd = dir.path().to_string_lossy().into_owned();
