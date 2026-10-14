@@ -227,8 +227,11 @@ Contributors checking a TUI change on Alacritty / Kitty / WezTerm / VTE: see
 
 A message sent while a turn is running steers it: the agent reads it before
 its next request, after the current tool calls finish. If the turn ends
-before that, the message runs as the next turn. Messages with images, and
-sessions attached to a daemon, still wait for the turn to end.
+before that, the message runs as the next turn, exactly as typed. `@file`
+mentions are expanded and pasted images attached, as on a normal submit.
+A TUI attached to a daemon sends text messages to
+`POST /api/session/{id}/steer`; messages with images wait for the turn to
+end there, because the daemon chat API is text only.
 
 Rebind keys under `[tui.key_bindings]` as `"key" = "action"`; `"none"`
 unbinds a default:

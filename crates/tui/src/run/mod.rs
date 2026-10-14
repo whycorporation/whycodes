@@ -2023,9 +2023,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 );
             }
 
-            // ── Steer a running local turn / reclaim unread messages ───
-            if remote.is_none() {
-                steer_or_reclaim(&mut app, &rt);
+            // ── Steer a running turn / reclaim unread messages ─────────
+            match remote {
+                Some(ref rem) => steer_remote(&mut app, &rt, rem, &project_dir),
+                None => steer_or_reclaim(&mut app, &mut rt, &project_dir),
             }
 
             // ── Start turn if needed ──────────────────────────────────
@@ -4753,6 +4754,8 @@ fn spawn_local_turn(
     let prep_config = config.clone();
 
     rt.steer = rt.agent.steer_inbox();
+    rt.steer_session = rt.session.id.clone();
+    rt.steered.clear();
     let (ag, sess) = take_turn_owner(rt, project_dir);
 
     rt.turn_join = Some(tokio::spawn(async move {
@@ -5084,21 +5087,87 @@ fn maybe_warm_cache(
         .map(tokio::spawn);
 }
 
-/// While a local turn runs, queued text goes to its inbox and is read at the
-/// next step. Once it ends, whatever it did not read is queued again first.
-fn steer_or_reclaim(app: &mut TuiApp, rt: &SessionRuntime) {
-    if rt.agent_busy {
-        if app.steer_pending_turns(&rt.steer) > 0 {
-            app.status_message = "sent to the running turn".into();
+/// While a local turn runs, queued prompts (with `@file` expansion and
+/// images) go to its inbox and are read at the next step. Once it ends,
+/// whatever it did not read is queued again first, exactly as typed.
+fn steer_or_reclaim(app: &mut TuiApp, rt: &mut SessionRuntime, project_dir: &std::path::Path) {
+    if !rt.agent_busy {
+        let unread = rt.steer.drain(&rt.steer_session).len();
+        let read = rt.steered.len().saturating_sub(unread);
+        let left: Vec<crate::app::PendingTurn> = rt.steered.drain(..).skip(read).collect();
+        if !left.is_empty() {
+            app.reclaim_steering(left);
             app.mark_dirty();
         }
-    } else {
-        let unread = rt.steer.drain();
-        if !unread.is_empty() {
-            app.reclaim_steering(unread);
-            app.mark_dirty();
+        return;
+    }
+    let turns = app.take_steerable_turns(false);
+    if turns.is_empty() {
+        return;
+    }
+    for turn in turns {
+        let content = steer_content(app, &turn, project_dir);
+        rt.steer.push(&rt.steer_session, content);
+        rt.steered.push_back(turn);
+    }
+    app.status_message = "sent to the running turn".into();
+    app.mark_dirty();
+}
+
+/// What the agent receives for a steered prompt: `@file` mentions expanded,
+/// images attached; a failed image falls back to the text, as on submit.
+fn steer_content(
+    app: &mut TuiApp,
+    turn: &crate::app::PendingTurn,
+    project_dir: &std::path::Path,
+) -> whycodes_core::types::MessageContent {
+    use whycodes_core::types::MessageContent;
+    let expanded = expand_at_files(&turn.text, project_dir);
+    if turn.images.is_empty() {
+        return MessageContent::Text(expanded);
+    }
+    match crate::images::build_user_blocks(&expanded, &turn.images) {
+        Ok(blocks) => MessageContent::Blocks(blocks),
+        Err(e) => {
+            app.toasts.push(
+                crate::toast::ToastKind::Warning,
+                format!("Image attach failed: {e}"),
+            );
+            MessageContent::Text(expanded)
         }
     }
+}
+
+/// While a daemon turn runs, queued text prompts go to the daemon, which
+/// replays any it did not read as `enqueue_prompt` events. Images stay
+/// queued: the daemon chat API is text only.
+fn steer_remote(
+    app: &mut TuiApp,
+    rt: &SessionRuntime,
+    rem: &crate::remote::RemoteAttach,
+    project_dir: &std::path::Path,
+) {
+    if !rt.agent_busy {
+        return;
+    }
+    let turns = app.take_steerable_turns(true);
+    if turns.is_empty() {
+        return;
+    }
+    for turn in turns {
+        let text = expand_at_files(&turn.text, project_dir);
+        let (rem, events) = (rem.clone(), rt.event_tx.clone());
+        tokio::spawn(async move {
+            if let Err(e) = crate::remote::steer(&rem, &text).await {
+                tracing::debug!(error = %e, "steer failed; queued instead");
+                if let Err(e) = events.send(TurnEvent::EnqueuePrompt { text }) {
+                    tracing::debug!(error = %e, "steer fallback dropped");
+                }
+            }
+        });
+    }
+    app.status_message = "sent to the running turn".into();
+    app.mark_dirty();
 }
 
 fn queue_auto_prompt_if_idle(app: &mut TuiApp, agent_busy: bool) {
