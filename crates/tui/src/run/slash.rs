@@ -122,6 +122,63 @@ pub(super) fn consume_slash_draft(app: &mut TuiApp) {
     app.slash_suggest.dismiss();
 }
 
+/// `/tell <id> <message>` target: a running subagent whose id starts with
+/// the first word, or the only running subagent when the first word names
+/// none. `None` when the message is empty or the target is ambiguous.
+pub(super) fn resolve_tell(running: &[String], rest: &str) -> Option<(String, String)> {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let (word, tail) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    let matches: Vec<&String> = running.iter().filter(|id| id.starts_with(word)).collect();
+    if let [id] = matches.as_slice()
+        && !tail.trim().is_empty()
+    {
+        return Some(((*id).clone(), tail.trim().to_string()));
+    }
+    match running {
+        [only] if matches.is_empty() => Some((only.clone(), rest.to_string())),
+        _ => None,
+    }
+}
+
+/// Handle `/tell` typed while a turn runs: queue the message for that
+/// subagent, which reads it at its next step. `false` when the draft is not
+/// a `/tell`.
+pub(super) fn busy_tell(app: &mut TuiApp, inbox: &whycodes_agent::steer::SteerInbox) -> bool {
+    let draft = app.input_buffer.trim().to_string();
+    let Some(rest) = draft.strip_prefix("/tell") else {
+        return false;
+    };
+    consume_slash_draft(app);
+    let running: Vec<String> = app
+        .subagents
+        .iter()
+        .filter(|s| s.status == "running")
+        .map(|s| s.id.clone())
+        .collect();
+    match resolve_tell(&running, rest) {
+        Some((id, message)) => {
+            app.add_message(ChatRole::User, format!("→ {id}: {message}"));
+            let content = whycodes_core::types::MessageContent::Text(message);
+            inbox.push(&id, content);
+            app.status_message = format!("sent to {id}");
+        }
+        None if running.is_empty() => {
+            app.status_message = "No subagent is running".into();
+        }
+        None => {
+            app.status_message = format!(
+                "Usage: /tell <id> <message> · running: {}",
+                running.join(", ")
+            );
+        }
+    }
+    app.mark_dirty();
+    true
+}
+
 /// Max chars inlined per `@file` (speculative context without blowing prefill).
 pub(super) const AT_FILE_MAX_CHARS: usize = 24_000;
 
@@ -302,6 +359,9 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.status_message = "Compacting conversation…".into();
                 ctx.app.mark_dirty();
             }
+        }
+        "/tell" => {
+            ctx.app.status_message = "No subagent is running".into();
         }
         "/fresh" => {
             ctx.agent.skip_prompt_cache_next();

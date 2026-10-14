@@ -296,6 +296,7 @@ Both TUI and `--plain`:
 | `/compact [context]` `/summarize` | Compact the conversation (LLM full-replace; optional note of what to keep) |
 | `/fresh` | Skip the provider prompt cache on the next turn (stale cache / wedged stream) |
 | `/btw <question>` | Side question: shown once, not written to session history, no `bash`/`write` |
+| `/tell <id> <message>` | While a turn runs: message a running `task` subagent or swarm worker (`id` prefix from the subagent panel; omit it when only one runs). Read at its next step; if it finishes first, the message is appended to its result for the parent. Local sessions only |
 | `/context` | Context window breakdown |
 | `/cost` `/usage` | Session + last-turn token usage (credential **name** only, never the secret) |
 | `/slop` | ΔLOC / verbosity / erosion vs git base (not a test score) |
