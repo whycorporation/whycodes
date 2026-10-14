@@ -321,8 +321,8 @@ switched), the status line says how many tokens went uncached:
 cache)`. A `/fresh` turn misses on purpose and is not reported.
 
 Providers drop a cached prefix a few minutes after its last use, so the first
-turn after a pause pays for the whole history again. The TUI can keep it warm
-while you are idle:
+turn after a pause pays for the whole history again. The TUI and the daemon
+can keep it warm while a session is idle:
 
 ```toml
 [session]
@@ -332,8 +332,11 @@ cache_warm_minutes = 30   # 0 (default) = off
 Every 4.5 minutes of idleness, for up to that many minutes after the last
 turn, it repeats the last request and hangs up as soon as the provider reports
 usage. Each keep-alive is a paid request (cache-read price for the prefix plus
-a few output tokens), counted in `/cost`. Sessions attached to a daemon are not
-kept warm.
+a few output tokens), counted in `/cost`. In the TUI this covers parked
+sessions too. The daemon (`whycodes serve`) does the same for each session
+after a `/api` chat or `/v1` run, using that turn's provider and model, and
+stops as soon as another turn starts on the session. A TUI attached to a
+daemon leaves keep-alives to the daemon.
 
 TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
 `/loop` (`/loop 3 <prompt>`; `/loop stop`), `/goal` (below).
