@@ -39,8 +39,7 @@ impl Tool for TaskTool {
                 },
                 "subagent_type": {
                     "type": "string",
-                    "enum": ["general", "explore", "scout"],
-                    "description": "Which subagent to spawn (default: general)"
+                    "description": "general (default), explore, scout, or a name from the system prompt's `# Custom agents` list"
                 },
                 "max_turns": {
                     "type": "integer",

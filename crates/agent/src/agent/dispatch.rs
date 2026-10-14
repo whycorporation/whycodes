@@ -735,6 +735,25 @@ impl Agent {
             }
         };
 
+        let defined = crate::custom_agents::load(&session.project_path);
+        let mut customs: std::collections::HashMap<String, crate::custom_agents::CustomAgent> =
+            std::collections::HashMap::new();
+        for spec in &specs {
+            match crate::custom_agents::resolve(&spec.subagent_type, &defined) {
+                Ok(Some(c)) => {
+                    customs.insert(c.name.clone(), c);
+                }
+                Ok(None) => skip_dispatch(),
+                Err(e) => {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: e,
+                        is_error: true,
+                    };
+                }
+            }
+        }
+
         let max_from_args = call
             .arguments
             .get("max_concurrent")
@@ -861,6 +880,7 @@ impl Agent {
         }
 
         let sem = std::sync::Arc::new(Semaphore::new(max_concurrent));
+        let session_route = (provider_name.to_string(), model.to_string());
         let (worker_provider, worker_model) =
             crate::routing::resolve_worker_model(provider_name, model, self.model_smol.as_deref());
         let provider_name: std::sync::Arc<str> = worker_provider.into();
@@ -890,8 +910,18 @@ impl Agent {
             let worker_id = format!("worker-{i}");
             let label = format!("{worker_id}/{}", spec.subagent_type);
             let permit = Arc::clone(&sem);
-            let pn = Arc::clone(&provider_name);
-            let m = Arc::clone(&model);
+            let custom = customs.get(&spec.subagent_type).cloned();
+            let (pn, m): (Arc<str>, Arc<str>) = match &custom {
+                Some(c) => {
+                    let (p, m) = c.route(
+                        &session_route.0,
+                        &session_route.1,
+                        (provider_name.to_string(), model.to_string()),
+                    );
+                    (p.into(), m.into())
+                }
+                None => (Arc::clone(&provider_name), Arc::clone(&model)),
+            };
             let ak = Arc::clone(&api_key);
             let claims = claims.clone();
             let registry = Arc::clone(&registry);
@@ -959,8 +989,26 @@ impl Agent {
                     project_path.clone()
                 };
 
-                let (permission, system_prompt) = match spec.subagent_type.as_str() {
-                    "explore" | "scout" => (
+                let (permission, system_prompt) = match (&custom, spec.subagent_type.as_str()) {
+                    (Some(c), _) => {
+                        let mut perm = c.permission(
+                            &parent_permission,
+                            &["todowrite", "todo", "todoread", "task", "swarm"],
+                        );
+                        if let Some(allowed) = perm.allowed_tools.as_mut() {
+                            push_unique(allowed, "swarm_msg");
+                        }
+                        (
+                            perm,
+                            Agent::with_prompt_overlays(
+                                &c.prompt,
+                                &overlays,
+                                pn.as_ref(),
+                                m.as_ref(),
+                            ),
+                        )
+                    }
+                    (None, "explore" | "scout") => (
                         PermissionSet {
                             allowed_tools: Some(vec![
                                 "read".into(),
@@ -997,7 +1045,7 @@ impl Agent {
                             m.as_ref(),
                         ),
                     ),
-                    _ => {
+                    (None, _) => {
                         let mut perm = parent_permission;
                         let mut denied = perm.denied_tools.unwrap_or_default();
                         for t in ["todowrite", "todo", "todoread", "task", "swarm"] {
@@ -1293,11 +1341,41 @@ impl Agent {
             .and_then(|v| v.as_u64())
             .unwrap_or(15) as usize;
 
+        let custom = match crate::custom_agents::resolve(
+            subagent_type,
+            &crate::custom_agents::load(&session.project_path),
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                return ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: e,
+                    is_error: true,
+                };
+            }
+        };
+
         // Permission profile per OpenCode subagent type
-        let (worker_provider, worker_model) =
+        let worker =
             crate::routing::resolve_worker_model(provider_name, model, self.model_smol.as_deref());
-        let (permission, system_prompt) = match subagent_type {
-            "explore" | "scout" => (
+        let (worker_provider, worker_model) = match &custom {
+            Some(c) => c.route(provider_name, model, worker),
+            None => worker,
+        };
+        let (permission, system_prompt) = match (&custom, subagent_type) {
+            (Some(c), _) => (
+                c.permission(
+                    &self.info.permission,
+                    &["todowrite", "todo", "todoread", "swarm"],
+                ),
+                Self::with_prompt_overlays(
+                    &c.prompt,
+                    &self.system_prompt_overlays,
+                    &worker_provider,
+                    &worker_model,
+                ),
+            ),
+            (None, "explore" | "scout") => (
                 PermissionSet {
                     allowed_tools: Some(vec![
                         "read".into(),
@@ -1332,7 +1410,7 @@ impl Agent {
                     &worker_model,
                 ),
             ),
-            _ => {
+            (None, _) => {
                 // general: full tools except todo / nested swarm (OpenCode default + safety)
                 let mut perm = self.info.permission.clone();
                 let mut denied = perm.denied_tools.unwrap_or_default();
