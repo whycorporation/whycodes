@@ -3529,3 +3529,181 @@ fn step_cost_prefers_config_prices_over_the_catalog() {
     assert_eq!(a.step_cost("wc-cost-p", "catalog-only", &usage), Some(2.0));
     assert_eq!(a.step_cost("wc-cost-p", "unknown", &usage), None);
 }
+
+type Seen = Arc<std::sync::Mutex<Vec<(String, String, Vec<String>)>>>;
+
+/// Records each stream request's system prompt, model, and tool names.
+struct CaptureProvider {
+    inner: whycodes_llm::ScriptedProvider,
+    seen: Seen,
+}
+
+impl whycodes_llm::LlmProvider for CaptureProvider {
+    fn name(&self) -> &str {
+        "script"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        request: &'a whycodes_core::types::LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        self.inner.complete(request, api_key, model)
+    }
+    fn stream<'a>(
+        &'a self,
+        request: &'a whycodes_core::types::LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        let tools = request.tools.iter().map(|t| t.name.clone()).collect();
+        self.seen
+            .lock()
+            .unwrap()
+            .push((request.system.clone(), model.to_string(), tools));
+        self.inner.stream(request, api_key, model)
+    }
+}
+
+fn capture_agent() -> (Agent, Seen) {
+    let seen: Seen = Arc::default();
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(CaptureProvider {
+        inner: whycodes_llm::ScriptedProvider::repeating(
+            "script",
+            [whycodes_llm::ScriptedStep::Text("custom-ok".into())],
+        ),
+        seen: Arc::clone(&seen),
+    }));
+    (test_agent().with_provider_registry(registry), seen)
+}
+
+fn write_reviewer(project: &std::path::Path) {
+    let dir = project.join(".claude").join("agents");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews diffs for bugs\ntools: Read, Grep\nmodel: script/special\n---\nZQ-REVIEWER-PROMPT\n",
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn execute_task_tool_runs_custom_agent_definition() {
+    let (a, seen) = capture_agent();
+    let dir = tempfile::tempdir().unwrap();
+    write_reviewer(dir.path());
+    let session = Session::new(dir.path().to_path_buf(), "sys".into());
+
+    let out = a
+        .execute_task_tool(
+            &tc(
+                "task",
+                json!({"goal": "review", "subagent_type": "reviewer", "max_turns": 1}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(!out.is_error, "{out:?}");
+    assert!(out.content.contains("Subagent (reviewer)"), "{out:?}");
+    let (system, model, tools) = seen.lock().unwrap()[0].clone();
+    assert!(system.contains("ZQ-REVIEWER-PROMPT"), "{system}");
+    assert_eq!(model, "special");
+    assert!(!tools.is_empty(), "{tools:?}");
+    assert!(
+        tools.iter().all(|t| t == "read" || t == "grep"),
+        "{tools:?}"
+    );
+
+    let unknown = a
+        .execute_task_tool(
+            &tc("task", json!({"goal": "x", "subagent_type": "nobody"})),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(unknown.is_error, "{unknown:?}");
+    assert!(unknown.content.contains("reviewer"), "{unknown:?}");
+}
+
+#[tokio::test]
+async fn execute_swarm_tool_runs_custom_agent_definition() {
+    let (mut a, seen) = capture_agent();
+    a.swarm_enabled = true;
+    a.swarm_worktrees = false;
+    let dir = tempfile::tempdir().unwrap();
+    write_reviewer(dir.path());
+    let session = Session::new(dir.path().to_path_buf(), "sys".into());
+
+    let unknown = a
+        .execute_swarm_tool(
+            &tc(
+                "swarm",
+                json!({"tasks": [{"goal": "a"}, {"goal": "b", "subagent_type": "nobody"}]}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(unknown.is_error, "{unknown:?}");
+    assert!(unknown.content.contains("`nobody`"), "{unknown:?}");
+    assert!(seen.lock().unwrap().is_empty(), "no worker may start");
+
+    let out = a
+        .execute_swarm_tool(
+            &tc(
+                "swarm",
+                json!({"tasks": [
+                    {"goal": "review", "subagent_type": "reviewer", "max_turns": 1},
+                    {"goal": "explore", "subagent_type": "explore", "max_turns": 1}
+                ]}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(out.content.contains("reviewer"), "{}", out.content);
+    let seen = seen.lock().unwrap();
+    let custom = seen
+        .iter()
+        .find(|(s, _, _)| s.contains("ZQ-REVIEWER-PROMPT"))
+        .expect("reviewer worker ran");
+    assert_eq!(custom.1, "special");
+    assert!(
+        custom
+            .2
+            .iter()
+            .all(|t| t == "read" || t == "grep" || t == "swarm_msg"),
+        "{:?}",
+        custom.2
+    );
+    assert!(
+        seen.iter().any(|(_, m, _)| m != "special"),
+        "built-in worker keeps the worker model"
+    );
+}
+
+#[test]
+fn with_agents_md_lists_custom_agents() {
+    let dir = tempfile::tempdir().unwrap();
+    write_reviewer(dir.path());
+    let p = Agent::with_agents_md("base", dir.path());
+    assert!(p.contains("# Custom agents"), "{p}");
+    assert!(p.contains("`reviewer`: Reviews diffs for bugs"), "{p}");
+}

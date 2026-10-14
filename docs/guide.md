@@ -465,6 +465,45 @@ In **build**, high-confidence questions get an ephemeral intent hint so the
 model answers instead of over-eager edits. Set
 `session.intent_guidance = "off"` to disable.
 
+### Custom subagents
+
+A Markdown file with frontmatter defines a subagent that `task` and `swarm`
+accept as `subagent_type`. Existing `.claude/agents/` files work
+unchanged:
+
+```markdown
+---
+name: reviewer
+description: Reviews a diff for bugs and missing tests
+tools: Read, Grep, Glob
+model: inherit
+---
+You are a careful reviewer. Report findings with file:line references.
+```
+
+Files are read from `~/.whycodes/agents/`, `~/.claude/agents/`,
+`<project>/.claude/agents/`, and `<project>/.whycodes/agents/`; a later
+directory wins on a name clash. `name` defaults to the file name, and a
+file without a `description` is ignored (finished workers' `agent://`
+output lives in `.whycodes/agents/` too). Built-in names (`general`,
+`explore`, `scout`) cannot be redefined.
+
+- `tools` (comma list or YAML list) limits the agent to those tools.
+  PascalCase names map to ours (`Bash` → `bash`, `LS` → `list`,
+  `mcp__server__tool` → `server_tool`). Without it the agent keeps the
+  parent's tools; `disallowedTools` removes tools.
+- A definition only narrows the parent's permissions: tools the parent may
+  not use stay unavailable, and the todo and nesting tools are removed as
+  for `general`.
+- `model`: `inherit` uses the session model, `provider/model` or a bare id
+  picks one, and no value (or the tier aliases `sonnet` / `opus` /
+  `haiku`) uses the normal worker model (`session.model_smol`).
+- The body is the agent's system prompt; AGENTS.md and the skill catalog
+  are appended as for built-in workers.
+
+The system prompt lists custom agents by name and description. An unknown
+`subagent_type` is an error that names the available ones.
+
 ## Tools
 
 | Category | Tools |

@@ -53,8 +53,7 @@ impl Tool for SwarmTool {
                             },
                             "subagent_type": {
                                 "type": "string",
-                                "enum": ["general", "explore", "scout"],
-                                "description": "Worker type (default: general)"
+                                "description": "general (default), explore, scout, or a name from the system prompt's `# Custom agents` list"
                             },
                             "paths": {
                                 "type": "array",
