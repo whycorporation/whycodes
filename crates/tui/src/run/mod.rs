@@ -2012,6 +2012,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 );
             }
 
+            // ── Steer a running local turn / reclaim unread messages ───
+            if remote.is_none() {
+                steer_or_reclaim(&mut app, &rt);
+            }
+
             // ── Start turn if needed ──────────────────────────────────
             if !rt.agent_busy
                 && let Some(turn) = app.take_pending_turn()
@@ -4734,6 +4739,7 @@ fn spawn_local_turn(
     let prep_dir = project_dir.to_path_buf();
     let prep_config = config.clone();
 
+    rt.steer = rt.agent.steer_inbox();
     let (ag, sess) = take_turn_owner(rt, project_dir);
 
     rt.turn_join = Some(tokio::spawn(async move {
@@ -5030,6 +5036,23 @@ fn take_turn_owner(rt: &mut SessionRuntime, project_dir: &std::path::Path) -> (A
         Session::new(project_dir.to_path_buf(), String::new()),
     );
     (ag, sess)
+}
+
+/// While a local turn runs, queued text goes to its inbox and is read at the
+/// next step. Once it ends, whatever it did not read is queued again first.
+fn steer_or_reclaim(app: &mut TuiApp, rt: &SessionRuntime) {
+    if rt.agent_busy {
+        if app.steer_pending_turns(&rt.steer) > 0 {
+            app.status_message = "sent to the running turn".into();
+            app.mark_dirty();
+        }
+    } else {
+        let unread = rt.steer.drain();
+        if !unread.is_empty() {
+            app.reclaim_steering(unread);
+            app.mark_dirty();
+        }
+    }
 }
 
 fn queue_auto_prompt_if_idle(app: &mut TuiApp, agent_busy: bool) {
