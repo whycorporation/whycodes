@@ -1068,9 +1068,11 @@ impl Agent {
                 let mut runner =
                     SubagentRunner::new(registry, executor, info, worker_cwd, sandbox, network)
                         .with_memory(memory)
+                        .with_memory_project(project_path.clone())
                         .with_file_index(file_index.clone())
                         .with_panel(panel.clone())
                         .with_swarm_hub(Some(hub.clone()))
+                        .with_identity(worker_id.clone(), label.clone())
                         .with_question_prompter(question_prompter)
                         .with_approval_mode(approval_mode)
                         .with_hooks(hooks);
@@ -1238,6 +1240,9 @@ impl Agent {
         let mut report = crate::swarm::format_swarm_header(total, ok, wall);
         report.push_str(&format!("\n_isolation: {mode_label}_\n\n"));
         report.push_str(&sections.join("\n"));
+        // The parent is blocked on this call, so mail addressed to it is
+        // delivered here rather than lost.
+        report.push_str(&crate::swarm::format_parent_inbox(&hub.drain("parent")));
 
         ToolResult {
             tool_call_id: call.id.clone(),

@@ -367,7 +367,10 @@ async fn shell_rule_deny_allow_and_ask() {
         .insert("bash(git *)".into(), PermissionAction::Allow);
     let mut allow = Agent::new(allow_info).with_permission_prompter(asks.clone());
     allow.set_approval_mode(ApprovalMode::Manual);
-    let (session, ctx) = session_ctx(&allow);
+    // Allowed means it really runs: keep its cwd (and any scratch log) in a tempdir.
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = allow.tool_context(&session);
     let _ = allow
         .execute_with_permission(
             &tc("bash", json!({"command": "git status"})),
@@ -1046,7 +1049,10 @@ async fn confirm_then_ask_rule_skips_second_prompt() {
         .insert("bash(rm *)".into(), PermissionAction::Ask);
     let mut a = Agent::new(info).with_permission_prompter(asks.clone());
     a.set_approval_mode(ApprovalMode::Manual);
-    let (session, ctx) = session_ctx(&a);
+    // Allowed means it really runs: keep its cwd (and any scratch log) in a tempdir.
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
     let result = a
         .execute_with_permission(
             &tc("bash", json!({"command": "rm -rf /tmp/scratch-cov"})),
@@ -1123,7 +1129,10 @@ async fn intent_confirm_skipped_after_risk_confirmed() {
     let mut a = Agent::new(info("build")).with_permission_prompter(asks.clone());
     a.set_approval_mode(ApprovalMode::Manual);
     a.intent_guidance = crate::intent::IntentGuidanceMode::Always;
-    let (session, ctx) = session_ctx(&a);
+    // Allowed means it really runs: keep its cwd (and any scratch log) in a tempdir.
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
     let q = crate::intent::classify_user_intent("how does auth work?");
     let result = a
         .execute_with_permission(

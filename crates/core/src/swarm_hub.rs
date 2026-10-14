@@ -65,11 +65,12 @@ impl SwarmHub {
     }
 
     /// Deliver `text` from `from` to `to` (`all` broadcasts to every known inbox
-    /// plus `parent`).
-    pub fn send(&self, from: &str, to: &str, text: &str) {
+    /// plus `parent`). A direct message to an unregistered id is refused with
+    /// the known ids, so a typo is not silently queued where nobody reads.
+    pub fn send(&self, from: &str, to: &str, text: &str) -> Result<(), String> {
         let text = text.trim();
         if text.is_empty() {
-            return;
+            return Ok(());
         }
         let mut boxes = recover_lock(self.inner.inboxes.lock());
         let targets: Vec<String> = if to.eq_ignore_ascii_case("all") {
@@ -78,8 +79,15 @@ impl SwarmHub {
                 ids.push("parent".into());
             }
             ids.into_iter().filter(|id| id != from).collect()
-        } else {
+        } else if boxes.contains_key(to) {
             vec![to.to_string()]
+        } else {
+            let mut known: Vec<&str> = boxes.keys().map(String::as_str).collect();
+            known.sort_unstable();
+            return Err(format!(
+                "unknown recipient `{to}`; known: all, {}",
+                known.join(", ")
+            ));
         };
         for dest in targets {
             let msg = SwarmMessage {
@@ -90,6 +98,7 @@ impl SwarmHub {
             boxes.entry(dest).or_default().push(msg.clone());
             self.emit(&msg);
         }
+        Ok(())
     }
 
     fn emit(&self, msg: &SwarmMessage) {
@@ -98,10 +107,12 @@ impl SwarmHub {
         }
     }
 
-    /// Take every pending message for `id`.
+    /// Take every pending message for `id`. The inbox stays registered so
+    /// later broadcasts still reach it.
     pub fn drain(&self, id: &str) -> Vec<SwarmMessage> {
         recover_lock(self.inner.inboxes.lock())
-            .remove(id)
+            .get_mut(id)
+            .map(std::mem::take)
             .unwrap_or_default()
     }
 }
@@ -141,8 +152,8 @@ mod tests {
         let hub = SwarmHub::new();
         hub.ensure("parent");
         hub.ensure("w0");
-        hub.send("w0", "parent", "   ");
-        hub.send("w0", "parent", "hello");
+        hub.send("w0", "parent", "   ").unwrap();
+        hub.send("w0", "parent", "hello").unwrap();
         let got = hub.drain("parent");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].text, "hello");
@@ -153,10 +164,26 @@ mod tests {
         hub.set_listener(Some(Arc::new(move |msg: SwarmMessage| {
             seen2.lock().unwrap().push(msg.text);
         })));
-        hub.send("parent", "all", "broadcast");
+        hub.send("parent", "all", "broadcast").unwrap();
         assert!(!hub.drain("w0").is_empty());
         assert!(!seen.lock().unwrap().is_empty());
         hub.set_listener(None);
         assert!(format!("{hub:?}").contains("SwarmHub"));
+    }
+
+    #[test]
+    fn broadcast_still_reaches_an_inbox_after_it_was_drained() {
+        let hub = SwarmHub::new();
+        hub.ensure("parent");
+        hub.ensure("worker-0");
+        hub.ensure("worker-1");
+        hub.send("worker-0", "worker-1", "first").unwrap();
+        assert_eq!(hub.drain("worker-1").len(), 1);
+        hub.send("worker-0", "all", "second").unwrap();
+        let got = hub.drain("worker-1");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].text, "second");
+        assert!(hub.drain("worker-0").is_empty(), "sender skips itself");
+        assert_eq!(hub.drain("parent").len(), 1);
     }
 }

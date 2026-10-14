@@ -145,6 +145,18 @@ pub fn format_swarm_header(n: usize, ok: usize, wall_secs: f64) -> String {
     format!("## Swarm results ({n} agents, {ok} ok, {wall_secs:.1}s wall)\n")
 }
 
+/// Report section for mail workers sent to `parent`; empty when none.
+pub fn format_parent_inbox(messages: &[whycodes_core::SwarmMessage]) -> String {
+    if messages.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n### Messages to parent\n\n");
+    for m in messages {
+        out.push_str(&format!("- from {}: {}\n", m.from, m.text));
+    }
+    out
+}
+
 #[cfg(test)]
 #[path = "swarm_tests.rs"]
 mod tests;

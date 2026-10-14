@@ -1473,7 +1473,8 @@ mod swarm_hub_tests {
     #[test]
     fn dm_reaches_only_target() {
         let hub = SwarmHub::new();
-        hub.send("worker-0", "worker-1", "hello");
+        hub.ensure("worker-1");
+        hub.send("worker-0", "worker-1", "hello").unwrap();
         assert!(hub.drain("worker-0").is_empty());
         let got = hub.drain("worker-1");
         assert_eq!(got.len(), 1);
@@ -1487,7 +1488,7 @@ mod swarm_hub_tests {
         hub.ensure("parent");
         hub.ensure("worker-0");
         hub.ensure("worker-1");
-        hub.send("worker-0", "all", "heads up");
+        hub.send("worker-0", "all", "heads up").unwrap();
         let parent = hub.drain("parent");
         assert!(parent.iter().any(|m| m.text == "heads up"));
         assert!(hub.drain("worker-0").is_empty());
@@ -1499,7 +1500,7 @@ mod swarm_hub_tests {
     fn empty_send_listener_and_broadcast_without_inboxes() {
         let hub = SwarmHub::new();
         let _ = format!("{hub:?}");
-        hub.send("a", "b", "   ");
+        assert!(hub.send("a", "b", "   ").is_ok(), "blank is a no-op");
         assert!(hub.drain("b").is_empty());
 
         let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1507,13 +1508,13 @@ mod swarm_hub_tests {
         hub.set_listener(Some(std::sync::Arc::new(move |_| {
             hits2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         })));
-        hub.send("solo", "all", "ping");
+        hub.send("solo", "all", "ping").unwrap();
         assert!(hits.load(std::sync::atomic::Ordering::SeqCst) >= 1);
         let parent = hub.drain("parent");
         assert!(parent.iter().any(|m| m.text == "ping"));
         hub.set_listener(None);
         hub.ensure("late");
-        hub.send("late", "all", "later");
+        hub.send("late", "all", "later").unwrap();
         assert!(hub.drain("parent").iter().any(|m| m.text == "later"));
     }
 
@@ -1531,16 +1532,30 @@ mod swarm_hub_tests {
         let hub = SwarmHub::new();
         hub.poison_inboxes();
         hub.ensure("w0");
+        hub.ensure("w1");
         hub.poison_inboxes();
         let _ = format!("{hub:?}");
         hub.poison_inboxes();
-        hub.send("w0", "w1", "hi");
+        hub.send("w0", "w1", "hi").unwrap();
         hub.poison_inboxes();
         let _ = hub.drain("w1");
         hub.poison_listener();
         hub.set_listener(None);
         hub.poison_listener();
-        hub.send("w0", "w1", "again");
+        hub.send("w0", "w1", "again").unwrap();
+    }
+
+    #[test]
+    fn dm_to_an_unknown_id_is_refused_with_the_known_ids() {
+        let hub = SwarmHub::new();
+        hub.ensure("parent");
+        hub.ensure("worker-1");
+        let err = hub.send("worker-1", "worker-9", "hi").unwrap_err();
+        assert_eq!(
+            err,
+            "unknown recipient `worker-9`; known: all, parent, worker-1"
+        );
+        assert!(hub.drain("worker-9").is_empty());
     }
 }
 

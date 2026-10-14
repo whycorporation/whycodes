@@ -59,6 +59,9 @@ pub struct SubagentRunner {
     sandbox: SandboxSettings,
     network: NetworkPolicy,
     memory: MemorySettings,
+    /// Project whose memory bank to use when it differs from `project_path`
+    /// (swarm worktrees run in a throwaway checkout of the main project).
+    memory_project: Option<std::path::PathBuf>,
     /// Shared file-claim registry when running inside a swarm.
     file_claims: Option<whycodes_core::FileClaimRegistry>,
     agent_id: Option<String>,
@@ -91,7 +94,8 @@ impl SubagentRunner {
             project_path,
             sandbox,
             network,
-            memory: MemorySettings::default(),
+            memory: default_memory(),
+            memory_project: None,
             file_claims: None,
             agent_id: None,
             agent_label: None,
@@ -140,6 +144,28 @@ impl SubagentRunner {
     /// Attach parent memory settings (subagent_banks, inject knobs).
     pub fn with_memory(mut self, memory: MemorySettings) -> Self {
         self.memory = memory;
+        self
+    }
+
+    /// Key memory by `project` instead of the working directory.
+    pub fn with_memory_project(mut self, project: std::path::PathBuf) -> Self {
+        self.memory_project = Some(project);
+        self
+    }
+
+    fn memory_project_path(&self) -> &std::path::Path {
+        self.memory_project.as_deref().unwrap_or(&self.project_path)
+    }
+
+    /// Name this runner (`worker-0`, …) for swarm mail and conflict labels,
+    /// whether or not file claims are on.
+    pub fn with_identity(
+        mut self,
+        agent_id: impl Into<String>,
+        agent_label: impl Into<String>,
+    ) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self.agent_label = Some(agent_label.into());
         self
     }
 
@@ -194,7 +220,8 @@ impl SubagentRunner {
             .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string());
         system_prompt = inject_subagent_memory(
             &system_prompt,
-            &self.project_path,
+            self.memory_project_path(),
+            &whycodes_core::paths::data_dir(),
             &self.info.name,
             &user_message,
             &self.memory,
@@ -528,10 +555,24 @@ impl SubagentRunner {
     }
 }
 
+/// Memory settings before config is applied. Unit tests start with memory off:
+/// banks live under the real `~/.whycodes`, and every tempdir project would
+/// leave one behind.
+#[cfg(test)]
+pub(crate) fn default_memory() -> MemorySettings {
+    MemorySettings::disabled()
+}
+
+#[cfg(not(test))]
+pub(crate) fn default_memory() -> MemorySettings {
+    MemorySettings::default()
+}
+
 /// Inject memory into the subagent system prompt using parent config.
 fn inject_subagent_memory(
     system_prompt: &str,
     project_path: &std::path::Path,
+    data_dir: &std::path::Path,
     agent_name: &str,
     query: &str,
     parent_memory: &MemorySettings,
@@ -546,8 +587,6 @@ fn inject_subagent_memory(
     {
         return system_prompt.to_string();
     }
-
-    let data_dir = whycodes_core::paths::data_dir();
 
     let mut settings = parent_memory.clone();
     // Env can force main bank even if config has subagent_banks=true.
@@ -568,7 +607,7 @@ fn inject_subagent_memory(
     whycodes_memory::apply_memory_prompt(
         system_prompt,
         project_path,
-        &data_dir,
+        data_dir,
         &settings,
         Some(query),
     )

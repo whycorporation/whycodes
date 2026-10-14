@@ -843,7 +843,10 @@ async fn load_mcp_connect_fail_does_not_replace_executor() {
 #[test]
 fn persist_agent_artifact_create_dir_err_is_logged() {
     persist_agent_artifact(std::path::Path::new("/dev/null/not-a-dir"), "id", "body");
-    persist_agent_artifact(std::path::Path::new("/proc/1"), "id", "body");
+    // A file as the project root fails everywhere (`/proc/1` is writable as C:\proc\1 on Windows).
+    let file = tempfile::NamedTempFile::new().unwrap();
+    persist_agent_artifact(file.path(), "id", "body");
+    assert!(!file.path().join(".whycodes").exists());
 }
 
 #[test]
@@ -1824,6 +1827,47 @@ async fn execute_swarm_worktrees_on_git_repo() {
     assert!(!out.is_error, "{out:?}");
     assert!(
         out.content.contains("worktrees") || out.content.to_lowercase().contains("swarm"),
+        "{}",
+        out.content
+    );
+}
+
+#[tokio::test]
+async fn execute_swarm_worktree_worker_mail_reaches_parent_under_its_own_id() {
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "script",
+        [
+            vec![whycodes_llm::ScriptedStep::ToolCall {
+                id: "m".into(),
+                name: "swarm_msg".into(),
+                input: json!({"to": "parent", "text": "found the bug"}),
+            }],
+            vec![whycodes_llm::ScriptedStep::Text("done".into())],
+        ],
+    )));
+    let mut a = test_agent().with_provider_registry(registry);
+    a.swarm_enabled = true;
+    a.swarm_worktrees = true;
+    let (_keep, root) = init_git_repo();
+    let session = Session::new(root.clone(), "sys".into());
+    let out = a
+        .execute_swarm_tool(
+            &tc(
+                "swarm",
+                json!({"tasks": [{"goal": "look", "subagent_type": "explore", "max_turns": 3}]}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(out.content.contains("worktrees"), "{}", out.content);
+    assert!(
+        out.content
+            .contains("### Messages to parent\n\n- from worker-0: found the bug"),
         "{}",
         out.content
     );

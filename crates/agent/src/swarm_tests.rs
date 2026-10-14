@@ -75,3 +75,17 @@ fn ensure_tldr_empty_existing_and_truncate() {
     assert!(t.starts_with("abcd"));
     assert!(t.contains("truncated"));
 }
+
+#[test]
+fn parent_inbox_section_lists_mail_or_is_empty() {
+    assert!(format_parent_inbox(&[]).is_empty());
+    let mail = [whycodes_core::SwarmMessage {
+        from: "worker-1".into(),
+        to: "parent".into(),
+        text: "api changed".into(),
+    }];
+    assert_eq!(
+        format_parent_inbox(&mail),
+        "\n### Messages to parent\n\n- from worker-1: api changed\n"
+    );
+}

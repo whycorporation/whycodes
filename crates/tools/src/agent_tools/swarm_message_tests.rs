@@ -4,9 +4,19 @@ use whycodes_core::SwarmHub;
 #[tokio::test]
 async fn send_reaches_inbox() {
     let hub = SwarmHub::new();
+    hub.ensure("worker-1");
     let mut ctx = ToolContext::unsandboxed(".");
     ctx.swarm_hub = Some(hub.clone());
     ctx.agent_id = Some("worker-0".into());
+    let typo = SwarmMsgTool::new()
+        .execute(json!({"to": "worker-7", "text": "hi"}), &ctx)
+        .await;
+    assert!(typo.is_error);
+    assert!(
+        typo.content.contains("unknown recipient `worker-7`"),
+        "{}",
+        typo.content
+    );
     let result = SwarmMsgTool::new()
         .execute(
             json!({"to": "worker-1", "text": "file a.rs is yours"}),
