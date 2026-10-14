@@ -573,7 +573,19 @@ project shows it uses one, and the result says so:
 | `.rs` | `rustfmt` (edition from `Cargo.toml`) | `rustfmt.toml` / `.rustfmt.toml` |
 | `.go` | `gofmt` | `go.mod` |
 | `.py`, `.pyi` | `ruff format`, else `black` | `ruff.toml`, `[tool.ruff]` / `[tool.black]` in `pyproject.toml` |
-| JS/TS, JSON, CSS, HTML, Markdown, YAML, … | `node_modules/.bin/prettier` | a Prettier config, or `prettier` in `package.json` |
+| JS/TS, JSON, CSS | `biome format` (`node_modules/.bin/biome`, else `biome` on `PATH`) | `biome.json` / `biome.jsonc` |
+| `.ts`, `.tsx`, `.js`, `.jsx`, `.json`, `.jsonc`, `.md` | `deno fmt` | `deno.json` / `deno.jsonc` (and no Biome config) |
+| JS/TS, JSON, CSS, HTML, Markdown, YAML, … | `node_modules/.bin/prettier` | a Prettier config, or `prettier` in `package.json` (and no Biome / Deno config for that file type) |
+| `.c`, `.h`, `.cc`, `.cpp`, `.cxx`, `.hh`, `.hpp`, `.hxx`, `.m`, `.mm`, `.proto` | `clang-format` | `.clang-format` / `_clang-format` |
+| `.zig` | `zig fmt` | `build.zig` |
+| `.tf`, `.tfvars` | `terraform fmt` | `.terraform.lock.hcl` or a `.terraform` directory |
+| `.lua` | `stylua` | `stylua.toml` / `.stylua.toml` |
+| `.toml` | `taplo fmt` (run beside its config) | `taplo.toml` / `.taplo.toml` |
+| `.ex`, `.exs`, `.heex` | `mix format` (run beside `.formatter.exs`) | `.formatter.exs` |
+
+For web files a Biome config wins over a Deno config, and either wins over
+Prettier, so a project that switched formatters is not reformatted by the
+old one.
 
 Markers count from the file's directory up to the project root. The
 formatter reads the file on stdin, so nothing else is rewritten; a missing

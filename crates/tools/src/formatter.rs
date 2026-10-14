@@ -22,6 +22,8 @@ const PRETTIER_BIN: &str = if cfg!(windows) {
     "prettier"
 };
 
+const BIOME_BIN: &str = if cfg!(windows) { "biome.cmd" } else { "biome" };
+
 const PRETTIER_CONFIGS: [&str; 13] = [
     ".prettierrc",
     ".prettierrc.json",
@@ -92,6 +94,9 @@ pub(crate) fn detect(file: &Path, root: &Path) -> Option<Formatter> {
         .take_while(|d| d.starts_with(root))
         .collect();
     let shown = file.to_string_lossy().into_owned();
+    // Tools that read their config only from the working directory run where
+    // the marker is.
+    let mut cwd = None;
     let (name, program, args): (&'static str, PathBuf, Vec<String>) = match ext.as_str() {
         "rs" => {
             nearest(&dirs, &["rustfmt.toml", ".rustfmt.toml"])?;
@@ -124,16 +129,85 @@ pub(crate) fn detect(file: &Path, root: &Path) -> Option<Formatter> {
         }
         "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" | "json" | "jsonc" | "css"
         | "scss" | "less" | "html" | "vue" | "md" | "mdx" | "yaml" | "yml" | "graphql" => {
-            if nearest(&dirs, &PRETTIER_CONFIGS).is_none()
-                && !mentions(&dirs, "package.json", "\"prettier\"")
-            {
+            // A Biome or Deno config names the formatter outright; Prettier
+            // is the fallback for everything else.
+            let biome_ext = matches!(
+                ext.as_str(),
+                "js" | "jsx"
+                    | "mjs"
+                    | "cjs"
+                    | "ts"
+                    | "tsx"
+                    | "mts"
+                    | "cts"
+                    | "json"
+                    | "jsonc"
+                    | "css"
+            );
+            let deno_ext = matches!(
+                ext.as_str(),
+                "js" | "jsx" | "ts" | "tsx" | "json" | "jsonc" | "md"
+            );
+            if biome_ext && nearest(&dirs, &["biome.json", "biome.jsonc"]).is_some() {
+                let bin = node_bin(&dirs, BIOME_BIN).unwrap_or_else(|| "biome".into());
+                let path_arg = format!("--stdin-file-path={shown}");
+                ("biome", bin, vec!["format".to_string(), path_arg])
+            } else if deno_ext && nearest(&dirs, &["deno.json", "deno.jsonc"]).is_some() {
+                let args = vec!["fmt".to_string(), format!("--ext={ext}"), "-".to_string()];
+                ("deno", "deno".into(), args)
+            } else {
+                if nearest(&dirs, &PRETTIER_CONFIGS).is_none()
+                    && !mentions(&dirs, "package.json", "\"prettier\"")
+                {
+                    return None;
+                }
+                let bin = node_bin(&dirs, PRETTIER_BIN)?;
+                ("prettier", bin, vec!["--stdin-filepath".to_string(), shown])
+            }
+        }
+        "c" | "h" | "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" | "m" | "mm" | "proto" => {
+            nearest(&dirs, &[".clang-format", "_clang-format"])?;
+            let args = vec![format!("--assume-filename={shown}")];
+            ("clang-format", "clang-format".into(), args)
+        }
+        "zig" => {
+            nearest(&dirs, &["build.zig"])?;
+            (
+                "zig fmt",
+                "zig".into(),
+                vec!["fmt".into(), "--stdin".into()],
+            )
+        }
+        "tf" | "tfvars" => {
+            let initialized = dirs.iter().any(|d| d.join(".terraform").is_dir());
+            if !initialized && nearest(&dirs, &[".terraform.lock.hcl"]).is_none() {
                 return None;
             }
-            let bin = dirs
-                .iter()
-                .map(|d| d.join("node_modules").join(".bin").join(PRETTIER_BIN))
-                .find(|p| p.is_file())?;
-            ("prettier", bin, vec!["--stdin-filepath".to_string(), shown])
+            (
+                "terraform fmt",
+                "terraform".into(),
+                vec!["fmt".into(), "-".into()],
+            )
+        }
+        "lua" => {
+            nearest(&dirs, &["stylua.toml", ".stylua.toml"])?;
+            let args = vec!["--stdin-filepath".to_string(), shown, "-".to_string()];
+            ("stylua", "stylua".into(), args)
+        }
+        "toml" => {
+            let config = nearest(&dirs, &["taplo.toml", ".taplo.toml"])?;
+            cwd = config.parent().map(Path::to_path_buf);
+            ("taplo", "taplo".into(), vec!["fmt".into(), "-".into()])
+        }
+        "ex" | "exs" | "heex" => {
+            let config = nearest(&dirs, &[".formatter.exs"])?;
+            cwd = config.parent().map(Path::to_path_buf);
+            let args = ["format", "--stdin-filename"].map(String::from).into_iter();
+            (
+                "mix format",
+                "mix".into(),
+                args.chain([shown, "-".into()]).collect(),
+            )
         }
         _ => return None,
     };
@@ -141,8 +215,15 @@ pub(crate) fn detect(file: &Path, root: &Path) -> Option<Formatter> {
         name,
         program,
         args,
-        dir,
+        dir: cwd.unwrap_or(dir),
     })
+}
+
+/// `node_modules/.bin/<bin>` in the nearest directory that has it.
+fn node_bin(dirs: &[&Path], bin: &str) -> Option<PathBuf> {
+    dirs.iter()
+        .map(|d| d.join("node_modules").join(".bin").join(bin))
+        .find(|p| p.is_file())
 }
 
 /// The nearest of `names` in `dirs` (nearest directory first).
