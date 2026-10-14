@@ -2012,6 +2012,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 );
             }
 
+            // ── Prompt-cache keep-alive while idle (opt-in) ─────────────
+            if remote.is_none() {
+                maybe_warm_cache(
+                    &mut rt,
+                    config.session.cache_warm_minutes,
+                    &provider,
+                    &model,
+                    &api_key,
+                );
+            }
+
             // ── Start turn if needed ──────────────────────────────────
             if !rt.agent_busy
                 && let Some(turn) = app.take_pending_turn()
@@ -3370,6 +3381,7 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
     if let Ok(outcome) = rt.done_rx.try_recv() {
         rt.agent_busy = false;
         rt.cancel_flag = None;
+        rt.last_turn_end = Some(Instant::now());
         rt.turn_join = None;
         rt.session_backup = None;
         rt.unread = true;
@@ -3548,6 +3560,7 @@ fn apply_turn_outcome(
 ) -> bool {
     rt.agent_busy = false;
     rt.cancel_flag = None;
+    rt.last_turn_end = Some(Instant::now());
     *cancel_requested_at = None;
     rt.turn_join = None;
     rt.session_backup = None;
@@ -5030,6 +5043,39 @@ fn take_turn_owner(rt: &mut SessionRuntime, project_dir: &std::path::Path) -> (A
         Session::new(project_dir.to_path_buf(), String::new()),
     );
     (ag, sess)
+}
+
+/// Record a finished keep-alive, then send the next one when it is due.
+fn maybe_warm_cache(
+    rt: &mut SessionRuntime,
+    window_minutes: u64,
+    provider: &str,
+    model: &str,
+    api_key: &str,
+) {
+    use futures::FutureExt;
+    if let Some(job) = rt.warm_job.take_if(|j| j.is_finished())
+        && let Some(Ok(Some(usage))) = job.now_or_never()
+    {
+        rt.agent
+            .record_cache_warm(&mut rt.session, provider, model, &usage);
+    }
+    let Some(ended) = rt.last_turn_end else {
+        return;
+    };
+    let window = Duration::from_secs(window_minutes.saturating_mul(60));
+    let now = Instant::now();
+    if rt.agent_busy
+        || rt.warm_job.is_some()
+        || !whycodes_agent::agent::cache_warm::warm_due(now, ended, rt.last_warm, window)
+    {
+        return;
+    }
+    rt.last_warm = Some(now);
+    rt.warm_job = rt
+        .agent
+        .cache_warm_job(&rt.session, provider, model, api_key)
+        .map(tokio::spawn);
 }
 
 fn queue_auto_prompt_if_idle(app: &mut TuiApp, agent_busy: bool) {

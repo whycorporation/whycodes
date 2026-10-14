@@ -1329,6 +1329,11 @@ pub struct SessionConfig {
     /// Anthropic-style prompt cache policy: `auto` (default) or `none`.
     #[serde(default = "default_prompt_cache")]
     pub prompt_cache: String,
+    /// Keep the prompt cache warm for this many idle minutes after a turn
+    /// (TUI). Each keep-alive is a paid request that re-reads the cached
+    /// prefix; `0` (default) turns it off.
+    #[serde(default)]
+    pub cache_warm_minutes: u64,
     /// Fast model for trivial chat (`provider/model` or bare model id).
     /// Empty = auto-pick small sibling of the session model (haiku/mini/flash).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1463,6 +1468,7 @@ impl Default for SessionConfig {
             title_model: None,
             tool_profile: default_tool_profile(),
             prompt_cache: default_prompt_cache(),
+            cache_warm_minutes: 0,
             model_fast: None,
             model_smol: None,
             model_plan: None,

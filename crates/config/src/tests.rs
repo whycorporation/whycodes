@@ -746,6 +746,7 @@ fn merge_with_session_and_tui_fields() {
     overlay.session.title_model = Some("claude-haiku".into());
     overlay.session.tool_profile = "full".into();
     overlay.session.prompt_cache = "none".into();
+    overlay.session.cache_warm_minutes = 30;
     overlay.session.compaction_llm = "off".into();
     overlay.session.model_fast = Some("flash".into());
     overlay.session.model_smol = Some("haiku".into());
@@ -776,6 +777,7 @@ fn merge_with_session_and_tui_fields() {
     assert_eq!(merged.session.title_model.as_deref(), Some("claude-haiku"));
     assert_eq!(merged.session.tool_profile, "full");
     assert_eq!(merged.session.prompt_cache, "none");
+    assert_eq!(merged.session.cache_warm_minutes, 30);
     assert_eq!(merged.session.compaction_llm, "off");
     assert_eq!(merged.session.model_fast.as_deref(), Some("flash"));
     assert_eq!(merged.session.model_smol.as_deref(), Some("haiku"));
