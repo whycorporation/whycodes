@@ -1,4 +1,5 @@
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rustc_hash::{FxHashMap, FxHasher};
@@ -23,6 +24,8 @@ pub struct ToolExecutor {
     /// Shares the registered `lsp` tool's server cache; feeds post-write
     /// diagnostics back into `edit` / `write` results.
     lsp: lsp::LspTool,
+    /// Run the project's formatter on files `edit` / `write` change.
+    format_after_write: AtomicBool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -57,6 +60,7 @@ impl ToolExecutor {
             tools: FxHashMap::default(),
             defs_cache: Mutex::new(FxHashMap::default()),
             lsp: lsp::LspTool::new(),
+            format_after_write: AtomicBool::new(true),
         };
 
         executor.register(Box::new(read::ReadTool::new()));
@@ -221,6 +225,11 @@ impl ToolExecutor {
     }
 
     /// Replace the built-in `lsp` tool with a configured overlay.
+    /// `[tools.format] enabled`; shared executors pick it up in place.
+    pub fn set_format_after_write(&self, enabled: bool) {
+        self.format_after_write.store(enabled, Ordering::Relaxed);
+    }
+
     pub fn configure_lsp(&mut self, overlay: &whycodes_lsp::LspSettings) {
         self.lsp = lsp::LspTool::with_overlay(overlay);
         self.register(Box::new(self.lsp.clone()));
@@ -286,6 +295,14 @@ impl ToolExecutor {
                 } else {
                     let mut result = tool.execute(call.arguments.clone(), ctx).await;
                     if matches!(call.name.as_str(), "edit" | "write") {
+                        if self.format_after_write.load(Ordering::Relaxed) {
+                            crate::formatter::format_written_file(
+                                call.arguments["path"].as_str(),
+                                &ctx.working_dir,
+                                &mut result,
+                            )
+                            .await;
+                        }
                         self.lsp
                             .annotate_write_result(
                                 call.arguments["path"].as_str(),

@@ -542,6 +542,26 @@ waits up to `edit_diagnostics_ms` (default 1500) for the server's
 `publishDiagnostics`; a cold server that is still indexing just adds nothing.
 Set `edit_diagnostics_ms = 0` to turn it off.
 
+Before that, the file is run through the project's own formatter when the
+project shows it uses one, and the result says so:
+
+| Files | Formatter | Used when |
+|---|---|---|
+| `.rs` | `rustfmt` (edition from `Cargo.toml`) | `rustfmt.toml` / `.rustfmt.toml` |
+| `.go` | `gofmt` | `go.mod` |
+| `.py`, `.pyi` | `ruff format`, else `black` | `ruff.toml`, `[tool.ruff]` / `[tool.black]` in `pyproject.toml` |
+| JS/TS, JSON, CSS, HTML, Markdown, YAML, … | `node_modules/.bin/prettier` | a Prettier config, or `prettier` in `package.json` |
+
+Markers count from the file's directory up to the project root. The
+formatter reads the file on stdin, so nothing else is rewritten; a missing
+binary, a syntax error or a 10 s timeout leaves the file as written. Turn it
+off with:
+
+```toml
+[tools.format]
+enabled = false
+```
+
 Override or disable a server in `config.toml`:
 
 ```toml
