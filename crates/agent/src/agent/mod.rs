@@ -275,6 +275,14 @@ fn append_skills_catalog(system_prompt: &str, project_path: &std::path::Path) ->
     format!("{system_prompt}\n\n{catalog}")
 }
 
+fn append_custom_agents_catalog(system_prompt: &str, project_path: &std::path::Path) -> String {
+    let catalog = crate::custom_agents::catalog_markdown(&crate::custom_agents::load(project_path));
+    if catalog.is_empty() {
+        return system_prompt.to_string();
+    }
+    format!("{system_prompt}\n\n{catalog}")
+}
+
 fn catalog_from_load(
     loaded: Result<whycodes_skill::SkillRegistry, whycodes_skill::SkillError>,
 ) -> String {
@@ -1106,7 +1114,8 @@ impl Agent {
         let with_files =
             crate::context_files::append_project_instructions(system_prompt, project_path);
         let with_skills = append_skills_catalog(&with_files, project_path);
-        Self::with_runtime_context(&with_skills)
+        let with_agents = append_custom_agents_catalog(&with_skills, project_path);
+        Self::with_runtime_context(&with_agents)
     }
 
     /// Resolve provider + model + key for a title refine call, or `None` if
