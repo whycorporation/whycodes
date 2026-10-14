@@ -3285,3 +3285,43 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 **Fix:** The system prompt now carries only message-independent text: instructions, AGENTS.md, skills and the MEMORY.md index. `whycodes_memory::recall_turn_context` builds the recall for the current query. It lives in `Session::turn_context`, which is never persisted, and the agent appends it to the latest user message at **every step** of the turn (`append_turn_context`). Steps within a turn share the cached prefix, and the next turn re-reads only from the previous user message. Chit-chat clears it. The same two-turn run now caches 10,368/10,439 and 10,496/10,498 tokens.
 
 **Prevention:** Nothing query- or time-dependent goes into `Session::system_prompt`. Put per-turn context on the user message via `turn_context` or `append_request_user_suffix`. Note that a newly retained memory still changes the MEMORY.md index, and therefore the system prompt, once. Tests: `turn_context_rides_on_the_user_message_at_every_step` and `recall_rides_on_turn_context_and_system_prompt_stays_stable`.
+
+## `apply_patch` never matched a CRLF file
+
+**Date:** 2026-10-14 · **Area:** `crates/tools` `file/apply_patch.rs` / `file/edit.rs` (#204)
+
+**Symptom:** On a CRLF file every `apply_patch` hunk failed with `context mismatch at line N`, even though the expected and found text looked identical in the error. `edit` with a multi-line `old_string` missed too, unless the whitespace-tolerant fallback happened to rescue it, and then wrote `\n` lines into a `\r\n` file.
+
+**JSONL / crash:** none.
+
+**Root cause:** The model writes patches and `old_string` with `\n`. `parse_hunks` already stripped `\r` from patch lines, but `apply_unified_diff` split the file on `\n` only, so every file line kept its trailing `\r` and `existing != text` on all of them. The `\r` is invisible in the error text. `edit` compared raw bytes and inserted `new_string` as given.
+
+**Fix:** `apply_patch` stores each file line with its own ending (`\r\n`, `\n` or none), compares without it, and writes added lines with the file's dominant ending. `edit` converts `old_string` / `new_string` to CRLF when most of the file's line breaks are CRLF (`file::tolerant::is_crlf`). Both also fold curly quotes, dashes and non-breaking spaces to ASCII as a last matching pass.
+
+**Prevention:** Any tool that matches model text against file bytes must decide line endings first. Windows checkouts with `core.autocrlf` and generated files make CRLF common. Tests: `crlf_file_matches_lf_patch_and_keeps_crlf`, `crlf_file_matches_lf_old_string_and_keeps_crlf`, `crlf_file_insert_after_tag_writes_crlf`.
+
+## Formatter test found no `rustfmt` on Linux CI
+
+**Date:** 2026-10-14 · **Area:** `crates/tools` `formatter_tests.rs` / `executor_tests.rs` (#206)
+
+**Symptom:** `Test (linux)` failed once on `formatter::tests::written_file_is_formatted_and_the_result_says_so`: the result was `Edited` without the "Formatted with rustfmt" note. Two other tests in the same binary that also spawn `rustfmt` passed, and Coverage passed. Locally it was green every time.
+
+**JSONL / crash:** none.
+
+**Root cause:** Git tests in the same crate point `PATH` at a missing directory while they hold `crate::ENV_LOCK`. The formatter test spawned `rustfmt` through `PATH` without that lock. When it ran in that window the spawn failed, and the formatter treats a missing binary as "leave the file alone", so the test saw no change. This is the same race as the credential stand-ins in #165.
+
+**Fix:** Tests that spawn a tool by name now run on a current-thread runtime while holding `ENV_LOCK` (`with_env_lock` in `formatter_tests.rs`). An async test cannot keep the std mutex guard across `.await`, so it wraps the async body in a sync `#[test]` instead.
+
+**Prevention:** In `whycodes-tools`, a test that resolves any program through `PATH` (`rustfmt`, `git`, `sh`, …) either holds `ENV_LOCK` or uses an absolute path. Repro: run the tools test binary with `PATH=/nonexistent`.
+
+## Local `cargo llvm-cov report` mixed in stale test binaries
+
+**Date:** 2026-10-14 · **Area:** coverage tooling (local only)
+
+**Symptom:** A per-crate report showed `edit.rs` at 53% and `apply_patch.rs` at 51%, with more mapped lines than the file has. CI Coverage for the same commit was 100%.
+
+**Root cause:** `cargo llvm-cov report` reads every instrumented binary under `target/llvm-cov-target`, including test binaries built from older source. Their mappings for the same file disagree with the current one. A killed run (a test hung) also leaves partial profiles behind.
+
+**Fix:** Run `cargo llvm-cov clean --workspace` before measuring, then `cargo llvm-cov -p <crate> --lib --no-report` and `LLVM_COV_FLAGS=-skip-expansions cargo llvm-cov report --json --ignore-filename-regex 'tests\.rs$'`.
+
+**Prevention:** Clean before trusting a local per-crate number. On Windows `--html` produced an empty directory and `--text` is polluted by per-instantiation views, so read uncovered lines from the JSON segments (a line is mapped when the segment carried into it has a count or a region-entry segment starts on it).
