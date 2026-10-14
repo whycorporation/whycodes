@@ -128,6 +128,8 @@ pub struct Agent {
     swarm_hub: Option<whycodes_core::SwarmHub>,
     /// `[lsp]` overlay from config (empty = built-in auto-detect).
     lsp_overlay: whycodes_tools::LspSettings,
+    /// `[tools.format] enabled`, re-applied to every rebuilt executor.
+    format_after_write: bool,
     /// Provider/model extras from `prompts/*.md`.
     system_prompt_overlays: SystemPromptOverlays,
     /// Active provider id for overlay lookup (`/models`, session route).
@@ -416,6 +418,7 @@ impl Agent {
             session_claims: None,
             swarm_hub: None,
             lsp_overlay: whycodes_tools::LspSettings::default(),
+            format_after_write: true,
             system_prompt_overlays: SystemPromptOverlays::default(),
             route_provider: String::new(),
             route_model: String::new(),
@@ -652,6 +655,9 @@ impl Agent {
             .map(|(k, v)| (k.clone(), v.credentials.clone()))
             .collect();
         self.lsp_overlay = lsp_overlay_from_config(&config.lsp);
+        self.format_after_write = config.tools.format.enabled;
+        self.tool_executor
+            .set_format_after_write(self.format_after_write);
         self.system_prompt_overlays = config.system_prompt_overlays.clone();
         let sandbox_desc = whycodes_sandbox::describe_backend(&self.sandbox);
         let network_allow = self.network.allowlist.len();
@@ -1005,6 +1011,7 @@ impl Agent {
     }
 
     fn apply_lsp_overlay(&self, exec: &mut ToolExecutor) {
+        exec.set_format_after_write(self.format_after_write);
         if !lsp_overlay_is_custom(&self.lsp_overlay) {
             return;
         }

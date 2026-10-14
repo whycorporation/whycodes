@@ -669,3 +669,39 @@ async fn write_goes_through_post_write_lsp_hook() {
         "hi\n"
     );
 }
+
+#[tokio::test]
+async fn write_runs_the_project_formatter_unless_disabled() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("rustfmt.toml"), "edition = \"2024\"\n").unwrap();
+    let ex = ToolExecutor::new();
+    let ctx = ToolContext::new(dir.path().display().to_string());
+    let perms = PermissionSet {
+        allow_file_writes: true,
+        ..PermissionSet::default()
+    };
+    let write = |path: &str| ToolCall {
+        id: "w1".into(),
+        name: "write".into(),
+        arguments: json!({ "path": path, "content": "fn  f(){}\n" }),
+    };
+
+    let res = ex.execute(&write("a.rs"), &ctx, &perms).await;
+    assert!(
+        res.content.contains("Formatted with rustfmt"),
+        "{}",
+        res.content
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.rs")).unwrap(),
+        "fn f() {}\n"
+    );
+
+    ex.set_format_after_write(false);
+    let res = ex.execute(&write("b.rs"), &ctx, &perms).await;
+    assert!(!res.content.contains("Formatted"), "{}", res.content);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("b.rs")).unwrap(),
+        "fn  f(){}\n"
+    );
+}
