@@ -2414,6 +2414,7 @@ async fn turn_accumulates_cost_only_for_priced_models() {
 struct SteerDuringFirstRequest {
     inner: ScriptedProvider,
     inbox: crate::steer::SteerInbox,
+    session_id: String,
     calls: std::sync::atomic::AtomicUsize,
 }
 
@@ -2440,7 +2441,12 @@ impl LlmProvider for SteerDuringFirstRequest {
     ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
         let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if n == 0 {
-            self.inbox.push("also count the words".into());
+            let text = whycodes_core::types::MessageContent::Text("also count the words".into());
+            self.inbox.push(&self.session_id, text);
+            let blocks = whycodes_core::types::MessageContent::Blocks(vec![ContentBlock::Text {
+                text: "and list them".into(),
+            }]);
+            self.inbox.push(&self.session_id, blocks);
         }
         self.inner.stream(request, api_key, model)
     }
@@ -2452,6 +2458,7 @@ async fn steering_message_reaches_the_next_step_after_tool_results() {
     std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
     let agent = Agent::new(info("build"));
     let inbox = agent.steer_inbox();
+    let mut session = session_at(dir.path(), "please read note.txt and summarize it");
     let mut registry = ProviderRegistry::new();
     registry.register(Box::new(SteerDuringFirstRequest {
         inner: ScriptedProvider::new([
@@ -2463,17 +2470,26 @@ async fn steering_message_reaches_the_next_step_after_tool_results() {
             ScriptedStep::Text("done".into()),
         ]),
         inbox: inbox.clone(),
+        session_id: session.id.clone(),
         calls: Default::default(),
     }));
     let agent = agent.with_provider_registry(registry);
-    let mut session = session_at(dir.path(), "please read note.txt and summarize it");
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let out = agent
         .run_turn_with_events(&mut session, opts(Some(tx)))
         .await
         .expect("turn");
     assert!(out.contains("done"), "{out}");
-    assert!(inbox.drain().is_empty(), "the turn read the message");
+    assert!(
+        inbox.drain(&session.id).is_empty(),
+        "the turn read the messages"
+    );
+    assert!(
+        session.messages.iter().any(|m| matches!(&m.content,
+            whycodes_core::types::MessageContent::Blocks(b)
+                if matches!(b.as_slice(), [ContentBlock::Text { text }] if text == "and list them"))),
+        "block message in history"
+    );
     let mut delivered = false;
     while let Ok(ev) = rx.try_recv() {
         delivered |= matches!(ev, TurnEvent::Status(s) if s.contains("delivered"));

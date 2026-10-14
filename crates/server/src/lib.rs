@@ -4,6 +4,7 @@
 //! alive across HTTP clients so reconnects skip cold startup. Sessions are
 //! held in-process and optionally persisted to the same SQLite DB as the TUI.
 
+mod keep_warm;
 pub mod perm;
 pub mod routes;
 pub mod v1;
@@ -118,6 +119,7 @@ pub fn create_router(state: AppState) -> Router {
             get(routes::get_session_messages),
         )
         .route("/api/session/{id}/chat", post(routes::chat))
+        .route("/api/session/{id}/steer", post(routes::steer))
         .route("/v1/health", get(v1::health))
         .route(
             "/v1/sessions",

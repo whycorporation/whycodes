@@ -11081,45 +11081,94 @@ async fn idle_session_sends_keep_alives_inside_the_window_and_records_them() {
     assert_eq!(rt.session.cost.unpriced_steps, 1, "usage recorded");
 }
 
-#[test]
-fn busy_turn_takes_queued_text_and_reclaims_what_it_did_not_read() {
-    let mut app = TuiApp::from_config(TuiAppConfig::default());
-    let mut rt = test_runtime();
-    rt.agent_busy = true;
-    app.enqueue_prompt_text("first");
-    app.enqueue_prompt_text("second");
-    app.enqueue_turn(crate::app::PendingTurn {
-        text: "with image".into(),
+fn image_turn(text: &str, path: PathBuf) -> crate::app::PendingTurn {
+    crate::app::PendingTurn {
+        text: text.into(),
         images: vec![crate::images::PromptImage {
-            path: PathBuf::from("a.png"),
             label: "a.png".into(),
+            path,
             media_type: "image/png".into(),
         }],
-    });
-    app.enqueue_prompt_text("after image");
+    }
+}
 
-    steer_or_reclaim(&mut app, &rt);
-    assert_eq!(app.status_message, "sent to the running turn");
-    assert_eq!(app.pending_prompt(), Some("with image"));
-    assert_eq!(app.queued_turn_count(), 2);
+#[test]
+fn busy_turn_takes_queued_prompts_and_reclaims_what_it_did_not_read() {
+    use whycodes_core::types::MessageContent;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "note-body").unwrap();
+    std::fs::write(dir.path().join("a.png"), b"png-bytes").unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.steer_session = "s".into();
 
-    // Nothing new to hand over: the status line is left alone.
+    // Idle with nothing handed over: the queue is untouched.
+    app.enqueue_prompt_text("waiting");
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    assert_eq!(app.queued_turn_count(), 1);
+    let _ = app.take_pending_turn();
+
+    rt.agent_busy = true;
     app.status_message.clear();
-    let _ = app.take_pending_turn();
-    let _ = app.take_pending_turn();
-    steer_or_reclaim(&mut app, &rt);
-    assert!(app.status_message.is_empty());
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    assert!(app.status_message.is_empty(), "nothing to hand over");
 
-    // The turn ended without reading them: they run next, in order.
+    app.enqueue_prompt_text("see @note.txt");
+    app.enqueue_turn(image_turn("look", dir.path().join("a.png")));
+    app.enqueue_turn(image_turn("broken", dir.path().join("missing.png")));
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    assert_eq!(app.status_message, "sent to the running turn");
+    assert!(!app.has_pending_turn());
+
+    let sent = rt.steer.drain("s");
+    assert!(matches!(&sent[0], MessageContent::Text(t) if t.contains("note-body")));
+    assert!(matches!(&sent[1], MessageContent::Blocks(b) if b.len() == 2));
+    assert!(matches!(&sent[2], MessageContent::Text(t) if t == "broken"));
+    assert!(!app.toasts.is_empty(), "failed image is reported");
+
+    // The turn read only the first message, then ended.
+    for content in sent.into_iter().skip(1) {
+        rt.steer.push("s", content);
+    }
     rt.agent_busy = false;
     app.enqueue_prompt_text("newer");
-    steer_or_reclaim(&mut app, &rt);
-    let order: Vec<String> = std::iter::from_fn(|| app.take_pending_turn())
-        .map(|t| t.text)
-        .collect();
-    assert_eq!(order, ["first", "second", "newer"]);
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    let back: Vec<_> = std::iter::from_fn(|| app.take_pending_turn()).collect();
+    let texts: Vec<&str> = back.iter().map(|t| t.text.as_str()).collect();
+    assert_eq!(texts, ["look", "broken", "newer"]);
+    assert_eq!(back[0].images.len(), 1, "requeued with its image");
+    assert!(rt.steered.is_empty());
+}
 
-    // Idle with an empty inbox: the queue is untouched.
-    steer_or_reclaim(&mut app, &rt);
-    assert!(!app.has_pending_turn());
+#[tokio::test]
+async fn daemon_steering_sends_text_and_requeues_when_unreachable() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let rem = crate::remote::RemoteAttach::new("http://127.0.0.1:9", "s");
+
+    app.enqueue_prompt_text("idle");
+    steer_remote(&mut app, &rt, &rem, dir.path());
+    assert_eq!(app.queued_turn_count(), 1, "idle: nothing sent");
+    let _ = app.take_pending_turn();
+
+    rt.agent_busy = true;
+    app.status_message.clear();
+    steer_remote(&mut app, &rt, &rem, dir.path());
+    assert!(app.status_message.is_empty());
+
+    app.enqueue_prompt_text("stop");
+    app.enqueue_turn(image_turn("pic", dir.path().join("a.png")));
+    steer_remote(&mut app, &rt, &rem, dir.path());
+    assert_eq!(app.status_message, "sent to the running turn");
+    assert_eq!(app.pending_prompt(), Some("pic"), "images wait");
+
+    let ev = tokio::time::timeout(std::time::Duration::from_secs(20), rt.event_rx.recv())
+        .await
+        .expect("fallback event")
+        .expect("channel open");
+    assert!(
+        matches!(ev, TurnEvent::EnqueuePrompt { ref text } if text == "stop"),
+        "{ev:?}"
+    );
 }

@@ -899,6 +899,7 @@ impl Agent {
         let file_index = self.file_index.clone();
         let panel = self.panel_sink();
         let hub = hub.clone();
+        let steer = self.steer.clone();
         let question_prompter = Arc::clone(&self.question_prompter);
         let approval_mode = self.approval_mode;
         let hooks = self.hooks.clone();
@@ -938,6 +939,7 @@ impl Agent {
             let file_index = file_index.clone();
             let panel = panel.clone();
             let hub = hub.clone();
+            let steer = steer.clone();
             let question_prompter = Arc::clone(&question_prompter);
             let hooks = hooks.clone();
             let overlays = overlays.clone();
@@ -1120,6 +1122,7 @@ impl Agent {
                         .with_file_index(file_index.clone())
                         .with_panel(panel.clone())
                         .with_swarm_hub(Some(hub.clone()))
+                        .with_steer(steer.clone(), worker_id.clone())
                         .with_identity(worker_id.clone(), label.clone())
                         .with_question_prompter(question_prompter)
                         .with_approval_mode(approval_mode)
@@ -1456,7 +1459,8 @@ impl Agent {
         .with_panel(self.panel_sink())
         .with_question_prompter(Arc::clone(&self.question_prompter))
         .with_approval_mode(self.approval_mode)
-        .with_hooks(self.hooks.clone());
+        .with_hooks(self.hooks.clone())
+        .with_steer(self.steer.clone(), format!("task-{}", call.id));
 
         let child_id = format!("task-{}", call.id);
         let started = std::time::Instant::now();

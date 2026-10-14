@@ -793,3 +793,20 @@ async fn chat_persists_after_scripted_turn() {
         .expect("persisted session");
     assert!(!loaded.messages.is_empty());
 }
+
+#[test]
+fn unread_steering_goes_back_as_queued_prompts() {
+    let state = crate::http_tests::test_state();
+    let inbox = state.agent.steer_inbox();
+    inbox.push(
+        "s1",
+        whycodes_core::types::MessageContent::Text("later".into()),
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    replay_unread_steering(&state.agent, "s1", &tx);
+    match rx.try_recv() {
+        Ok(TurnEvent::EnqueuePrompt { text }) => assert_eq!(text, "later"),
+        other => panic!("{other:?}"),
+    }
+    assert!(rx.try_recv().is_err(), "one message, one prompt");
+}

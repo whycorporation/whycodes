@@ -838,8 +838,8 @@ impl Agent {
     /// Add messages the user sent during this turn, so the next request
     /// carries them. Called at the start of a step, after tool results.
     pub(crate) fn inject_steering(&self, session: &mut Session, events: &Option<EventSink>) {
-        for text in self.steer.drain() {
-            session.add_user_message(&text);
+        for content in self.steer.drain(&session.id) {
+            crate::steer::add_to_session(session, content);
             crate::events::emit(
                 events,
                 TurnEvent::Status("message delivered to the running turn".into()),
