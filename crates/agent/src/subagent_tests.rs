@@ -6,6 +6,7 @@ fn inject_memory_passthrough_when_disabled() {
     let out = inject_subagent_memory(
         "base prompt",
         std::path::Path::new("/work/proj"),
+        std::path::Path::new("/unused-data"),
         "worker",
         "do the thing",
         &memory,
@@ -20,6 +21,7 @@ fn inject_memory_passthrough_when_env_off_switch() {
     let out = inject_subagent_memory(
         "base prompt",
         std::path::Path::new("/work/proj"),
+        std::path::Path::new("/unused-data"),
         "worker",
         "do the thing",
         &whycodes_memory::MemorySettings::default(),
@@ -60,6 +62,29 @@ fn with_identity_names_the_runner_without_file_claims() {
     assert_eq!(runner.agent_id.as_deref(), Some("worker-2"));
     assert_eq!(runner.agent_label.as_deref(), Some("worker-2/explore"));
     assert!(runner.file_claims.is_none());
+}
+
+#[test]
+fn memory_project_defaults_to_cwd_and_overrides_for_worktrees() {
+    let runner = make_runner();
+    assert_eq!(
+        runner.memory_project_path(),
+        std::path::Path::new("/work/proj")
+    );
+    // Swarm worktree: cwd is a throwaway checkout, memory stays on the main project.
+    let runner = SubagentRunner::new(
+        Arc::new(ProviderRegistry::default()),
+        Arc::new(ToolExecutor::new()),
+        make_info(),
+        std::path::PathBuf::from("/work/proj/.whycodes/swarm/run/worker-0"),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    )
+    .with_memory_project(std::path::PathBuf::from("/work/proj"));
+    assert_eq!(
+        runner.memory_project_path(),
+        std::path::Path::new("/work/proj")
+    );
 }
 
 #[tokio::test]
@@ -270,9 +295,21 @@ fn inject_memory_honors_subagent_banks_off() {
         subagent_banks: true,
         ..MemorySettings::default()
     };
+    let data = tempfile::tempdir().unwrap();
     let out = inject_subagent_memory(
         "base prompt",
         std::path::Path::new("/work/proj"),
+        data.path(),
+        "worker",
+        "do the thing",
+        &memory,
+    );
+    // Without the env switch the subagent gets its own bank.
+    unsafe { std::env::remove_var("WHYCODES_SUBAGENT_BANKS") };
+    let banked = inject_subagent_memory(
+        "base prompt",
+        std::path::Path::new("/work/proj"),
+        data.path(),
         "worker",
         "do the thing",
         &memory,
@@ -288,6 +325,7 @@ fn inject_memory_honors_subagent_banks_off() {
         unsafe { std::env::remove_var("WHYCODES_SUBAGENT_BANKS") };
     }
     assert!(out.contains("base prompt"), "{out}");
+    assert!(banked.contains("base prompt"), "{banked}");
     let _ = scripted_runner([whycodes_llm::ScriptedStep::Text("x".into())]);
 }
 

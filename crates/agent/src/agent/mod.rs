@@ -363,7 +363,7 @@ impl Agent {
             model_race: "off".into(),
             race_after: std::time::Duration::from_millis(800),
             response_cache: true,
-            memory: whycodes_memory::MemorySettings::default(),
+            memory: crate::subagent::default_memory(),
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
             magic_keywords: whycodes_config::MagicKeywordsConfig::default(),
             reasoning_effort: None,

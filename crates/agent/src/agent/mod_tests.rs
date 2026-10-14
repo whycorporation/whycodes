@@ -843,7 +843,10 @@ async fn load_mcp_connect_fail_does_not_replace_executor() {
 #[test]
 fn persist_agent_artifact_create_dir_err_is_logged() {
     persist_agent_artifact(std::path::Path::new("/dev/null/not-a-dir"), "id", "body");
-    persist_agent_artifact(std::path::Path::new("/proc/1"), "id", "body");
+    // A file as the project root fails everywhere (`/proc/1` is writable as C:\proc\1 on Windows).
+    let file = tempfile::NamedTempFile::new().unwrap();
+    persist_agent_artifact(file.path(), "id", "body");
+    assert!(!file.path().join(".whycodes").exists());
 }
 
 #[test]

@@ -1066,6 +1066,7 @@ impl Agent {
                 let mut runner =
                     SubagentRunner::new(registry, executor, info, worker_cwd, sandbox, network)
                         .with_memory(memory)
+                        .with_memory_project(project_path.clone())
                         .with_file_index(file_index.clone())
                         .with_panel(panel.clone())
                         .with_swarm_hub(Some(hub.clone()))
