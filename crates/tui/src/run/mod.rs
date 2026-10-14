@@ -2744,6 +2744,9 @@ fn apply_busy_key(
             ),
         },
         BusyKey::WaitEnter => {
+            if slash::busy_tell(app, &rt.steer) {
+                return;
+            }
             if app.prompt_has_content() {
                 app.submit_input();
             } else {

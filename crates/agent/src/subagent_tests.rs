@@ -707,3 +707,32 @@ async fn finished_subagent_runs_matching_stop_hooks() {
         .collect();
     assert_eq!(lines, ["worker"]);
 }
+
+#[tokio::test]
+async fn reads_messages_told_to_it_and_reports_late_ones() {
+    let inbox = crate::steer::SteerInbox::default();
+    inbox.push(
+        "task-1",
+        whycodes_core::types::MessageContent::Text("focus on errors".into()),
+    );
+    let runner = scripted_runner([whycodes_llm::ScriptedStep::Text("done".into())])
+        .with_steer(inbox.clone(), "task-1");
+    let task = || SubagentTask {
+        goal: "look around".into(),
+        context: None,
+        tools: None,
+        max_turns: 2,
+    };
+    let result = runner.run(task(), "script", "m", "k").await;
+    assert!(result.success, "{result:?}");
+    assert!(inbox.drain("task-1").is_empty(), "read at the first step");
+    assert!(!result.output.contains("finished:"), "{}", result.output);
+
+    assert_eq!(unread_tell_note(Vec::new()), "");
+    let late = vec![whycodes_core::types::MessageContent::Text(
+        "too late".into(),
+    )];
+    let note = unread_tell_note(late);
+    assert!(note.contains("after this subagent finished"), "{note}");
+    assert!(note.contains("- too late"), "{note}");
+}

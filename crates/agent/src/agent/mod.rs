@@ -839,12 +839,7 @@ impl Agent {
     /// carries them. Called at the start of a step, after tool results.
     pub(crate) fn inject_steering(&self, session: &mut Session, events: &Option<EventSink>) {
         for content in self.steer.drain(&session.id) {
-            match content {
-                whycodes_core::types::MessageContent::Text(text) => session.add_user_message(&text),
-                whycodes_core::types::MessageContent::Blocks(blocks) => {
-                    session.add_user_message_blocks(blocks)
-                }
-            }
+            crate::steer::add_to_session(session, content);
             crate::events::emit(
                 events,
                 TurnEvent::Status("message delivered to the running turn".into()),

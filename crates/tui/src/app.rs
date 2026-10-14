@@ -1954,6 +1954,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Skip provider prompt cache on the next turn",
     },
     SlashCommand {
+        name: "/tell",
+        hint: "<id> <message> Message a running subagent (task / swarm worker)",
+    },
+    SlashCommand {
         name: "/btw",
         hint: "[question] Side question (not written to history)",
     },

@@ -33,6 +33,14 @@ impl SteerInbox {
     }
 }
 
+/// Append a steering message to `session` as a user message.
+pub fn add_to_session(session: &mut whycodes_session::session::Session, content: MessageContent) {
+    match content {
+        MessageContent::Text(text) => session.add_user_message(&text),
+        MessageContent::Blocks(blocks) => session.add_user_message_blocks(blocks),
+    }
+}
+
 /// The text a message carries (image blocks dropped), for clients that can
 /// only replay text.
 pub fn content_text(content: &MessageContent) -> String {

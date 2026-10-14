@@ -71,6 +71,8 @@ pub struct SubagentRunner {
     /// Parent TUI panel sink (so workers can pin a preview).
     panel: Option<whycodes_core::PanelSink>,
     swarm_hub: Option<whycodes_core::SwarmHub>,
+    /// The parent's steering inbox and this subagent's key in it (`/tell`).
+    steer: Option<(crate::steer::SteerInbox, String)>,
     question_prompter: Arc<dyn QuestionPrompter>,
     approval_mode: ApprovalMode,
     /// Parent config hooks: tool hooks run here too, plus `subagent_stop`.
@@ -102,6 +104,7 @@ impl SubagentRunner {
             file_index: None,
             panel: None,
             swarm_hub: None,
+            steer: None,
             question_prompter: default_question_prompter(),
             approval_mode: ApprovalMode::Auto,
             hooks: Vec::new(),
@@ -133,6 +136,12 @@ impl SubagentRunner {
     /// Inherit the parent agent's side-panel sink.
     pub fn with_panel(mut self, panel: Option<whycodes_core::PanelSink>) -> Self {
         self.panel = panel;
+        self
+    }
+
+    /// Read messages the user addresses to `key` (`/tell <key> …`) at each step.
+    pub fn with_steer(mut self, inbox: crate::steer::SteerInbox, key: impl Into<String>) -> Self {
+        self.steer = Some((inbox, key.into()));
         self
     }
 
@@ -357,6 +366,12 @@ impl SubagentRunner {
                 }
             }
 
+            if let Some((inbox, key)) = &self.steer {
+                for content in inbox.drain(key) {
+                    crate::steer::add_to_session(session, content);
+                }
+            }
+
             let request = session.build_request(
                 std::sync::Arc::clone(&tools),
                 None, // max_tokens
@@ -493,6 +508,9 @@ impl SubagentRunner {
             session.add_tool_results(results);
         }
 
+        if let Some((inbox, key)) = &self.steer {
+            final_text.push_str(&unread_tell_note(inbox.drain(key)));
+        }
         Ok((final_text, total_usage))
     }
 
@@ -566,6 +584,19 @@ pub(crate) fn default_memory() -> MemorySettings {
 #[cfg(not(test))]
 pub(crate) fn default_memory() -> MemorySettings {
     MemorySettings::default()
+}
+
+/// Messages addressed to a subagent that finished before reading them, so
+/// the parent still sees them in the result; empty when there are none.
+fn unread_tell_note(unread: Vec<whycodes_core::types::MessageContent>) -> String {
+    if unread.is_empty() {
+        return String::new();
+    }
+    let mut note = String::from("\n\n[The user sent these after this subagent finished:]\n");
+    for content in &unread {
+        note.push_str(&format!("- {}\n", crate::steer::content_text(content)));
+    }
+    note
 }
 
 /// Inject memory into the subagent system prompt using parent config.

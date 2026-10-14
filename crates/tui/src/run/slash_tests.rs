@@ -217,3 +217,62 @@ fn expand_at_files_truncates_long_and_keeps_absolute() {
     let out = expand_at_files(&mention, dir.path());
     assert!(out.contains("abs-body"), "{out}");
 }
+
+#[test]
+fn resolve_tell_matches_a_prefix_or_the_only_running_subagent() {
+    let two = vec!["task-abc".to_string(), "worker-0".to_string()];
+    assert_eq!(
+        resolve_tell(&two, "task focus here"),
+        Some(("task-abc".into(), "focus here".into()))
+    );
+    assert_eq!(resolve_tell(&two, "worker-0"), None, "no message");
+    assert_eq!(resolve_tell(&two, "just a message"), None, "ambiguous");
+    assert_eq!(resolve_tell(&two, "   "), None);
+    let one = vec!["task-abc".to_string()];
+    assert_eq!(
+        resolve_tell(&one, "stop now"),
+        Some(("task-abc".into(), "stop now".into()))
+    );
+}
+
+#[test]
+fn busy_tell_queues_for_the_subagent_or_explains() {
+    let inbox = whycodes_agent::steer::SteerInbox::default();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.input_buffer = "plain prompt".into();
+    assert!(!busy_tell(&mut app, &inbox));
+    assert_eq!(app.input_buffer, "plain prompt");
+
+    app.input_buffer = "/tell hi".into();
+    assert!(busy_tell(&mut app, &inbox));
+    assert_eq!(app.status_message, "No subagent is running");
+    assert!(app.input_buffer.is_empty());
+
+    for id in ["task-abc", "worker-0"] {
+        app.upsert_subagent(crate::app::SubagentUpdate {
+            id: id.into(),
+            kind: "general".into(),
+            description: "d".into(),
+            status: "running".into(),
+            activity: String::new(),
+            elapsed_ms: 0,
+            output: String::new(),
+        });
+    }
+    app.input_buffer = "/tell ambiguous".into();
+    assert!(busy_tell(&mut app, &inbox));
+    assert!(
+        app.status_message.contains("task-abc, worker-0"),
+        "{}",
+        app.status_message
+    );
+
+    app.input_buffer = "/tell work check the logs".into();
+    assert!(busy_tell(&mut app, &inbox));
+    assert_eq!(app.status_message, "sent to worker-0");
+    let got = inbox.drain("worker-0");
+    assert_eq!(
+        whycodes_agent::steer::content_text(&got[0]),
+        "check the logs"
+    );
+}
