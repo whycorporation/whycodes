@@ -1,6 +1,7 @@
 use serde_json::json;
 
 use crate::file::paths::display_path;
+use crate::file::tolerant;
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 use whycodes_format::diff::{first_line_number, format_edit_preview_at};
@@ -27,7 +28,8 @@ impl Tool for EditTool {
         "Make targeted edits to a file. Prefer `from`/`to`/`insert_after` \
          content tags from `read`/`grep` (`N tag|text`). `old_string` is \
          the fallback: exact match, then unique whitespace-tolerant match \
-         (indent / extra spaces only — not typos)."
+         (indent / extra spaces only — not typos). Curly quotes, dashes and \
+         CRLF line endings match their plain forms."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -152,7 +154,7 @@ impl EditTool {
                         &full_path,
                         &shown,
                         &plan.matched,
-                        &new_string,
+                        &plan.new_text,
                         plan.count,
                         plan.start,
                         &plan.modified,
@@ -185,6 +187,8 @@ struct EditTarget<'a> {
 /// The change an edit makes to `original`, before anything is written.
 struct EditPlan {
     matched: String,
+    /// `new_string` in the file's line endings.
+    new_text: String,
     modified: String,
     count: usize,
     start: Option<usize>,
@@ -195,31 +199,41 @@ fn plan_edit(
     target: &EditTarget<'_>,
     new_string: &str,
 ) -> Result<EditPlan, String> {
+    let (old_string, new_text) = if tolerant::is_crlf(original) {
+        (
+            tolerant::to_crlf(target.old_string),
+            tolerant::to_crlf(new_string),
+        )
+    } else {
+        (target.old_string.to_string(), new_string.to_string())
+    };
     if target.from.is_some() || target.insert_after.is_some() {
         let (matched, modified, start) = apply_tagged(
             original,
             target.from,
             target.to,
             target.insert_after,
-            new_string,
+            &new_text,
         )?;
         return Ok(EditPlan {
             matched,
+            new_text,
             modified,
             count: 1,
             start,
         });
     }
-    match locate_spans(original, target.old_string, target.replace_all) {
-        Locate::None => Err(miss_with_snippet(original, target.old_string)),
-        Locate::Ambiguous(count) => Err(ambiguous_with_tags(original, target.old_string, count)),
+    match locate_spans(original, &old_string, target.replace_all) {
+        Locate::None => Err(miss_with_snippet(original, &old_string)),
+        Locate::Ambiguous(count) => Err(ambiguous_with_tags(original, &old_string, count)),
         Locate::Hits(spans) => {
             let matched = original[spans[0].0..spans[0].1].to_string();
             Ok(EditPlan {
                 start: first_line_number(original, &matched),
-                modified: apply_spans(original, &spans, new_string),
+                modified: apply_spans(original, &spans, &new_text),
                 count: spans.len(),
                 matched,
+                new_text,
             })
         }
     }
@@ -241,7 +255,13 @@ pub fn preview_edit(args: &serde_json::Value, working_dir: &str) -> Option<Strin
     };
     let plan = plan_edit(&original, &target, new_string).ok()?;
     let shown = display_path(&full, working_dir);
-    let preview = format_edit_preview_at(&shown, &plan.matched, new_string, plan.count, plan.start);
+    let preview = format_edit_preview_at(
+        &shown,
+        &plan.matched,
+        &plan.new_text,
+        plan.count,
+        plan.start,
+    );
     Some(preview.replacen("Edited ", "Edit ", 1))
 }
 
@@ -361,6 +381,9 @@ fn apply_tagged(
         if !insert.is_empty() && insert_at > 0 && !original[..insert_at].ends_with('\n') {
             insert.insert(0, '\n');
         }
+        if tolerant::is_crlf(original) {
+            insert = tolerant::to_crlf(&insert);
+        }
         let mut modified = String::with_capacity(original.len() + insert.len());
         modified.push_str(&original[..insert_at]);
         modified.push_str(&insert);
@@ -455,7 +478,23 @@ fn decide_spans(
     if !exact.is_empty() {
         return finish_spans(exact, replace_all);
     }
-    finish_spans(ws_flexible_spans(original, old), replace_all)
+    let flexible = ws_flexible_spans(original, old);
+    if !flexible.is_empty() {
+        return finish_spans(flexible, replace_all);
+    }
+    finish_spans(folded_spans(original, old), replace_all)
+}
+
+/// Exact, then whitespace-tolerant matches after typographic punctuation is
+/// folded to ASCII on both sides, mapped back to byte spans of `original`.
+fn folded_spans(original: &str, old: &str) -> Vec<(usize, usize)> {
+    let (haystack, map) = tolerant::fold(original);
+    let (needle, _) = tolerant::fold(old);
+    let mut spans = exact_spans(&haystack, &needle);
+    if spans.is_empty() {
+        spans = ws_flexible_spans(&haystack, &needle);
+    }
+    spans.into_iter().map(|(s, e)| (map[s], map[e])).collect()
 }
 
 fn finish_spans(spans: Vec<(usize, usize)>, replace_all: bool) -> Locate {
