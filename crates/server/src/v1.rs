@@ -158,6 +158,9 @@ pub async fn permission(
         .map_err(|e| (StatusCode::NOT_FOUND, e))
 }
 
+/// Internal end-of-run marker on the event channel; never sent to clients.
+const RUN_DONE: &str = "__whycodes_v1_run_done__";
+
 pub async fn run(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -249,11 +252,17 @@ pub async fn run(
         crate::keep_warm::spawn(Arc::clone(&agent), Arc::clone(&handle), route, warm_minutes);
         state_done.take_cancel(&sid);
         state_done.perm.finish_run(&sid);
+        // The channel itself may never close: a `bash` call hands a sender to
+        // the agent's background registry, which lives as long as the daemon.
+        crate::routes::emit_status(&tx, RUN_DONE);
         result
     });
 
     let stream = async_stream::stream! {
         while let Some(ev) = rx.recv().await {
+            if matches!(&ev, TurnEvent::Status(s) if s == RUN_DONE) {
+                break;
+            }
             if let Some(sdk) = from_turn_event(&ev)
                 && let Ok(payload) = serde_json::to_string(&sdk)
             {
