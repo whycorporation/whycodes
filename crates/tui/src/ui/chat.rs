@@ -1062,8 +1062,17 @@ fn thinking_lines(
     } else {
         None
     };
+    // The header leads with the same bullet as a tool call (thinking
+    // colour while live, dim when done); the rail marks only the body.
     let mut rail_row = 0usize;
-    let header_line = accent_line(header_spans, true, rail_at(rail_row));
+    let bullet = Style::default().fg(if live_rail {
+        palette.thinking
+    } else {
+        palette.dim
+    });
+    let mut bulleted = vec![Span::styled(TOOL_BULLET.to_string(), bullet)];
+    bulleted.extend(header_spans);
+    let header_line = Line::from(bulleted);
     rail_row += 1;
     if let Some(ref right) = right {
         lines.push(line_with_right(
@@ -1177,7 +1186,9 @@ fn meta_gutter() -> Span<'static> {
 }
 
 /// Grok `scrollback.blocks.tool.bullet = "diamond"`.
-const TOOL_BULLET: &str = "• ";
+const TOOL_BULLET: &str = "◆ ";
+/// Leads a collapsed run of tool calls ("◈ Read 3 files, Ran 2 commands").
+const GROUP_BULLET: &str = "◈ ";
 
 /// Turn footer: `Worked for 12s`, past tense, muted. Token counts live in
 /// the turn status while it runs and in the context meter after.
@@ -1880,7 +1891,7 @@ fn verb_group_line(run: &[ToolRef<'_>], paint: ToolPaint<'_>) -> Line<'static> {
         Style::default().fg(paint.palette.dim)
     };
     Line::from(vec![
-        Span::styled(TOOL_BULLET.to_string(), style),
+        Span::styled(GROUP_BULLET.to_string(), style),
         Span::styled(text, style),
     ])
 }

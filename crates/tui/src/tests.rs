@@ -2589,3 +2589,25 @@ fn tool_view_keeps_a_bounded_copy() {
     let stored = app.messages[0].tool_calls[0].result.as_deref().unwrap();
     assert!(stored.len() < TOOL_VIEW_MAX_CHARS + 100);
 }
+
+#[test]
+fn text_after_a_tool_call_starts_a_new_paragraph() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "go");
+    app.append_to_last("I'll read main.rs first.");
+    app.add_tool_call(
+        "t1".into(),
+        "read".into(),
+        serde_json::json!({"path": "main.rs"}),
+    );
+    app.add_tool_call(
+        "t2".into(),
+        "read".into(),
+        serde_json::json!({"path": "lib.rs"}),
+    );
+    app.append_to_last("Done.");
+    assert_eq!(
+        app.messages.last().unwrap().content,
+        "I'll read main.rs first.\n\nDone."
+    );
+}

@@ -516,27 +516,31 @@ fn render_turn_status(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: 
         AgentState::Error(_) => palette.error,
         AgentState::Idle => palette.success,
     };
+    // Left: what the agent is doing now (with the thinking phase's own
+    // timer). Right: the whole turn's time, tokens and [stop].
     let label = match &app.current_agent_state {
         AgentState::Thinking if !thinking_elapsed.is_empty() => {
-            format!("thinking {thinking_elapsed}")
+            format!("Thinking… {thinking_elapsed}")
         }
-        AgentState::Thinking => "thinking".into(),
-        AgentState::WaitingForPermission => "waiting for permission".into(),
-        AgentState::WaitingForQuestion => "waiting for answer".into(),
-        AgentState::Generating if !turn_elapsed.is_empty() => {
-            format!("generating {turn_elapsed}")
-        }
-        AgentState::Generating => "generating".into(),
-        AgentState::Error(_) => "error".into(),
-        AgentState::Idle => "ready".into(),
+        AgentState::Thinking => "Thinking…".into(),
+        AgentState::WaitingForPermission => "Waiting for permission…".into(),
+        AgentState::WaitingForQuestion => "Waiting for answers…".into(),
+        AgentState::Generating => "Responding…".into(),
+        AgentState::Error(_) => "Error".into(),
+        AgentState::Idle => "Ready".into(),
     };
     let detail = turn_status_detail(&app.status_message, &label);
 
-    // Right cluster: optional ⇣tokens + [stop]
-    let tokens_s = app.turn_usage.as_ref().map(|u| {
+    // Right cluster: optional turn time + ⇣tokens, then [stop]
+    let tokens = app.turn_usage.as_ref().map(|u| {
         let n = u.input_tokens + u.output_tokens;
         format!("⇣{}", crate::app::format_token_count(n))
     });
+    let tokens_s = match (turn_elapsed.is_empty(), tokens) {
+        (true, t) => t,
+        (false, Some(t)) => Some(format!("{turn_elapsed} {t}")),
+        (false, None) => Some(turn_elapsed.clone()),
+    };
     let stop_label = "[stop]";
     let stop_hovered = app.turn_stop_hit.hovered;
     let stop_style = if stop_hovered {
@@ -613,6 +617,10 @@ fn turn_status_detail(status: &str, label: &str) -> String {
         return String::new();
     }
     let lower = cleaned.to_ascii_lowercase();
+    // Per-request bookkeeping ("LLM request (step 2)…") is not an activity.
+    if lower.starts_with("llm request") {
+        return String::new();
+    }
     // Generic "Generating…" is already the strip label.
     if lower == "generating"
         || lower == "generating…"

@@ -146,6 +146,7 @@ fn paint_row_skips_zero_width_and_marks_selection() {
         0,
         0,
         0,
+        14,
         "/help",
         "hint",
         true,
@@ -159,6 +160,7 @@ fn paint_row_skips_zero_width_and_marks_selection() {
         0,
         0,
         40,
+        14,
         "/help",
         "Keybinding cheatsheet",
         true,
@@ -177,6 +179,7 @@ fn paint_row_skips_zero_width_and_marks_selection() {
         0,
         1,
         40,
+        14,
         "/exit",
         "Quit the TUI",
         false,
@@ -201,6 +204,7 @@ fn paint_row_omits_hint_when_the_name_column_fills_the_width() {
         0,
         0,
         16,
+        14,
         "/help",
         "SHOULD-NOT-APPEAR",
         false,
@@ -268,7 +272,8 @@ fn render_paints_commands_count_and_selected_marker() {
     assert!(text.contains("/help"), "{text}");
     assert!(text.contains("/new"), "{text}");
     assert!(text.contains('❯'), "selected marker: {text}");
-    assert!(text.contains('3'), "count on hairline: {text}");
+    // Position of the selection / total, on the top hairline.
+    assert!(text.contains("2/3"), "count on hairline: {text}");
     assert!(app.slash_suggest.list_hit.is_some());
     let hit = app.slash_suggest.list_hit.unwrap();
     // 3 items fit in MAX_ROWS → no scrollbar gutter reserved.
@@ -299,4 +304,52 @@ fn render_overflow_reserves_scrollbar_and_honours_hover() {
         render(f, Rect::new(0, 16, 70, 2), &mut app, &p);
     });
     assert!(app.slash_suggest.list_scroll_start > 0);
+}
+
+#[test]
+fn the_name_column_fits_the_longest_command() {
+    assert_eq!(name_column_width(["/help", "/new"].into_iter()), 14);
+    assert_eq!(
+        name_column_width(["/help", "/security-review"].into_iter()),
+        "/security-review".len()
+    );
+    assert_eq!(
+        name_column_width(["/x".repeat(20).as_str()].into_iter()),
+        24
+    );
+
+    // With the wider column both descriptions start in the same column.
+    let colors = DropdownColors::from_palette(&palette());
+    let mut buf = Buffer::empty(Rect::new(0, 0, 60, 2));
+    let w = name_column_width(["/exit", "/security-review"].into_iter());
+    paint_row(
+        &mut buf,
+        0,
+        0,
+        60,
+        w,
+        "/exit",
+        "Quit",
+        false,
+        colors.panel,
+        &colors,
+    );
+    paint_row(
+        &mut buf,
+        0,
+        1,
+        60,
+        w,
+        "/security-review",
+        "Review",
+        false,
+        colors.panel,
+        &colors,
+    );
+    let row = |y: u16| -> String {
+        (0..60)
+            .map(|x| buf.cell((x, y)).unwrap().symbol().to_string())
+            .collect()
+    };
+    assert_eq!(row(0).find("Quit"), row(1).find("Review"));
 }

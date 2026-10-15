@@ -112,15 +112,14 @@ fn fenced_rust_uses_more_than_one_token_colour() {
 }
 
 #[test]
-fn fenced_code_is_banded_labelled_and_numbered() {
+fn fenced_code_is_a_plain_band() {
     let out = rendered("```rust\nlet x = 1;\n```");
     let joined = out.join("\n");
-    assert!(joined.contains("rust"), "{out:?}");
-    assert!(joined.contains("let x = 1;"), "{out:?}");
-    assert!(
-        joined.contains('1'),
-        "Grok code blocks number lines, got {out:?}"
-    );
+    // Band row, the code inset by two columns (no line number), band row;
+    // the language only picks the highlighter.
+    assert_eq!(out.len(), 3, "{out:?}");
+    assert!(out[1].starts_with("  let x = 1;"), "{out:?}");
+    assert!(!joined.contains("rust"), "{out:?}");
     assert!(
         !joined.contains('┌') && !joined.contains('└'),
         "no box chrome: {out:?}"
@@ -233,7 +232,7 @@ fn mermaid_fence_renders_as_diagram() {
 fn streaming_mermaid_shows_source_without_closing() {
     let out = rendered("```mermaid\ngraph LR; A --> B");
     let joined = out.join("\n");
-    assert!(joined.contains("mermaid"), "{joined}");
+    assert!(joined.contains("graph LR"), "{joined}");
     // Still open: no bottom edge yet.
     assert!(
         !joined.contains('┌') && !joined.contains('└'),
@@ -353,5 +352,21 @@ fn wrap_list_item_and_tabbed_diff_and_open_fence() {
     assert!(
         empty_table.is_empty(),
         "a table with no headers must paint nothing"
+    );
+}
+
+#[test]
+fn a_quote_gets_a_rail_instead_of_a_raw_gt() {
+    let lines = render_with_width("> Run cargo run to see it.", &palette(), Some(14));
+    let shown: Vec<String> = lines.iter().map(text).collect();
+    assert!(shown.len() > 1, "{shown:?}");
+    assert!(shown.iter().all(|l| l.starts_with("│ ")), "{shown:?}");
+    assert!(!shown.concat().contains('>'), "{shown:?}");
+    assert_eq!(
+        render("> ", &palette())
+            .iter()
+            .map(text)
+            .collect::<Vec<_>>(),
+        ["│ "]
     );
 }

@@ -132,7 +132,7 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
         rule_style,
     );
     // Count hint on the top hairline, right-aligned (Grok: gray on bg_base).
-    let hint = format!("{total}");
+    let hint = format!("{}/{total}", app.slash_suggest.selected + 1);
     let hint_w = hint.len() as u16;
     if hint_w + 2 <= area.width {
         let hx = area.x + area.width - hint_w - 1;
@@ -169,6 +169,12 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
 
     // Slightly elevated wash for mouse hover (between panel and selected).
     let hover_bg = elevate(palette.bg, 36);
+    let name_w = name_column_width(
+        app.slash_suggest
+            .matches
+            .iter()
+            .map(|&i| BUILTIN_SLASH_COMMANDS[i].name),
+    );
 
     for vis_row in 0..visible {
         let item_idx = start + vis_row;
@@ -203,6 +209,7 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
             items_area.x,
             y,
             content_w,
+            name_w,
             cmd.name,
             cmd.hint,
             selected,
@@ -229,6 +236,7 @@ fn paint_row(
     x: u16,
     y: u16,
     width: u16,
+    name_w: usize,
     name: &str,
     hint: &str,
     selected: bool,
@@ -255,8 +263,7 @@ fn paint_row(
     let pad_style = Style::default().bg(row_bg);
 
     let prefix = if selected { "❯ " } else { "  " };
-    // Fixed name column (14) like before — keeps descriptions aligned.
-    let name_col = format!("{name:<14}");
+    let name_col = format!("{name:<name_w$}");
     let mut spans = vec![
         Span::styled(prefix.to_string(), name_style),
         Span::styled(name_col.clone(), name_style),
@@ -277,6 +284,13 @@ fn paint_row(
     let line = Line::from(spans);
     // set_line writes graphemes without restyling the whole rect.
     let _ = buf.set_line(x, y, &line, width);
+}
+
+/// Longest command name in the list (at least 14, at most 24 columns), so
+/// every description starts in the same column; a fixed 14 let longer names
+/// such as `/security-review` push theirs out of line.
+fn name_column_width<'a>(names: impl Iterator<Item = &'a str>) -> usize {
+    names.map(str::len).max().unwrap_or(0).clamp(14, 24)
 }
 
 pub(crate) fn fill_bg(buf: &mut Buffer, area: Rect, bg: Color) {

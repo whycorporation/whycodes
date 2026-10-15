@@ -15,7 +15,7 @@ use ratatui::text::Line;
 use rustc_hash::FxHasher;
 
 use crate::theme::ThemePalette;
-use crate::ui::markdown::{append_open_fence, code_gutter_nw, open_fence_tail, render_with_width};
+use crate::ui::markdown::{append_open_fence, open_fence_tail, render_with_width};
 
 /// Frozen prefix + live tail for one width.
 #[derive(Debug, Clone, Default)]
@@ -32,7 +32,6 @@ pub struct IncrementalMarkdown {
     /// `buf[frozen_len .. frozen_len+fence_display]` is committed fence chrome
     /// + complete rows (no partial line, no closing pad).
     fence_display: usize,
-    fence_nw: usize,
     /// State for the other width the layout probes each frame. With an
     /// overflowing transcript `session_bar_layout` measures at the full
     /// width and again without the scrollbar gutter; one slot per width
@@ -79,7 +78,6 @@ impl IncrementalMarkdown {
             self.buf.truncate(self.frozen_len);
             self.fence_src = 0;
             self.fence_display = 0;
-            self.fence_nw = 0;
             let chunk = &text[self.frozen_bytes..cp];
             if !chunk.is_empty() {
                 self.buf.extend(render_with_width(chunk, palette, width));
@@ -96,19 +94,12 @@ impl IncrementalMarkdown {
             self.buf.truncate(self.frozen_len);
             self.fence_src = 0;
             self.fence_display = 0;
-            self.fence_nw = 0;
         }
         &self.buf
     }
 
     fn render_tail(&mut self, tail: &str, palette: &ThemePalette, width: Option<usize>) {
         if let Some((lang, body)) = open_fence_tail(tail) {
-            let nw = code_gutter_nw(body);
-            if nw != self.fence_nw && self.fence_src > 0 {
-                self.fence_src = 0;
-                self.fence_display = 0;
-            }
-            self.fence_nw = nw;
             if self.fence_src == 0 {
                 self.buf.truncate(self.frozen_len);
             } else {
@@ -123,7 +114,6 @@ impl IncrementalMarkdown {
         self.buf.truncate(self.frozen_len);
         self.fence_src = 0;
         self.fence_display = 0;
-        self.fence_nw = 0;
         self.buf.extend(render_with_width(tail, palette, width));
     }
 
@@ -155,7 +145,6 @@ impl IncrementalMarkdown {
         self.frozen_len = 0;
         self.fence_src = 0;
         self.fence_display = 0;
-        self.fence_nw = 0;
     }
 }
 
