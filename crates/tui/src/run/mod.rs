@@ -2651,6 +2651,7 @@ async fn apply_idle_loop_key(
                 session_claims.clone(),
                 provider,
                 model,
+                Some(rt.agent.shared_tools()),
             )
             .await;
             adopt_fresh_runtime(app, rt, runtimes, mru, fresh);
@@ -3169,6 +3170,7 @@ async fn spawn_new_session_runtime(
     session_claims: whycodes_core::FileClaimRegistry,
     provider: &str,
     model: &str,
+    shared_tools: Option<whycodes_agent::agent::SharedTools>,
 ) -> SessionRuntime {
     let agent_info =
         config
@@ -3215,7 +3217,11 @@ async fn spawn_new_session_runtime(
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
     agent.set_route(provider, model);
     agent.set_approval_mode(config.general.approval_mode.unwrap_or_default());
-    agent = agent.with_mcp(config).await;
+    // Sessions in one TUI share tools: MCP servers and LSP clients start once.
+    agent = match shared_tools {
+        Some(tools) => agent.with_shared_tools(tools),
+        None => agent.with_mcp(config).await,
+    };
     let system_prompt = with_project_memory(
         &Agent::with_agents_md(&agent.system_prompt_for_route(provider, model), project_dir),
         project_dir,

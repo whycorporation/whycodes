@@ -90,7 +90,7 @@ pub fn set_syntax_theme(kind: SyntaxTheme) {
         return;
     }
     recover_lock(closed_cache().lock()).clear();
-    *recover_lock(open_stream().lock()) = OpenStreamHighlighter::new();
+    // Open-stream states notice the new theme on their next use.
 }
 
 fn load_embedded_theme(bytes: &'static [u8]) -> Theme {
@@ -390,9 +390,11 @@ fn note_parse(ok: bool, stream: &mut OpenStreamHighlighter) {
     }
 }
 
-fn open_stream() -> &'static Mutex<OpenStreamHighlighter> {
-    static STREAM: OnceLock<Mutex<OpenStreamHighlighter>> = OnceLock::new();
-    STREAM.get_or_init(|| Mutex::new(OpenStreamHighlighter::new()))
+// Per thread: the Oniguruma parse state is not `Send`, and the hot fence is
+// painted from one thread anyway.
+thread_local! {
+    static STREAM: std::cell::RefCell<OpenStreamHighlighter> =
+        std::cell::RefCell::new(OpenStreamHighlighter::new());
 }
 
 /// Visit highlighted lines of a growing fence without cloning the committed
@@ -406,9 +408,13 @@ pub fn with_open_code_spans<R>(
     f: impl FnOnce(&[Vec<CodeSpan>], Option<&[CodeSpan]>) -> R,
 ) -> Option<R> {
     find_syntax_for(syntax_set(), language, code)?;
-    let mut stream = recover_lock(open_stream().lock());
-    stream.highlight_in_place(code, language)?;
-    Some(f(&stream.committed_lines, stream.partial.as_deref()))
+    STREAM.with_borrow_mut(|stream| {
+        if stream.theme != ACTIVE_SYNTAX_THEME.load(Ordering::Relaxed) {
+            *stream = OpenStreamHighlighter::new();
+        }
+        stream.highlight_in_place(code, language)?;
+        Some(f(&stream.committed_lines, stream.partial.as_deref()))
+    })
 }
 
 /// Resumable syntect state for the hot (usually trailing, still-open) fence.
@@ -423,6 +429,8 @@ struct OpenStreamHighlighter {
     partial: Option<Vec<CodeSpan>>,
     parse_state: ParseState,
     highlight_state: HighlightState,
+    /// Syntax theme the highlight state was built with.
+    theme: u8,
 }
 
 impl OpenStreamHighlighter {
@@ -430,6 +438,7 @@ impl OpenStreamHighlighter {
         let ps = syntax_set();
         let highlighter = Highlighter::new(theme());
         Self {
+            theme: ACTIVE_SYNTAX_THEME.load(Ordering::Relaxed),
             language: None,
             committed_source: String::new(),
             committed_lines: Vec::new(),

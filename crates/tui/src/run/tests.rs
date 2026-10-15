@@ -3426,9 +3426,26 @@ async fn spawn_runtime_and_drain_outcomes() {
         whycodes_core::FileClaimRegistry::new(),
         "xai",
         "grok-4.6",
+        None,
     )
     .await;
     assert_eq!(rt.agent.info.name, "no-such-agent");
+    let second = spawn_new_session_runtime(
+        "no-such-agent",
+        &Config::default(),
+        dir.path(),
+        &idx,
+        whycodes_core::FileClaimRegistry::new(),
+        "xai",
+        "grok-4.6",
+        Some(rt.agent.shared_tools()),
+    )
+    .await;
+    assert_eq!(
+        second.agent.mcp_servers().len(),
+        rt.agent.mcp_servers().len(),
+        "the new session reuses the loaded tools"
+    );
     assert!(!rt.agent_busy);
 
     let mut rt = test_runtime();
