@@ -355,3 +355,19 @@ fn wrap_list_item_and_tabbed_diff_and_open_fence() {
         "a table with no headers must paint nothing"
     );
 }
+
+#[test]
+fn a_quote_gets_a_rail_instead_of_a_raw_gt() {
+    let lines = render_with_width("> Run cargo run to see it.", &palette(), Some(14));
+    let shown: Vec<String> = lines.iter().map(text).collect();
+    assert!(shown.len() > 1, "{shown:?}");
+    assert!(shown.iter().all(|l| l.starts_with("│ ")), "{shown:?}");
+    assert!(!shown.concat().contains('>'), "{shown:?}");
+    assert_eq!(
+        render("> ", &palette())
+            .iter()
+            .map(text)
+            .collect::<Vec<_>>(),
+        ["│ "]
+    );
+}
