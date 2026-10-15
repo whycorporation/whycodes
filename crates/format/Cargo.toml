@@ -19,9 +19,11 @@ extended-syntax = ["dep:two-face"]
 whycodes-core = { path = "../core" }
 serde.workspace = true
 rustc-hash.workspace = true
-# TextMate highlighting; `default-fancy` matches two-face when that feature is on.
-syntect = { version = "5", default-features = false, features = ["default-fancy"] }
-two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"], optional = true }
+# TextMate highlighting on the Oniguruma regex engine (two-face matches it).
+# fancy-regex compiled grammars cost ~90 MB RSS after 16 languages vs ~8 MB
+# here, and the binary is smaller.
+syntect = { version = "5", default-features = false, features = ["default-onig"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-onig"], optional = true }
 regex = "1"
 # Pure-Rust Mermaid → Unicode box-drawing for fenced ```mermaid blocks.
 mermaid-text = { version = "0.57", optional = true }
