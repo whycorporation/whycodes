@@ -2565,3 +2565,16 @@ async fn tool_results_carry_their_call_id_on_every_execution_path() {
     );
     assert!(answered[0].1.contains("main.rs"), "{answered:?}");
 }
+
+#[test]
+fn step_texts_are_a_blank_line_apart() {
+    let mut text = String::new();
+    append_step_text(&mut text, "   ");
+    assert_eq!(text, "");
+    append_step_text(&mut text, "\n\nFirst step.");
+    assert_eq!(text, "\n\nFirst step.");
+    append_step_text(&mut text, "Second step. ");
+    append_step_text(&mut text, "");
+    append_step_text(&mut text, "\nThird.");
+    assert_eq!(text, "\n\nFirst step.\n\nSecond step.\n\nThird.");
+}
