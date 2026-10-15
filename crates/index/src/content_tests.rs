@@ -24,8 +24,7 @@ fn pack_and_extract_unique_sorted() {
 
 #[test]
 fn indexed_trigrams_keep_no_spare_capacity() {
-    let text = "fn main() {}
-".repeat(200);
+    let text = "fn main() {}\n".repeat(200);
     for bytes in [text.as_bytes(), text.to_uppercase().as_bytes()] {
         let tris = extract_indexed_trigrams(bytes);
         assert_eq!(tris.capacity(), tris.len());
