@@ -21,6 +21,12 @@ pub const HTTP_REFERER: &str = "https://why.codes";
 /// retries for 20–75s and inflate "Worked for Xs" far above gateway Duration.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// `localhost` with IPv4 first; `::1` stays as the fallback (port comes from the URL).
+const LOCALHOST_IPV4_FIRST: [std::net::SocketAddr; 2] = [
+    std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0),
+    std::net::SocketAddr::new(std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), 0),
+];
+
 /// Process-wide HTTP client. Reusing one `reqwest::Client` keeps the connection
 /// pool and TLS sessions warm across LLM turns (title refine, multi-step tools,
 /// catalog fetch). Building a new client per request forces a full handshake
@@ -51,6 +57,9 @@ fn shared_client() -> &'static reqwest::Client {
                 .tcp_nodelay(true)
                 .tcp_keepalive(std::time::Duration::from_secs(30))
                 .connect_timeout(CONNECT_TIMEOUT)
+                // Local gateways mostly bind 127.0.0.1; `::1` first cost a
+                // ~300 ms refused dial per connection on Windows.
+                .resolve_to_addrs("localhost", &LOCALHOST_IPV4_FIRST)
                 .build(),
         )
     })
