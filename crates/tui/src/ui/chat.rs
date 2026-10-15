@@ -730,13 +730,6 @@ fn refresh_live_markdown(app: &mut TuiApp, index: usize, width: u16) {
     let mut stream = app.messages[index].stream_md.take();
     if let Some(inc) = stream.as_mut() {
         inc.render(&app.messages[index].content, &palette, Some(md_width));
-        let ts = message_clock(&app.messages[index]);
-        stamp_first_content_line(
-            inc.lines_mut(),
-            Some(&ts),
-            Style::default().fg(palette.dim),
-            width,
-        );
     }
     app.messages[index].stream_md = stream;
 }
@@ -795,11 +788,10 @@ fn render_message(
         ChatRole::User => {
             let selected =
                 app.selected_msg == Some(index) && app.focus == crate::app::FocusPane::Scrollback;
-            let ts = message_clock(msg);
             lines.extend(user_prompt_lines(
                 &msg.content,
                 &msg.image_labels,
-                Some(&ts),
+                None,
                 palette,
                 width,
                 selected,
@@ -813,19 +805,7 @@ fn render_message(
             // *before* the first tool, so the growing reply sat above the
             // cards and auto-scroll (stick-to-bottom) showed tools, not the
             // answer. Content width for Mermaid: SIDE_PAD + "│ " gutter.
-            //
-            // Clock on the first answer line, same as the user ❯ row.
-            let ts = message_clock(msg);
-            let ts_style = Style::default().fg(palette.dim);
-            let stamped = std::cell::Cell::new(false);
-            let stamp = |chunk: &mut [Line<'static>]| {
-                if stamped.get() {
-                    return;
-                }
-                if stamp_first_content_line(chunk, Some(&ts), ts_style, width) {
-                    stamped.set(true);
-                }
-            };
+
             let md_width = (width as usize).saturating_sub(4).max(20);
             let emit_markdown =
                 |lines: &mut Vec<Line<'static>>,
@@ -834,7 +814,6 @@ fn render_message(
                     if skip_live_md || text.is_empty() {
                         return;
                     }
-                    let start = lines.len();
                     if let Some(inc) = stream.as_mut() {
                         lines.extend_from_slice(inc.render(text, palette, Some(md_width)));
                     } else {
@@ -844,7 +823,6 @@ fn render_message(
                             Some(md_width),
                         ));
                     }
-                    stamp(&mut lines[start..]);
                 };
 
             let paint = ToolPaint {
@@ -983,12 +961,12 @@ fn render_message(
                 && msg.tool_calls.is_empty()
                 && msg.error.is_none();
             if !empty && !still_streaming {
-                let (left, clock) = turn_done_footer(msg, is_last, app);
-                let ts_style = Style::default().fg(palette.dim);
-                let mut epi = vec![meta_gutter()];
-                epi.push(Span::styled(left, ts_style));
+                let epi = vec![
+                    meta_gutter(),
+                    Span::styled(turn_done_footer(msg), Style::default().fg(palette.dim)),
+                ];
                 lines.push(Line::from(""));
-                lines.push(line_with_right(epi, clock.as_deref(), ts_style, width));
+                lines.push(Line::from(epi));
             }
         }
         ChatRole::System => {
@@ -1084,8 +1062,17 @@ fn thinking_lines(
     } else {
         None
     };
+    // The header leads with the same bullet as a tool call (thinking
+    // colour while live, dim when done); the rail marks only the body.
     let mut rail_row = 0usize;
-    let header_line = accent_line(header_spans, true, rail_at(rail_row));
+    let bullet = Style::default().fg(if live_rail {
+        palette.thinking
+    } else {
+        palette.dim
+    });
+    let mut bulleted = vec![Span::styled(TOOL_BULLET.to_string(), bullet)];
+    bulleted.extend(header_spans);
+    let header_line = Line::from(bulleted);
     rail_row += 1;
     if let Some(ref right) = right {
         lines.push(line_with_right(
@@ -1199,58 +1186,17 @@ fn meta_gutter() -> Span<'static> {
 }
 
 /// Grok `scrollback.blocks.tool.bullet = "diamond"`.
-const TOOL_BULLET: &str = "• ";
+const TOOL_BULLET: &str = "◆ ";
+/// Leads a collapsed run of tool calls ("◈ Read 3 files, Ran 2 commands").
+const GROUP_BULLET: &str = "◈ ";
 
-/// Put `clock` on the first non-empty line. Returns whether it landed.
-fn stamp_first_content_line(
-    lines: &mut [Line<'static>],
-    clock: Option<&str>,
-    style: Style,
-    width: u16,
-) -> bool {
-    let Some(clock) = clock.filter(|s| !s.is_empty()) else {
-        return false;
-    };
-    for line in lines.iter_mut() {
-        if !line_has_content(line) {
-            continue;
-        }
-        if line.spans.iter().any(|s| s.content.as_ref() == clock) {
-            return true;
-        }
-        let left = std::mem::take(&mut line.spans);
-        *line = line_with_right(left, Some(clock), style, width);
-        return true;
-    }
-    false
-}
-
-/// Grok session event: `Worked for 12s` (+ optional token usage on last turn).
-///
-/// Matches pager `SessionEvent::TurnCompleted` wording — past tense, no agent
-/// badge, no `▣`. Cancelled turns are separate system messages.
-fn turn_done_footer(
-    msg: &crate::app::ChatMessage,
-    is_last: bool,
-    app: &TuiApp,
-) -> (String, Option<String>) {
-    let mut s = match msg.duration_ms {
+/// Turn footer: `Worked for 12s`, past tense, muted. Token counts live in
+/// the turn status while it runs and in the context meter after.
+fn turn_done_footer(msg: &crate::app::ChatMessage) -> String {
+    match msg.duration_ms {
         Some(ms) => format!("Worked for {}", crate::app::format_elapsed_ms(ms)),
         None => "Done.".to_string(),
-    };
-    // Token summary only for the most recent finished turn (session totals live elsewhere).
-    if is_last
-        && let Some(ref usage) = app.turn_usage
-        && (usage.input_tokens > 0 || usage.output_tokens > 0)
-    {
-        s.push_str(" · ");
-        s.push_str(&crate::app::format_usage_short(usage));
     }
-    (s, Some(message_clock(msg)))
-}
-
-fn message_clock(msg: &crate::app::ChatMessage) -> String {
-    crate::ui::timefmt::format_clock(msg.created_at.unwrap_or_else(chrono::Utc::now))
 }
 
 /// Grok `prompt_arrow()`: U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK + space.
@@ -1265,18 +1211,12 @@ fn sticky_user_lines(
     width: u16,
     is_selected: bool,
 ) -> Vec<Line<'static>> {
-    let ts = message_clock(msg);
     let band = palette.prompt_band(is_selected);
     let band_style = Style::default().bg(band);
     let prefix_style = Style::default().fg(palette.user_msg).bg(band);
     let body_style = Style::default().fg(palette.fg).bg(band);
-    let ts_style = Style::default().fg(palette.dim).bg(band);
     let first = msg.content.lines().next().unwrap_or("").trim();
-    let ts_reserve = UnicodeWidthStr::width(ts.as_str()).saturating_add(2) as u16;
-    let first_w = width
-        .saturating_sub(PROMPT_ARROW_WIDTH)
-        .saturating_sub(ts_reserve)
-        .max(4);
+    let first_w = width.saturating_sub(PROMPT_ARROW_WIDTH).max(4);
     let slice = if first.is_empty() {
         " ".to_string()
     } else {
@@ -1289,8 +1229,8 @@ fn sticky_user_lines(
                 Span::styled(PROMPT_ARROW.to_string(), prefix_style),
                 Span::styled(slice, body_style),
             ],
-            Some(ts.as_str()),
-            ts_style,
+            None,
+            band_style,
             width,
         ),
     ]
@@ -1951,7 +1891,7 @@ fn verb_group_line(run: &[ToolRef<'_>], paint: ToolPaint<'_>) -> Line<'static> {
         Style::default().fg(paint.palette.dim)
     };
     Line::from(vec![
-        Span::styled(TOOL_BULLET.to_string(), style),
+        Span::styled(GROUP_BULLET.to_string(), style),
         Span::styled(text, style),
     ])
 }

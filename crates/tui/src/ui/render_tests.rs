@@ -22,9 +22,10 @@ fn strip_status_chrome_drops_cancel_and_spinner() {
 #[test]
 fn turn_status_detail_skips_generic_generating() {
     assert_eq!(turn_status_detail("Generating…", "generating 1.2s"), "");
+    // Per-request bookkeeping is not shown as an activity.
     assert_eq!(
-        turn_status_detail("LLM request (step 1)…  [Esc cancel]", "generating 1.2s"),
-        "LLM request (step 1)…"
+        turn_status_detail("LLM request (step 1)…  [Esc cancel]", "Responding…"),
+        ""
     );
     assert_eq!(
         turn_status_detail("Running tool `read`…", "generating 3s"),
