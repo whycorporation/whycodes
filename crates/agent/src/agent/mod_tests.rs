@@ -3709,3 +3709,11 @@ fn with_agents_md_lists_custom_agents() {
     assert!(p.contains("# Custom agents"), "{p}");
     assert!(p.contains("`reviewer`: Reviews diffs for bugs"), "{p}");
 }
+
+#[test]
+fn shared_tools_reuse_the_same_executor() {
+    let first = test_agent();
+    let second = test_agent().with_shared_tools(first.shared_tools());
+    assert!(Arc::ptr_eq(&first.tool_executor, &second.tool_executor));
+    assert_eq!(second.mcp_servers().len(), first.mcp_servers().len());
+}
