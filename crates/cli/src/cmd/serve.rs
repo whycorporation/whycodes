@@ -93,6 +93,16 @@ pub(crate) async fn cmd_connect(
 
 /// `serve` — Warm multi-session API + local share server.
 ///
+/// Config the daemon serves `project_dir` with: global, then the project's
+/// `.whycodes/config.toml`, then `WHYCODES_*` overrides, plus markdown
+/// commands. The daemon belongs to one project, so its settings apply.
+#[cfg(feature = "server")]
+pub(crate) fn serve_config(project_dir: &std::path::Path) -> anyhow::Result<Config> {
+    let mut config = Config::load_layered(project_dir)?;
+    config.load_command_files(project_dir);
+    Ok(config)
+}
+
 /// Loads config, MCP, plugins, and a workspace file index once so clients
 /// reconnect without cold startup cost (jcode/OpenCode daemon spirit).
 #[cfg(feature = "server")]
@@ -109,8 +119,7 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
     println!("{}", serve_start_line(port));
     println!("  project: {}", project_dir.display());
 
-    let mut config = Config::load_or_create()?;
-    config.load_command_files(&project_dir);
+    let config = serve_config(&project_dir)?;
     let agent_info = config
         .default_agent()
         .cloned()
