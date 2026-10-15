@@ -11209,3 +11209,14 @@ fn doctor_memory_label_covers_each_platform_shape() {
     assert_eq!(memory_label(Some(3 * mb), None), "3.0 MB resident");
     assert_eq!(memory_label(None, None), "n/a on this platform");
 }
+
+#[test]
+fn preconnect_waits_for_a_typed_prompt_in_a_local_session() {
+    assert!(should_preconnect("fix the bug", true, false));
+    assert!(should_preconnect("  x", true, false));
+    assert!(!should_preconnect("", true, false));
+    assert!(!should_preconnect("   ", true, false));
+    assert!(!should_preconnect(" /doctor", true, false));
+    assert!(!should_preconnect("fix the bug", false, false));
+    assert!(!should_preconnect("fix the bug", true, true));
+}

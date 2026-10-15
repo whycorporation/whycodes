@@ -2306,6 +2306,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         &rt.pending_perm_queue,
                     );
                 } // for ev in batch
+                if should_preconnect(
+                    &app.input_buffer,
+                    config.session.preconnect,
+                    remote.is_some(),
+                ) {
+                    rt.agent.preconnect(&provider);
+                }
             }
 
             // Also drain on idle ticks: a click that closed the dialog must
@@ -6176,4 +6183,11 @@ fn spawn_model_context_fetch(
 
 fn skip_model_catalog() -> bool {
     std::env::var_os("WHYCODES_NO_MODEL_CATALOG").is_some()
+}
+
+/// Open the provider connection once a prompt is being typed. Not for a slash
+/// command, and not when attached to a daemon, which makes the requests.
+fn should_preconnect(input: &str, enabled: bool, remote: bool) -> bool {
+    let input = input.trim_start();
+    enabled && !remote && !input.is_empty() && !input.starts_with('/')
 }

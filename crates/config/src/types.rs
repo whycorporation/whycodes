@@ -1379,6 +1379,10 @@ pub struct SessionConfig {
     /// Process-local text-only response cache: `auto` (default) or `off`.
     #[serde(default = "default_response_cache")]
     pub response_cache: String,
+    /// Open the provider connection while the prompt is being typed, so the
+    /// first request skips DNS/TCP/TLS setup. Sends no credentials or prompt.
+    #[serde(default = "default_true")]
+    pub preconnect: bool,
     /// Heuristic intent posture for build turns: `auto` (default), `off`, or `always`.
     ///
     /// When enabled, high-confidence question/plan signals inject an ephemeral
@@ -1494,6 +1498,7 @@ impl Default for SessionConfig {
             race_after_ms: default_race_after_ms(),
             fallback_models: Vec::new(),
             response_cache: default_response_cache(),
+            preconnect: true,
             intent_guidance: default_intent_guidance(),
             compaction_llm: default_compaction_llm(),
             reasoning_effort: None,
