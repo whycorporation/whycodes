@@ -11197,3 +11197,15 @@ fn idle_heap_trim_retrims_while_idle_after_the_interval() {
     maybe_idle_heap_trim(false, crate::heap::IDLE_TRIM_AFTER, &mut armed);
     assert!(!armed, "disarmed idle only retrims on the long interval");
 }
+
+#[test]
+fn doctor_memory_label_covers_each_platform_shape() {
+    use super::persist::memory_label;
+    let mb = 1024 * 1024;
+    assert_eq!(
+        memory_label(Some(22 * mb), Some(mb / 2)),
+        "22.0 MB resident, 0.5 MB retained by the allocator"
+    );
+    assert_eq!(memory_label(Some(3 * mb), None), "3.0 MB resident");
+    assert_eq!(memory_label(None, None), "n/a on this platform");
+}
