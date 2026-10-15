@@ -974,10 +974,12 @@ fn stale_layout_cache_scroll_paint_does_not_panic() {
     fill_overflowing_chat(&mut app, 16);
     paint_session(&mut app, 40, 10);
     assert!(
-        app.messages
-            .iter()
-            .all(|m| m.layout_cache.is_some() && m.line_cache.is_some()),
-        "first paint must fill caches"
+        app.messages.iter().all(|m| m.layout_cache.is_some()),
+        "first paint must fill height caches"
+    );
+    assert!(
+        app.messages.last().is_some_and(|m| m.line_cache.is_some()),
+        "and line caches near the viewport"
     );
 
     // Under-count every closed bubble so starts[] no longer match line counts.

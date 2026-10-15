@@ -157,6 +157,23 @@ fn last_scrolled_past_user(app: &TuiApp, starts: &[usize], view_start: usize) ->
 
 /// Message index range whose rows intersect `[view_start, view_end)`.
 ///
+/// Messages on each side of the painted range that keep their rendered lines.
+pub const LINE_CACHE_MARGIN: usize = 24;
+
+/// Drop the rendered lines of messages far from the viewport. Their heights
+/// stay cached, so layout does not render them again; scrolling back to one
+/// renders it once more. Without this a long session kept every message's
+/// styled lines, several times the size of the transcript itself.
+fn drop_far_line_caches(app: &mut TuiApp, painted: std::ops::Range<usize>) {
+    let keep_from = painted.start.saturating_sub(LINE_CACHE_MARGIN);
+    let keep_to = painted.end.saturating_add(LINE_CACHE_MARGIN);
+    for (i, msg) in app.messages.iter_mut().enumerate() {
+        if i < keep_from || i >= keep_to {
+            msg.line_cache = None;
+        }
+    }
+}
+
 /// Grok `compute_paint_window`: `starts` is a prefix-sum of heights, so
 /// two `partition_point`s replace a linear scan of the whole transcript.
 pub fn visible_message_range(
@@ -341,7 +358,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     }
 
     let paint = visible_message_range(&starts, total, view_start, view_end);
-    for i in paint {
+    for i in paint.clone() {
         let msg_start = starts[i];
 
         let selected =
@@ -418,6 +435,8 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
             );
         }
     }
+
+    drop_far_line_caches(app, paint);
 
     // If layout undershot (stale height), blank any leftover rows so scroll
     // cannot leave ghost glyphs from the previous frame. Stay inside the
