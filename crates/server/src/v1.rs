@@ -254,9 +254,7 @@ pub async fn run(
         state_done.perm.finish_run(&sid);
         // The channel itself may never close: a `bash` call hands a sender to
         // the agent's background registry, which lives as long as the daemon.
-        if tx.send(TurnEvent::Status(RUN_DONE.into())).is_err() {
-            tracing::debug!("v1: run stream already gone");
-        }
+        crate::routes::emit_status(&tx, RUN_DONE);
         result
     });
 
