@@ -38,6 +38,14 @@ fn refuse_question_open_work(tool_call_id: &str, detail: &str) -> ToolResult {
     }
 }
 
+/// A result answers `tc`. Most tools leave `tool_call_id` empty; without the
+/// call's id the request repair (`pairing`) treats the call as unanswered,
+/// drops the real output and tells the model the call never ran.
+fn answering(tc: &ToolCall, mut result: ToolResult) -> ToolResult {
+    result.tool_call_id = tc.id.clone();
+    result
+}
+
 fn tool_error_is_retryable(name: &str, result: &ToolResult) -> bool {
     if !result.is_error {
         return false;
@@ -121,6 +129,7 @@ impl Agent {
                     }
                 }
             };
+            let result = answering(tc, result);
             emit(
                 events,
                 TurnEvent::ToolEnd {
@@ -186,6 +195,11 @@ impl Agent {
                 }
                 r = futures::future::join_all(futs) => r,
             };
+            let results: Vec<ToolResult> = tool_calls
+                .iter()
+                .zip(results)
+                .map(|(tc, result)| answering(tc, result))
+                .collect();
             for (tc, result) in tool_calls.iter().zip(results.iter()) {
                 emit(
                     events,
@@ -232,6 +246,7 @@ impl Agent {
                     }
                 }
             };
+            let result = answering(tc, result);
             emit(
                 events,
                 TurnEvent::ToolEnd {

@@ -294,6 +294,9 @@ impl ToolExecutor {
                     }
                 } else {
                     let mut result = tool.execute(call.arguments.clone(), ctx).await;
+                    // Tools leave the id empty; a result without its call's id
+                    // is dropped from the request as an orphan.
+                    result.tool_call_id = call.id.clone();
                     if matches!(call.name.as_str(), "edit" | "write") {
                         if self.format_after_write.load(Ordering::Relaxed) {
                             crate::formatter::format_written_file(

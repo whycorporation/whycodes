@@ -2512,3 +2512,56 @@ async fn steering_message_reaches_the_next_step_after_tool_results() {
         .expect("tool result in history");
     assert!(steer_at > result_at, "steering lands after the tool result");
 }
+
+/// Tools return results with an empty `tool_call_id`; the agent must stamp
+/// the call's id, or the request repair (`pairing`) drops the real output
+/// and tells the model the call never ran.
+#[tokio::test]
+async fn tool_results_carry_their_call_id_on_every_execution_path() {
+    let call = |id: &str, name: &str, input: serde_json::Value| ScriptedStep::ToolCall {
+        id: id.into(),
+        name: name.into(),
+        input,
+    };
+    let agent = batched([
+        // Single call.
+        vec![call("g1", "glob", json!({"pattern": "*.rs"}))],
+        // Parallel read-only batch.
+        vec![
+            call("g2", "glob", json!({"pattern": "*.rs"})),
+            call("l3", "list", json!({"path": "."})),
+        ],
+        // Mixed batch: runs sequentially.
+        vec![
+            call("g4", "glob", json!({"pattern": "*.rs"})),
+            call("b5", "bash", json!({"command": "echo hi"})),
+        ],
+        vec![ScriptedStep::Text("done".into())],
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
+    let mut session = session_at(dir.path(), "look around");
+    agent
+        .run_turn_with_events(&mut session, opts(None))
+        .await
+        .unwrap();
+
+    let answered: Vec<(&str, String)> = session
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .map(|m| {
+            (
+                m.tool_call_id.as_deref().unwrap_or(""),
+                m.content.as_text().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    let ids: Vec<&str> = answered.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids, ["g1", "g2", "l3", "g4", "b5"], "{answered:?}");
+    assert!(
+        whycodes_session::pairing::paired_messages(&session.messages).is_none(),
+        "the request repair had to replace real results"
+    );
+    assert!(answered[0].1.contains("main.rs"), "{answered:?}");
+}

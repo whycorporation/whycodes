@@ -715,3 +715,25 @@ async fn write_runs_the_project_formatter_body() {
         "fn  f(){}\n"
     );
 }
+
+#[tokio::test]
+async fn execute_stamps_the_call_id_on_the_tool_result() {
+    // Built-in tools return an empty `tool_call_id`; the executor owns the id.
+    let ex = ToolExecutor::new();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy());
+    for (name, args) in [
+        ("glob", json!({"pattern": "*.rs"})),
+        ("list", json!({"path": "."})),
+    ] {
+        let call = ToolCall {
+            id: format!("call-{name}"),
+            name: name.into(),
+            arguments: args,
+        };
+        let res = ex.execute(&call, &ctx, &PermissionSet::default()).await;
+        assert!(!res.is_error, "{name}: {}", res.content);
+        assert_eq!(res.tool_call_id, call.id);
+    }
+}
