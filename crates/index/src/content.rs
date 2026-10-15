@@ -155,6 +155,10 @@ pub fn required_trigrams(pattern: &str, case_insensitive: bool) -> Option<Vec<u3
 /// Original-case trigrams plus ASCII-lowercased ones so a case-insensitive
 /// query can prune without hiding a case-sensitive match (false positives
 /// are confirmed by the grep engine; false negatives are not).
+///
+/// The result stays resident for the daemon's life, so it gives back the
+/// spare capacity: the vector is built from one entry per byte and dedup
+/// keeps only a fraction of them.
 fn extract_indexed_trigrams(bytes: &[u8]) -> Vec<u32> {
     let mut v = extract_trigrams(bytes);
     let lower = ascii_lower(bytes);
@@ -163,6 +167,7 @@ fn extract_indexed_trigrams(bytes: &[u8]) -> Vec<u32> {
         v.sort_unstable();
         v.dedup();
     }
+    v.shrink_to_fit();
     v
 }
 

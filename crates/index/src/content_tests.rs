@@ -23,6 +23,15 @@ fn pack_and_extract_unique_sorted() {
 }
 
 #[test]
+fn indexed_trigrams_keep_no_spare_capacity() {
+    let text = "fn main() {}\n".repeat(200);
+    for bytes in [text.as_bytes(), text.to_uppercase().as_bytes()] {
+        let tris = extract_indexed_trigrams(bytes);
+        assert_eq!(tris.capacity(), tris.len());
+    }
+}
+
+#[test]
 fn required_trigrams_literal_and_escape() {
     let t = required_trigrams("fn main", false).unwrap();
     assert!(t.contains(&pack_trigram(b'f', b'n', b' ')));
