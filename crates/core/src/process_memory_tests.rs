@@ -54,7 +54,7 @@ fn measurements_exist_on_linux_glibc_only() {
 #[test]
 fn watch_trims_on_growth_past_a_baseline_that_only_moves_down() {
     let mut watch = RetentionWatch::new(16 * MIB);
-    let unused = || panic!("no trim expected");
+    let unused: fn() -> Option<u64> = || panic!("no trim expected");
 
     assert!(!watch.observe(40 * MIB, "t", unused));
     assert_eq!(watch.baseline(), Some(40 * MIB));

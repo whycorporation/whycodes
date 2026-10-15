@@ -117,7 +117,7 @@ impl RetentionWatch {
         &mut self,
         retained: u64,
         reason: &'static str,
-        after_trim: impl FnOnce() -> Option<u64>,
+        after_trim: fn() -> Option<u64>,
     ) -> bool {
         let baseline = *self.baseline.get_or_insert(retained);
         if retained < baseline {
