@@ -1182,11 +1182,21 @@ impl Agent {
     /// Append project instruction files (AGENTS.md and sibling conventions)
     /// plus runtime context to a system prompt.
     pub fn with_agents_md(system_prompt: &str, project_path: &std::path::Path) -> String {
+        Self::with_agents_md_in(system_prompt, project_path, project_path)
+    }
+
+    /// [`Self::with_agents_md`] for an agent that works somewhere other than
+    /// the project root, e.g. a swarm worker in its own git worktree.
+    pub fn with_agents_md_in(
+        system_prompt: &str,
+        project_path: &std::path::Path,
+        working_dir: &std::path::Path,
+    ) -> String {
         let with_files =
             crate::context_files::append_project_instructions(system_prompt, project_path);
         let with_skills = append_skills_catalog(&with_files, project_path);
         let with_agents = append_custom_agents_catalog(&with_skills, project_path);
-        Self::with_runtime_context_in(&with_agents, Some(project_path))
+        Self::with_runtime_context_in(&with_agents, Some(working_dir))
     }
 
     /// Resolve provider + model + key for a title refine call, or `None` if
