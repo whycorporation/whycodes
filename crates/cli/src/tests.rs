@@ -6758,3 +6758,21 @@ fn resume_with_fork_saves_a_copy_and_keeps_the_original() {
         .expect("original kept");
     assert_eq!(original.title, "retry loop");
 }
+
+#[cfg(feature = "server")]
+#[test]
+fn serve_config_applies_the_project_layer() {
+    let _home = IsolatedHome::new();
+    let proj = tempfile::tempdir().unwrap();
+    let cfg = crate::cmd::serve_config(proj.path()).unwrap();
+    assert_eq!(cfg.session.cache_warm_minutes, 0);
+
+    std::fs::create_dir_all(proj.path().join(".whycodes")).unwrap();
+    std::fs::write(
+        proj.path().join(".whycodes").join("config.toml"),
+        "[session]\ncache_warm_minutes = 7\n",
+    )
+    .unwrap();
+    let cfg = crate::cmd::serve_config(proj.path()).unwrap();
+    assert_eq!(cfg.session.cache_warm_minutes, 7);
+}

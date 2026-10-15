@@ -80,7 +80,9 @@ are set — never values or tokens).
 invoke on a TTY offers takeover; stale locks (dead PID, 24h, clock skew)
 are removed. CI and `whycodes serve --no-takeover` exit non-zero instead
 of prompting. `whycodes connect` names the lock holder when the daemon is
-unreachable.
+unreachable. The daemon serves the directory it starts in and reads the same
+layered config as the TUI there: global, then `<project>/.whycodes/config.toml`,
+then `WHYCODES_*`.
 
 The prompt is positional: `whycodes generate "<prompt>"`, not `whycodes -p`.
 `generate` (and `run --format json|stream-json`) accept `-t, --max-turns <N>` as
