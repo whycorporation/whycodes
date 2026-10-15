@@ -133,11 +133,32 @@ pub fn format_worker_report(
 ) -> String {
     let mark = if success { "✓" } else { "✕" };
     let body = ensure_tldr(body);
+    let goal = goal_label(goal);
     format!(
         "### {worker_id} ({subagent_type}) {mark} {duration_secs:.1}s\n\
          **Goal:** {goal}\n\n\
          {body}\n"
     )
+}
+
+/// Longest goal label in a worker report.
+const GOAL_LABEL_CHARS: usize = 120;
+
+/// The goal's first line, cut to [`GOAL_LABEL_CHARS`]. The parent wrote the
+/// whole goal (often with file contents and requirements); echoing it back
+/// per worker cost hundreds of tokens just to say which worker this is.
+fn goal_label(goal: &str) -> String {
+    let first = goal
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let more = first.chars().count() > GOAL_LABEL_CHARS || goal.trim() != first;
+    let mut label: String = first.chars().take(GOAL_LABEL_CHARS).collect();
+    if more {
+        label.push('…');
+    }
+    label
 }
 
 /// Aggregate wall-clock summary header.
