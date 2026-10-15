@@ -168,15 +168,12 @@ mod glibc {
     }
 
     pub(super) fn set_limits(arena_max: i32, mmap_threshold: i32) {
-        // SAFETY: mallopt only adjusts allocator tunables; invalid values are
-        // rejected by glibc with a 0 return.
-        unsafe {
-            if arena_max > 0 {
-                mallopt(M_ARENA_MAX, arena_max);
-            }
-            if mmap_threshold > 0 {
-                mallopt(M_MMAP_THRESHOLD, mmap_threshold);
-            }
+        let limits = [(M_ARENA_MAX, arena_max), (M_MMAP_THRESHOLD, mmap_threshold)];
+        // A value of 0 (or less) leaves glibc's own setting.
+        for (param, value) in limits.into_iter().filter(|&(_, v)| v > 0) {
+            // SAFETY: mallopt only adjusts allocator tunables; invalid values
+            // are rejected by glibc with a 0 return.
+            unsafe { mallopt(param, value) };
         }
     }
 
