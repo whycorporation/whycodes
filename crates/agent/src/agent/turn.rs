@@ -452,7 +452,7 @@ impl Agent {
                             blocks.push(ContentBlock::Text {
                                 text: accumulated_text.clone(),
                             });
-                            final_text.push_str(&accumulated_text);
+                            append_step_text(&mut final_text, &accumulated_text);
                         }
                         if !blocks.is_empty() {
                             session.add_assistant_message(blocks);
@@ -699,7 +699,7 @@ impl Agent {
                 blocks.push(ContentBlock::Text {
                     text: accumulated_text.clone(),
                 });
-                final_text.push_str(&accumulated_text);
+                append_step_text(&mut final_text, &accumulated_text);
             }
 
             for tc in &tool_calls {
@@ -929,6 +929,23 @@ impl Agent {
 
         Ok(final_text)
     }
+}
+
+/// Add one step's text to the turn's text, a blank line apart: each step is
+/// its own message, and gluing them read "…in parallel.The stubs match…".
+fn append_step_text(final_text: &mut String, step: &str) {
+    if step.trim().is_empty() {
+        return;
+    }
+    if final_text.trim().is_empty() {
+        final_text.clear();
+        final_text.push_str(step);
+        return;
+    }
+    let end = final_text.trim_end().len();
+    final_text.truncate(end);
+    final_text.push_str("\n\n");
+    final_text.push_str(step.trim_start());
 }
 
 fn take_pending_usage(
