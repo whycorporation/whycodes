@@ -667,6 +667,10 @@ auto_inject = true
 auto_retain = true
 ```
 
+`whycodes generate` keeps the local retain pass and waits up to 5 seconds
+for it before exiting, but skips the extra model call that extracts facts
+when the local pass finds none.
+
 `whycodes --no-memory` disables the subsystem for one run. The default
 embedder is a local hashing model; `--features onnx` adds MiniLM
 (`whycodes memory onnx-smoke` verifies the download).

@@ -1561,8 +1561,26 @@ pub(crate) async fn run_init_agents_md(
     Ok(agents_path.display().to_string())
 }
 
+/// Longest `generate` waits after its turns for local memory work to finish.
+const GENERATE_MEMORY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// `generate` — Non-interactive code generation (supports `--format` for CI).
 pub(crate) async fn cmd_generate(
+    cli: &Cli,
+    prompts: &[String],
+    max_turns: Option<usize>,
+    jobs: usize,
+    format: OutputFormat,
+    approve_tools: bool,
+) -> anyhow::Result<()> {
+    let result = generate_prompts(cli, prompts, max_turns, jobs, format, approve_tools).await;
+    // Post-turn memory work runs on spawned tasks; returning drops the runtime
+    // and would cancel it halfway.
+    whycodes_agent::memory_retain::finish_post_turn_retain(GENERATE_MEMORY_WAIT).await;
+    result
+}
+
+async fn generate_prompts(
     cli: &Cli,
     prompts: &[String],
     max_turns: Option<usize>,
@@ -1577,6 +1595,9 @@ pub(crate) async fn cmd_generate(
     if cli.no_memory {
         config.memory.enabled = false;
     }
+    // One-shot runs keep the local memory pass but skip the extra model call
+    // that extracts facts: it would add a paid request and seconds per run.
+    config.memory.retain_llm = false;
     config.load_command_files(&project_dir);
     let provider = resolve_provider(cli, &config);
     let model = resolve_model(cli, &config);

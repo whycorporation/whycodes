@@ -3749,3 +3749,16 @@ async fn preconnect_dials_only_a_known_http_provider() {
     assert!(a.preconnect("ollama"));
     assert!(!a.preconnect("ollama"), "dialled once per window");
 }
+
+/// Prompt files ship inside the binary via `include_str!`. A CRLF checkout
+/// (Windows, `core.autocrlf`) used to put a `\r` on every line of the prompt
+/// Windows users sent; `.gitattributes` pins them to LF.
+#[test]
+fn built_in_prompts_have_no_carriage_returns() {
+    for name in [
+        "build", "plan", "ask", "explore", "general", "scout", "other",
+    ] {
+        let prompt = Agent::system_prompt_for(name);
+        assert!(!prompt.contains('\r'), "{name} prompt has CR line endings");
+    }
+}

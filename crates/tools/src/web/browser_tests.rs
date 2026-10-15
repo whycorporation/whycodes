@@ -856,12 +856,26 @@ fn uncovered_io_error_arms() {
     let _ = http_get(&format!("http://{addr}/json/version"));
     server.join().ok();
 
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    drop(listener);
-    let connect =
-        ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({})).unwrap_err();
-    assert!(connect.contains("cdp connect"), "{connect}");
+    // A freed port can be taken by a parallel test, which then accepts and
+    // resets the socket; try fresh ports until one is refused. (Port 0 is no
+    // way out: on Linux a dial to it hangs until the timeout.)
+    let mut errors = Vec::new();
+    for _ in 0..5 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        drop(listener);
+        let err =
+            ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({})).unwrap_err();
+        let refused = err.contains("cdp connect");
+        errors.push(err);
+        if refused {
+            break;
+        }
+    }
+    assert!(
+        errors.iter().any(|e| e.contains("cdp connect")),
+        "{errors:?}"
+    );
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");

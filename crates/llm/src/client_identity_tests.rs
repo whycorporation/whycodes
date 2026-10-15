@@ -112,3 +112,57 @@ fn plugin_identity_applies_ua_and_skips_user_agent_header() {
     );
     let _ = post("https://example.invalid/");
 }
+
+/// Local gateways usually listen on 127.0.0.1 only. `localhost` resolves to
+/// `::1` first, and on Windows a refused IPv6 dial costs ~300 ms before the
+/// IPv4 fallback; the shared client tries IPv4 first.
+#[tokio::test]
+async fn localhost_reaches_an_ipv4_only_server_without_the_ipv6_detour() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                if sock.read(&mut buf).await.is_ok() {
+                    let reply = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
+                    sock.write_all(reply.as_bytes()).await.ok();
+                }
+            });
+        }
+    });
+    let started = std::time::Instant::now();
+    let reply = http_client()
+        .get(format!("http://localhost:{port}/"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), 204);
+    let took = started.elapsed();
+    assert!(took < std::time::Duration::from_millis(250), "{took:?}");
+}
+
+#[tokio::test]
+async fn localhost_still_reaches_an_ipv6_only_server() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let Ok(listener) = tokio::net::TcpListener::bind("[::1]:0").await else {
+        return; // no IPv6 loopback on this host
+    };
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        if let Ok((mut sock, _)) = listener.accept().await {
+            let mut buf = [0u8; 4096];
+            if sock.read(&mut buf).await.is_ok() {
+                let reply = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
+                sock.write_all(reply.as_bytes()).await.ok();
+            }
+        }
+    });
+    let reply = http_client()
+        .get(format!("http://localhost:{port}/"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), 204);
+}

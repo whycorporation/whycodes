@@ -11,6 +11,10 @@
 *.json text eol=lf
 *.py   text eol=lf
 
+# Agent prompts are compiled in with `include_str!`; a CRLF checkout would
+# ship a `` on every prompt line in Windows builds.
+*.txt  text eol=lf
+
 # Shell scripts must keep LF in the working tree, not just in the repository.
 # A CRLF shebang line fails with "bad interpreter", and these run on machines
 # that have never seen this project before.
