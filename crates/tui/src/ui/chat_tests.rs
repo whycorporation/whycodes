@@ -1003,60 +1003,40 @@ fn assistant_answer_renders_after_tools() {
 }
 
 #[test]
-fn assistant_reply_puts_clock_on_the_first_content_line() {
+fn a_finished_reply_shows_no_clock_and_a_plain_footer() {
     use crate::app::{ChatRole, TuiApp};
     use crate::config::TuiAppConfig;
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.add_message(ChatRole::User, "hi");
     app.add_message(ChatRole::Assistant, "hello from the agent");
     app.messages[1].duration_ms = Some(1200);
-    let palette = app.config.palette();
-    let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80, None, false);
-    let answer = lines
-        .iter()
-        .find(|l| {
-            l.spans
-                .iter()
-                .any(|s| s.content.contains("hello from the agent"))
-        })
-        .expect("assistant body");
-    let text: String = answer.spans.iter().map(|s| s.content.as_ref()).collect();
-    let hello_at = text.find("hello").expect("answer text");
-    let colon = text.rfind(':').expect("h:mm AM/PM clock on the reply");
-    assert!(
-        colon > hello_at,
-        "Grok puts the clock on the right of the agent line, got {text:?}"
-    );
-    assert!(
-        text.contains("AM") || text.contains("PM"),
-        "Grok bubble clock is 12-hour, got {text:?}"
-    );
-    let footer = lines
-        .iter()
-        .find(|l| l.spans.iter().any(|s| s.content.contains("Worked for")))
-        .expect("turn footer");
-    let foot: String = footer.spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(
-        foot.contains(':'),
-        "Worked for line also carries the clock, got {foot:?}"
-    );
-
     app.turn_usage = Some(whycodes_core::types::Usage {
         input_tokens: 1200,
         output_tokens: 80,
         cache_creation_input_tokens: None,
         cache_read_input_tokens: None,
     });
-    let (left, _) = super::turn_done_footer(&app.messages[1], true, &app);
-    assert!(
-        left.contains("Worked for") && (left.contains("in") || left.contains("·")),
-        "last finished turn must append usage, got {left}"
+    let palette = app.config.palette();
+    let mut texts = Vec::new();
+    for i in 0..2 {
+        let lines = super::render_message(&app.messages[i], &app, &palette, i, 80, None, false);
+        texts.extend(lines.iter().map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        }));
+    }
+    let all = texts.join(
+        "
+",
     );
-    let (left, _) = super::turn_done_footer(&app.messages[1], false, &app);
-    assert!(
-        !left.contains("in") && !left.contains("out"),
-        "non-last turns must not append token usage, got {left}"
-    );
+    assert!(!all.contains("AM") && !all.contains("PM"), "{all}");
+    let footer = texts
+        .iter()
+        .find(|t| t.contains("Worked for"))
+        .expect("turn footer");
+    assert_eq!(footer.trim(), "Worked for 1.2s", "{footer:?}");
 }
 
 #[test]
@@ -1111,7 +1091,7 @@ fn collapsed_thinking_has_no_trailing_chevron() {
 }
 
 #[test]
-fn first_user_bubble_keeps_clock_on_the_right() {
+fn a_user_bubble_shows_no_clock() {
     use crate::app::{ChatRole, TuiApp};
     use crate::config::TuiAppConfig;
     let mut app = TuiApp::new(TuiAppConfig::default());
@@ -1124,16 +1104,7 @@ fn first_user_bubble_keeps_clock_on_the_right() {
         .expect("first bubble ❯ row");
     let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(text.contains("hello from history"), "got {text:?}");
-    let hello_at = text.find("hello").expect("prompt text");
-    let colon = text.rfind(':').expect("h:mm AM/PM clock");
-    assert!(
-        colon > hello_at,
-        "clock must sit to the right, got {text:?}"
-    );
-    assert!(
-        text.contains("AM") || text.contains("PM"),
-        "Grok bubble clock is 12-hour, got {text:?}"
-    );
+    assert!(!text.contains("AM") && !text.contains("PM"), "got {text:?}");
 }
 
 #[test]
@@ -2311,39 +2282,7 @@ fn user_prompt_empty_body_and_image_placeholder_skip() {
 }
 
 #[test]
-fn stamp_first_content_line_skips_empty_clock_and_already_stamped() {
-    let style = Style::default().fg(Color::Gray);
-    let mut empty = vec![Line::from("")];
-    assert!(!super::stamp_first_content_line(
-        &mut empty, None, style, 40
-    ));
-    assert!(!super::stamp_first_content_line(
-        &mut empty,
-        Some(""),
-        style,
-        40
-    ));
-
-    let mut blank_then_text = vec![Line::from(""), Line::from(Span::raw("hello"))];
-    assert!(super::stamp_first_content_line(
-        &mut blank_then_text,
-        Some("12:00"),
-        style,
-        40
-    ));
-    let joined: String = blank_then_text
-        .iter()
-        .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
-        .collect();
-    assert!(
-        joined.contains("hello") && joined.contains("12:00"),
-        "clock must land on the first non-empty line, got {joined:?}"
-    );
-    assert!(
-        super::stamp_first_content_line(&mut blank_then_text, Some("12:00"), style, 40),
-        "a line that already carries the clock must return true without restamping"
-    );
-
+fn an_accent_line_without_a_rail_is_just_its_spans() {
     let rail = super::accent_line(vec![Span::raw("body")], false, Style::default());
     let text: String = rail.spans.iter().map(|s| s.content.as_ref()).collect();
     assert_eq!(text, "body");

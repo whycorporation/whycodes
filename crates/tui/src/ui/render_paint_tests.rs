@@ -492,7 +492,7 @@ fn session_scrolled_to_top_still_clears_header() {
 }
 
 #[test]
-fn first_user_bubble_shows_clock_on_the_right() {
+fn first_user_bubble_shows_no_clock() {
     let mut a = app();
     a.add_message(crate::app::ChatRole::User, "FIRST_BUBBLE_MARKER hello");
     let (buf, _) = paint_full_shell(&mut a, 100, 24);
@@ -509,16 +509,14 @@ fn first_user_bubble_shows_clock_on_the_right() {
         row.contains('\u{276F}'),
         "first bubble must be the ❯ prompt row: {row:?}"
     );
-    let marker_at = row.find("FIRST_BUBBLE_MARKER").expect("marker");
-    let clock_at = row.rfind(':').expect("HH:MM clock on the first bubble");
     assert!(
-        clock_at > marker_at,
-        "clock must sit to the right of the first bubble, got {row:?}"
+        !row.contains("AM") && !row.contains("PM"),
+        "no clock: {row:?}"
     );
 }
 
 #[test]
-fn assistant_reply_shows_clock_on_the_right() {
+fn assistant_reply_shows_no_clock() {
     let mut a = app();
     a.add_message(crate::app::ChatRole::User, "ask");
     a.add_message(
@@ -536,11 +534,9 @@ fn assistant_reply_shows_clock_on_the_right() {
         }
     }
     let row = found.expect("agent reply should be painted");
-    let marker_at = row.find("AGENT_REPLY_MARKER").expect("marker");
-    let clock_at = row.rfind(':').expect("HH:MM clock on the agent reply");
     assert!(
-        clock_at > marker_at,
-        "clock must sit to the right of the reply, got {row:?}"
+        !row.contains("AM") && !row.contains("PM"),
+        "no clock: {row:?}"
     );
 }
 
@@ -692,10 +688,9 @@ fn overflow_session_pins_a_user_prompt_at_the_chat_top() {
         top.contains('\u{276F}'),
         "sticky header must be a user ❯ band: {top:?}"
     );
-    // Absolute clock on the pinned prompt (same as a live user bubble).
     assert!(
-        top.contains(':'),
-        "sticky header must keep the clock: {top:?}"
+        !top.contains("AM") && !top.contains("PM"),
+        "no clock: {top:?}"
     );
 }
 
