@@ -1,10 +1,10 @@
-// ── ui/status.rs: Top header + bottom cwd / context bar ────────────────
-// Top: `? whycodes` (fg why, dim codes) · project · shortcuts.
-// Bottom: git branch + cwd (click-to-copy, hover underline) · Grok context bar.
+// ── ui/status.rs: top location bar + bottom shortcuts bar ──────────────
+// Top: git branch + cwd (click-to-copy, hover underline) on the left; goal,
+// background jobs and the context meter on the right.
+// Bottom: context-aware `Key:label  │  Key:label` shortcuts.
 
 use crate::app::{AgentState, AppMode, FocusPane, TuiApp};
 use crate::theme::ThemePalette;
-use crate::tokens::HEADER_MARK;
 use crate::ui::status_bar::StatusBar;
 use ratatui::{
     Frame,
@@ -43,134 +43,77 @@ fn branch_icon_from(nerd_env: Option<&str>, is_windows: bool) -> &'static str {
     }
 }
 
-/// Home-matching wordmark: `? ` then bold fg `why` + dim `codes`.
-fn brand_wordmark(palette: &ThemePalette) -> Vec<Span<'static>> {
-    vec![
-        Span::styled(
-            format!("{HEADER_MARK} "),
-            Style::default()
-                .fg(palette.fg)
-                .bg(palette.bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "why",
-            Style::default()
-                .fg(palette.fg)
-                .bg(palette.bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("codes", Style::default().fg(palette.dim).bg(palette.bg)),
-    ]
+pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
+    render_location(frame, area, app, palette);
 }
 
-pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+/// Bottom chrome: context-aware shortcuts, or how to get started when no
+/// provider key is set up yet.
+pub fn render_footer(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     if area.height == 0 || area.width < 8 {
         return;
     }
-
-    let title_raw = app.session_title.trim();
-    let dir_raw = app.project_label.trim();
-    let label_src = if !title_raw.is_empty() && title_raw != dir_raw {
-        title_raw
-    } else if !dir_raw.is_empty() && !dir_raw.eq_ignore_ascii_case("whycodes") && dir_raw != "." {
-        dir_raw
-    } else {
-        ""
-    };
-    let dir = if !label_src.is_empty() {
-        truncate_start(
-            label_src,
-            ((area.width / 4).max(10)).min(area.width / 3) as usize,
-        )
-    } else {
-        String::new()
-    };
-
     let no_key = app.status_message.contains("no API key")
         || app.status_message.contains("/connect")
         || (app.provider_name.is_empty() && app.messages.is_empty());
-
-    let right: Vec<Span<'_>> = if no_key && matches!(app.current_agent_state, AgentState::Idle) {
+    let spans: Vec<Span<'_>> = if no_key && matches!(app.current_agent_state, AgentState::Idle) {
         vec![
             Span::styled(
                 String::from("Get started "),
                 Style::default().fg(palette.fg),
             ),
             Span::styled(String::from("/connect"), Style::default().fg(palette.dim)),
-            Span::raw(" "),
         ]
     } else {
         shortcuts_spans(app, palette)
     };
-
-    let mut left: Vec<Span<'_>> = brand_wordmark(palette);
-    if !dir.is_empty() {
-        left.push(Span::styled(
-            format!("  ·  {dir}"),
-            Style::default().fg(palette.dim),
-        ));
-    }
-
-    let left_w: usize = left.iter().map(|s| s.content.as_ref().width()).sum();
-    let right_w: usize = right.iter().map(|s| s.content.as_ref().width()).sum();
-    let mid = area
-        .width
-        .saturating_sub(left_w as u16)
-        .saturating_sub(right_w as u16)
-        .saturating_sub(1) as usize;
-
-    let mut spans: Vec<Span<'_>> = left;
-    spans.push(Span::raw(" ".repeat(mid)));
-    spans.extend(right);
-
     frame.render_widget(
         Paragraph::new(Text::from(Line::from(spans))).style(Style::default().bg(palette.bg)),
         area,
     );
 }
 
-/// Grok-style context-aware shortcuts bar (right side of status header).
+/// Context-aware shortcuts: `Key:label` pairs, `  │  ` apart.
 fn shortcuts_spans(app: &TuiApp, palette: &ThemePalette) -> Vec<Span<'static>> {
     let mut parts: Vec<(&str, &str)> = Vec::new();
 
     match app.mode {
         AppMode::Help => {
-            parts.push(("q/esc", "close"));
+            parts.push(("q/Esc", "close"));
         }
         AppMode::Command => {
-            parts.push(("enter", "run"));
-            parts.push(("esc", "back"));
+            parts.push(("Enter", "run"));
+            parts.push(("Esc", "back"));
         }
         AppMode::Dialog => {
             parts.push(("y/n", "confirm"));
-            parts.push(("esc", "close"));
+            parts.push(("Esc", "close"));
         }
         AppMode::Normal | AppMode::Session => {
             if app.is_busy() {
                 if app.queued_turn_count() > 0 {
-                    parts.push(("enter", "queue"));
+                    parts.push(("Enter", "queue"));
                 }
-                parts.push(("esc", "cancel"));
-                parts.push(("tab", "focus"));
+                parts.push(("Esc", "cancel"));
+                parts.push(("Tab", "focus"));
             } else {
                 match app.focus {
                     FocusPane::Prompt => {
-                        parts.push(("enter", "send"));
-                        parts.push(("tab", "scrollback"));
-                        parts.push(("^t", "agent"));
-                        parts.push(("/help", "help"));
+                        parts.push(("Enter", "send"));
+                        parts.push(("Tab", "scrollback"));
+                        parts.push(("Ctrl+T", "agent"));
+                        parts.push(("/", "commands"));
                     }
                     FocusPane::Scrollback => {
                         parts.push(("j/k", "select"));
                         parts.push(("y", "copy"));
                         parts.push(("e", "fold"));
-                        parts.push(("tab", "prompt"));
+                        parts.push(("Tab", "prompt"));
                     }
                     FocusPane::Todos => {
                         parts.push(("j/k", "scroll"));
                         parts.push(("t", "fold"));
-                        parts.push(("tab", "prompt"));
+                        parts.push(("Tab", "prompt"));
                     }
                 }
             }
@@ -181,7 +124,7 @@ fn shortcuts_spans(app: &TuiApp, palette: &ThemePalette) -> Vec<Span<'static>> {
     for (i, (key, label)) in parts.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(
-                " · ".to_string(),
+                "  │  ".to_string(),
                 Style::default().fg(palette.dim),
             ));
         }
@@ -190,11 +133,10 @@ fn shortcuts_spans(app: &TuiApp, palette: &ThemePalette) -> Vec<Span<'static>> {
             Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
-            format!(" {label}"),
+            format!(":{label}"),
             Style::default().fg(palette.dim),
         ));
     }
-    spans.push(Span::raw(" "));
     spans
 }
 
@@ -207,11 +149,12 @@ fn truncate_start(s: &str, max: usize) -> String {
     }
 }
 
-/// Bottom chrome: branch + cwd (left) · Grok context meter (right, via StatusBar).
+/// Location bar: branch + cwd (left) · goal, background jobs and the context
+/// meter (right, via StatusBar).
 ///
 /// Default: `1.2k / 200k` · hover: `████░ 42.0%` (same width). Sticky hover on
 /// `app.context_hit` — never recompute after clearing rect mid-paint.
-pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
+fn render_location(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     // Clear hit rects only (keep sticky hovered flags).
     app.cwd_hit.set_rect(None);
     app.context_hit.set_rect(None);

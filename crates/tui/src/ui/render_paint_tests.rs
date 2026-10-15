@@ -100,7 +100,8 @@ fn turn_status_generating_shows_spinner_label_tokens_and_stop() {
     let (buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("generating"), "{text}");
+    assert!(text.contains("Responding…"), "{text}");
+    assert!(!text.contains("generating"), "{text}");
     assert!(text.contains("tool: read"), "{text}");
     assert!(text.contains("⇣1.3k"), "tokens shown: {text}");
     assert!(text.contains("[stop]"), "{text}");
@@ -130,8 +131,7 @@ fn turn_status_thinking_uses_running_block_elapsed() {
     let (_buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("thinking"), "{text}");
-    assert!(text.contains("0.0s") || text.contains("thinking"), "{text}");
+    assert!(text.contains("Thinking…"), "{text}");
 }
 
 #[test]
@@ -143,28 +143,28 @@ fn turn_status_waiting_and_error_labels() {
     let (_buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("waiting for permission"), "{text}");
+    assert!(text.contains("Waiting for permission…"), "{text}");
 
     let mut a = app();
     a.current_agent_state = AgentState::WaitingForQuestion;
     let (_buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("waiting for answer"), "{text}");
+    assert!(text.contains("Waiting for answers…"), "{text}");
 
     let mut a = app();
     a.current_agent_state = AgentState::Error("boom".into());
     let (_buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("error"), "{text}");
+    assert!(text.contains("Error"), "{text}");
 
     let mut a = app();
     a.current_agent_state = AgentState::Idle;
     let (_buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("ready"), "{text}");
+    assert!(text.contains("Ready"), "{text}");
 }
 
 #[test]
@@ -409,8 +409,8 @@ fn session_chat_stays_below_header_and_safe_area() {
 
     // Status header sits on the first inset row and is not overwritten.
     assert!(
-        header.contains("whycodes"),
-        "header brand missing: {header:?}"
+        header.contains(" / "),
+        "header context meter missing: {header:?}"
     );
     assert!(
         !header.contains("why codes"),
@@ -460,7 +460,7 @@ fn session_scrolled_to_top_still_clears_header() {
 
     let header = row_text(&buf, layout::SAFE_TOP);
     assert!(
-        header.contains("whycodes"),
+        header.contains(" / "),
         "header lost after scroll: {header:?}"
     );
     assert!(
@@ -492,7 +492,7 @@ fn session_scrolled_to_top_still_clears_header() {
 }
 
 #[test]
-fn first_user_bubble_shows_clock_on_the_right() {
+fn first_user_bubble_shows_no_clock() {
     let mut a = app();
     a.add_message(crate::app::ChatRole::User, "FIRST_BUBBLE_MARKER hello");
     let (buf, _) = paint_full_shell(&mut a, 100, 24);
@@ -509,16 +509,14 @@ fn first_user_bubble_shows_clock_on_the_right() {
         row.contains('\u{276F}'),
         "first bubble must be the ❯ prompt row: {row:?}"
     );
-    let marker_at = row.find("FIRST_BUBBLE_MARKER").expect("marker");
-    let clock_at = row.rfind(':').expect("HH:MM clock on the first bubble");
     assert!(
-        clock_at > marker_at,
-        "clock must sit to the right of the first bubble, got {row:?}"
+        !row.contains("AM") && !row.contains("PM"),
+        "no clock: {row:?}"
     );
 }
 
 #[test]
-fn assistant_reply_shows_clock_on_the_right() {
+fn assistant_reply_shows_no_clock() {
     let mut a = app();
     a.add_message(crate::app::ChatRole::User, "ask");
     a.add_message(
@@ -536,11 +534,9 @@ fn assistant_reply_shows_clock_on_the_right() {
         }
     }
     let row = found.expect("agent reply should be painted");
-    let marker_at = row.find("AGENT_REPLY_MARKER").expect("marker");
-    let clock_at = row.rfind(':').expect("HH:MM clock on the agent reply");
     assert!(
-        clock_at > marker_at,
-        "clock must sit to the right of the reply, got {row:?}"
+        !row.contains("AM") && !row.contains("PM"),
+        "no clock: {row:?}"
     );
 }
 
@@ -692,10 +688,9 @@ fn overflow_session_pins_a_user_prompt_at_the_chat_top() {
         top.contains('\u{276F}'),
         "sticky header must be a user ❯ band: {top:?}"
     );
-    // Absolute clock on the pinned prompt (same as a live user bubble).
     assert!(
-        top.contains(':'),
-        "sticky header must keep the clock: {top:?}"
+        !top.contains("AM") && !top.contains("PM"),
+        "no clock: {top:?}"
     );
 }
 
@@ -861,4 +856,31 @@ fn tiny_body_drops_panel_gap_to_keep_the_transcript() {
         header.y,
         chat.y
     );
+}
+
+#[test]
+fn turn_status_puts_the_turn_time_on_the_right() {
+    let mut a = app();
+    a.current_agent_state = AgentState::Generating;
+    a.turn_started_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(12));
+    let palette = a.config.palette();
+    let (_buf, text) = paint(80, 1, |f| {
+        render_turn_status(f, f.area(), &mut a, &palette);
+    });
+    let left = text.find("Responding…").expect("label");
+    let time = text.find("12").expect("turn time");
+    assert!(time > left + 20, "turn time sits on the right: {text}");
+    assert!(text.trim_end().ends_with("[stop]"), "{text}");
+
+    // Without usage yet, the time still shows on its own.
+    a.turn_usage = Some(whycodes_core::types::Usage {
+        input_tokens: 1_000,
+        output_tokens: 0,
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: None,
+    });
+    let (_buf, text) = paint(80, 1, |f| {
+        render_turn_status(f, f.area(), &mut a, &palette);
+    });
+    assert!(text.contains("12s ⇣1k [stop]"), "{text}");
 }
