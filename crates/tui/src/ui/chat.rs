@@ -231,7 +231,150 @@ pub fn visible_range(total: usize, height: usize, scroll_offset: usize) -> (usiz
     (start, end)
 }
 
+/// Narrowest terminal that gets the welcome box (logo + menu side by side).
+const HOME_BOX_MIN_WIDTH: u16 = 72;
+/// Widest the welcome box grows.
+const HOME_BOX_MAX_WIDTH: u16 = 84;
+
 fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+    let box_h = HOME_LOGO_MARK.len() as u16 + 2;
+    if area.width >= HOME_BOX_MIN_WIDTH && area.height >= box_h + 2 {
+        render_home_box(frame, area, app, palette);
+    } else {
+        render_home_stacked(frame, area, app, palette);
+    }
+}
+
+/// Welcome box: the logo on the left; name, version, route and what to do
+/// next on the right. Recent sessions follow under the box.
+fn render_home_box(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+    let box_w = area.width.saturating_sub(4).min(HOME_BOX_MAX_WIDTH);
+    let inner_w = box_w.saturating_sub(4) as usize;
+    let logo_w = HOME_LOGO_MARK
+        .first()
+        .map(|row| row.chars().count())
+        .unwrap_or(0);
+    let text_w = inner_w.saturating_sub(logo_w + 3);
+    let border = Style::default().fg(palette.dim);
+    let bold = Style::default().fg(palette.fg).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(palette.dim);
+
+    let no_key = app.provider_name.is_empty();
+    let mut menu: Vec<(&str, &str)> = Vec::new();
+    if no_key {
+        menu.push(("Connect a provider", "/connect"));
+    }
+    menu.push(("New session", "ctrl+n"));
+    menu.push(("Resume a session", "/resume"));
+    menu.push(("Commands", "/"));
+    menu.push(("Quit", "/exit"));
+
+    let agent_color = app
+        .config
+        .agent_color(&app.agent_name, app.agent_cycle_idx, palette);
+    let mut right: Vec<Vec<Span<'static>>> = vec![
+        vec![
+            Span::styled("whycodes".to_string(), bold),
+            Span::styled(format!("  v{}", env!("CARGO_PKG_VERSION")), dim),
+        ],
+        vec![
+            Span::styled(app.agent_name.clone(), Style::default().fg(agent_color)),
+            Span::styled(
+                format!(
+                    "  ·  {}/{}",
+                    empty_dash(&app.provider_name),
+                    empty_dash(&app.model_name)
+                ),
+                dim,
+            ),
+        ],
+        Vec::new(),
+    ];
+    let label_w = menu.iter().map(|(l, _)| l.len()).max().unwrap_or(0) + 3;
+    for (label, key) in &menu {
+        right.push(vec![
+            Span::styled(format!("{label:<label_w$}"), bold),
+            Span::styled((*key).to_string(), dim),
+        ]);
+    }
+
+    let rows = HOME_LOGO_MARK.len().max(right.len());
+    let recents: Vec<&crate::app::SessionEntry> = app
+        .session_list
+        .sessions
+        .iter()
+        .filter(|s| s.live.is_none())
+        .take(5)
+        .collect();
+    let recents_h = if recents.is_empty() {
+        0
+    } else {
+        2 + recents.len()
+    };
+    let content_h = (rows + 2 + recents_h) as u16;
+    let top = area.height.saturating_sub(content_h) / 2;
+    let pad = " ".repeat(area.width.saturating_sub(box_w) as usize / 2);
+
+    let mut lines: Vec<Line> = (0..top).map(|_| Line::from("")).collect();
+    let rule = "─".repeat(box_w.saturating_sub(2) as usize);
+    lines.push(Line::from(vec![
+        Span::raw(pad.clone()),
+        Span::styled(format!("╭{rule}╮"), border),
+    ]));
+    for i in 0..rows {
+        let logo = HOME_LOGO_MARK.get(i).copied().unwrap_or("");
+        let mut spans = vec![
+            Span::raw(pad.clone()),
+            Span::styled("│ ".to_string(), border),
+            Span::styled(format!("{logo:<logo_w$}"), bold),
+            Span::raw("   ".to_string()),
+        ];
+        let mut used = 0usize;
+        for span in right.get(i).cloned().unwrap_or_default() {
+            let room = text_w.saturating_sub(used);
+            let text = truncate_home_title(span.content.as_ref(), room);
+            used += UnicodeWidthStr::width(text.as_str());
+            spans.push(Span::styled(text, span.style));
+        }
+        spans.push(Span::raw(" ".repeat(text_w.saturating_sub(used))));
+        spans.push(Span::styled(" │".to_string(), border));
+        lines.push(Line::from(spans));
+    }
+    lines.push(Line::from(vec![
+        Span::raw(pad.clone()),
+        Span::styled(format!("╰{rule}╯"), border),
+    ]));
+
+    if !recents.is_empty() {
+        lines.push(Line::from(""));
+        let list_w = box_w as usize;
+        for s in recents {
+            let when = s
+                .updated_at
+                .map(crate::ui::timefmt::format_relative)
+                .unwrap_or_default();
+            let time_w = UnicodeWidthStr::width(when.as_str());
+            let title = truncate_home_title(&s.title, list_w.saturating_sub(time_w + 4));
+            let gap = list_w
+                .saturating_sub(UnicodeWidthStr::width(title.as_str()) + 2)
+                .saturating_sub(time_w);
+            lines.push(Line::from(vec![
+                Span::raw(pad.clone()),
+                Span::raw("  ".to_string()),
+                Span::styled(title, Style::default().fg(palette.fg)),
+                Span::raw(" ".repeat(gap)),
+                Span::styled(when, dim),
+            ]));
+        }
+    }
+
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.bg)),
+        area,
+    );
+}
+
+fn render_home_stacked(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     let recents: Vec<&crate::app::SessionEntry> = app
         .session_list
         .sessions

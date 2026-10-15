@@ -795,35 +795,46 @@ fn paint_home_clears_chat_hits() {
 }
 
 #[test]
-fn paint_home_shows_question_mark_without_wordmark() {
+fn paint_home_shows_the_welcome_box() {
     let mut app = TuiApp::new(cfg());
     app.project_label = "whycodes".into();
     let buf = paint_and_snapshot(&mut app, 80, 24);
     let text = buffer_text(&buf);
     assert!(
-        text.contains("▄█████▄"),
+        text.contains("▄█████▄") && text.contains("███▀ ▀███"),
         "home must paint the landing `?` bowl: {text}"
     );
     assert!(
-        text.contains("███▀ ▀███"),
-        "home `?` must keep the left-open bowl: {text}"
+        !text.contains("█   ██▀▀▀") && !text.contains("█   █ █▀▀▀"),
+        "home must not paint a block wordmark: {text}"
     );
     assert!(
-        !text.contains("█   ██▀▀▀"),
-        "home must not paint the WHYCODES block wordmark: {text}"
+        text.contains('╭') && text.contains('╯'),
+        "welcome box: {text}"
+    );
+    assert!(text.contains("whycodes  v"), "name and version: {text}");
+    // No provider yet: connecting one is the first thing on the menu.
+    assert!(
+        text.contains("Connect a provider") && text.contains("/connect"),
+        "{text}"
     );
     assert!(
-        !text.contains("█   █ █▀▀▀"),
-        "home must not paint a spaced Why Codes wordmark: {text}"
+        text.contains("New session") && text.contains("ctrl+n"),
+        "{text}"
     );
+}
+
+#[test]
+fn a_narrow_home_keeps_the_stacked_layout() {
+    let mut app = TuiApp::new(cfg());
+    let buf = paint_and_snapshot(&mut app, 60, 24);
+    let text = buffer_text(&buf);
+    assert!(text.contains("▄█████▄"), "{text}");
     assert!(
-        !text.contains("whycodes"),
-        "home body must not repeat the project label under the model: {text}"
+        !text.contains('╭') || !text.contains("New session"),
+        "{text}"
     );
-    assert!(
-        text.contains("Get started") && text.contains("/connect"),
-        "empty recents must paint the Get started /connect /import row: {text}"
-    );
+    assert!(text.contains("Get started"), "{text}");
 }
 
 #[test]
