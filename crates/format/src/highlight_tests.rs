@@ -325,7 +325,6 @@ fn recover_lock_survives_poison() {
         let _g = recover_lock(m.lock());
     }
     poison_and_recover(ClosedHighlightCache::default);
-    poison_and_recover(OpenStreamHighlighter::new);
     poison_and_recover(rustc_hash::FxHashMap::<u64, Result<Arc<Vec<String>>, String>>::default);
 }
 
@@ -584,5 +583,18 @@ fn grok_night_and_day_keep_distinct_token_foregrounds() {
         day_fgs.len() >= 2,
         "Grok Day keyword vs string vs comment must not collapse: {day_fgs:?}"
     );
+    set_syntax_theme(SyntaxTheme::GrokNight);
+}
+
+#[test]
+fn open_stream_rebuilds_after_a_theme_switch() {
+    let _theme = lock_theme();
+    set_syntax_theme(SyntaxTheme::GrokNight);
+    let code = "let x = 1;\nlet y";
+    let night = with_open_code_spans(code, Some("rust"), |c, _| c.to_vec()).unwrap();
+    set_syntax_theme(SyntaxTheme::GrokDay);
+    let day = with_open_code_spans(code, Some("rust"), |c, _| c.to_vec()).unwrap();
+    assert_eq!(night.len(), day.len());
+    assert_ne!(night, day, "colours follow the new theme");
     set_syntax_theme(SyntaxTheme::GrokNight);
 }
