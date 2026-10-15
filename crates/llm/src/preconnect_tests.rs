@@ -60,8 +60,9 @@ fn origin_keeps_scheme_host_and_port_only() {
 }
 
 #[test]
-fn nothing_starts_outside_a_runtime() {
+fn nothing_starts_outside_a_runtime_or_for_a_non_http_url() {
     assert!(!spawn("https://outside-runtime.invalid/v1"));
+    assert!(!spawn("not a url"));
 }
 
 #[test]
