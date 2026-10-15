@@ -670,6 +670,21 @@ fn cost_line(cost: &whycodes_session::SessionCost) -> String {
 }
 
 /// Claude Code–style environment check: keys, sandbox, git, tools, jobs.
+/// This process's resident anonymous memory and how much of it the allocator
+/// holds without using (given back on the next trim).
+pub(super) fn memory_label(rss_anon: Option<u64>, retained: Option<u64>) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    match (rss_anon, retained) {
+        (Some(rss), Some(kept)) => format!(
+            "{:.1} MB resident, {:.1} MB retained by the allocator",
+            rss as f64 / MB,
+            kept as f64 / MB
+        ),
+        (Some(rss), None) => format!("{:.1} MB resident", rss as f64 / MB),
+        (None, _) => "n/a on this platform".into(),
+    }
+}
+
 pub(super) fn doctor_report(
     session: &Session,
     app: &TuiApp,
@@ -742,6 +757,15 @@ pub(super) fn doctor_report(
     {
         lines.push("  bwrap:        n/a (non-Linux)".into());
     }
+
+    // ── Memory ────────────────────────────────────────────────────────
+    lines.push(format!(
+        "  memory:       {}",
+        memory_label(
+            whycodes_core::process_memory::rss_anon_bytes(),
+            whycodes_core::process_memory::retained_bytes(),
+        )
+    ));
 
     // ── Automation ────────────────────────────────────────────────────
     let bg = agent.background_registry();
