@@ -100,7 +100,8 @@ fn turn_status_generating_shows_spinner_label_tokens_and_stop() {
     let (buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("generating"), "{text}");
+    assert!(text.contains("Responding…"), "{text}");
+    assert!(!text.contains("generating"), "{text}");
     assert!(text.contains("tool: read"), "{text}");
     assert!(text.contains("⇣1.3k"), "tokens shown: {text}");
     assert!(text.contains("[stop]"), "{text}");
@@ -130,8 +131,7 @@ fn turn_status_thinking_uses_running_block_elapsed() {
     let (_buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("thinking"), "{text}");
-    assert!(text.contains("0.0s") || text.contains("thinking"), "{text}");
+    assert!(text.contains("Thinking…"), "{text}");
 }
 
 #[test]
@@ -143,28 +143,28 @@ fn turn_status_waiting_and_error_labels() {
     let (_buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("waiting for permission"), "{text}");
+    assert!(text.contains("Waiting for permission…"), "{text}");
 
     let mut a = app();
     a.current_agent_state = AgentState::WaitingForQuestion;
     let (_buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("waiting for answer"), "{text}");
+    assert!(text.contains("Waiting for answers…"), "{text}");
 
     let mut a = app();
     a.current_agent_state = AgentState::Error("boom".into());
     let (_buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("error"), "{text}");
+    assert!(text.contains("Error"), "{text}");
 
     let mut a = app();
     a.current_agent_state = AgentState::Idle;
     let (_buf, text) = paint(100, 1, |f| {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
-    assert!(text.contains("ready"), "{text}");
+    assert!(text.contains("Ready"), "{text}");
 }
 
 #[test]
@@ -861,4 +861,31 @@ fn tiny_body_drops_panel_gap_to_keep_the_transcript() {
         header.y,
         chat.y
     );
+}
+
+#[test]
+fn turn_status_puts_the_turn_time_on_the_right() {
+    let mut a = app();
+    a.current_agent_state = AgentState::Generating;
+    a.turn_started_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(12));
+    let palette = a.config.palette();
+    let (_buf, text) = paint(80, 1, |f| {
+        render_turn_status(f, f.area(), &mut a, &palette);
+    });
+    let left = text.find("Responding…").expect("label");
+    let time = text.find("12").expect("turn time");
+    assert!(time > left + 20, "turn time sits on the right: {text}");
+    assert!(text.trim_end().ends_with("[stop]"), "{text}");
+
+    // Without usage yet, the time still shows on its own.
+    a.turn_usage = Some(whycodes_core::types::Usage {
+        input_tokens: 1_000,
+        output_tokens: 0,
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: None,
+    });
+    let (_buf, text) = paint(80, 1, |f| {
+        render_turn_status(f, f.area(), &mut a, &palette);
+    });
+    assert!(text.contains("12s ⇣1k [stop]"), "{text}");
 }
