@@ -53,7 +53,10 @@ fn tool_error_is_retryable(name: &str, result: &ToolResult) -> bool {
                 || c.contains("refused")
                 || c.contains("doom loop")
                 || c.contains("cannot be approved")
-                || c.contains("catastrophic"))
+                || c.contains("catastrophic")
+                // The same arguments fail the same way again.
+                || c.contains("missing required parameter")
+                || c.contains("unknown tool"))
         }
     }
 }
