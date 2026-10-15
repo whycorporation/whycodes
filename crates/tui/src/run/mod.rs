@@ -6047,6 +6047,12 @@ fn shown_tool_name(name: &str) -> &str {
 }
 
 fn apply_background_event(app: &mut TuiApp, id: &str, status: &str, summary: &str) {
+    // A `bash` call that finished before it was detached still reports its
+    // end. It never ran in the background (no "running" was ever sent), so
+    // it gets no toast and no task row.
+    if matches!(status, "done" | "failed" | "killed") && !app.bg_jobs.iter().any(|j| j.id == id) {
+        return;
+    }
     match status {
         "running" => {
             app.bg_running_count = app.bg_running_count.saturating_add(1);
