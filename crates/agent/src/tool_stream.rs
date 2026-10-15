@@ -143,7 +143,7 @@ impl ToolCallAssembler {
             if tc.id.is_empty() {
                 tc.id = whycodes_core::fallback_tool_call_id(i);
             }
-            // else keep pre-parsed object
+            canonical_path_argument(tc);
         }
         calls
     }
@@ -179,6 +179,32 @@ impl ToolCallAssembler {
             String::new()
         };
         Some((tc.id.clone(), tc.name.clone(), buf))
+    }
+}
+
+/// Built-in tools whose file argument is `path`.
+const PATH_TOOLS: &[&str] = &[
+    "read",
+    "write",
+    "edit",
+    "list",
+    "code_mode",
+    "external_directory",
+];
+/// Names models trained on other tool sets send for `path`.
+const PATH_ALIASES: &[&str] = &["file_path", "filepath", "file"];
+
+/// Rename a `file_path`-style argument to `path` for the built-in file tools,
+/// before any gate reads it. MCP and plugin tools keep their own names.
+fn canonical_path_argument(tc: &mut ToolCall) {
+    if !PATH_TOOLS.contains(&tc.name.as_str()) {
+        return;
+    }
+    if let Value::Object(args) = &mut tc.arguments
+        && !args.contains_key("path")
+        && let Some(value) = PATH_ALIASES.iter().find_map(|k| args.remove(*k))
+    {
+        args.insert("path".into(), value);
     }
 }
 

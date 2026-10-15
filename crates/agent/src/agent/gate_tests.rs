@@ -119,6 +119,15 @@ fn retryable_skips_policy_and_question() {
         }
     ));
     assert!(tool_error_is_retryable("read", &err("transient fail 1")));
+    // Argument errors repeat identically; retrying them only burns steps.
+    assert!(!tool_error_is_retryable(
+        "read",
+        &err("Missing required parameter `path`.")
+    ));
+    assert!(!tool_error_is_retryable(
+        "nope",
+        &err("Unknown tool: 'nope'.")
+    ));
     assert!(!tool_error_is_retryable("question", &err("do not ask")));
     assert!(!tool_error_is_retryable("task", &err("subagent failed")));
     assert!(!tool_error_is_retryable("swarm", &err("x")));

@@ -200,3 +200,37 @@ fn repeated_start_merges_fragments_cumulative_args_and_objects() {
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].arguments["command"], "ls");
 }
+
+#[test]
+fn file_path_becomes_path_for_built_in_file_tools_only() {
+    let mut a = ToolCallAssembler::new();
+    a.on_tool_use("r".into(), "read".into(), json!({"file_path": "main.rs"}));
+    a.on_tool_use("e".into(), "edit".into(), Value::String(String::new()));
+    a.on_tool_use_delta("e", r#"{"filepath":"a.rs","new_string":"x"}"#);
+    a.on_tool_use(
+        "w".into(),
+        "write".into(),
+        json!({"path": "keep.rs", "file": "other.rs"}),
+    );
+    a.on_tool_use(
+        "m".into(),
+        "srv_open".into(),
+        json!({"file_path": "mcp.rs"}),
+    );
+    a.on_tool_use("s".into(), "read".into(), Value::String("[1]".into()));
+    let calls = a.finish();
+    assert_eq!(calls[0].arguments, json!({"path": "main.rs"}));
+    assert_eq!(
+        calls[1].arguments,
+        json!({"path": "a.rs", "new_string": "x"})
+    );
+    // An explicit `path` wins; the alias is left alone.
+    assert_eq!(
+        calls[2].arguments,
+        json!({"path": "keep.rs", "file": "other.rs"})
+    );
+    // MCP / plugin tools keep their own argument names.
+    assert_eq!(calls[3].arguments, json!({"file_path": "mcp.rs"}));
+    // Arguments that are not an object get no invented `path`.
+    assert!(calls[4].arguments.get("path").is_none());
+}

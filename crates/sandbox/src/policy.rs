@@ -82,7 +82,7 @@ impl SandboxOutcome {
 /// The no-bubblewrap fallback warning was appended to every command's output
 /// (~40 tokens each on Windows/macOS, where bwrap never exists). The model
 /// needs it once; later outputs stay clean.
-fn first_sighting(warning: &str) -> bool {
+pub fn first_sighting(warning: &str) -> bool {
     let mut seen = SEEN_WARNINGS.lock().unwrap_or_else(|e| e.into_inner());
     seen.insert(warning.to_string())
 }
