@@ -2380,7 +2380,9 @@ async fn execute_schedule_after_secs_sleeps_then_runs() {
         .await;
     assert!(!scheduled.is_error, "{scheduled:?}");
     let mut saw_running = false;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1800);
+    // The job is due after 1 s; leave room for a loaded CI runner (it once
+    // missed a 1.8 s deadline there). The loop exits as soon as it runs.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
         match rx.try_recv() {
             Ok(TurnEvent::Background { status, .. }) if status == "running" => {
