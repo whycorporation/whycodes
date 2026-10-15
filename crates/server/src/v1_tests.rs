@@ -289,6 +289,69 @@ async fn persist_list_rename_rewind_compact_hit_db() {
     assert!(compacted.messages.is_empty() || !compacted.id.is_empty());
 }
 
+/// A `bash` call hands the turn's event sender to the agent's background
+/// registry, which outlives the turn; the stream must still finish.
+#[cfg(unix)]
+#[tokio::test]
+async fn run_ends_after_a_bash_call() {
+    use whycodes_core::types::{AgentInfo, AgentMode, PermissionSet};
+    let _home = crate::http_tests::IsolatedHome::new();
+    let mut registry = whycodes_llm::provider::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "ollama",
+        [
+            vec![whycodes_llm::ScriptedStep::ToolCall {
+                id: "b1".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"command": "echo from-bash"}),
+            }],
+            vec![whycodes_llm::ScriptedStep::Text("after-bash".into())],
+        ],
+    )));
+    let mut state = crate::http_tests::test_state_with_registry(None);
+    let agent = whycodes_agent::Agent::new(AgentInfo {
+        name: "test".into(),
+        description: "test agent".into(),
+        mode: AgentMode::Primary,
+        permission: PermissionSet {
+            allow_shell: true,
+            ..PermissionSet::default()
+        },
+        model: None,
+        system_prompt: None,
+        temperature: None,
+        top_p: None,
+    });
+    state.agent = Arc::new(agent.with_provider_registry(registry));
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let id = session.id.clone();
+    state.insert_session(session);
+
+    // The daemon keeps its state (and so the agent) for its whole life.
+    let resp = run(
+        State(state.clone()),
+        Path(id),
+        Json(RunRequest {
+            message: "run bash".into(),
+            provider: Some("ollama".into()),
+            model: Some("tiny".into()),
+            max_turns: Some(3),
+            auto_approve: Some(true),
+        }),
+    )
+    .await
+    .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX);
+    let bytes = tokio::time::timeout(std::time::Duration::from_secs(20), body)
+        .await
+        .expect("stream never finished")
+        .unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("from-bash"), "{text}");
+    assert!(text.contains("turn_done"), "{text}");
+}
+
 #[tokio::test]
 async fn run_streams_scripted_success_and_error() {
     let _home = crate::http_tests::IsolatedHome::new();

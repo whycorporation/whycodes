@@ -476,7 +476,7 @@ pub async fn chat(
     Ok(Sse::new(stream).keep_alive(keep).into_response())
 }
 
-fn emit_status(tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>, status: &str) {
+pub(crate) fn emit_status(tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>, status: &str) {
     send_event(tx, TurnEvent::Status(status.to_string()));
 }
 
