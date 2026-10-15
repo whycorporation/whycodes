@@ -268,7 +268,7 @@ fn location_strips_windows_verbatim_cwd() {
 fn location_tiny_area_skips() {
     let mut app = footer_app();
     let palette = app.config.palette();
-    let text = paint(3, 1, |f| render_footer(f, f.area(), &mut app, &palette));
+    let text = paint(3, 1, |f| render(f, f.area(), &mut app, &palette));
     assert!(text.trim().is_empty(), "{text}");
 }
 
