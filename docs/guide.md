@@ -927,7 +927,7 @@ prompt, not by `bash = "allow"`, not by `bash_risk_threshold = "off"`.
 A still-running `bash` that is not catastrophic is auto-detached after 20s
 (default) and returns `job_id` + last lines. Completions arrive once on a
 later turn. Detached stdout/stderr is also written to
-`.whycodes/scratch/<job-id>.log`. Opt out:
+`.whycodes/scratch/<job-id>.log` (the first 64 MiB). Opt out:
 
 ```toml
 [tools.bash]
