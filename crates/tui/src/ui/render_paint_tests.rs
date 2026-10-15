@@ -409,8 +409,8 @@ fn session_chat_stays_below_header_and_safe_area() {
 
     // Status header sits on the first inset row and is not overwritten.
     assert!(
-        header.contains("whycodes"),
-        "header brand missing: {header:?}"
+        header.contains(" / "),
+        "header context meter missing: {header:?}"
     );
     assert!(
         !header.contains("why codes"),
@@ -460,7 +460,7 @@ fn session_scrolled_to_top_still_clears_header() {
 
     let header = row_text(&buf, layout::SAFE_TOP);
     assert!(
-        header.contains("whycodes"),
+        header.contains(" / "),
         "header lost after scroll: {header:?}"
     );
     assert!(

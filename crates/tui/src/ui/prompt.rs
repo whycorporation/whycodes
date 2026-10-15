@@ -252,6 +252,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
     let top_border = chunks[1];
     if top_border.height > 0 {
         paint_h_border(frame, top_border, border_style, true);
+        if !app.messages.is_empty() {
+            paint_top_caption(frame, top_border, app.session_title.trim(), palette);
+        }
     }
 
     // ── Attachment chips: │  🖼 shot.png · 2 images  │ ─────────────
@@ -453,6 +456,30 @@ fn paint_attach_row(
             Style::default().fg(palette.dim),
         ))),
         text_rect,
+    );
+}
+
+/// The session title on the top border, right-aligned: `╭──── title ─╮`.
+fn paint_top_caption(frame: &mut Frame, row: Rect, title: &str, palette: &ThemePalette) {
+    // Corner + at least one `─` on each side, a space either side of the text.
+    let budget = row.width.saturating_sub(6) as usize;
+    if title.is_empty() || budget < 4 {
+        return;
+    }
+    let text = truncate_to_width(title, budget);
+    let w = UnicodeWidthStr::width(text.as_str()) as u16 + 2;
+    let caption = Rect {
+        x: row.x + row.width - 2 - w,
+        y: row.y,
+        width: w,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!(" {text} "),
+            Style::default().fg(palette.dim),
+        ))),
+        caption,
     );
 }
 
