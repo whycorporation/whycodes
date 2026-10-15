@@ -840,6 +840,30 @@ pub const THINKING_EXPANDED_MAX_LINES: usize = 200;
 /// provider streams multi‑MB reasoning or resends full snapshots every chunk.
 pub const THINKING_MAX_CHARS: usize = 96 * 1024;
 
+/// Prompt history kept for Up/Down recall; the oldest entries go first.
+pub const INPUT_HISTORY_MAX: usize = 1000;
+
+/// Tool output kept for display, per result (chars). The model's copy lives in
+/// the session with its own cap; this one only bounds what the TUI holds.
+pub const TOOL_VIEW_MAX_CHARS: usize = 512 * 1024;
+
+/// `content` cut to [`TOOL_VIEW_MAX_CHARS`] with a note on what was dropped.
+pub fn cap_tool_view(content: String) -> String {
+    if content.len() <= TOOL_VIEW_MAX_CHARS {
+        return content;
+    }
+    let total = content.chars().count();
+    if total <= TOOL_VIEW_MAX_CHARS {
+        return content;
+    }
+    let mut kept: String = content.chars().take(TOOL_VIEW_MAX_CHARS).collect();
+    kept.push_str(&format!(
+        "\n[{} more chars not kept in the view]",
+        total - TOOL_VIEW_MAX_CHARS
+    ));
+    kept
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatRole {
     User,
@@ -3164,7 +3188,7 @@ impl TuiApp {
         if !text.is_empty() {
             // History stores expanded text so re-selecting a past entry is usable.
             let expanded = crate::paste::expand(text, &self.pending_pastes);
-            self.input_history.push(expanded);
+            self.remember_input(expanded);
             self.input_history_idx = self.input_history.len();
         }
         self.input_buffer.clear();
@@ -3867,6 +3891,14 @@ impl TuiApp {
         self.mark_dirty();
     }
 
+    /// Add `text` to the prompt history, dropping the oldest entries past
+    /// [`INPUT_HISTORY_MAX`].
+    pub(crate) fn remember_input(&mut self, text: String) {
+        self.input_history.push(text);
+        let excess = self.input_history.len().saturating_sub(INPUT_HISTORY_MAX);
+        self.input_history.drain(..excess);
+    }
+
     /// Add a tool result to the most recent tool-call.
     pub fn add_tool_result(
         &mut self,
@@ -3874,7 +3906,7 @@ impl TuiApp {
         content: impl Into<String>,
         is_error: bool,
     ) {
-        let content = content.into();
+        let content = cap_tool_view(content.into());
         // Search backwards for the matching tool-call
         for msg in self.messages.iter_mut().rev() {
             for tc in msg.tool_calls.iter_mut() {
@@ -3929,7 +3961,7 @@ impl TuiApp {
         // so huge dumps do not bloat the transcript.
         let expanded = crate::paste::expand(&display_text, &self.pending_pastes);
         if !expanded.is_empty() {
-            self.input_history.push(expanded.clone());
+            self.remember_input(expanded.clone());
         }
         let labels: Vec<String> = self
             .pending_images
@@ -4002,10 +4034,11 @@ pub fn chat_messages_from_session(
                 for m in out.iter_mut().rev() {
                     for tc in m.tool_calls.iter_mut() {
                         if tc.id == id {
+                            let content = cap_tool_view(content.clone());
                             tc.result = Some(content.clone());
                             m.blocks.push(ChatBlock::ToolResult {
                                 id: id.to_string(),
-                                content: content.clone(),
+                                content,
                                 is_error: false,
                             });
                             m.invalidate_layout();
@@ -4083,13 +4116,14 @@ pub fn chat_messages_from_session(
                             is_error,
                         } => {
                             let err = is_error.unwrap_or(false);
+                            let c = cap_tool_view(c.clone());
                             if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == *tool_use_id) {
                                 tc.result = Some(c.clone());
                                 tc.is_error = err;
                             }
                             ui_blocks.push(ChatBlock::ToolResult {
                                 id: tool_use_id.clone(),
-                                content: c.clone(),
+                                content: c,
                                 is_error: err,
                             });
                         }
