@@ -261,41 +261,33 @@ fn render_code(
 ) -> Vec<Line<'static>> {
     let band = palette.status_bar_bg;
     let mut out = Vec::with_capacity(lines.len() + 3);
-    push_code_header(&mut out, language, palette);
-    let n = lines.len().max(1);
-    let nw = n.to_string().len().max(2);
+    push_code_header(&mut out, palette);
     let source: Vec<String> = lines.iter().map(|l| l.replace('\t', "    ")).collect();
     let highlighted = highlight_code_spans(&source.join("\n"), language);
-    for (i, spans) in highlighted.iter().enumerate() {
-        push_code_source_line(&mut out, i, spans, nw, palette, max_width);
+    for spans in highlighted.iter() {
+        push_code_source_line(&mut out, spans, palette, max_width);
     }
     out.push(code_band_pad(band));
     out
 }
 
-fn push_code_header(out: &mut Vec<Line<'static>>, language: Option<&str>, palette: &ThemePalette) {
-    let band = palette.status_bar_bg;
-    let gutter = Style::default().fg(palette.dim).bg(band);
-    out.push(code_band_pad(band));
-    if let Some(lang) = language.map(str::trim).filter(|s| !s.is_empty()) {
-        out.push(Line::from(vec![
-            Span::styled(format!(" {lang} "), gutter),
-            Span::styled(" ".to_string(), Style::default().bg(band)),
-        ]));
-    }
+/// The fence row: band only. The language tag only picks the highlighter.
+fn push_code_header(out: &mut Vec<Line<'static>>, palette: &ThemePalette) {
+    out.push(code_band_pad(palette.status_bar_bg));
 }
+
+/// Left inset of code inside the band. No line numbers: a reply's snippet is
+/// read, not navigated, and the numbers crowded short blocks.
+const CODE_INSET: usize = 2;
 
 fn push_code_source_line(
     out: &mut Vec<Line<'static>>,
-    i: usize,
     spans: &[CodeSpan],
-    nw: usize,
     palette: &ThemePalette,
     max_width: Option<usize>,
 ) {
     let band = palette.status_bar_bg;
-    let gutter = Style::default().fg(palette.dim).bg(band);
-    let gutter_w = nw + 2;
+    let gutter_w = CODE_INSET;
     let body_w = max_width.map(|w| w.saturating_sub(gutter_w).max(8));
     let mut code_spans: Vec<Span<'static>> = spans
         .iter()
@@ -315,14 +307,9 @@ fn push_code_source_line(
         Some(w) => wrap_spans(code_spans, w as u16),
         None => vec![Line::from(code_spans)],
     };
-    let no = format!(" {:>w$} ", i + 1, w = nw);
-    let hang = " ".repeat(gutter_w);
-    for (j, row) in rows.into_iter().enumerate() {
-        let mut line = if j == 0 {
-            vec![Span::styled(no.clone(), gutter)]
-        } else {
-            vec![Span::styled(hang.clone(), Style::default().bg(band))]
-        };
+    let inset = " ".repeat(gutter_w);
+    for row in rows {
+        let mut line = vec![Span::styled(inset.clone(), Style::default().bg(band))];
         for mut s in row.spans {
             s.style.bg = Some(band);
             line.push(s);
@@ -368,11 +355,6 @@ fn complete_source_lines(body: &str) -> usize {
     }
 }
 
-/// Digit width `render_code` uses for the gutter (`max(2, digits(n))`).
-pub fn code_gutter_nw(body: &str) -> usize {
-    body.lines().count().max(1).to_string().len().max(2)
-}
-
 /// Append an open fenced block onto `out` without re-wrapping already-painted
 /// complete source lines. `out` must already hold `[header + complete rows]`
 /// when `committed_src > 0` (no partial tail, no closing pad).
@@ -389,7 +371,6 @@ pub fn append_open_fence(
     committed_src: usize,
 ) -> (usize, usize) {
     let band = palette.status_bar_bg;
-    let nw = code_gutter_nw(body);
     let expanded;
     let source = if body.contains('\t') {
         expanded = body.replace('\t', "    ");
@@ -399,18 +380,18 @@ pub fn append_open_fence(
     };
 
     if committed_src == 0 {
-        push_code_header(out, language, palette);
+        push_code_header(out, palette);
     }
 
     let start_src = committed_src;
     let (new_committed, committed_display) = if let Some(v) =
         with_open_code_spans(source, language, |committed, partial| {
-            for (i, spans) in committed.iter().enumerate().skip(start_src) {
-                push_code_source_line(out, i, spans, nw, palette, max_width);
+            for spans in committed.iter().skip(start_src) {
+                push_code_source_line(out, spans, palette, max_width);
             }
             let display = out.len();
             if let Some(tail) = partial {
-                push_code_source_line(out, committed.len(), tail, nw, palette, max_width);
+                push_code_source_line(out, tail, palette, max_width);
             }
             (committed.len(), display)
         }) {
@@ -425,7 +406,7 @@ pub fn append_open_fence(
                 continue;
             }
             let spans = vec![(PLAIN_CODE_FG, line.to_string())];
-            push_code_source_line(out, i, &spans, nw, palette, max_width);
+            push_code_source_line(out, &spans, palette, max_width);
         }
         let display = out.len();
         if !source.ends_with('\n')
@@ -434,7 +415,7 @@ pub fn append_open_fence(
             && i >= start_src
         {
             let spans = vec![(PLAIN_CODE_FG, line.to_string())];
-            push_code_source_line(out, i, &spans, nw, palette, max_width);
+            push_code_source_line(out, &spans, palette, max_width);
         }
         (committed_n, display)
     };
