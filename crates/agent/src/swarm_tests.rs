@@ -77,6 +77,21 @@ fn ensure_tldr_empty_existing_and_truncate() {
 }
 
 #[test]
+fn a_report_names_the_goal_by_its_first_line() {
+    let goal = "Implement mul and div in mathutil.py only.\n\nCurrent file:\n```python\ndef add(a, b):\n```";
+    let report = format_worker_report("w0", "general", true, 1.0, goal, "TLDR: done");
+    assert!(
+        report.contains("**Goal:** Implement mul and div in mathutil.py only.…"),
+        "{report}"
+    );
+    assert!(!report.contains("def add"), "{report}");
+    assert_eq!(goal_label("  one line  "), "one line");
+    assert_eq!(goal_label(""), "");
+    let long = "x".repeat(GOAL_LABEL_CHARS + 5);
+    assert_eq!(goal_label(&long).chars().count(), GOAL_LABEL_CHARS + 1);
+}
+
+#[test]
 fn parent_inbox_section_lists_mail_or_is_empty() {
     assert!(format_parent_inbox(&[]).is_empty());
     let mail = [whycodes_core::SwarmMessage {
