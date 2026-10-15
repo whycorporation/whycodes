@@ -529,3 +529,25 @@ async fn collect_retained_facts_skips_when_auto_retain_off() {
         collect_retained_facts(&snap, &settings, dir.path(), &registry, "script", "m", "k").await;
     assert!(saved.is_empty());
 }
+
+#[tokio::test]
+async fn finish_waits_for_tracked_work_up_to_the_limit() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let done = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&done);
+    track(tokio::spawn(async {}));
+    track(tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        flag.store(true, Ordering::SeqCst);
+    }));
+    finish_post_turn_retain(Duration::from_secs(5)).await;
+    assert!(done.load(Ordering::SeqCst), "finished before the work did");
+
+    track(tokio::spawn(tokio::time::sleep(Duration::from_secs(60))));
+    let started = std::time::Instant::now();
+    finish_post_turn_retain(Duration::from_millis(50)).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "ignored the limit"
+    );
+}

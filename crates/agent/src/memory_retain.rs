@@ -6,7 +6,8 @@
 //! awaiting title refine).
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
 use whycodes_llm::provider::{LlmProvider, ProviderRegistry};
@@ -116,7 +117,7 @@ pub fn spawn_post_turn_retain(
     let api_key = api_key.to_string();
     let data_dir = whycodes_core::paths::data_dir();
 
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let saved = collect_retained_facts(
             &snap,
             &settings,
@@ -134,6 +135,32 @@ pub fn spawn_post_turn_retain(
 
         emit_retained_facts(&saved, &events);
     });
+    track(handle);
+}
+
+fn pending() -> MutexGuard<'static, Vec<tokio::task::JoinHandle<()>>> {
+    static PENDING: Mutex<Vec<tokio::task::JoinHandle<()>>> = Mutex::new(Vec::new());
+    PENDING.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn track(handle: tokio::task::JoinHandle<()>) {
+    let mut pending = pending();
+    pending.retain(|h| !h.is_finished());
+    pending.push(handle);
+}
+
+/// Wait up to `limit` for post-turn retain work still running. One-shot
+/// commands call this before exiting: dropping the runtime cancels the work
+/// mid-request or mid-write.
+pub async fn finish_post_turn_retain(limit: Duration) {
+    let handles = std::mem::take(&mut *pending());
+    let deadline = tokio::time::Instant::now() + limit;
+    for handle in handles {
+        if tokio::time::timeout_at(deadline, handle).await.is_err() {
+            tracing::debug!("post-turn memory work still running at exit");
+            return;
+        }
+    }
 }
 
 fn index_and_consolidate(svc: &MemoryService, snap: &RetainSnapshot) {
