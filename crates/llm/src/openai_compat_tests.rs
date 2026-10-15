@@ -957,6 +957,40 @@ async fn chat_sse_keeps_multibyte_text_split_across_chunks() {
     assert_eq!(text, "Merhaba, şöyle güzel");
 }
 
+/// (thinking, text) of a whole SSE body.
+async fn sse_thinking_and_text(body: &str) -> (String, String) {
+    let mut stream = chat_sse_from_bytes(scripted_bytes([Ok(body.as_bytes().to_vec())]), "openai");
+    let (mut thinking, mut text) = (String::new(), String::new());
+    while let Some(ev) = stream.next().await {
+        match ev.unwrap() {
+            StreamEvent::ThinkingDelta { text: d } => thinking.push_str(&d),
+            StreamEvent::TextDelta { text: d } => text.push_str(&d),
+            _ => {}
+        }
+    }
+    (thinking, text)
+}
+
+#[tokio::test]
+async fn chat_sse_moves_a_leading_think_tag_to_thinking() {
+    let closed = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"<think>check main.rs\"}}]}\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"</think>It prints hi.\"}}]}\n",
+        "data: [DONE]\n",
+    );
+    assert_eq!(
+        sse_thinking_and_text(closed).await,
+        ("check main.rs".into(), "It prints hi.".into())
+    );
+
+    // No `[DONE]` and the tag never closes: the thought is also the answer.
+    let unclosed = "data: {\"choices\":[{\"delta\":{\"content\":\"<think>It prints hi.\"}}]}\n";
+    assert_eq!(
+        sse_thinking_and_text(unclosed).await,
+        ("It prints hi.".into(), "It prints hi.".into())
+    );
+}
+
 fn assistant(blocks: Vec<ContentBlock>) -> Message {
     Message {
         role: Role::Assistant,
