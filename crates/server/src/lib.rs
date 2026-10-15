@@ -146,7 +146,7 @@ pub fn spawn_session_eviction(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(every).await;
-            state.evict_idle_sessions(idle);
+            heap::after_eviction(state.evict_idle_sessions(idle));
         }
     })
 }
