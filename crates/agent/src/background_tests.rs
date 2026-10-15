@@ -763,3 +763,34 @@ async fn wait_until_idle_ignores_a_different_job_finishing() {
     assert_eq!(fg_snap.status, JobStatus::Running);
     reg.kill_all();
 }
+
+#[tokio::test]
+async fn a_repeated_sandbox_warning_reaches_one_job_only() {
+    let warning = "bg fallback warning seen once per process (test-only text)";
+    let mut outputs = Vec::new();
+    for id in ["bg-warn-1", "bg-warn-2"] {
+        let reg = BackgroundRegistry::new(4);
+        let job = Arc::new(Mutex::new(sample_job(JobStatus::Running, "")));
+        reg.inner
+            .jobs
+            .lock()
+            .unwrap()
+            .insert(id.into(), Arc::clone(&job));
+        reg.inner.order.lock().unwrap().push(id.into());
+        run_background_job(
+            reg,
+            Arc::clone(&job),
+            id.into(),
+            "missing".into(),
+            "/no/such/whycodes-bg-bin".into(),
+            vec![],
+            std::env::temp_dir(),
+            Some(warning.into()),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await;
+        outputs.push(job.lock().unwrap().output.clone());
+    }
+    assert!(outputs[0].contains(warning), "{outputs:?}");
+    assert!(!outputs[1].contains(warning), "{outputs:?}");
+}
