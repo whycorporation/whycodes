@@ -73,6 +73,8 @@ pub enum Block {
         spans: Vec<Inline>,
     },
     Paragraph(Vec<Inline>),
+    /// A `> ` blockquote line.
+    Quote(Vec<Inline>),
     ListItem {
         indent: usize,
         /// `None` = bullet; `Some(n)` = ordered list starting at n.
@@ -152,7 +154,10 @@ pub fn parse_markdown(text: &str) -> Vec<Block> {
             continue;
         }
 
-        if let Some((level, rest)) = heading(trimmed) {
+        if let Some(rest) = trimmed.strip_prefix('>') {
+            let rest = rest.strip_prefix(' ').unwrap_or(rest);
+            blocks.push(Block::Quote(parse_inline(rest)));
+        } else if let Some((level, rest)) = heading(trimmed) {
             blocks.push(Block::Heading {
                 level,
                 spans: parse_inline(rest),
