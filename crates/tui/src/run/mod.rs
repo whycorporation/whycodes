@@ -426,6 +426,7 @@ fn apply_resume_loaded(
             }
             let title = session.title.clone();
             app.load_messages_from_session(session);
+            crate::heap::request_release_after_draw("history_loaded");
             app.toasts.push(
                 crate::toast::ToastKind::Success,
                 format!("Resumed · {title} ({n} msgs)"),
@@ -466,6 +467,7 @@ async fn apply_remote_hydrate(
             if !msgs.is_empty() {
                 session.messages = msgs;
                 app.load_messages_from_session(session);
+                crate::heap::request_release_after_draw("remote_history_loaded");
             }
             app.session_title = session.title.clone();
         }
@@ -3428,6 +3430,7 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
         rt.turn_join = None;
         rt.session_backup = None;
         rt.unread = true;
+        crate::heap::request_release_after_draw("background_turn_done");
         match outcome {
             TurnOutcome::Ok {
                 text,
@@ -3815,6 +3818,8 @@ fn close_session_slot(
             let idx = idx.min(runtimes.len() - 1);
             let mut closed = std::mem::replace(rt, runtimes.remove(idx));
             closed.turn_join.take();
+            drop(closed);
+            crate::heap::request_release_after_draw("session_closed");
             mru.retain(|&i| i != idx);
             for i in mru.iter_mut() {
                 if *i > idx {
@@ -3862,6 +3867,8 @@ fn close_session_slot(
                 runtimes.len() + 1
             ),
         );
+        drop(bg);
+        crate::heap::request_release_after_draw("session_closed");
     }
 }
 
@@ -3909,6 +3916,7 @@ fn resume_or_switch_session(
             }
             let title = rt.session.title.clone();
             app.load_messages_from_session(&rt.session);
+            crate::heap::request_release_after_draw("history_loaded");
             app.toasts.push(
                 crate::toast::ToastKind::Success,
                 format!("Resumed · {title} ({n} msgs)"),
