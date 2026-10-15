@@ -1102,13 +1102,53 @@ cargo build --release -p whycodes-cli
 python scripts/bench_memory.py --skip-cli --sessions 1 10 --runs 3 --settle 2
 ```
 
+## Resumed long session (2026-10-15)
+
+An idle, empty TUI says little about a working one. `bench_resume_memory.py`
+imports a synthetic transcript (user/assistant pairs, each answer with prose
+and a fenced block in one of 16 languages), resumes it in the TUI under a
+120×40 PTY, and samples PSS and `RssAnon` after the first paint (8 s) and
+after 75 s idle. No provider key or network.
+
+Linux x86_64 (WSL2), release builds, 3 runs, median.
+
+300 messages (196 KiB):
+
+| Build | PSS open | RssAnon open |
+|---|---:|---:|
+| before (`89ed870`) | 171.9 MB | 158.9 MB |
+| Oniguruma highlighting (#220) | 32.0 MB | 18.8 MB |
+| all of #220–#224 | 31.7 MB | 18.6 MB |
+
+3000 messages (1.9 MiB):
+
+| Build | PSS open | PSS idle | RssAnon idle |
+|---|---:|---:|---:|
+| before (`89ed870`) | 216.4 MB | 216.6 MB | 203.7 MB |
+| Oniguruma highlighting (#220) | 76.5 MB | 75.8 MB | 63.7 MB |
+| all of #220–#224 | 76.0 MB | **35.0 MB** | **22.5 MB** |
+
+- fancy-regex grammars compiled for 16 languages were most of the "before"
+  figure, and they were live memory, so no trim could return them.
+- In the long session, rendered lines of every message were the next largest
+  item. #222 drops them away from the viewport, and #224's idle trim gives
+  the freed pages back, which is why that gain shows only in the idle column.
+
+Reproduce:
+
+```bash
+cargo build --release -p whycodes-cli
+python scripts/bench_resume_memory.py --binary target/release/whycodes --turns 1500
+```
+
 ## What is deliberately not measured yet
 
 Being explicit, because a benchmark page that quietly omits things reads as
 though it covered them.
 
-- **Memory of a busy session.** Idle TUI only; a turn with tool output and a
-  long transcript is not exercised (would need a provider key or a fixture).
+- **Memory during a turn.** A resumed long transcript is measured above
+  (`bench_resume_memory.py`), but a live turn with streaming and tool output
+  is not (it would need a provider key or a scripted provider).
 
 ## Token accounting reconciliation (2026-08-14)
 
