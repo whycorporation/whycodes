@@ -2545,3 +2545,47 @@ fn isolated_home_pins_and_restores_whycodes_home() {
     assert!(std::env::var_os("WHYCODES_HOME").is_none());
     drop(home);
 }
+
+#[test]
+fn prompt_history_keeps_the_newest_entries() {
+    let mut app = TuiApp::new(crate::config::TuiAppConfig::default());
+    for i in 0..crate::app::INPUT_HISTORY_MAX + 5 {
+        app.remember_input(format!("p{i}"));
+    }
+    assert_eq!(app.input_history.len(), crate::app::INPUT_HISTORY_MAX);
+    assert_eq!(app.input_history[0], "p5");
+}
+
+#[test]
+fn tool_view_keeps_a_bounded_copy() {
+    use crate::app::{TOOL_VIEW_MAX_CHARS, cap_tool_view};
+    assert_eq!(cap_tool_view("short".into()), "short");
+    let wide = "é".repeat(TOOL_VIEW_MAX_CHARS);
+    assert_eq!(
+        cap_tool_view(wide.clone()),
+        wide,
+        "bytes over, chars within"
+    );
+    let long = "x".repeat(TOOL_VIEW_MAX_CHARS + 10);
+    let kept = cap_tool_view(long);
+    assert!(kept.starts_with(&"x".repeat(TOOL_VIEW_MAX_CHARS)));
+    assert!(
+        kept.ends_with("[10 more chars not kept in the view]"),
+        "{}",
+        &kept[kept.len() - 60..]
+    );
+
+    let mut app = TuiApp::new(crate::config::TuiAppConfig::default());
+    app.add_message(crate::app::ChatRole::Assistant, String::new());
+    app.messages[0].tool_calls.push(crate::app::ChatToolCall {
+        id: "t1".into(),
+        name: "read".into(),
+        arguments: serde_json::json!({}),
+        collapsed: true,
+        result: None,
+        is_error: false,
+    });
+    app.add_tool_result("t1", "y".repeat(TOOL_VIEW_MAX_CHARS + 1), false);
+    let stored = app.messages[0].tool_calls[0].result.as_deref().unwrap();
+    assert!(stored.len() < TOOL_VIEW_MAX_CHARS + 100);
+}

@@ -155,8 +155,6 @@ fn last_scrolled_past_user(app: &TuiApp, starts: &[usize], view_start: usize) ->
         .find(|&i| matches!(app.messages.get(i).map(|m| &m.role), Some(ChatRole::User)))
 }
 
-/// Message index range whose rows intersect `[view_start, view_end)`.
-///
 /// Messages on each side of the painted range that keep their rendered lines.
 pub const LINE_CACHE_MARGIN: usize = 24;
 
@@ -164,16 +162,26 @@ pub const LINE_CACHE_MARGIN: usize = 24;
 /// stay cached, so layout does not render them again; scrolling back to one
 /// renders it once more. Without this a long session kept every message's
 /// styled lines, several times the size of the transcript itself.
+///
+/// A finished reply also drops its streaming buffer (`stream_md`): once it is
+/// closed it renders like any other message, so the buffer is dead weight.
 fn drop_far_line_caches(app: &mut TuiApp, painted: std::ops::Range<usize>) {
     let keep_from = painted.start.saturating_sub(LINE_CACHE_MARGIN);
     let keep_to = painted.end.saturating_add(LINE_CACHE_MARGIN);
-    for (i, msg) in app.messages.iter_mut().enumerate() {
+    for i in 0..app.messages.len() {
+        let closed = message_is_closed(app, i);
+        let msg = &mut app.messages[i];
+        if closed {
+            msg.stream_md = None;
+        }
         if i < keep_from || i >= keep_to {
             msg.line_cache = None;
         }
     }
 }
 
+/// Message index range whose rows intersect `[view_start, view_end)`.
+///
 /// Grok `compute_paint_window`: `starts` is a prefix-sum of heights, so
 /// two `partition_point`s replace a linear scan of the whole transcript.
 pub fn visible_message_range(
