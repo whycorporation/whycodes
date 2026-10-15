@@ -973,14 +973,16 @@ async fn sse_thinking_and_text(body: &str) -> (String, String) {
 
 #[tokio::test]
 async fn chat_sse_moves_a_leading_think_tag_to_thinking() {
+    // A `reasoning` field and an inline tag in one response both count.
     let closed = concat!(
+        "data: {\"choices\":[{\"delta\":{\"reasoning\":\"field \"}}]}\n",
         "data: {\"choices\":[{\"delta\":{\"content\":\"<think>check main.rs\"}}]}\n",
         "data: {\"choices\":[{\"delta\":{\"content\":\"</think>It prints hi.\"}}]}\n",
         "data: [DONE]\n",
     );
     assert_eq!(
         sse_thinking_and_text(closed).await,
-        ("check main.rs".into(), "It prints hi.".into())
+        ("field check main.rs".into(), "It prints hi.".into())
     );
 
     // No `[DONE]` and the tag never closes: the thought is also the answer.
