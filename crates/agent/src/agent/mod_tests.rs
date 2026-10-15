@@ -265,6 +265,24 @@ fn runtime_context_is_idempotent_and_append_only() {
 }
 
 #[test]
+fn runtime_context_names_platform_shell_and_working_dir() {
+    let shell = whycodes_sandbox::host_shell_name();
+    let platform = format!(
+        "Platform: {}. The `bash` tool runs commands in {shell}.",
+        std::env::consts::OS
+    );
+    let bare = Agent::with_runtime_context("base");
+    assert!(bare.contains(&platform), "{bare}");
+    assert!(!bare.contains("Working directory:"), "{bare}");
+
+    let dir = tempfile::tempdir().unwrap();
+    let full = Agent::with_agents_md("base", dir.path());
+    assert!(full.contains(&platform), "{full}");
+    let cwd = format!("Working directory: {}\n", dir.path().display());
+    assert!(full.contains(&cwd), "{full}");
+}
+
+#[test]
 fn agents_md_is_appended_and_candidates_are_tried() {
     let dir = tempfile::tempdir().unwrap();
     // no AGENTS.md → prompt unchanged (plus runtime context)

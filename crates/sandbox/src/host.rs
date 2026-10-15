@@ -27,6 +27,22 @@ pub fn prepare_host(
     }
 }
 
+/// File name of the shell the `bash` tool runs in on this host: `bash` on
+/// Unix; on Windows Git Bash's `bash.exe`, `cmd.exe`, or `WHYCODES_SHELL`.
+pub fn host_shell_name() -> String {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| shell_file_name(&host_invocation("").program))
+        .clone()
+}
+
+pub(crate) fn shell_file_name(program: &str) -> String {
+    program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(program)
+        .to_string()
+}
+
 struct HostInvocation {
     program: String,
     args: Vec<String>,

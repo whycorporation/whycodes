@@ -1150,13 +1150,30 @@ impl Agent {
     ///
     /// Idempotent: if the prompt already contains `Today's date:`, it is returned unchanged.
     pub fn with_runtime_context(system_prompt: &str) -> String {
+        Self::with_runtime_context_in(system_prompt, None)
+    }
+
+    /// [`Self::with_runtime_context`] that also names the working directory.
+    /// The platform and the `bash` tool's shell are always stated: on Windows
+    /// that shell is Git Bash or `cmd.exe`, and the model cannot tell which.
+    pub fn with_runtime_context_in(
+        system_prompt: &str,
+        working_dir: Option<&std::path::Path>,
+    ) -> String {
         if system_prompt.contains("Today's date:") {
             return system_prompt.to_string();
         }
         let today = chrono::Local::now().format("%Y-%m-%d");
+        let os = std::env::consts::OS;
+        let shell = whycodes_sandbox::host_shell_name();
+        let cwd = working_dir
+            .map(|dir| format!("Working directory: {}\n", dir.display()))
+            .unwrap_or_default();
         format!(
             "{system_prompt}\n\n# Environment\n\n\
              Today's date: {today}.\n\
+             Platform: {os}. The `bash` tool runs commands in {shell}.\n\
+             {cwd}\
              When searching for the current or latest version of software, do not pin the query to a past year; \
              prefer canonical sources (npm registry, GitHub Releases, official docs)."
         )
@@ -1169,7 +1186,7 @@ impl Agent {
             crate::context_files::append_project_instructions(system_prompt, project_path);
         let with_skills = append_skills_catalog(&with_files, project_path);
         let with_agents = append_custom_agents_catalog(&with_skills, project_path);
-        Self::with_runtime_context(&with_agents)
+        Self::with_runtime_context_in(&with_agents, Some(project_path))
     }
 
     /// Resolve provider + model + key for a title refine call, or `None` if
