@@ -66,6 +66,19 @@ impl AppState {
         self.sessions.lock().ok()?.get(id).cloned()
     }
 
+    /// Drop sessions untouched for `idle` from memory, saving each first; the
+    /// next request loads them again from the database. Skips a session that
+    /// a request, turn or keep-alive still holds, an empty one, and one that
+    /// could not be saved. Returns how many were dropped.
+    pub fn evict_idle_sessions(&self, idle: std::time::Duration) -> usize {
+        let Ok(mut map) = self.sessions.lock() else {
+            return 0;
+        };
+        let before = map.len();
+        map.retain(|_, handle| !evictable(handle, idle));
+        before - map.len()
+    }
+
     pub fn list_session_ids(&self) -> Vec<String> {
         self.sessions
             .lock()
@@ -105,6 +118,37 @@ impl AppState {
             Err(_poisoned) => false,
         }
     }
+}
+
+/// Idle long enough, held by nobody else, non-empty, and saved just now.
+fn evictable(handle: &SessionHandle, idle: std::time::Duration) -> bool {
+    let Ok(session) = handle.try_lock() else {
+        return false;
+    };
+    let quiet = chrono::Utc::now() - session.updated_at;
+    Arc::strong_count(handle) == 1
+        && !session.messages.is_empty()
+        && quiet.to_std().is_ok_and(|q| q >= idle)
+        && routes::save_session(&session).is_ok()
+}
+
+/// How often the daemon looks for idle sessions to drop from memory.
+pub const SESSION_EVICT_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+/// A session untouched this long leaves memory (it stays in the database).
+pub const SESSION_IDLE_EVICT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Run [`AppState::evict_idle_sessions`] every `every` for the daemon's life.
+pub fn spawn_session_eviction(
+    state: AppState,
+    every: std::time::Duration,
+    idle: std::time::Duration,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(every).await;
+            state.evict_idle_sessions(idle);
+        }
+    })
 }
 
 pub fn create_router(state: AppState) -> Router {

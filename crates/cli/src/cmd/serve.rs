@@ -183,6 +183,11 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
         session_route: Arc::new(std::sync::Mutex::new(HashMap::new())),
     };
 
+    let _eviction = whycodes_server::spawn_session_eviction(
+        state.clone(),
+        whycodes_server::SESSION_EVICT_EVERY,
+        whycodes_server::SESSION_IDLE_EVICT,
+    );
     let router = whycodes_server::create_router(state);
     let _retention = whycodes_server::heap::spawn_retention_watchdog(
         whycodes_server::heap::RETENTION_CHECK_EVERY,

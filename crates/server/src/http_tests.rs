@@ -858,3 +858,71 @@ async fn steer_queues_a_message_for_the_session() {
     assert_eq!(queued.len(), 1);
     assert_eq!(whycodes_agent::steer::content_text(&queued[0]), "check X");
 }
+
+#[tokio::test]
+async fn idle_sessions_leave_memory_and_load_again() {
+    let _home = IsolatedHome::new();
+    let state = test_state();
+    let hour_ago = chrono::Utc::now() - chrono::Duration::hours(1);
+    let idle = |text: &str| {
+        let mut s = whycodes_session::session::Session::new(std::env::temp_dir(), "sys".into());
+        s.add_user_message(text);
+        s.updated_at = hour_ago;
+        s
+    };
+    let old = state.insert_session(idle("old"));
+    let old_id = old.lock().await.id.clone();
+    drop(old);
+    let held = state.insert_session(idle("held"));
+    let mut recent = whycodes_session::session::Session::new(std::env::temp_dir(), "sys".into());
+    recent.add_user_message("recent");
+    let recent_id = state.insert_session(recent).lock().await.id.clone();
+    let mut empty = whycodes_session::session::Session::new(std::env::temp_dir(), "sys".into());
+    empty.updated_at = hour_ago;
+    let empty_id = state.insert_session(empty).lock().await.id.clone();
+
+    let dropped = state.evict_idle_sessions(std::time::Duration::from_secs(600));
+    assert_eq!(dropped, 1, "only the idle, unheld, non-empty session");
+    assert!(state.get_session(&old_id).is_none());
+    assert!(
+        state.get_session(&held.lock().await.id).is_some(),
+        "still held"
+    );
+    assert!(state.get_session(&recent_id).is_some());
+    assert!(state.get_session(&empty_id).is_some());
+
+    let back = crate::routes::load_or_get_session(&state, &old_id)
+        .await
+        .expect("reloads");
+    assert_eq!(back.lock().await.messages.len(), 1);
+}
+
+#[tokio::test]
+async fn eviction_task_runs_until_aborted() {
+    let task = crate::spawn_session_eviction(
+        test_state(),
+        std::time::Duration::from_millis(5),
+        std::time::Duration::from_secs(600),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    assert!(!task.is_finished());
+    task.abort();
+}
+
+#[tokio::test]
+async fn eviction_skips_locked_sessions_and_a_poisoned_map() {
+    let state = test_state();
+    let mut s = whycodes_session::session::Session::new(std::env::temp_dir(), "sys".into());
+    s.add_user_message("busy");
+    s.updated_at = chrono::Utc::now() - chrono::Duration::hours(1);
+    let handle = state.insert_session(s);
+    let guard = Arc::clone(&handle).lock_owned().await;
+    let id = guard.id.clone();
+    drop(handle);
+    assert_eq!(state.evict_idle_sessions(std::time::Duration::ZERO), 0);
+    assert!(state.get_session(&id).is_some(), "a running turn holds it");
+    drop(guard);
+
+    poison_mutex(&state.sessions);
+    assert_eq!(state.evict_idle_sessions(std::time::Duration::ZERO), 0);
+}

@@ -82,7 +82,8 @@ are removed. CI and `whycodes serve --no-takeover` exit non-zero instead
 of prompting. `whycodes connect` names the lock holder when the daemon is
 unreachable. The daemon serves the directory it starts in and reads the same
 layered config as the TUI there: global, then `<project>/.whycodes/config.toml`,
-then `WHYCODES_*`.
+then `WHYCODES_*`. A session nobody has touched for 10 minutes is saved and
+dropped from the daemon's memory; the next request for it loads it again.
 
 The prompt is positional: `whycodes generate "<prompt>"`, not `whycodes -p`.
 `generate` (and `run --format json|stream-json`) accept `-t, --max-turns <N>` as
