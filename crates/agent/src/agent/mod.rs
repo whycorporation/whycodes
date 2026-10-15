@@ -141,6 +141,14 @@ pub struct Agent {
     route_model: String,
 }
 
+/// Built-in, plugin and MCP tools plus their connections (MCP servers, LSP
+/// clients), shareable between agents loaded from the same config.
+#[derive(Clone)]
+pub struct SharedTools {
+    executor: Arc<ToolExecutor>,
+    mcp_servers: Vec<crate::mcp_load::McpServerHandle>,
+}
+
 /// Recover from a poisoned mutex instead of aborting (`panic = "abort"` in release).
 pub(crate) fn recover_lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -1029,6 +1037,22 @@ impl Agent {
     /// MCP servers connected by [`Self::with_mcp`] / [`Self::load_mcp`].
     pub fn mcp_servers(&self) -> &[crate::mcp_load::McpServerHandle] {
         &self.mcp_servers
+    }
+
+    /// This agent's loaded tools, for another agent with the same config.
+    pub fn shared_tools(&self) -> SharedTools {
+        SharedTools {
+            executor: Arc::clone(&self.tool_executor),
+            mcp_servers: self.mcp_servers.clone(),
+        }
+    }
+
+    /// Reuse another agent's tools instead of loading them again: one set of
+    /// MCP server processes and LSP clients serves both.
+    pub fn with_shared_tools(mut self, tools: SharedTools) -> Self {
+        self.tool_executor = tools.executor;
+        self.mcp_servers = tools.mcp_servers;
+        self
     }
 
     /// Load shell plugins only (when not calling [`Self::with_mcp`]).
