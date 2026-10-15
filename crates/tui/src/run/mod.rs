@@ -3649,6 +3649,7 @@ fn apply_turn_outcome(
             {
                 last.content = text.clone();
             }
+            note_empty_answer(app, &text);
             app.finish_open_thinking();
             app.current_agent_state = AgentState::Idle;
             crate::desktop_notify::notify(
@@ -3697,6 +3698,7 @@ fn apply_turn_outcome(
                 {
                     last.content = text.clone();
                 }
+                note_empty_answer(app, &text);
                 app.current_agent_state = AgentState::Idle;
                 app.status_message = format_turn_done_status(
                     app,
@@ -6191,3 +6193,13 @@ fn should_preconnect(input: &str, enabled: bool, remote: bool) -> bool {
     let input = input.trim_start();
     enabled && !remote && !input.is_empty() && !input.starts_with('/')
 }
+
+/// Say so when a turn ends with no answer text (only thinking or tool calls):
+/// otherwise the transcript just stops after "Worked for…".
+fn note_empty_answer(app: &mut TuiApp, text: &str) {
+    if text.trim().is_empty() {
+        app.add_message(ChatRole::System, EMPTY_ANSWER_NOTE);
+    }
+}
+
+const EMPTY_ANSWER_NOTE: &str = "The model ended the turn without an answer.";
