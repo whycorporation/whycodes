@@ -3869,6 +3869,11 @@ impl TuiApp {
         if let Some(last) = self.messages.last_mut()
             && last.role == ChatRole::Assistant
         {
+            // Text the model writes after this call belongs to a later step;
+            // without a break it was glued on ("…first.Done.").
+            if !last.content.trim().is_empty() && !last.content.ends_with("\n\n") {
+                last.content.push_str("\n\n");
+            }
             last.blocks.push(ChatBlock::ToolUse {
                 id: tc.id.clone(),
                 name: tc.name.clone(),
