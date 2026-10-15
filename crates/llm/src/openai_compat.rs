@@ -190,6 +190,7 @@ pub(crate) fn chat_sse_from_bytes(bytes: ByteStream, provider: &str) -> Provider
         pending: std::collections::VecDeque::new(),
         provider: provider.to_string(),
         done: false,
+        think: crate::think_tags::ThinkTags::default(),
     })
 }
 
@@ -199,6 +200,8 @@ struct ChatSse {
     pending: std::collections::VecDeque<whycodes_core::Result<StreamEvent>>,
     provider: String,
     done: bool,
+    /// Inline `<think>` at the start of `content` (some open models).
+    think: crate::think_tags::ThinkTags,
 }
 
 impl ChatSse {
@@ -208,6 +211,7 @@ impl ChatSse {
         }
         let data = &line[6..];
         if data == "[DONE]" {
+            self.flush_think();
             self.pending.push_back(Ok(StreamEvent::MessageStop));
             self.done = true;
             return;
@@ -217,11 +221,22 @@ impl ChatSse {
         };
         let delta = &event["choices"][0]["delta"];
         for ev in stream_events_for_chat_delta(delta) {
-            self.pending.push_back(Ok(ev));
+            match ev {
+                StreamEvent::TextDelta { text } => {
+                    let routed = self.think.push(&text);
+                    self.pending.extend(routed.into_iter().map(Ok));
+                }
+                other => self.pending.push_back(Ok(other)),
+            }
         }
         if let Some(ev) = stream_usage_from_chunk(&event) {
             self.pending.push_back(Ok(ev));
         }
+    }
+
+    fn flush_think(&mut self) {
+        let rest = self.think.finish();
+        self.pending.extend(rest.into_iter().map(Ok));
     }
 
     fn drain_buffer_lines(&mut self) {
@@ -254,7 +269,10 @@ impl Stream for ChatSse {
                 Poll::Ready(Some(Err(e))) => {
                     return Poll::Ready(Some(Err(stream_chunk_error(&this.provider, e))));
                 }
-                Poll::Ready(None) => this.done = true,
+                Poll::Ready(None) => {
+                    this.flush_think();
+                    this.done = true;
+                }
                 Poll::Pending => return Poll::Pending,
             }
         }
