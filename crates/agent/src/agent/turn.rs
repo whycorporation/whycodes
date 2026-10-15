@@ -419,6 +419,10 @@ impl Agent {
                     return Err(e);
                 }
             };
+            // The request holds a full copy of the transcript. Once the stream is
+            // open it is only needed to store a tools-free reply in the response
+            // cache; drop it now otherwise instead of holding it while streaming.
+            let cacheable = (self.response_cache && request.tools.is_empty()).then_some(request);
             let cache_hit = turn.cache_hit;
             if self.sticky_credential().is_none() {
                 self.set_sticky_credential(Some("default".into()));
@@ -651,13 +655,12 @@ impl Agent {
                 continue;
             }
 
-            if self.response_cache
+            if let Some(request) = &cacheable
                 && !cache_hit
-                && request.tools.is_empty()
                 && tool_calls.is_empty()
                 && !accumulated_text.trim().is_empty()
             {
-                whycodes_llm::ResponseCache::global().store(&request, model, &accumulated_text);
+                whycodes_llm::ResponseCache::global().store(request, model, &accumulated_text);
             }
 
             // Emit ToolStart with final parsed arguments (not the empty first chunk).
