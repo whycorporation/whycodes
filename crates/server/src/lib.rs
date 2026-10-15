@@ -4,6 +4,7 @@
 //! alive across HTTP clients so reconnects skip cold startup. Sessions are
 //! held in-process and optionally persisted to the same SQLite DB as the TUI.
 
+pub mod heap;
 mod keep_warm;
 pub mod perm;
 pub mod routes;

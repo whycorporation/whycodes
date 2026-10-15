@@ -244,6 +244,7 @@ pub async fn run(
             "v1: failed to save session after run",
             save_session(&*handle.lock().await),
         );
+        crate::heap::after_turn();
         let route = (provider.clone(), model.clone(), api_key.clone());
         crate::keep_warm::spawn(Arc::clone(&agent), Arc::clone(&handle), route, warm_minutes);
         state_done.take_cancel(&sid);

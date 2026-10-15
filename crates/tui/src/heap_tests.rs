@@ -30,3 +30,17 @@ fn deferred_request_coalesces_and_drains_once() {
     run_deferred_release();
     assert!(!AFTER_DRAW.load(Ordering::Relaxed));
 }
+
+#[test]
+fn retention_ticker_checks_once_per_interval() {
+    let start = Instant::now();
+    let mut ticker = RetentionTicker::new(u64::MAX, Duration::from_secs(30), start);
+    assert!(!ticker.tick(start + Duration::from_secs(10)), "too soon");
+    assert!(
+        !ticker.tick(start + Duration::from_secs(31)),
+        "checked, nothing to trim"
+    );
+    assert_eq!(ticker.last, start + Duration::from_secs(31));
+    assert!(!ticker.tick(start + Duration::from_secs(40)));
+    assert_eq!(ticker.last, start + Duration::from_secs(31), "skipped");
+}

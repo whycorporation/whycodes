@@ -1,56 +1,57 @@
-//! Return freed-but-retained allocator pages to the OS.
+//! Return freed-but-retained allocator pages to the OS from the TUI loop.
 //!
-//! jcode (`process_memory::release_retained_heap`): after a turn the
-//! transcript/layout caches drop large transients, but glibc keeps the
-//! arena. `malloc_trim(0)` walks free chunks and gives the pages back.
-//! Inert on non-Linux. Never call on the draw path.
+//! The trimming itself lives in [`whycodes_core::process_memory`]; this module
+//! adds the client's timing: after a turn (deferred past the frame flush), on
+//! the edge into idle, again every few minutes while idle, and whenever
+//! retained memory grows past a threshold. Inert outside Linux/glibc. Never
+//! call on the draw path.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// How long the client must be quiet before an idle trim (jcode: 60s).
-pub const IDLE_TRIM_AFTER: Duration = Duration::from_secs(60);
+use whycodes_core::process_memory::RetentionWatch;
+pub use whycodes_core::process_memory::{release_retained_heap, release_retained_heap_debounced};
 
-static LAST_TRIM: Mutex<Option<Instant>> = Mutex::new(None);
+/// How long the client must be quiet before an idle trim.
+pub const IDLE_TRIM_AFTER: Duration = Duration::from_secs(60);
+/// While idle, trim again this often: background ticks slowly regrow the heap.
+pub const IDLE_RETRIM_EVERY: Duration = Duration::from_secs(300);
+/// How often the client checks for retained memory.
+pub const RETENTION_CHECK_EVERY: Duration = Duration::from_secs(30);
+/// Retained growth that triggers a trim in a client (several may run at once).
+pub const CLIENT_RETENTION_TRIM_BYTES: u64 = 16 * 1024 * 1024;
+
 static AFTER_DRAW: AtomicBool = AtomicBool::new(false);
 static AFTER_DRAW_REASON: Mutex<&'static str> = Mutex::new("post-draw");
 
-/// Ask glibc to return unused arena pages. Safe no-op elsewhere.
-pub fn release_retained_heap(reason: &'static str) {
-    #[cfg(target_os = "linux")]
-    {
-        unsafe extern "C" {
-            fn malloc_trim(pad: usize) -> i32;
+/// Retention check on a fixed cadence, driven by the event loop's clock.
+pub struct RetentionTicker {
+    watch: RetentionWatch,
+    every: Duration,
+    last: Instant,
+}
+
+impl RetentionTicker {
+    pub fn new(threshold_bytes: u64, every: Duration, now: Instant) -> Self {
+        Self {
+            watch: RetentionWatch::new(threshold_bytes),
+            every,
+            last: now,
         }
-        // SAFETY: malloc_trim is a documented glibc extension; pad=0 means
-        // "keep no padding". Other libcs typically lack the symbol — we
-        // only compile this block on Linux.
-        let trimmed = unsafe { malloc_trim(0) };
-        tracing::debug!(reason, trimmed, "malloc_trim");
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = reason;
-    }
-    if let Ok(mut g) = LAST_TRIM.lock() {
-        *g = Some(Instant::now());
+
+    /// Check at most once per interval. Returns whether it trimmed.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        if now.saturating_duration_since(self.last) < self.every {
+            return false;
+        }
+        self.last = now;
+        self.watch.check("client_retention")
     }
 }
 
-/// [`release_retained_heap`] unless one already ran inside `min_interval`.
-pub fn release_retained_heap_debounced(reason: &'static str, min_interval: Duration) -> bool {
-    if let Ok(g) = LAST_TRIM.lock()
-        && let Some(last) = *g
-        && last.elapsed() < min_interval
-    {
-        return false;
-    }
-    release_retained_heap(reason);
-    true
-}
-
-/// Grok `request_release_after_draw`: coalesce trims requested on the
+/// Coalesce trims requested on the
 /// draw/tick path and run them **after** the frame flush so `malloc_trim`
 /// cannot stall the paint the user is waiting for.
 pub fn request_release_after_draw(reason: &'static str) {

@@ -11189,3 +11189,11 @@ async fn daemon_steering_sends_text_and_requeues_when_unreachable() {
         "{ev:?}"
     );
 }
+
+#[test]
+fn idle_heap_trim_retrims_while_idle_after_the_interval() {
+    let mut armed = false;
+    crate::heap::release_retained_heap("retrim-setup");
+    maybe_idle_heap_trim(false, crate::heap::IDLE_TRIM_AFTER, &mut armed);
+    assert!(!armed, "disarmed idle only retrims on the long interval");
+}
