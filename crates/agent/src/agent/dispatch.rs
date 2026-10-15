@@ -1101,7 +1101,13 @@ impl Agent {
                     mode: AgentMode::Subagent,
                     permission,
                     model: None,
-                    system_prompt: Some(Agent::with_agents_md(&system_prompt, &agents_md_path)),
+                    // Instructions come from the project; the working
+                    // directory is the worker's own (its worktree).
+                    system_prompt: Some(Agent::with_agents_md_in(
+                        &system_prompt,
+                        &agents_md_path,
+                        &worker_cwd,
+                    )),
                     temperature: None,
                     top_p: None,
                 };
@@ -1119,7 +1125,9 @@ impl Agent {
                     SubagentRunner::new(registry, executor, info, worker_cwd, sandbox, network)
                         .with_memory(memory)
                         .with_memory_project(project_path.clone())
-                        .with_file_index(file_index.clone())
+                        // The parent's index covers the main checkout and
+                        // never sees a worktree's edits; tools walk instead.
+                        .with_file_index(if use_worktrees { None } else { file_index.clone() })
                         .with_panel(panel.clone())
                         .with_swarm_hub(Some(hub.clone()))
                         .with_steer(steer.clone(), worker_id.clone())

@@ -3762,3 +3762,16 @@ fn built_in_prompts_have_no_carriage_returns() {
         assert!(!prompt.contains('\r'), "{name} prompt has CR line endings");
     }
 }
+
+#[test]
+fn a_worker_prompt_names_its_own_directory_and_the_project_instructions() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("AGENTS.md"), "Run the project tests.\n").unwrap();
+    let worktree = tempfile::tempdir().unwrap();
+    let prompt = Agent::with_agents_md_in("base", project.path(), worktree.path());
+    assert!(prompt.contains("Run the project tests."), "{prompt}");
+    let own = format!("Working directory: {}\n", worktree.path().display());
+    assert!(prompt.contains(&own), "{prompt}");
+    let main = format!("Working directory: {}\n", project.path().display());
+    assert!(!prompt.contains(&main), "{prompt}");
+}
