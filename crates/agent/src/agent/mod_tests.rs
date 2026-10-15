@@ -3717,3 +3717,17 @@ fn shared_tools_reuse_the_same_executor() {
     assert!(Arc::ptr_eq(&first.tool_executor, &second.tool_executor));
     assert_eq!(second.mcp_servers().len(), first.mcp_servers().len());
 }
+
+#[tokio::test]
+async fn preconnect_dials_only_a_known_http_provider() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(
+        whycodes_llm::providers::ollama::OllamaProvider::from_base(Some(&base)),
+    ));
+    let a = test_agent().with_provider_registry(registry);
+    assert!(!a.preconnect("no-such-provider"));
+    assert!(a.preconnect("ollama"));
+    assert!(!a.preconnect("ollama"), "dialled once per window");
+}

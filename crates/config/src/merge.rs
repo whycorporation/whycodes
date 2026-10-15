@@ -211,6 +211,10 @@ impl Config {
         if other.session.response_cache != default_response_cache() {
             self.session.response_cache = other.session.response_cache.clone();
         }
+        // Defaults true, like `auto_title`: an explicit false in any layer wins.
+        if !other.session.preconnect {
+            self.session.preconnect = false;
+        }
         if other.session.intent_guidance != default_intent_guidance() {
             self.session.intent_guidance = other.session.intent_guidance.clone();
         }

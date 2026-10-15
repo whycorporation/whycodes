@@ -10,6 +10,7 @@ pub(crate) mod line_buffer;
 pub mod model_catalog;
 pub mod oauth_refresh;
 pub mod openai_compat;
+pub mod preconnect;
 pub mod pricing;
 pub mod provider;
 pub mod providers;

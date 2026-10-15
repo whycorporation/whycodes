@@ -342,6 +342,17 @@ after a `/api` chat or `/v1` run, using that turn's provider and model, and
 stops as soon as another turn starts on the session. A TUI attached to a
 daemon leaves keep-alives to the daemon.
 
+While you type a prompt, the TUI opens the connection to the session's
+provider in the background, so the request skips DNS, TCP and TLS setup. It
+is a bare `GET` of the provider's host with no API key or prompt, at most once
+per 90 seconds per host. Slash commands and attached TUIs do not trigger it.
+Turn it off with:
+
+```toml
+[session]
+preconnect = false
+```
+
 TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
 `/loop` (`/loop 3 <prompt>`; `/loop stop`), `/goal` (below).
 

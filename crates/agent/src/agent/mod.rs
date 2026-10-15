@@ -460,6 +460,14 @@ impl Agent {
         self.provider_registry.get(name).is_some()
     }
 
+    /// Open `provider`'s connection in the background (see
+    /// [`whycodes_llm::preconnect`]). `false` when nothing was started.
+    pub fn preconnect(&self, provider: &str) -> bool {
+        self.provider_registry
+            .get(provider)
+            .is_some_and(|p| whycodes_llm::preconnect::spawn(p.default_base_url()))
+    }
+
     pub(crate) fn provider_registry_get(&self, name: &str) -> Option<&dyn LlmProvider> {
         self.provider_registry.get(name)
     }
