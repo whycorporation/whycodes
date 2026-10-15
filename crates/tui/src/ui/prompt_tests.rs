@@ -908,67 +908,26 @@ fn modal_hides_prompt_caret() {
 }
 
 #[test]
-fn home_side_gutters_clear_stale_paste_glyphs() {
+fn home_prompt_spans_the_full_width() {
     use crate::config::TuiAppConfig;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
+    // The home screen used to centre a narrower box (and had to scrub the
+    // gutters beside it); it now has the same width as in a session.
     let backend = TestBackend::new(100, 12);
     let mut terminal = Terminal::new(backend).unwrap();
     let mut app = TuiApp::new(TuiAppConfig::default());
     assert!(app.messages.is_empty(), "home layout");
-    let area = Rect {
-        x: 0,
-        y: 0,
-        width: 100,
-        height: 12,
-    };
+    let area = Rect::new(0, 0, 100, 12);
     let palette = app.config.palette();
     terminal
-        .draw(|f| {
-            let stain: Vec<Line> = (0..12).map(|_| Line::from("W".repeat(100))).collect();
-            f.render_widget(Paragraph::new(Text::from(stain)), f.area());
-            render(f, area, &mut app, &palette);
-        })
+        .draw(|f| render(f, area, &mut app, &palette))
         .unwrap();
-
     let buf = terminal.backend().buffer();
-    let mut box_x = None;
-    let mut box_y = None;
-    for y in 0..12u16 {
-        for x in 0..100u16 {
-            if buf[(x, y)].symbol() == "╭" {
-                box_x = Some(x);
-                box_y = Some(y);
-                break;
-            }
-        }
-    }
-    let box_x = box_x.expect("prompt ╭");
-    let box_y = box_y.expect("prompt ╭");
-    assert!(box_x > 0, "home prompt should be inset, box_x={box_x}");
-    let mut box_right = None;
-    for x in (0..100u16).rev() {
-        if buf[(x, box_y)].symbol() == "╮" {
-            box_right = Some(x);
-            break;
-        }
-    }
-    let box_right = box_right.expect("prompt ╮");
-    for y in box_y..box_y.saturating_add(3) {
-        for x in 0..box_x {
-            assert_ne!(
-                buf[(x, y)].symbol(),
-                "W",
-                "paste leftover left of prompt ({x},{y})"
-            );
-        }
-        for x in box_right.saturating_add(1)..100 {
-            assert_ne!(
-                buf[(x, y)].symbol(),
-                "W",
-                "paste leftover right of prompt ({x},{y})"
-            );
-        }
-    }
+    let top = (0..12u16)
+        .find(|&y| (0..100u16).any(|x| buf[(x, y)].symbol() == "╭"))
+        .expect("prompt ╭");
+    assert_eq!(buf[(0, top)].symbol(), "╭");
+    assert_eq!(buf[(99, top)].symbol(), "╮");
 }
