@@ -41,6 +41,20 @@ case "$home" in
         ;;
 esac
 
+# A listener runs one job at a time, so its target dirs are idle here. They
+# only grow (new dependencies, new toolchains): at 154 GB across three
+# runners the disk filled and every runner crash-looped. Past the budget,
+# drop this runner's targets and build cold once.
+max_mb="${WHYCODES_CI_TARGET_MAX_MB:-15360}"
+runner_targets="${target_base}/${runner}"
+if [ -d "$runner_targets" ]; then
+    used_mb="$(du -sm "$runner_targets" 2>/dev/null | cut -f1)"
+    if [ "${used_mb:-0}" -gt "$max_mb" ]; then
+        printf 'pruning %s: %s MB > %s MB\n' "$runner_targets" "$used_mb" "$max_mb"
+        rm -rf "$runner_targets"
+    fi
+fi
+
 mkdir -p "$home" "$target"
 # Cargo (and llvm-cov clean) require this exact first line. A heredoc from a
 # CRLF-checked-out script produced "invalid signature"; printf is one LF.
