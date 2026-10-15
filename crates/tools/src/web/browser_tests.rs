@@ -856,11 +856,9 @@ fn uncovered_io_error_arms() {
     let _ = http_get(&format!("http://{addr}/json/version"));
     server.join().ok();
 
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    drop(listener);
-    let connect =
-        ws_cdp_call(&format!("ws://{addr}/devtools"), "Page.enable", json!({})).unwrap_err();
+    // Port 0 never accepts. A port freed by `drop(listener)` could be taken
+    // by a parallel test, which then resets the socket after connect.
+    let connect = ws_cdp_call("ws://127.0.0.1:0/devtools", "Page.enable", json!({})).unwrap_err();
     assert!(connect.contains("cdp connect"), "{connect}");
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
