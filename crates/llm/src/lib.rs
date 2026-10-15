@@ -19,6 +19,7 @@ pub mod rate_limit;
 pub mod response_cache;
 pub mod retry;
 pub mod scripted;
+mod think_tags;
 pub mod thinking;
 pub mod token_counter;
 pub mod transport;
