@@ -11231,3 +11231,15 @@ fn a_turn_without_answer_text_says_so() {
     assert_eq!(last.role, ChatRole::System);
     assert_eq!(last.content, EMPTY_ANSWER_NOTE);
 }
+
+#[test]
+fn a_bash_call_that_finished_in_the_foreground_is_not_a_task() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let toasts = app.toasts.visible().len();
+    for status in ["done", "failed", "killed"] {
+        apply_background_event(&mut app, "bg-quick", status, "Show the file (exit 0)");
+    }
+    assert!(app.bg_jobs.is_empty());
+    assert_eq!(app.toasts.visible().len(), toasts);
+    assert_eq!(app.bg_running_count, 0);
+}

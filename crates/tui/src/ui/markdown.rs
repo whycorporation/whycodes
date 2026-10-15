@@ -75,6 +75,29 @@ fn render_block(
             wrap_prose(out, max_width)
         }
 
+        Block::Quote(spans) => {
+            // A muted rail and dim text, so a quote reads as an aside.
+            let rail = Span::styled("│ ", Style::default().fg(palette.dim));
+            let style = Style::default().fg(palette.dim);
+            let body: Vec<Span> = spans
+                .iter()
+                .map(|s| inline_span(s, palette, Some(style)))
+                .collect();
+            let body_width = max_width.map(|w| w.saturating_sub(2).max(8));
+            let mut out: Vec<Line<'static>> = wrap_prose(body, body_width)
+                .into_iter()
+                .map(|line| {
+                    let mut spans = vec![rail.clone()];
+                    spans.extend(line.spans);
+                    Line::from(spans)
+                })
+                .collect();
+            if out.is_empty() {
+                out.push(Line::from(rail));
+            }
+            out
+        }
+
         Block::ListItem {
             indent,
             number,

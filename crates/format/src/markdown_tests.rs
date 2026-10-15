@@ -473,3 +473,14 @@ fn remaining_parse_render_and_table_edges() {
     let blank_in_fence = render_markdown("```\n\nplain\n```");
     assert!(blank_in_fence.contains("plain"), "{blank_in_fence}");
 }
+
+#[test]
+fn a_gt_line_is_a_quote() {
+    let blocks = parse_markdown("> Run `cargo run`.\n>tight");
+    assert_eq!(blocks.len(), 2);
+    let Block::Quote(first) = &blocks[0] else {
+        panic!("{blocks:?}");
+    };
+    assert_eq!(first[0], Inline::Text("Run ".into()));
+    assert!(matches!(&blocks[1], Block::Quote(s) if s == &vec![Inline::Text("tight".into())]));
+}
