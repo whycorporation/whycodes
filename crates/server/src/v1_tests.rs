@@ -324,13 +324,13 @@ async fn run_ends_after_a_bash_call() {
     });
     state.agent = Arc::new(agent.with_provider_registry(registry));
     let dir = tempfile::tempdir().unwrap();
-    let session =
-        whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
     let id = session.id.clone();
     state.insert_session(session);
 
+    // The daemon keeps its state (and so the agent) for its whole life.
     let resp = run(
-        State(state),
+        State(state.clone()),
         Path(id),
         Json(RunRequest {
             message: "run bash".into(),
