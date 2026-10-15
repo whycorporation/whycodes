@@ -422,7 +422,7 @@ fn tool_block_grep_header_shows_match_chip() {
         },
     );
     let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(header.contains('•'), "Grok bullet, got {header}");
+    assert!(header.contains('◆'), "tool bullet, got {header}");
     assert!(header.contains("Search"), "got {header}");
     assert!(header.contains("\"foo\""), "quoted pattern, got {header}");
     assert!(
@@ -460,7 +460,7 @@ fn tool_block_run_shows_display_name_and_command() {
         !header.contains('┃'),
         "collapsed Run has no accent rail, got {header}"
     );
-    assert!(header.contains('•'), "Grok bullet, got {header}");
+    assert!(header.contains('◆'), "tool bullet, got {header}");
     assert!(header.contains("Run"), "got {header}");
     assert!(!header.contains("bash"), "got {header}");
     assert!(header.contains("cargo test"), "got {header}");
@@ -492,7 +492,7 @@ fn collapsed_tool_is_header_only() {
         "Grok collapsed tool is a one-liner: {lines:?}"
     );
     let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(header.contains('•'), "{header}");
+    assert!(header.contains('◆'), "{header}");
     assert!(
         !header.contains("line 5"),
         "body must not leak into the header: {header}"
@@ -528,7 +528,7 @@ fn collapsed_tools_group_into_one_verb_line() {
         .collect();
     let joined = texts.join("\n");
     assert!(
-        joined.contains("Searched 3 patterns, Listed 1 dir, Read 1 file"),
+        joined.contains("◈ Searched 3 patterns, Listed 1 dir, Read 1 file"),
         "Grok verb-group line, got {texts:?}"
     );
 }
@@ -610,7 +610,7 @@ fn thinking_body_uses_palette_dim_without_sgr_dim() {
     let rail = lines[0]
         .spans
         .iter()
-        .find(|s| s.content.contains('┃') || s.content.contains("┃"))
+        .find(|s| s.content.contains('◆'))
         .and_then(|s| s.style.fg);
     assert_eq!(rail, Some(palette.thinking));
     assert_ne!(rail, Some(palette.success));
@@ -626,7 +626,7 @@ fn finished_thinking_rail_stays_dim_not_success() {
     let rail = lines
         .iter()
         .flat_map(|l| l.spans.iter())
-        .find(|s| s.content.contains('┃') || s.content.as_ref() == "┃")
+        .find(|s| s.content.contains('◆'))
         .and_then(|s| s.style.fg);
     assert_eq!(rail, Some(palette.dim));
     assert_ne!(rail, Some(palette.success));
@@ -1097,8 +1097,8 @@ fn collapsed_thinking_has_no_trailing_chevron() {
     let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(header.contains("Thought"), "got {header:?}");
     assert!(
-        header.contains('┃'),
-        "thinking keeps a left accent, got {header:?}"
+        header.contains('◆'),
+        "thinking leads with the tool bullet, got {header:?}"
     );
     assert!(
         !header.contains('›') && !header.contains('>'),
@@ -2919,8 +2919,8 @@ fn selected_caret_sits_in_gutter_and_does_not_shift_thinking_rail() {
     let body_rail = buf.cell((1, 1)).map(|c| c.symbol());
     assert_eq!(
         header_rail,
-        Some("┃"),
-        "header rail at content x, got {header_rail:?}"
+        Some("◆"),
+        "header bullet at content x, got {header_rail:?}"
     );
     assert_eq!(
         body_rail,
@@ -3575,7 +3575,7 @@ fn grok_chat_flow_headers_paint_thinking_search_edit_read_run() {
         text.contains("Run") && text.contains("cargo test"),
         "run header, got {text}"
     );
-    assert!(text.contains('•'), "quiet tool bullet column, got {text}");
+    assert!(text.contains('◆'), "quiet tool bullet column, got {text}");
 
     app.messages[last].results_expanded = true;
     let expanded =
