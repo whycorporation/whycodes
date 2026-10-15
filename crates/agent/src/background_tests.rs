@@ -664,10 +664,23 @@ fn scratch_log_persists_and_skips_failures() {
     job.log_path = Some(path.clone());
     let job = Arc::new(Mutex::new(job));
     append_output(&job, "hello-scratch");
+    append_output(&job, "-and-more");
     let disk = std::fs::read_to_string(&path).expect("read");
-    assert!(disk.contains("hello-scratch"), "{disk}");
-    persist_scratch_output(&path, "rewritten");
-    assert_eq!(std::fs::read_to_string(&path).expect("reread"), "rewritten");
+    assert_eq!(disk, "hello-scratch-and-more");
+
+    // The log keeps everything (memory only keeps the tail) up to its cap.
+    let big = "x".repeat(MAX_JOB_OUTPUT_BYTES + 10);
+    append_output(&job, &big);
+    let len = std::fs::metadata(&path).expect("meta").len() as usize;
+    assert_eq!(len, "hello-scratch-and-more".len() + big.len());
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(MAX_JOB_LOG_BYTES)
+        .unwrap();
+    append_scratch_output(&path, "over-the-cap");
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), MAX_JOB_LOG_BYTES);
 
     let blocked = dir.path().join("blocked-file");
     std::fs::write(&blocked, "not-a-dir").unwrap();
@@ -680,7 +693,7 @@ fn scratch_log_persists_and_skips_failures() {
         .join("bg-clash.log");
     std::fs::create_dir_all(&clash).unwrap();
     assert!(ensure_scratch_log(dir.path(), "bg-clash").is_none());
-    persist_scratch_output(&clash, "nope");
+    append_scratch_output(&clash, "nope");
 }
 
 #[tokio::test]

@@ -24,6 +24,9 @@ pub const DEFAULT_MAX_BACKGROUND_JOBS: usize = 8;
 /// Keep at most this many bytes of combined stdout/stderr per job.
 pub const MAX_JOB_OUTPUT_BYTES: usize = 64 * 1024;
 
+/// Stop growing a job's scratch log at this size; memory keeps the tail.
+pub const MAX_JOB_LOG_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Finished jobs retained for `/bg` / `bg list` after exit.
 const RETAIN_FINISHED: usize = 16;
 
@@ -600,7 +603,7 @@ fn append_output(job: &Arc<Mutex<JobInner>>, chunk: &str) {
     g.output.push_str(chunk);
     cap_job_output(&mut g.output);
     if let Some(path) = g.log_path.as_deref() {
-        persist_scratch_output(path, &g.output);
+        append_scratch_output(path, chunk);
     }
 }
 
@@ -618,10 +621,23 @@ fn ensure_scratch_log(working_dir: &Path, id: &str) -> Option<PathBuf> {
     Some(path)
 }
 
-fn persist_scratch_output(path: &Path, output: &str) {
-    if let Err(e) = std::fs::write(path, output) {
+/// Append one chunk; rewriting the whole capped buffer per 4 KiB read cost
+/// 64 KiB of writes for every chunk of a noisy command.
+fn append_scratch_output(path: &Path, chunk: &str) {
+    let written = std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .and_then(|mut file| append_below_cap(&mut file, chunk));
+    if let Err(e) = written {
         tracing::debug!(error = %e, "background scratch write skipped");
     }
+}
+
+fn append_below_cap(file: &mut std::fs::File, chunk: &str) -> std::io::Result<()> {
+    if file.metadata()?.len() >= MAX_JOB_LOG_BYTES {
+        return Ok(());
+    }
+    std::io::Write::write_all(file, chunk.as_bytes())
 }
 
 fn cap_job_output(output: &mut String) {
