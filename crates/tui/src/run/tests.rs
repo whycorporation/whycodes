@@ -3426,9 +3426,26 @@ async fn spawn_runtime_and_drain_outcomes() {
         whycodes_core::FileClaimRegistry::new(),
         "xai",
         "grok-4.6",
+        None,
     )
     .await;
     assert_eq!(rt.agent.info.name, "no-such-agent");
+    let second = spawn_new_session_runtime(
+        "no-such-agent",
+        &Config::default(),
+        dir.path(),
+        &idx,
+        whycodes_core::FileClaimRegistry::new(),
+        "xai",
+        "grok-4.6",
+        Some(rt.agent.shared_tools()),
+    )
+    .await;
+    assert_eq!(
+        second.agent.mcp_servers().len(),
+        rt.agent.mcp_servers().len(),
+        "the new session reuses the loaded tools"
+    );
     assert!(!rt.agent_busy);
 
     let mut rt = test_runtime();
@@ -11171,4 +11188,12 @@ async fn daemon_steering_sends_text_and_requeues_when_unreachable() {
         matches!(ev, TurnEvent::EnqueuePrompt { ref text } if text == "stop"),
         "{ev:?}"
     );
+}
+
+#[test]
+fn idle_heap_trim_retrims_while_idle_after_the_interval() {
+    let mut armed = false;
+    crate::heap::release_retained_heap("retrim-setup");
+    maybe_idle_heap_trim(false, crate::heap::IDLE_TRIM_AFTER, &mut armed);
+    assert!(!armed, "disarmed idle only retrims on the long interval");
 }

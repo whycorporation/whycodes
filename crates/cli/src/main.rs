@@ -52,6 +52,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr> + Clone,
 {
+    whycodes_core::process_memory::configure_system_allocator();
     let args: Vec<_> = args.into_iter().collect();
     whycodes_tui::bench::mark_process_start();
     if let Some(project_dir) = early_tui_run_dir_from(args.iter().map(|s| s.as_ref())) {

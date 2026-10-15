@@ -439,6 +439,7 @@ pub async fn chat(
             "serve: failed to save session after chat",
             save_session(&*handle.lock().await),
         );
+        crate::heap::after_turn();
         let route = (provider.clone(), model.clone(), api_key.clone());
         crate::keep_warm::spawn(Arc::clone(&agent), Arc::clone(&handle), route, warm_minutes);
         replay_unread_steering(&agent, &steer_id, &tx);

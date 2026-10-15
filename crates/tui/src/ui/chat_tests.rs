@@ -3846,8 +3846,11 @@ fn overflowing_transcript_keeps_line_caches_across_frames() {
     draw(&mut app);
     for (i, (m, old)) in app.messages.iter().zip(&before).enumerate() {
         let now = m.line_cache.as_ref().map(|(_, _, l)| l);
+        // Messages far from the viewport keep no lines at all (and must not
+        // be re-rendered either); the rest keep the very same lines.
         assert!(
-            matches!((old, now), (Some(a), Some(b)) if std::sync::Arc::ptr_eq(a, b)),
+            matches!((old, now), (Some(a), Some(b)) if std::sync::Arc::ptr_eq(a, b))
+                || (old.is_none() && now.is_none()),
             "message {i} was re-rendered on an unchanged frame"
         );
         assert!(m.layout_cache.is_some() && m.layout_cache_alt.is_some());
@@ -3868,4 +3871,40 @@ fn set_layout_parks_the_previous_width_and_cached_height_reads_both() {
     assert_eq!(m.cached_height(78, false), None);
     m.invalidate_layout();
     assert_eq!(m.cached_height(80, true), None);
+}
+
+#[test]
+fn long_transcript_keeps_rendered_lines_only_near_the_viewport() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    for i in 0..100 {
+        app.add_message(ChatRole::User, format!("question {i}"));
+        app.add_message(ChatRole::Assistant, format!("answer {i}"));
+    }
+    let palette = app.config.palette();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 10)).expect("test terminal");
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw");
+    let cached = app
+        .messages
+        .iter()
+        .filter(|m| m.line_cache.is_some())
+        .count();
+    assert!(
+        cached <= 2 * super::LINE_CACHE_MARGIN + 10,
+        "{cached} messages kept lines"
+    );
+    assert!(
+        app.messages[0].line_cache.is_none(),
+        "oldest message dropped"
+    );
+    assert!(
+        app.messages.last().unwrap().line_cache.is_some(),
+        "visible kept"
+    );
+    assert!(
+        app.messages.iter().all(|m| m.layout_cache.is_some()),
+        "every height stays cached"
+    );
 }
