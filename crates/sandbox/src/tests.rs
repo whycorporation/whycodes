@@ -802,3 +802,18 @@ fn warning_dedup_survives_a_poisoned_set() {
     let (first, _) = host_outcome("x", "", Some("after-poison warning")).display_content();
     assert!(first.contains("[sandbox] after-poison warning"), "{first}");
 }
+
+#[test]
+fn host_shell_name_is_the_shell_file_name() {
+    let name = crate::host_shell_name();
+    assert!(!name.is_empty());
+    assert!(!name.contains(['/', '\\']), "{name}");
+    #[cfg(not(windows))]
+    assert_eq!(name, "bash");
+    assert_eq!(
+        crate::host::shell_file_name(r"C:\Program Files\Git\bin\bash.exe"),
+        "bash.exe"
+    );
+    assert_eq!(crate::host::shell_file_name("/usr/bin/zsh"), "zsh");
+    assert_eq!(crate::host::shell_file_name("cmd.exe"), "cmd.exe");
+}
