@@ -11220,3 +11220,14 @@ fn preconnect_waits_for_a_typed_prompt_in_a_local_session() {
     assert!(!should_preconnect("fix the bug", false, false));
     assert!(!should_preconnect("fix the bug", true, true));
 }
+
+#[test]
+fn a_turn_without_answer_text_says_so() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    note_empty_answer(&mut app, "It prints hi.");
+    assert!(app.messages.is_empty());
+    note_empty_answer(&mut app, "  \n");
+    let last = app.messages.last().expect("note");
+    assert_eq!(last.role, ChatRole::System);
+    assert_eq!(last.content, EMPTY_ANSWER_NOTE);
+}
