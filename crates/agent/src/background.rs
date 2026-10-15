@@ -464,7 +464,11 @@ async fn run_background_job(
     warning: Option<String>,
     kill_flag: Arc<AtomicBool>,
 ) {
-    if let Some(ref w) = warning {
+    // The no-bubblewrap fallback warning is the same for every job; the model
+    // needs it once per process, like foreground shell output.
+    if let Some(ref w) = warning
+        && whycodes_sandbox::first_sighting(w)
+    {
         append_output(&job, &format!("[sandbox] {w}\n"));
     }
 
