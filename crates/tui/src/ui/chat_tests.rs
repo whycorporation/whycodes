@@ -3908,3 +3908,22 @@ fn long_transcript_keeps_rendered_lines_only_near_the_viewport() {
         "every height stays cached"
     );
 }
+
+#[test]
+fn a_finished_reply_drops_its_streaming_buffer_after_paint() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "hi".to_string());
+    app.add_message(ChatRole::Assistant, "**done** answer".to_string());
+    app.messages[1].stream_md = Some(crate::md_stream::IncrementalMarkdown::default());
+    let palette = app.config.palette();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 10)).expect("test terminal");
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .expect("draw");
+    assert!(app.messages[1].stream_md.is_none());
+    assert!(
+        app.messages[1].line_cache.is_some(),
+        "still painted from its lines"
+    );
+}
