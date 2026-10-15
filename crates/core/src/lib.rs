@@ -5,6 +5,7 @@ pub mod logging;
 pub mod network;
 pub mod panel;
 pub mod paths;
+pub mod process_memory;
 pub mod sandbox;
 pub mod secret_env;
 pub mod swarm_hub;

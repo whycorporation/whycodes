@@ -184,6 +184,10 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
     };
 
     let router = whycodes_server::create_router(state);
+    let _retention = whycodes_server::heap::spawn_retention_watchdog(
+        whycodes_server::heap::RETENTION_CHECK_EVERY,
+        whycodes_server::heap::RETENTION_TRIM_BYTES,
+    );
     // Loopback only — this is a local warm daemon, not a public API.
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     for line in serve_endpoint_lines(port, &addr.to_string()) {
