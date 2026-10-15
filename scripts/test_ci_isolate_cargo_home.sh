@@ -122,6 +122,41 @@ need ".cache/whycodes-ci-cargo" "$out4"
 need ".cache/whycodes-ci-target" "$out4"
 forbid "${tmp}/home/.cargo" "$out4"
 
+# Target budget: a runner past WHYCODES_CI_TARGET_MAX_MB loses its target
+# dirs (all of them, coverage's -llvm-cov included); under it they stay.
+big="$tmp/tools/whycodes-target/1panel-ci-2/coverage-llvm-cov"
+mkdir -p "$big"
+head -c 3145728 /dev/zero >"$big/blob"
+kept="$(
+    HOME="$tmp/home" \
+        RUNNER_TOOL_CACHE="$tmp/tools" \
+        RUNNER_NAME="1panel-ci-2" \
+        GITHUB_JOB="test" \
+        "$SCRIPT"
+)"
+forbid "pruning" "$kept"
+[ -f "$big/blob" ] || {
+    printf 'error: target under the budget was removed\n' >&2
+    exit 1
+}
+pruned="$(
+    HOME="$tmp/home" \
+        RUNNER_TOOL_CACHE="$tmp/tools" \
+        RUNNER_NAME="1panel-ci-2" \
+        GITHUB_JOB="test" \
+        WHYCODES_CI_TARGET_MAX_MB=1 \
+        "$SCRIPT"
+)"
+need "pruning" "$pruned"
+[ ! -e "$big" ] || {
+    printf 'error: target over the budget was kept\n' >&2
+    exit 1
+}
+[ -d "$target1" ] || {
+    printf 'error: the job target dir must exist again after pruning\n' >&2
+    exit 1
+}
+
 wf="$(cat "$WF")"
 need "scripts/ci_isolate_cargo_home.sh" "$wf"
 need "cache-targets: false" "$wf"
