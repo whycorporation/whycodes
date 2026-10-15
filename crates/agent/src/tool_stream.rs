@@ -200,13 +200,10 @@ fn canonical_path_argument(tc: &mut ToolCall) {
     if !PATH_TOOLS.contains(&tc.name.as_str()) {
         return;
     }
-    let Value::Object(args) = &mut tc.arguments else {
-        return;
-    };
-    if args.contains_key("path") {
-        return;
-    }
-    if let Some(value) = PATH_ALIASES.iter().find_map(|k| args.remove(*k)) {
+    if let Value::Object(args) = &mut tc.arguments
+        && !args.contains_key("path")
+        && let Some(value) = PATH_ALIASES.iter().find_map(|k| args.remove(*k))
+    {
         args.insert("path".into(), value);
     }
 }
