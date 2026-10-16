@@ -1,0 +1,5 @@
+{
+  "name": "hello",
+  "description": "Echo a greeting back (example shell plugin)",
+  "command": "./run.sh"
+}

@@ -87,7 +87,7 @@ pub(crate) async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Resul
         Commands::Auth { cmd } => auth::cmd_auth(cmd).await,
         Commands::Import { args } => import::cmd_import(args).await,
         Commands::Stats => session::cmd_stats().await,
-        Commands::Debug { json } => debug::cmd_debug(*json).await,
+        Commands::Debug { json, tools } => debug::cmd_debug(*json, *tools).await,
         Commands::Slop { base, json } => slop::cmd_slop(cli, base.as_deref(), *json).await,
         #[cfg(feature = "self-update")]
         Commands::Upgrade => upgrade::cmd_upgrade().await,

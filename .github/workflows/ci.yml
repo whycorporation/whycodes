@@ -121,6 +121,9 @@ jobs:
           python scripts/test_tracked_secrets.py
           python scripts/test_release_downloads.py
           python scripts/test_affected_tests.py
+          python scripts/test_gen_tool_docs.py
+      - name: Tool docs match the committed catalog
+        run: python scripts/gen_tool_docs.py --check
       - name: Installer syntax (PowerShell)
         run: |
           set -euo pipefail

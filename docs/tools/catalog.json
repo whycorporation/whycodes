@@ -1,0 +1,1391 @@
+[
+  {
+    "name": "apply_patch",
+    "description": "Apply a unified diff. Prefer `edit` for exact string replacements. `path` is required for a single-file patch without `+++` headers; omit it (or pass `.`) for a multi-file `diff --git` / `+++ b/…` patch. Native — no `patch(1)`.",
+    "parameters": {
+      "properties": {
+        "patch_content": {
+          "description": "Unified diff (---/+++ headers optional for a single file; @@ hunks required)",
+          "type": "string"
+        },
+        "path": {
+          "description": "File to patch when the diff has no +++ headers. Optional for multi-file diffs (use `.` or omit).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "patch_content"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "bash",
+    "description": "Run a shell command. Long notes: `read agent://tools/bash`.",
+    "parameters": {
+      "properties": {
+        "background": {
+          "description": "If true, start the command in the background and return a job id immediately",
+          "type": "boolean"
+        },
+        "command": {
+          "description": "The shell command to execute",
+          "type": "string"
+        },
+        "description": {
+          "description": "Short description of why this command is run (optional)",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Timeout in seconds (default: 120; ignored when background=true)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": "Execute a shell command in the project environment.\n\nDefault: wait for stdout/stderr (timeout 120s).\n`background=true` returns a job id immediately; use `bg` to list/read/kill.\nLong-running non-catastrophic commands auto-detach after 20s unless\n`[tools.bash] auto_background = false`. Catastrophic commands (rm -rf /,\ngit clean of home, …) stay in the foreground and still hit the permission gate.\nChild processes do not inherit provider API keys. Detached output lives under\n`.whycodes/scratch`, not the OS temp dir."
+  },
+  {
+    "name": "bg",
+    "description": "Manage background shell jobs started with bash `background: true` or `schedule`. Actions: list (default), read (needs id), kill (needs id).",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "list | read | kill (default list)",
+          "enum": [
+            "list",
+            "read",
+            "kill"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "description": "Job id (e.g. bg-1) for read/kill",
+          "type": "string"
+        },
+        "max_chars": {
+          "description": "Max characters of output for read (default 8000)",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "browser",
+    "description": "Control a local Chromium/Chrome window (CDP). Actions: status, open, snapshot, click, type, wait, screenshot, close. Not in the core tool profile — use tool_search. The OS sandbox does not apply; domain allowlists do not apply inside the browser. Permission defaults to ask.",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "Browser action",
+          "enum": [
+            "status",
+            "open",
+            "snapshot",
+            "click",
+            "type",
+            "wait",
+            "screenshot",
+            "close"
+          ],
+          "type": "string"
+        },
+        "ms": {
+          "description": "Wait milliseconds (default 1000)",
+          "type": "integer"
+        },
+        "selector": {
+          "description": "CSS selector for click/type",
+          "type": "string"
+        },
+        "text": {
+          "description": "Text to type",
+          "type": "string"
+        },
+        "url": {
+          "description": "URL for open",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "checkpoint",
+    "description": "Mark the current conversation so a later `rewind` can collapse exploratory context into a short report. Use before a speculative investigation. Does not snapshot files.",
+    "parameters": {
+      "properties": {
+        "goal": {
+          "description": "What you are about to investigate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "code_mode",
+    "description": "Transform or refactor code files",
+    "parameters": {
+      "properties": {
+        "instruction": {
+          "description": "Natural language description of the transformation to apply",
+          "type": "string"
+        },
+        "language": {
+          "description": "Programming language of the file (optional)",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to the code file to transform",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "instruction"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "edit",
+    "description": "Make targeted edits to a file. Prefer `from`/`to`/`insert_after` content tags from `read`/`grep` (`N tag|text`). `old_string` is the fallback: exact match, then unique whitespace-tolerant match (indent / extra spaces only — not typos). Curly quotes, dashes and CRLF line endings match their plain forms.",
+    "parameters": {
+      "properties": {
+        "from": {
+          "description": "Content tag of the first line to replace (inclusive)",
+          "type": "string"
+        },
+        "insert_after": {
+          "description": "Content tag after which to insert new_string (no deletion)",
+          "type": "string"
+        },
+        "new_string": {
+          "description": "The replacement or inserted text",
+          "type": "string"
+        },
+        "old_string": {
+          "description": "Exact text to find. Required unless from/to/insert_after is set.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to the file to edit",
+          "type": "string"
+        },
+        "replace_all": {
+          "description": "Replace all occurrences of old_string (default: false)",
+          "type": "boolean"
+        },
+        "to": {
+          "description": "Content tag of the last line to replace (inclusive). Omit for a single line.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "new_string"
+      ],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": "Make targeted edits. Prefer `from`/`to`/`insert_after` tags from `read`/`grep`.\n`old_string` is the fallback: exact match, then unique whitespace-tolerant match."
+  },
+  {
+    "name": "external_directory",
+    "description": "Access files outside the project directory (requires permission)",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "Action to perform: 'read' to read a file, 'list' to list a directory",
+          "enum": [
+            "read",
+            "list"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to the external file or directory",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "action"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "git_blame",
+    "description": "Show what revision and author last modified each line of a file. Runs 'git blame' in the working directory.",
+    "parameters": {
+      "properties": {
+        "file": {
+          "description": "Path to the file to blame (required)",
+          "type": "string"
+        },
+        "line_end": {
+          "description": "End line number (1-based) to limit blame range",
+          "type": "integer"
+        },
+        "line_start": {
+          "description": "Start line number (1-based) to limit blame range",
+          "type": "integer"
+        },
+        "revision": {
+          "description": "Revision to blame against (default: HEAD)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "git_commit",
+    "description": "Stage and commit changes to git. If files are provided, runs 'git add <files>' then 'git commit -m <message>'. If no files, runs 'git commit -a -m <message>'. Optionally push with 'git push'.",
+    "parameters": {
+      "properties": {
+        "files": {
+          "description": "Optional list of files to stage and commit. If empty or omitted, commits all modified tracked files (git commit -a).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "message": {
+          "description": "Commit message",
+          "type": "string"
+        },
+        "push": {
+          "description": "If true, push after committing with 'git push'",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "git_diff",
+    "description": "Show changes between commits, commit and working tree, etc. Runs 'git diff' in the working directory.",
+    "parameters": {
+      "properties": {
+        "path": {
+          "description": "Limit diff to a specific file or directory",
+          "type": "string"
+        },
+        "staged": {
+          "description": "Show staged changes (--staged / --cached)",
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "git_log",
+    "description": "Show commit logs. Runs 'git log --oneline' in the working directory.",
+    "parameters": {
+      "properties": {
+        "author": {
+          "description": "Filter by author name or email",
+          "type": "string"
+        },
+        "count": {
+          "description": "Number of commits to show (default: 10)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "Limit to commits touching a specific file or directory",
+          "type": "string"
+        },
+        "since": {
+          "description": "Show commits more recent than a date (e.g. '2024-01-01', '1 week ago')",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "git_status",
+    "description": "Show the working tree status. Runs 'git status --short' in the working directory.",
+    "parameters": {
+      "properties": {
+        "path": {
+          "description": "Limit status to a specific path",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "github_issue",
+    "description": "Manage GitHub issues: create, list, view, close, reopen, or comment on issues.",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "Action to perform on GitHub issues",
+          "enum": [
+            "create",
+            "list",
+            "view",
+            "close",
+            "reopen",
+            "comment"
+          ],
+          "type": "string"
+        },
+        "body": {
+          "description": "Issue body or comment body",
+          "type": "string"
+        },
+        "issue_number": {
+          "description": "Issue number (required for view, close, reopen, comment)",
+          "type": "integer"
+        },
+        "labels": {
+          "description": "Labels to apply (for 'create' action)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "owner": {
+          "description": "Repository owner (username or organization)",
+          "type": "string"
+        },
+        "per_page": {
+          "description": "Results per page (for 'list' action, default: 30, max: 100)",
+          "type": "integer"
+        },
+        "repo": {
+          "description": "Repository name",
+          "type": "string"
+        },
+        "state": {
+          "description": "Filter by state (for 'list' action, default: open)",
+          "enum": [
+            "open",
+            "closed",
+            "all"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "description": "Issue title (required for 'create')",
+          "type": "string"
+        },
+        "token": {
+          "description": "GitHub token (optional). Falls back to GITHUB_TOKEN / GH_TOKEN, `gh auth login`, gh hosts.yml, or git credentials.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "owner",
+        "repo"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "github_pr",
+    "description": "Create, list, view, or merge GitHub Pull Requests via the REST API. Token: tool arg, GITHUB_TOKEN / GH_TOKEN, `gh auth login`, or stored git credentials.",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "Action to perform on pull requests",
+          "enum": [
+            "create",
+            "list",
+            "view",
+            "merge"
+          ],
+          "type": "string"
+        },
+        "base": {
+          "description": "[create] Target branch for the PR (e.g. 'main')",
+          "type": "string"
+        },
+        "body": {
+          "description": "[create] PR description/body text",
+          "type": "string"
+        },
+        "head": {
+          "description": "[create] Branch name containing the changes (e.g. 'feature-branch')",
+          "type": "string"
+        },
+        "method": {
+          "description": "[merge] Merge method to use",
+          "enum": [
+            "merge",
+            "squash",
+            "rebase"
+          ],
+          "type": "string"
+        },
+        "owner": {
+          "description": "Repository owner (user or organization)",
+          "type": "string"
+        },
+        "pr_number": {
+          "description": "[view | merge] Pull request number",
+          "type": "integer"
+        },
+        "repo": {
+          "description": "Repository name",
+          "type": "string"
+        },
+        "state": {
+          "description": "[list] Filter PRs by state",
+          "enum": [
+            "open",
+            "closed",
+            "all"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "description": "[create] PR title",
+          "type": "string"
+        },
+        "token": {
+          "description": "GitHub token (optional). Falls back to GITHUB_TOKEN / GH_TOKEN, `gh auth login`, gh hosts.yml, or git credentials.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "owner",
+        "repo"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "glob",
+    "description": "Find files by glob pattern under the project (e.g. `**/*.rs`, `crates/**/mod.rs`). Respects .gitignore; skips heavy dirs (target, node_modules, .git, …). Served from the live file index when warm. Prefer over shell find.",
+    "parameters": {
+      "properties": {
+        "max_results": {
+          "description": "Maximum paths to return (default: 200)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "Root directory for the search (default: project root)",
+          "type": "string"
+        },
+        "pattern": {
+          "description": "Glob pattern (e.g. '*.rs', 'src/**/*.ts', '**/Cargo.toml')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": "Find files by glob pattern under the project (e.g. `**/*.rs`).\nRespects .gitignore; skips heavy dirs."
+  },
+  {
+    "name": "grep",
+    "description": "Search file contents with regex (ripgrep engine, in-process — no `rg` binary). Respects .gitignore; skips binaries and heavy dirs (target, node_modules, .git, …). Literal queries prune files via the workspace content index before scanning. Prefer over shell grep for project code search. Hits are `path:line tag:text` so `edit` can name the line by tag.",
+    "parameters": {
+      "properties": {
+        "case_insensitive": {
+          "description": "Case-insensitive match (default: false)",
+          "type": "boolean"
+        },
+        "context": {
+          "description": "Lines of context before/after each match (default: 0, max: 5)",
+          "type": "integer"
+        },
+        "include": {
+          "description": "File glob filter (e.g. '*.rs', '*.{ts,tsx}')",
+          "type": "string"
+        },
+        "max_results": {
+          "description": "Maximum number of matching lines (default: 50)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "Directory or file to search in (default: project root)",
+          "type": "string"
+        },
+        "pattern": {
+          "description": "Regex pattern to search for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": "Search file contents with regex (in-process). Respects .gitignore;\nskips binaries and heavy dirs. Hits are `path:line tag:text`."
+  },
+  {
+    "name": "list",
+    "description": "List files and directories in a path (dirs first, with sizes). Prefer this over shell `ls`. Optional recursive listing respects .gitignore and skips heavy dirs (target, node_modules, .git, …). Use `glob` for pattern search.",
+    "parameters": {
+      "properties": {
+        "ignore": {
+          "description": "Glob patterns to ignore (e.g. '*.o', 'tmp*')",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_depth": {
+          "description": "Max recursion depth when recursive=true (default: 3)",
+          "type": "integer"
+        },
+        "max_entries": {
+          "description": "Max entries to return (default: 200)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "Directory path (relative to project root or absolute). Defaults to project root.",
+          "type": "string"
+        },
+        "recursive": {
+          "description": "Recurse into subdirectories (default: false). Heavy dirs are pruned.",
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "lsp",
+    "description": "Language Server Protocol tool — diagnostics, hover, definition, references, type_definition, implementation, document/workspace symbols. Requires a language server installed for the file type.",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "What LSP action to perform",
+          "enum": [
+            "diagnostics",
+            "hover",
+            "definition",
+            "references",
+            "type_definition",
+            "implementation",
+            "symbols"
+          ],
+          "type": "string"
+        },
+        "character": {
+          "description": "1-indexed character offset on the line",
+          "type": "integer"
+        },
+        "file_path": {
+          "description": "Absolute path to the file to analyze",
+          "type": "string"
+        },
+        "line": {
+          "description": "1-indexed line number (required for hover, definition, references, type_definition, implementation)",
+          "type": "integer"
+        },
+        "query": {
+          "description": "Workspace symbol query (symbols action without file_path)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "memory",
+    "description": "Save or recall durable project facts across sessions (preferences, build commands, decisions). Prefer this over re-asking the user. Do not store secrets.",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "write/list/search/delete facts; learn a reusable lesson; code_search over indexed code; index the codebase for RAG",
+          "enum": [
+            "write",
+            "list",
+            "search",
+            "delete",
+            "code_search",
+            "index",
+            "learn"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "description": "Memory id or unique prefix (delete)",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max results for list/search (default 10)",
+          "type": "integer"
+        },
+        "text": {
+          "description": "Fact text (write) or search query (search)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "panel",
+    "description": "Pin a file, unified diff, or mermaid diagram on the user's side panel (Preview tab). Use to keep a reference visible while you keep working. Does not edit files.",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "What to put on the panel",
+          "enum": [
+            "show_file",
+            "show_diff",
+            "show_mermaid",
+            "clear"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "description": "File path (show_file / show_diff). Relative to the project.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Inline mermaid source, or a unified diff when path is omitted",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "plan",
+    "description": "Enter or exit planning mode (read-only, no file modifications)",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "Whether to enter or exit planning mode",
+          "enum": [
+            "enter",
+            "exit"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "question",
+    "description": "Ask the user one or more clarifying questions with optional multiple-choice options. Prefer this over guessing when requirements, approach, or risk are ambiguous. Each question may set multi_select. The UI always offers an Other free-text path. Use short labels and helpful descriptions; put the recommended option first.",
+    "parameters": {
+      "properties": {
+        "choices": {
+          "description": "Legacy string choices for the single-question form",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "important": {
+          "description": "Legacy: if true, prompt even in auto mode",
+          "type": "boolean"
+        },
+        "multi_select": {
+          "description": "Legacy multi_select for the single-question form",
+          "type": "boolean"
+        },
+        "question": {
+          "description": "Legacy single-question form",
+          "type": "string"
+        },
+        "questions": {
+          "description": "One or more questions (preferred). Max 4 recommended.",
+          "items": {
+            "properties": {
+              "choices": {
+                "description": "Legacy: plain string options (same as options[].label)",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "important": {
+                "description": "If true, prompt even in approval_mode=auto (destructive / irreversible). Default false.",
+                "type": "boolean"
+              },
+              "multi_select": {
+                "description": "Allow selecting more than one option (default false)",
+                "type": "boolean"
+              },
+              "options": {
+                "description": "Choices (label + description). Other is added automatically.",
+                "items": {
+                  "properties": {
+                    "description": {
+                      "description": "What choosing this option means",
+                      "type": "string"
+                    },
+                    "label": {
+                      "description": "Short option label (a few words)",
+                      "type": "string"
+                    },
+                    "preview": {
+                      "description": "Optional extra detail shown when focused",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "label"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "question": {
+                "description": "The question text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "question"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "read",
+    "description": "Read a text file (line-numbered). Long notes: `read agent://tools/read`.",
+    "parameters": {
+      "properties": {
+        "limit": {
+          "description": "Max lines to return (default: 400, max: 2000)",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "1-based line to start from (default: 1)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "File path (relative to project root or absolute)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": "Read a text file with line numbers. Prefer project-relative paths.\n`skill://<name>` loads a skill; `agent://<id>` re-reads a finished task/swarm\nartifact; `agent://tools/<name>` opens the long tool guide."
+  },
+  {
+    "name": "repomap",
+    "description": "Signature map of a directory: declaration-like lines (fn/struct/class/impl), packed to a token budget. Use to orient before `read`. Not a full dump — bodies are omitted. Served from the live file index when warm.",
+    "parameters": {
+      "properties": {
+        "max_files": {
+          "description": "Max source files to inspect (default: 80)",
+          "type": "integer"
+        },
+        "max_tokens": {
+          "description": "Approximate token budget for the whole map (default: 4000, max: 16000)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "Directory or file to map (default: project root)",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "rewind",
+    "description": "End an active `checkpoint` by dropping exploratory conversation after the mark and keeping `report`. Files are not reverted.",
+    "parameters": {
+      "properties": {
+        "report": {
+          "description": "Concise findings to keep after collapsing the investigation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "report"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "schedule",
+    "description": "After `after_secs`, either start a background shell `command` and/or queue a user `goal` prompt for the next free turn. Use for deferred checks and simple automation. Not a persistent daemon — process-local only.",
+    "parameters": {
+      "properties": {
+        "after_secs": {
+          "description": "Delay in seconds before firing (default 0, max 86400)",
+          "type": "integer"
+        },
+        "command": {
+          "description": "Shell command to run in the background when the timer fires",
+          "type": "string"
+        },
+        "description": {
+          "description": "Short label for the scheduled job",
+          "type": "string"
+        },
+        "goal": {
+          "description": "User prompt to enqueue for the next free agent turn",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "shell",
+    "description": "Run a shell command. Long notes: `read agent://tools/bash`.",
+    "parameters": {
+      "properties": {
+        "background": {
+          "description": "If true, start the command in the background and return a job id immediately",
+          "type": "boolean"
+        },
+        "command": {
+          "description": "The shell command to execute",
+          "type": "string"
+        },
+        "description": {
+          "description": "Short description of why this command is run (optional)",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Timeout in seconds (default: 120; ignored when background=true)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": "bash",
+    "guide": "Execute a shell command in the project environment.\n\nDefault: wait for stdout/stderr (timeout 120s).\n`background=true` returns a job id immediately; use `bg` to list/read/kill.\nLong-running non-catastrophic commands auto-detach after 20s unless\n`[tools.bash] auto_background = false`. Catastrophic commands (rm -rf /,\ngit clean of home, …) stay in the foreground and still hit the permission gate.\nChild processes do not inherit provider API keys. Detached output lives under\n`.whycodes/scratch`, not the OS temp dir."
+  },
+  {
+    "name": "skill",
+    "description": "List or load project/user skills. Prefer `read skill://<name>` for the body; `action=list` shows names and descriptions only.",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "Action: 'list' shows all available skills, 'load' loads a specific skill by name",
+          "enum": [
+            "list",
+            "load"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "description": "Name of the skill to load (required when action is 'load')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "swarm",
+    "description": "Run several subagents in parallel on independent units of work. In a git repo each worker gets an isolated worktree under `.whycodes/swarm/`; changes three-way-merge back into the main checkout (conflicts toast). Without git (or with worktrees off), workers share the checkout and file claims block double-writes. Prefer for wide audits or mechanical migrations across disjoint paths. For a single investigation use `task` instead.",
+    "parameters": {
+      "properties": {
+        "max_concurrent": {
+          "description": "Max workers running at once (default from config, usually 4)",
+          "type": "integer"
+        },
+        "tasks": {
+          "description": "Parallel units of work (2–8 items)",
+          "items": {
+            "properties": {
+              "context": {
+                "description": "Optional extra context for this worker",
+                "type": "string"
+              },
+              "goal": {
+                "description": "Goal for this worker",
+                "type": "string"
+              },
+              "max_turns": {
+                "description": "Max conversation turns for this worker (default: 15)",
+                "type": "integer"
+              },
+              "paths": {
+                "description": "Optional paths to pre-claim before the worker starts (reduces mid-turn conflicts)",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "subagent_type": {
+                "description": "general (default), explore, scout, or a name from the system prompt's `# Custom agents` list",
+                "type": "string"
+              }
+            },
+            "required": [
+              "goal"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "tasks"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "swarm_msg",
+    "description": "Send a short message to another swarm worker (`to` = worker-N), the parent agent (`parent`), or every sibling (`all`). Use when your work affects someone else. Not a chat — one or two sentences.",
+    "parameters": {
+      "properties": {
+        "text": {
+          "description": "Message body",
+          "type": "string"
+        },
+        "to": {
+          "description": "Recipient: parent | all | worker-N",
+          "type": "string"
+        }
+      },
+      "required": [
+        "to",
+        "text"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "task",
+    "description": "Launch a subagent to handle a complex multi-step task. Use for research, exploration, or parallel units of work. Prefer explore for read-only codebase search, general for multi-step work that may edit files.",
+    "parameters": {
+      "properties": {
+        "context": {
+          "description": "Additional context for the subagent (optional)",
+          "type": "string"
+        },
+        "goal": {
+          "description": "The goal or task for the subagent to accomplish",
+          "type": "string"
+        },
+        "max_turns": {
+          "description": "Maximum conversation turns for the subagent (default: 15)",
+          "type": "integer"
+        },
+        "subagent_type": {
+          "description": "general (default), explore, scout, or a name from the system prompt's `# Custom agents` list",
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal"
+      ],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "todo",
+    "description": "Create and manage a structured task list. The user sees this list live at the top of the session. Use for any task with 3+ steps. Mark the current item in_progress (only one) and completed as soon as the step is done. Default merge=true updates items by id.",
+    "parameters": {
+      "properties": {
+        "merge": {
+          "description": "If true (default), merge with existing todos by id; if false, replace entirely",
+          "type": "boolean"
+        },
+        "todos": {
+          "description": "List of todo items",
+          "items": {
+            "properties": {
+              "content": {
+                "description": "Description of the task",
+                "type": "string"
+              },
+              "id": {
+                "description": "Unique identifier for the todo item",
+                "type": "string"
+              },
+              "status": {
+                "description": "Status of the task",
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "completed",
+                  "cancelled"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "content",
+              "status"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "todos"
+      ],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": "todowrite",
+    "guide": null
+  },
+  {
+    "name": "todoread",
+    "description": "Read the current todo list for this session",
+    "parameters": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "todowrite",
+    "description": "Create and manage a structured task list. The user sees this list live at the top of the session. Use for any task with 3+ steps. Mark the current item in_progress (only one) and completed as soon as the step is done. Default merge=true updates items by id.",
+    "parameters": {
+      "properties": {
+        "merge": {
+          "description": "If true (default), merge with existing todos by id; if false, replace entirely",
+          "type": "boolean"
+        },
+        "todos": {
+          "description": "List of todo items",
+          "items": {
+            "properties": {
+              "content": {
+                "description": "Description of the task",
+                "type": "string"
+              },
+              "id": {
+                "description": "Unique identifier for the todo item",
+                "type": "string"
+              },
+              "status": {
+                "description": "Status of the task",
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "completed",
+                  "cancelled"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "content",
+              "status"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "todos"
+      ],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "tool_search",
+    "description": "Discover tools not in the core profile (apply_patch, memory, schedule, swarm, web, browser, github, lsp, git_*, plan, …) and activate them for this session. Actions: search (keywords), select (name or comma-separated names), list (activated + deferred catalogue).",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "search | select | list (default search)",
+          "enum": [
+            "search",
+            "select",
+            "list"
+          ],
+          "type": "string"
+        },
+        "max_results": {
+          "description": "Max search hits (default 8)",
+          "type": "integer"
+        },
+        "query": {
+          "description": "Keywords for search, or tool name(s) for select (comma-separated)",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "truncate",
+    "description": "Truncate long output to fit context window",
+    "parameters": {
+      "properties": {
+        "max_chars": {
+          "description": "Maximum number of characters to keep (default: 8000)",
+          "type": "integer"
+        },
+        "max_lines": {
+          "description": "Maximum number of lines to keep (default: 200)",
+          "type": "integer"
+        },
+        "text": {
+          "description": "The text to truncate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "webfetch",
+    "description": "Fetch content from a URL and return readable text. Prefers machine-readable responses (JSON, Markdown, plain text) via Accept headers. For package versions prefer registry APIs (e.g. https://registry.npmjs.org/<pkg>/latest) or GitHub Releases over marketing HTML pages. If a site exposes llm.txt / llms.txt, fetch that URL when you need LLM-oriented docs.",
+    "parameters": {
+      "properties": {
+        "max_length": {
+          "description": "Maximum content length to return (default: 8000)",
+          "type": "integer"
+        },
+        "url": {
+          "description": "The URL to fetch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "websearch",
+    "description": "Search the web and return result snippets. Requires SERPAPI_API_KEY for best results (falls back to DuckDuckGo HTML). For 'latest version' questions: do not pin the query to a past calendar year (e.g. avoid '2024'/'2025'); search 'Nuxt latest release' or fetch canonical APIs via webfetch (npm registry, GitHub Releases, official docs).",
+    "parameters": {
+      "properties": {
+        "num_results": {
+          "description": "Number of results to return (default: 10)",
+          "type": "integer"
+        },
+        "query": {
+          "description": "The search query. Prefer current phrasing without a past year for 'latest' lookups.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "worktree",
+    "description": "Git worktree helpers under `.whycodes/worktrees/`. Actions: create, list, remove, enter (switch tool cwd), exit (restore project root). Use to isolate experimental edits without touching the main checkout.",
+    "parameters": {
+      "properties": {
+        "action": {
+          "description": "create | list | remove | enter | exit",
+          "enum": [
+            "create",
+            "list",
+            "remove",
+            "enter",
+            "exit"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "description": "Worktree name (create/remove/enter)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
+    "name": "write",
+    "description": "Write content to a file, creating it if it doesn't exist.",
+    "parameters": {
+      "properties": {
+        "content": {
+          "description": "Content to write to the file",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to the file to write",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ],
+      "type": "object"
+    },
+    "profile": "core",
+    "aliasOf": null,
+    "guide": "Write content to a file, creating it if it doesn't exist."
+  }
+]
