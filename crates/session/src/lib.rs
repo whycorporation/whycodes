@@ -1,3 +1,4 @@
+pub mod edit_stats;
 pub mod error;
 pub mod history;
 pub mod import;
@@ -6,6 +7,7 @@ pub mod search;
 pub mod session;
 pub mod title;
 
+pub use edit_stats::EditStats;
 pub use error::{Result, SessionError};
 pub use history::{SessionHistory, StashSlot};
 pub use import::{ImportKind, import_messages};

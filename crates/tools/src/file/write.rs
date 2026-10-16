@@ -118,6 +118,11 @@ impl WriteTool {
             };
         }
 
+        // Lines the overwrite replaces, for the `[+N -M]` trailer. A file
+        // that is not there yet (or cannot be read) removes nothing.
+        let removed = std::fs::read_to_string(&full_path)
+            .map(|old| old.lines().count())
+            .unwrap_or(0);
         let bytes = match crate::file::notebook::convert_write(Path::new(&full_path), &content) {
             Ok(bytes) => bytes,
             Err(msg) => {
@@ -133,7 +138,11 @@ impl WriteTool {
                 tool_call_id: String::new(),
                 // +lines preview so the TUI can paint add colours
                 // (and syntax-highlight when the path has a known extension).
-                content: format_write_preview(&shown, &content),
+                content: format!(
+                    "{}{}",
+                    format_write_preview(&shown, &content),
+                    whycodes_core::edit_trailer(content.lines().count(), removed)
+                ),
                 is_error: false,
             },
             Err(e) => ToolResult {

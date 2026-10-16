@@ -76,6 +76,18 @@ they were unique.
 `whycodes debug --json` prints a camelCase dump (paths, whether env names
 are set — never values or tokens).
 
+`whycodes auth status --json` prints one object per provider the config
+names or the token store holds: `provider`, `authKind` (`api_key` |
+`oauth` | `none`), `credentialSource` (`env:<VAR>` | `config` |
+`oauth_store` | `none`, the first hit in the CLI's own precedence), and for
+a stored login `expiry`, `validatedAt` and `stale` (not renewed for over a
+week). Never a secret. The text output is unchanged.
+
+`whycodes config get <key>` prints the value and the layer that set it,
+`debug  (from: global)`; `--json` prints `{ "key", "value",
+"overriddenBy" }` with `overriddenBy` one of `default`, `global`,
+`project`, `env` (the same layers `-d`/`--dir` resolves at startup).
+
 `whycodes serve` writes `.whycodes/serve.lock` (pid, port). A second
 invoke on a TTY offers takeover; stale locks (dead PID, 24h, clock skew)
 are removed. CI and `whycodes serve --no-takeover` exit non-zero instead
@@ -332,7 +344,7 @@ Both TUI and `--plain`:
 | `/memory` | Show memory path and recent entries |
 | `/themes` | Theme picker (TUI) / list names (plain) |
 | `/tools` | List tools for the current agent |
-| `/info` `/details` | Session details |
+| `/info` `/details` | Session details: model, context, token usage, and lines added/removed by this session's `write`/`edit`/`apply_patch` results (approximate: block counts, not a minimal diff) |
 | `/doctor` | Environment / config diagnostics |
 
 When a step reads far less from the provider's prompt cache than the step
@@ -1016,6 +1028,29 @@ bash_risk_threshold = "destructive"   # caution | destructive | off
 
 The threshold is the lowest level that prompts. Default is `destructive`:
 `caution` would prompt on ordinary cleanup like `rm -rf target`.
+
+The command is parsed as shell, not matched as text, so the level follows
+what would actually run:
+
+- Variables assigned earlier in the line are followed: `DIR=/; rm -rf $DIR`,
+  `d=~; rm -rf "$d"`, `X=~ rm -rf $X`, `export T=$HOME && rm -rf "$T"` and
+  `for d in build ~; do rm -rf $d; done` are refused. A variable whose value
+  is not known still prompts (`rm -rf "$OUT"` is `destructive`).
+- Command and process substitutions are judged by their body:
+  `echo $(rm -rf ~)` and `diff <(rm -rf ~) x` are refused.
+- Here-documents are data: `cat <<EOF` with `rm -rf ~` in its body is `safe`.
+  Fed to a shell (`bash <<EOF`, `cat <<EOF | sh`, `bash <<< '…'`) the body is
+  judged as a script.
+- Redirections are typed: `2>&1` and `>&2` touch no file, `> /tmp/x`,
+  `>| file`, `&> file` and `>&file` truncate one. A redirection written first
+  (`>/dev/null rm -rf ~`) does not hide the command.
+- Quoting is exact, including `$'…'` escapes (`rm -rf $'\x2f'etc` is
+  `rm -rf /etc`).
+
+A line the parser cannot read (unbalanced quotes, PowerShell, `cmd.exe`
+syntax) falls back to a simpler word splitter, which errs towards asking.
+Comments are read by that splitter too, because `cmd.exe` has no `#`
+comments: `echo # & rm -rf ~` is refused.
 
 `catastrophic` is refused outright and **cannot be approved** — not by a
 prompt, not by `bash = "allow"`, not by `bash_risk_threshold = "off"`.

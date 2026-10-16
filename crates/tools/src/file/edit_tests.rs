@@ -200,6 +200,7 @@ async fn execute_insert_after_tag() {
         )
         .await;
     assert!(!ok.is_error, "{}", ok.content);
+    assert!(ok.content.ends_with("\n[+1 -0]"), "{}", ok.content);
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         "fn run() {\n    let x = 1;\n    let y = 3;\n}\n"

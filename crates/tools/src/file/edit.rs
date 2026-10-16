@@ -337,11 +337,21 @@ fn write_edit_result(
     start: Option<usize>,
 ) -> ToolResult {
     match result {
-        Ok(()) => ToolResult {
-            tool_call_id: String::new(),
-            content: format_edit_preview_at(shown, matched, new_string, count, start),
-            is_error: false,
-        },
+        Ok(()) => {
+            let mut content = format_edit_preview_at(shown, matched, new_string, count, start);
+            // Whole replaced block, times the occurrences: the session
+            // sums these as its (approximate) edit statistics. The preview
+            // always ends with a newline, so the trailer gets its own line.
+            content.push_str(&whycodes_core::edit_trailer(
+                new_string.lines().count() * count,
+                matched.lines().count() * count,
+            ));
+            ToolResult {
+                tool_call_id: String::new(),
+                content,
+                is_error: false,
+            }
+        }
         Err(e) => write_edit_error(&e),
     }
 }

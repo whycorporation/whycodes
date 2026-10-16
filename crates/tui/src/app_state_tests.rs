@@ -756,6 +756,7 @@ fn catalog_models_merges_oauth_token_store_suggestions() {
             "tui-cov-oauth-cat",
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "tok".into(),
                     refresh_token: None,

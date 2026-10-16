@@ -118,6 +118,7 @@ async fn execute_applies_single_file_patch() {
         .await;
     assert!(!out.is_error, "{}", out.content);
     assert!(out.content.contains("Patch applied"), "{}", out.content);
+    assert!(out.content.ends_with("[+1 -1]"), "{}", out.content);
     assert_eq!(
         std::fs::read_to_string(dir.path().join("x.txt")).unwrap(),
         "alpha\nBETA\ngamma\n"
@@ -227,6 +228,10 @@ unprefixed context
     assert!(parse_hunk_header("@@ -abc @@").is_err());
     assert_eq!(count_hunks("no hunks"), 1);
     assert_eq!(count_hunks("@@ -1 @@\n@@ -2 @@"), 2);
+    assert_eq!(
+        count_changed_lines("--- a\n+++ b\n@@ -1,2 +1,3 @@\n ctx\n-old\n+new\n+more\n"),
+        (2, 1)
+    );
 }
 
 #[test]

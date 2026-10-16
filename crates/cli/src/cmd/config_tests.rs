@@ -36,3 +36,37 @@ fn config_printer_helpers() {
     assert!(config_key_missing_line("nope").contains("nope"));
     assert!(config_set_line("log_level", "info").contains("log_level"));
 }
+
+#[test]
+fn resolve_config_value_names_the_last_layer_that_changed_it() {
+    let defaults = whycodes_config::Config::default();
+    let mut global = defaults.clone();
+    global.default_agent = "plan".into();
+    let mut project = global.clone();
+    project.general.log_level = Some("debug".into());
+    let mut env = project.clone();
+    env.general.log_level = Some("trace".into());
+    let layers = [
+        ("default", defaults.clone()),
+        ("global", global),
+        ("project", project),
+        ("env", env),
+    ];
+    assert_eq!(
+        resolve_config_value(&layers, "default_agent"),
+        Some(("plan".into(), "global"))
+    );
+    assert_eq!(
+        resolve_config_value(&layers, "log_level"),
+        Some(("trace".into(), "env"))
+    );
+    assert_eq!(resolve_config_value(&layers, "project_path"), None);
+    assert_eq!(resolve_config_value(&layers, "nope"), None);
+    // Nothing changed it: the built-in default wins.
+    let untouched = [("default", defaults.clone()), ("global", defaults)];
+    assert_eq!(
+        resolve_config_value(&untouched, "default_agent"),
+        Some((whycodes_config::Config::default().default_agent, "default"))
+    );
+    assert!(config_get_line("plan", "global").contains("(from: global)"));
+}

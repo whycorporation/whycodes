@@ -27,10 +27,19 @@ async fn writes_relative_path_and_creates_parents() {
         .await;
     assert!(!out.is_error, "{}", out.content);
     assert!(out.content.contains("Wrote"), "{}", out.content);
+    assert!(out.content.ends_with("[+2 -0]"), "{}", out.content);
     assert_eq!(
         std::fs::read_to_string(dir.path().join("nested/a.txt")).expect("read"),
         "hello\nworld"
     );
+    // Overwrite: the old file's lines count as removed.
+    let out = WriteTool::new()
+        .execute(
+            json!({ "path": "nested/a.txt", "content": "one" }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(out.content.ends_with("[+1 -2]"), "{}", out.content);
 }
 
 #[tokio::test]
