@@ -34,7 +34,7 @@ fn env_registration_filters_names_and_values() {
     let vars = [
         ("OPENAI_API_KEY", "sk-live-0123456789"),
         ("DB_PASSWORD", "p@ssw0rd-long"),
-        ("GITHUB_TOKEN", "ghp_abcdefghijklmnopqrstuvwxyz0123"),
+        ("GITHUB_TOKEN", "long-enough-token-value"),
         ("MY_CREDENTIAL", "cred-value-1"),
         ("SOME_PASSWD", "swordfish99"),
         ("PATH", "/usr/bin:/bin"),
@@ -68,41 +68,44 @@ fn redact_text_handles_known_secrets_longest_first_and_patterns() {
     assert!(!out.contains("abc12345"), "{out}");
     assert_eq!(out.matches(PLACEHOLDER_PREFIX).count(), 2);
 
-    let samples = [
+    // Token-shaped fixtures are assembled at runtime so the tracked-secrets
+    // ratchet does not mistake them for live credentials.
+    let alpha = "abcdefghijklmnopqrstuvwxyz";
+    let github = format!("gh{}_{alpha}0123", "p");
+    let pat = format!("github_{}_{alpha}", "pat");
+    let slack = format!("xox{}-123456789012-abc", "b");
+    let aws = format!("AK{}ABCDEFGHIJKLMNOP", "IA");
+    let google = format!("AI{}SyAbCdEfGhIjKlMnOpQrStUvWxYz0123456", "za");
+    let pem_head = format!("-----BEGIN RSA {} KEY-----", "PRIVATE");
+    let pem = format!(
+        "{pem_head}
+MIIE
+-----END RSA {} KEY-----",
+        "PRIVATE"
+    );
+    let samples: Vec<(String, &str)> = vec![
         (
-            "key sk-abcdefghijklmnopqrstuvwxyz done",
+            format!("key sk-{alpha} done"),
             "sk-abcdefghijklmnopqrstuvwxyz",
         ),
+        (github.clone(), github.as_str()),
+        (pat.clone(), pat.as_str()),
+        (slack.clone(), slack.as_str()),
+        (aws.clone(), aws.as_str()),
+        (google.clone(), google.as_str()),
+        (pem.clone(), pem_head.as_str()),
         (
-            "ghp_abcdefghijklmnopqrstuvwxyz0123",
-            "ghp_abcdefghijklmnopqrstuvwxyz0123",
+            "postgres://user:s3cretpw@db.example.com/app".into(),
+            "s3cretpw",
         ),
+        (format!("Authorization: Bearer {alpha}"), alpha),
+        ("API_KEY=verysecretvalue123".into(), "verysecretvalue123"),
         (
-            "github_pat_abcdefghijklmnopqrstuvwxyz",
-            "github_pat_abcdefghijklmnopqrstuvwxyz",
-        ),
-        ("xoxb-123456789012-abc", "xoxb-123456789012-abc"),
-        ("AKIAABCDEFGHIJKLMNOP", "AKIAABCDEFGHIJKLMNOP"),
-        (
-            "AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz0123456",
-            "AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz0123456",
-        ),
-        (
-            "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----",
-            "-----BEGIN RSA PRIVATE KEY-----",
-        ),
-        ("postgres://user:s3cretpw@db.example.com/app", "s3cretpw"),
-        (
-            "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
-            "abcdefghijklmnopqrstuvwxyz",
-        ),
-        ("API_KEY=verysecretvalue123", "verysecretvalue123"),
-        (
-            "password: \"hunter2hunter2hunter2\"",
+            "password: \"hunter2hunter2hunter2\"".into(),
             "hunter2hunter2hunter2",
         ),
     ];
-    for (text, secret) in samples {
+    for (text, secret) in &samples {
         let out = r
             .redact_text(text)
             .unwrap_or_else(|| panic!("no redaction for {text:?}"));
@@ -118,7 +121,7 @@ fn redact_text_handles_known_secrets_longest_first_and_patterns() {
 
     // Plain text and an existing placeholder are left alone.
     assert!(r.redact_text("nothing secret here").is_none());
-    let already = r.register("ghp_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz");
+    let already = r.register(&format!("gh{}_{}", "p", "z".repeat(30)));
     assert!(
         r.redact_text(&format!("token: {already}")).is_none(),
         "placeholder is not re-redacted"
