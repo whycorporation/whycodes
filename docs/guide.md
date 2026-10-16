@@ -1100,9 +1100,15 @@ This is not a multi-tenant security boundary — it reduces blast radius.
 On Windows the host shell is **not** WSL. WhyCodes looks for Git for
 Windows (`bash.exe` outside `System32` / `WindowsApps`), then falls back
 to `cmd.exe`. Set `WHYCODES_SHELL` to an explicit interpreter
-(`pwsh.exe`, a Git Bash path, `cmd.exe`) if you need to override. Git
-for Windows is recommended so the Unix-style commands models emit keep
-working; it is not required to install or run the TUI.
+(`pwsh.exe`, a Git Bash path, `cmd.exe`) if you need to override.
+
+Install Git for Windows if you want the `bash` tool to work the way it does
+on Linux and macOS. Models write Unix-style commands (`ls`, `grep`, pipes,
+`&&`, `$VAR`); `cmd.exe` is a degraded mode where most of them fail, and the
+shell risk classifier sees `cmd` syntax it was not written for. Nothing else
+in WhyCodes needs Git for Windows: installing, the TUI, every other tool and
+the sandbox fallback work without it. When no Git Bash is found, the first
+`bash` result carries a warning that says so and how to fix it.
 
 ### Secret redaction
 
