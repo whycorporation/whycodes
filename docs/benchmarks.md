@@ -1,7 +1,6 @@
 # Benchmarks
 
-How to measure whycodes. Residual notes:
-[archive/plan-performance.md](archive/plan-performance.md).
+How to measure whycodes.
 
 ## Running them
 
@@ -977,8 +976,7 @@ inherits the console and the screen flickers briefly during a run.
 
 ### Update, 2026-08-04 — dirty-draw + context economy
 
-See [archive/plan-perf-context-tui.md](archive/plan-perf-context-tui.md). After this work the
-event loop only paints when `needs_redraw` is set, the agent is busy (spinner),
+After this work the event loop only paints when `needs_redraw` is set, the agent is busy (spinner),
 or a toast is live. Idle sessions with no input should report **~0 draws/s**
 after the first frame (re-measure with
 `python scripts/bench_first_frame.py --runs 10 --idle-ms 3000`). The previous
@@ -1198,8 +1196,6 @@ ceiling loose enough not to flap at a 20 ms measurement catches almost nothing,
 and a gate that catches nothing reads as assurance while providing none.
 
 ## Binary size, hashing, and token heuristics (2026-08-04)
-
-See also [archive/plan-perf-hotpath.md](archive/plan-perf-hotpath.md).
 
 **Release profile.** Workspace `[profile.release]` now sets `strip = true`,
 `lto = "thin"`, and `codegen-units = 1`. On Linux x86_64 (2026-08-04):

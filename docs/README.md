@@ -19,6 +19,5 @@ Start here, then pick the page you need.
 | [../SECURITY.md](../SECURITY.md) | Everyone | Vulnerability reporting |
 | [../AGENTS.md](../AGENTS.md) | Agents | Build, commit, and crate rules |
 | [packaging.md](packaging.md) | Maintainers | Homebrew, installers, release download counts |
-| [archive/](archive/README.md) | History | Completed plans — not open work |
 
 The product landing page is the [root README](../README.md).

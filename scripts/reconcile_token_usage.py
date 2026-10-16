@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Reconcile session usage against the last raw provider usage snapshot.
 
-The 1% acceptance criterion in docs/archive/plan-performance.md: stored
-session usage must match the provider's own usage object on a real turn.
+Acceptance criterion: within 1%, stored session usage must match the provider's own usage object on a real turn.
 
   WHYCODES_USAGE_DUMP=/tmp/usage.jsonl whycodes generate --format json ...
   python scripts/reconcile_token_usage.py --dump /tmp/usage.jsonl --result out.json

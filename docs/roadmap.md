@@ -1,7 +1,6 @@
 # Roadmap
 
-Current focus and standing decisions. Completed phase plans live under
-[archive/](archive/README.md) — do not treat them as open work.
+Current focus and standing decisions.
 
 Last updated: **2026-08-29**.
 
@@ -30,8 +29,7 @@ ACP (`whycodes acp`, editor ↔ agent over stdio) shipped.
 
 ## Standing decisions
 
-These are still in force. The full historical log is
-[archive/status.md](archive/status.md).
+These are still in force.
 
 - The goal is not “OpenCode parity” (nor jcode clone).
 - Safety before features: shell risk classification and the OS sandbox stay
