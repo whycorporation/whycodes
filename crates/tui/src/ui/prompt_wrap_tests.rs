@@ -74,18 +74,6 @@ fn prompt_height_includes_box_chrome() {
 }
 
 #[test]
-fn center_prompt_uses_almost_full_width_on_phone() {
-    let area = Rect::new(0, 0, 40, 6);
-    let boxed = center_prompt_area(area);
-    assert!(
-        boxed.width >= 36,
-        "portrait prompt.width={} should not sit at the old 40-col floor",
-        boxed.width
-    );
-    assert!(boxed.x + boxed.width <= area.width);
-}
-
-#[test]
 fn slash_command_byte_end_covers_token_only() {
     assert_eq!(slash_command_byte_end("/help"), Some(5));
     assert_eq!(slash_command_byte_end("/models foo"), Some(7));
@@ -205,7 +193,7 @@ fn truncate_pick_hint_and_cursor_helpers() {
     });
     assert_eq!(attach_row_count(&app), 1);
     assert!(prompt_height(&app, 80) > 1);
-    assert!(content_width(&app, 80) >= 8);
+    assert!(content_width(80) >= 8);
     assert!(prompt_owns_caret(&app));
     app.focus = crate::app::FocusPane::Scrollback;
     assert!(!prompt_owns_caret(&app));

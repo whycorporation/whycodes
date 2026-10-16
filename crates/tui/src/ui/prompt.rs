@@ -13,7 +13,6 @@
 
 use crate::app::{AgentState, AppMode, TuiApp};
 use crate::theme::ThemePalette;
-use crate::tokens::layout;
 use crate::widgets::wrap::wrap_text;
 use ratatui::{
     Frame,
@@ -73,7 +72,7 @@ const CHROME_H: u16 = PAD_LEFT + PREFIX_WIDTH + PAD_RIGHT;
 
 /// Rows the input text needs right now (1 for an empty prompt).
 pub fn input_row_count(app: &TuiApp, area_width: u16) -> u16 {
-    let width = content_width(app, area_width);
+    let width = content_width(area_width);
     let buf: &str = match app.mode {
         AppMode::Command => &app.command.buffer,
         _ => &app.input_buffer,
@@ -115,59 +114,11 @@ fn prompt_owns_caret(app: &TuiApp) -> bool {
 }
 
 /// Inner width available for input text inside a prompt area.
-fn content_width(app: &TuiApp, area_width: u16) -> u16 {
-    let area_width = if app.messages.is_empty() {
-        center_prompt_area(Rect {
-            x: 0,
-            y: 0,
-            width: area_width,
-            height: 1,
-        })
-        .width
-    } else {
-        area_width
-    };
+fn content_width(area_width: u16) -> u16 {
     area_width.saturating_sub(CHROME_H).max(8)
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
-    // Center prompt on home (empty messages) with max width cap.
-    // Own the leftover columns first: a long paste echo lands at x=0 while
-    // the box sits at ~15% — those side gutters stay spaces in both ratatui
-    // frames, so skip-diff never overwrites the ghost.
-    let area = if app.messages.is_empty() {
-        let boxed = center_prompt_area(area);
-        if boxed.x > area.x {
-            crate::ui::layout::fill_blank(
-                frame,
-                Rect {
-                    x: area.x,
-                    y: area.y,
-                    width: boxed.x.saturating_sub(area.x),
-                    height: area.height,
-                },
-                palette.bg,
-            );
-        }
-        let right = boxed.x.saturating_add(boxed.width);
-        let end = area.x.saturating_add(area.width);
-        if right < end {
-            crate::ui::layout::fill_blank(
-                frame,
-                Rect {
-                    x: right,
-                    y: area.y,
-                    width: end.saturating_sub(right),
-                    height: area.height,
-                },
-                palette.bg,
-            );
-        }
-        boxed
-    } else {
-        area
-    };
-
     if area.height == 0 || area.width < 6 {
         app.agent_hit.set_rect(None);
         app.model_hit.set_rect(None);
@@ -797,30 +748,6 @@ fn pick_hint() -> &'static str {
         .unwrap_or(0)
         % HINTS.len();
     HINTS[idx]
-}
-
-fn center_prompt_area(area: Rect) -> Rect {
-    // Wide terminals: 70% capped at PROMPT_MAX_WIDTH. Narrow / portrait: fill
-    // almost the full width (2-col side breathing room) so the box is not a
-    // 70%-of-40 island that wastes the PTY.
-    let side = if area.width >= 48 { 4 } else { 2 };
-    let usable = area.width.saturating_sub(side);
-    let ratio_w = (area.width as f32 * layout::PROMPT_WIDTH_RATIO) as u16;
-    let preferred = if area.width < 64 {
-        usable
-    } else {
-        layout::PROMPT_MAX_WIDTH.min(ratio_w.max(layout::PROMPT_MIN_WIDTH))
-    };
-    let max_w = preferred
-        .min(usable)
-        .max(layout::PROMPT_MIN_WIDTH.min(usable));
-    let x = area.x + (area.width.saturating_sub(max_w)) / 2;
-    Rect {
-        x,
-        y: area.y,
-        width: max_w,
-        height: area.height,
-    }
 }
 
 /// Byte end of the leading slash-command token (`/name`), or `None` when the

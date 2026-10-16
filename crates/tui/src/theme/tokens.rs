@@ -50,11 +50,6 @@ pub const HEADER_MARK: &str = "?";
 pub mod layout {
     use ratatui::layout::Rect;
 
-    /// Prompt max width: absolute cap, or fraction of terminal width.
-    pub const PROMPT_MAX_WIDTH: u16 = 75;
-    pub const PROMPT_WIDTH_RATIO: f32 = 0.70;
-    /// Floor before the ratio/cap so portrait phones keep a usable prompt.
-    pub const PROMPT_MIN_WIDTH: u16 = 24;
     /// Session main column horizontal padding (bubble left/right margin).
     pub const SIDE_PAD: u16 = 2;
     /// Tighter side pad on phone-portrait / keyboard-shrunk widths.

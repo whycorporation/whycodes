@@ -49,12 +49,9 @@ fn layout_constants_leave_room_for_content() {
     // Prompt cap is strictly positive and the sidebar leaves space for
     // the main column at the minimum supported width.
     const {
-        assert!(layout::PROMPT_MAX_WIDTH > 0);
-        assert!(layout::PROMPT_WIDTH_RATIO > 0.0 && layout::PROMPT_WIDTH_RATIO < 1.0);
         assert!(layout::SIDEBAR_WIDTH > layout::SIDE_PAD * 2);
         assert!(layout::SIDE_PAD >= 2);
         assert!(layout::SIDE_PAD_NARROW >= 1);
-        assert!(layout::PROMPT_MIN_WIDTH >= 8);
         assert!(layout::SIDEBAR_MIN_BODY > layout::SIDEBAR_MIN_CHAT);
         assert!(layout::HEADER_H >= 1);
         assert!(layout::CHAT_GAP >= 1);
