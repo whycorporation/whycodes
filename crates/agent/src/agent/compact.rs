@@ -1,6 +1,9 @@
 //! Full-replace session compaction.
 
+use std::sync::Arc;
+
 use whycodes_core::types::ContentBlock;
+use whycodes_llm::provider::ProviderRegistry;
 use whycodes_session::session::Session;
 
 use super::Agent;
@@ -58,7 +61,110 @@ Conversation:
     )
 }
 
+/// Share of `compaction_threshold` at which a summary of the current prefix
+/// is prepared in the background, so the compaction at the threshold does not
+/// wait for a model call.
+pub(crate) const SPECULATIVE_LEAD_PERCENT: usize = 85;
+
+/// A background summary of the messages before the last user turn.
+pub(crate) struct SpeculativeSummary {
+    session_id: String,
+    prefix_end: usize,
+    handle: tokio::task::JoinHandle<Option<String>>,
+}
+
 impl Agent {
+    /// Start summarizing the prefix in the background. Returns whether a job
+    /// was started: not when compaction is local-only, when a job for this
+    /// prefix already exists, or when there is no prefix.
+    pub(crate) fn maybe_spawn_speculative_summary(
+        &self,
+        session: &Session,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+    ) -> bool {
+        if !self.compaction_llm || api_key.is_empty() {
+            return false;
+        }
+        let Some((prefix_end, transcript)) = session.prefix_transcript_for_summary() else {
+            return false;
+        };
+        let mut slot = super::recover_lock(&self.speculative_summary);
+        if let Some(job) = slot.as_ref()
+            && job.session_id == session.id
+            && job.prefix_end == prefix_end
+        {
+            return false;
+        }
+        if let Some(stale) = slot.take() {
+            stale.handle.abort();
+        }
+        let registry = Arc::clone(&self.provider_registry);
+        let redactor = self.secrets.clone();
+        let provider_name = provider_name.to_string();
+        let model = model.to_string();
+        let api_key = api_key.to_string();
+        let handle = tokio::spawn(async move {
+            summarize_with_model(
+                &registry,
+                redactor,
+                &transcript,
+                &provider_name,
+                &model,
+                &api_key,
+                None,
+            )
+            .await
+        });
+        *slot = Some(SpeculativeSummary {
+            session_id: session.id.clone(),
+            prefix_end,
+            handle,
+        });
+        true
+    }
+
+    /// The prepared summary when it still describes the session's prefix.
+    /// Consumes the job; a stale one (other session, or the prefix moved) is
+    /// aborted and `None` is returned.
+    pub(crate) async fn take_speculative_summary(&self, session: &Session) -> Option<String> {
+        let job = super::recover_lock(&self.speculative_summary).take()?;
+        let fresh =
+            job.session_id == session.id && session.compaction_prefix_end() == Some(job.prefix_end);
+        if !fresh {
+            job.handle.abort();
+            return None;
+        }
+        match job.handle.await {
+            Ok(Some(summary)) if !summary.trim().is_empty() => Some(summary),
+            Ok(_) => None,
+            Err(err) => {
+                tracing::debug!(error = %err, "speculative summary task did not finish");
+                None
+            }
+        }
+    }
+
+    /// [`Self::compact_session`] with a summary prepared earlier: the same
+    /// cheap passes and `pre_compact` hooks, no model call.
+    pub(crate) async fn compact_with_summary(
+        &self,
+        session: &mut Session,
+        summary: &str,
+    ) -> whycodes_session::CompactOutcome {
+        session.truncate_large_tool_results();
+        session.spill_old_tool_results(&mut super::spill::artifact_store(
+            session.project_path.clone(),
+        ));
+        session.prune_old_tool_results();
+        if session.messages.is_empty() {
+            return whycodes_session::CompactOutcome::default();
+        }
+        self.run_pre_compact_hooks(session).await;
+        session.apply_full_replace(summary)
+    }
+
     /// Full-replace compact: summarize the whole conversation,
     /// keep the last real user query + current-turn tail, replace the rest
     /// with a continuation carrier.
@@ -76,6 +182,9 @@ impl Agent {
         user_context: Option<&str>,
     ) -> whycodes_session::CompactOutcome {
         session.truncate_large_tool_results();
+        session.spill_old_tool_results(&mut super::spill::artifact_store(
+            session.project_path.clone(),
+        ));
         session.prune_old_tool_results();
         if session.messages.is_empty() {
             return whycodes_session::CompactOutcome::default();
@@ -86,29 +195,41 @@ impl Agent {
         let local = session.local_full_replace_summary();
         let want_llm = self.compaction_llm && !api_key.is_empty() && !transcript.trim().is_empty();
         let summary = if want_llm {
-            self.llm_compact_summary(&transcript, provider_name, model, api_key, user_context)
-                .await
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or(local)
+            summarize_with_model(
+                &self.provider_registry,
+                self.secrets.clone(),
+                &transcript,
+                provider_name,
+                model,
+                api_key,
+                user_context,
+            )
+            .await
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(local)
         } else {
             local
         };
         session.apply_full_replace(&summary)
     }
+}
 
-    /// Structured summarizer used by full-replace compact (session model).
-    async fn llm_compact_summary(
-        &self,
-        transcript: &str,
-        provider_name: &str,
-        model: &str,
-        api_key: &str,
-        user_context: Option<&str>,
-    ) -> Option<String> {
+/// Structured summarizer used by full-replace compact (session model). Free
+/// of `Agent` so a speculative job can run it from a background task.
+async fn summarize_with_model(
+    registry: &ProviderRegistry,
+    redactor: Option<Arc<whycodes_llm::Redactor>>,
+    transcript: &str,
+    provider_name: &str,
+    model: &str,
+    api_key: &str,
+    user_context: Option<&str>,
+) -> Option<String> {
+    {
         if transcript.trim().is_empty() {
             return None;
         }
-        let provider = self.provider_registry.get(provider_name)?;
+        let provider = registry.get(provider_name)?;
         use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
         let request = LlmRequest {
             system: String::new(),
@@ -132,7 +253,7 @@ impl Agent {
             use_prompt_cache: false,
         };
         let transport = whycodes_llm::LlmTransport {
-            redactor: self.secrets.clone(),
+            redactor,
             complete_timeout: Some(std::time::Duration::from_secs(60)),
             retry: whycodes_llm::RetryPolicy {
                 max_retries: 2,

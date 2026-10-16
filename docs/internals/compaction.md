@@ -28,10 +28,22 @@ triggers call the same `Agent::compact_session`
 
 ```
 truncate_large_tool_results   every tool body  <= 32_768 chars   (TOOL_RESULT_MAX_CHARS)
+spill_old_tool_results        all but last 4 tool msgs > 2_048 chars: full body written to
+                              .whycodes/scratch/artifacts/<tool_call_id>.txt once; the
+                              message keeps 400 chars + "[N more chars; full output saved:
+                              read <path>]"                        (SPILL_HEAD_CHARS, SPILL_MARK)
 prune_old_tool_results        all but last 4 tool msgs <= 2_048  (TOOL_RESULT_PRUNE_CHARS)
 shake_old_tool_results        all but last 4 tool msgs <= 512    (TOOL_RESULT_SHAKE_CHARS)
                               only when tokens > 3/4 * compaction_threshold
 ```
+
+The spill runs before prune and shake, so a long old output is not cut in
+place and lost: the model can `read` the artifact instead of re-running the
+tool. The store lives in the agent (`crates/agent/src/agent/spill.rs`); the
+session only receives a `store(id, body) -> Option<pointer>` callback and
+keeps the body when the store declines (unwritable scratch dir). A spilled
+body is under the shake cap and carries `SPILL_MARK`, so later passes leave
+it alone.
 
 `turn.rs:212-221`; constants and bodies in `crates/session/src/session.rs:15-25`,
 `1048`, `1109-1158`, `1160-1208`. A cut body ends with `\n[N chars truncated]`
@@ -53,7 +65,21 @@ if compaction_threshold > 0 && !compact_paused && before > compaction_threshold:
 ```
 
 `turn.rs:222-268`. The breaker is a local of `run_turn_steps`, so it resets
-on the next user turn. `CompactOutcome::still_over` is
+on the next user turn.
+
+**Speculative summary.** When the step is under the threshold but at or
+above `SPECULATIVE_LEAD_PERCENT` (85%) of it and compaction uses the model,
+`maybe_spawn_speculative_summary` (`compact.rs`) starts a background task
+that summarizes the *prefix* — the messages before the last real user turn,
+`Session::prefix_transcript_for_summary` — with the same prompt and
+transport as a normal pass. One job per (session, prefix) is kept in
+`Agent::speculative_summary`; a newer prefix replaces an older job. When the
+threshold trips, `take_speculative_summary` uses the job if its prefix is
+still the session's (`compaction_prefix_end`), awaiting it when it has not
+finished; otherwise the job is aborted and the normal pass runs. The
+prepared summary goes through `compact_with_summary`: the same cheap passes
+and `pre_compact` hooks, then `apply_full_replace`, with no model call at
+the threshold. `CompactOutcome::still_over` is
 `tokens_after > threshold` (`session.rs:64-66`). A successful pass emits
 `TurnEvent::Status("Compacted context (a → b msgs, ~x → ~y tok)…")`
 (`turn.rs:229-238`); only a status line, not a transcript rebuild (see §8).
@@ -170,10 +196,6 @@ Stated as absences, not plans:
 
 - No provider-native compaction or server-side context management is
   requested; the only provider-facing mechanism is prompt caching.
-- No speculative summary before the threshold (no background summarization of
-  a prefix while the session is still under `compaction_threshold`).
-- No spilling of tool results to on-disk artifacts with a pointer left in the
-  transcript; large bodies are cut in place and the agent must re-run the tool.
 - No incremental/rolling summary: each pass re-summarizes the whole (capped)
   transcript, relying on the prompt to carry an earlier carrier forward.
 - No token counting against the provider's tokenizer; thresholds use chars/4.

@@ -9,6 +9,7 @@ mod dispatch;
 mod gate;
 mod lifecycle;
 mod spawn;
+mod spill;
 mod turn;
 
 use std::collections::VecDeque;
@@ -44,6 +45,8 @@ pub struct Agent {
     /// Restores secret placeholders inside tool arguments; the transport
     /// redacts outgoing requests with the same redactor.
     secrets: Option<Arc<whycodes_llm::Redactor>>,
+    /// A summary of the current prefix prepared before the threshold.
+    speculative_summary: Mutex<Option<compact::SpeculativeSummary>>,
     sandbox: SandboxSettings,
     network: NetworkPolicy,
     /// Config-driven tool and lifecycle hooks (empty by default).
@@ -391,6 +394,7 @@ impl Agent {
             question_prompter: default_question_prompter(),
             risk_threshold: RiskThreshold::default(),
             secrets: whycodes_llm::secrets::installed(),
+            speculative_summary: Mutex::new(None),
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
             hooks: Vec::new(),
