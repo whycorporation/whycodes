@@ -3,7 +3,7 @@
 
 > Profile: core · Permission key: `[permission] read`
 
-Read a text file (line-numbered) or an internal URL: skill://, agent://, proc://, rule://, pr://, issue://, mcp:// (a bare scheme lists). Long notes: `read agent://tools/read`.
+Read a text file (line-numbered; a long source file returns its declaration outline first) or an internal URL: skill://, agent://, proc://, rule://, pr://, issue://, mcp:// (a bare scheme lists). Long notes: `read agent://tools/read`.
 
 ## Parameters
 
@@ -11,6 +11,7 @@ Read a text file (line-numbered) or an internal URL: skill://, agent://, proc://
 |---|---|---|---|
 | `limit` | integer | no | Max lines to return (default: 400, max: 2000) |
 | `offset` | integer | no | 1-based line to start from (default: 1) |
+| `outline` | boolean | no | Declaration outline instead of lines. Default: on for source files over 400 lines read without offset/limit; false forces lines, true outlines any size |
 | `path` | string | yes | File path (relative to project root or absolute), or an internal URL: skill://<name>, agent://<id>, proc://<job-id>, rule://<name>, pr://<number>[/diff], issue://<number>, mcp://<server>/<uri> |
 
 ## Guide
@@ -18,6 +19,14 @@ Read a text file (line-numbered) or an internal URL: skill://, agent://, proc://
 The model reads this with `read agent://tools/read`.
 
 Read a text file with line numbers. Prefer project-relative paths.
+
+Outline: a source file over 400 lines read without `offset`/`limit` returns its
+declaration lines (fn/struct/class/impl/headings, indentation kept) with line
+numbers and content tags, then `[file has N lines; showing its outline. ...]`.
+The tags work with `edit`. Read a range next with `offset`/`limit`.
+`outline: false` always pages; `outline: true` outlines a file of any length.
+Extensions repomap does not map, files over 512 KB, or files with no
+declarations page as usual.
 
 Internal URLs (a bare scheme lists what it can read):
 - `skill://<name>` — a skill body.

@@ -76,8 +76,8 @@ fn ctx(dir: &std::path::Path) -> ToolContext {
 fn spawn_skips_virtual_and_missing() {
     let dir = tempfile::tempdir().unwrap();
     let c = ctx(dir.path());
-    assert!(spawn_speculative_read("1".into(), "skill://x".into(), 1, 10, &c).is_none());
-    assert!(spawn_speculative_read("1".into(), "missing.txt".into(), 1, 10, &c).is_none());
+    assert!(spawn_speculative_read("1".into(), "skill://x".into(), 1, 10, true, &c).is_none());
+    assert!(spawn_speculative_read("1".into(), "missing.txt".into(), 1, 10, true, &c).is_none());
 }
 
 #[tokio::test]
@@ -99,15 +99,38 @@ async fn spawn_and_take_matching_hit_and_miss() {
         "other.txt",
         1,
         DEFAULT_LIMIT,
+        false,
         &c.working_dir,
     )
     .await;
     assert!(miss.is_none());
     assert_eq!(jobs.len(), 1);
 
-    let hit = take_matching(&mut jobs, "c1", "n.txt", 1, DEFAULT_LIMIT, &c.working_dir)
-        .await
-        .expect("hit");
+    let explicit = take_matching(
+        &mut jobs,
+        "c1",
+        "n.txt",
+        1,
+        DEFAULT_LIMIT,
+        true,
+        &c.working_dir,
+    )
+    .await;
+    assert!(
+        explicit.is_none(),
+        "a windowed call never takes an unwindowed read"
+    );
+    let hit = take_matching(
+        &mut jobs,
+        "c1",
+        "n.txt",
+        1,
+        DEFAULT_LIMIT,
+        false,
+        &c.working_dir,
+    )
+    .await
+    .expect("hit");
     assert!(hit.content.contains("payload"), "{hit:?}");
     assert!(jobs.is_empty());
 }
@@ -136,11 +159,20 @@ async fn take_matching_join_err_after_abort() {
     std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
     let c = ctx(dir.path());
     let mut jobs = Vec::new();
-    let job =
-        spawn_speculative_read("c1".into(), "n.txt".into(), 1, DEFAULT_LIMIT, &c).expect("spawn");
+    let job = spawn_speculative_read("c1".into(), "n.txt".into(), 1, DEFAULT_LIMIT, true, &c)
+        .expect("spawn");
     job.handle.abort();
     jobs.push(job);
-    let miss = take_matching(&mut jobs, "c1", "n.txt", 1, DEFAULT_LIMIT, &c.working_dir).await;
+    let miss = take_matching(
+        &mut jobs,
+        "c1",
+        "n.txt",
+        1,
+        DEFAULT_LIMIT,
+        true,
+        &c.working_dir,
+    )
+    .await;
     assert!(miss.is_none());
     assert!(jobs.is_empty());
 }
@@ -208,8 +240,12 @@ fn abort_all_drains_jobs() {
 #[test]
 fn spawn_skips_internal_schemes() {
     let ctx = whycodes_core::ToolContext::new("/tmp");
-    assert!(spawn_speculative_read("c1".into(), "skill://demo".into(), 1, 10, &ctx).is_none());
-    assert!(spawn_speculative_read("c1".into(), "agent://task-1".into(), 1, 10, &ctx).is_none());
+    assert!(
+        spawn_speculative_read("c1".into(), "skill://demo".into(), 1, 10, true, &ctx).is_none()
+    );
+    assert!(
+        spawn_speculative_read("c1".into(), "agent://task-1".into(), 1, 10, true, &ctx).is_none()
+    );
 }
 
 #[test]
@@ -291,4 +327,38 @@ fn maybe_start_ignores_non_read_tools() {
     };
     maybe_start(&mut jobs, "tc-1", "grep", r#"{"pattern": "x"}"#, &ctx);
     assert!(jobs.is_empty());
+}
+
+#[test]
+fn window_is_explicit_names_offset_or_limit() {
+    assert!(!window_is_explicit(&json!({"path": "a.rs"})));
+    assert!(window_is_explicit(&json!({"path": "a.rs", "offset": 1})));
+    assert!(window_is_explicit(&json!({"path": "a.rs", "limit": 9})));
+}
+
+#[tokio::test]
+async fn outline_reads_are_not_speculated_and_windows_are_kept_apart() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let c = ctx(dir.path());
+    let mut jobs = Vec::new();
+    maybe_start(
+        &mut jobs,
+        "c1",
+        "read",
+        r#"{"path":"n.txt","outline":false}"#,
+        &c,
+    );
+    assert!(jobs.is_empty());
+    maybe_start(
+        &mut jobs,
+        "c1",
+        "read",
+        r#"{"path":"n.txt","limit":400}"#,
+        &c,
+    );
+    assert!(jobs[0].explicit_window);
+    maybe_start(&mut jobs, "c2", "read", r#"{"path":"n.txt"}"#, &c);
+    assert!(!jobs[1].explicit_window);
+    abort_all(&mut jobs);
 }

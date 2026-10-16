@@ -808,6 +808,35 @@ async fn take_speculative_read_hits_matching_call() {
 }
 
 #[tokio::test]
+async fn read_with_outline_argument_skips_speculative_read() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let a = agent();
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let mut jobs = Vec::new();
+    crate::speculative_read::maybe_start(&mut jobs, "t1", "read", r#"{"path":"n.txt"}"#, &ctx);
+    let out = a
+        .execute_tool_calls(
+            &[tc("read", json!({"path": "n.txt", "outline": false}))],
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            &None,
+            &None,
+            None,
+            &mut jobs,
+        )
+        .await
+        .expect("read");
+    assert!(out[0].content.contains("payload"), "{:?}", out[0]);
+    assert_eq!(jobs.len(), 1, "the early read was not taken");
+    crate::speculative_read::abort_all(&mut jobs);
+}
+
+#[tokio::test]
 async fn important_prompts_high_risk_schedule() {
     let asks = Arc::new(CountingDenyPrompter {
         asks: AtomicUsize::new(0),
