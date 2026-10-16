@@ -8,11 +8,11 @@ use crate::types::{
     default_max_background_jobs, default_max_tokens, default_memory_backend,
     default_memory_embed_dim, default_memory_index_bytes, default_memory_index_lines,
     default_memory_min_score, default_memory_scope, default_memory_token_budget,
-    default_memory_top_k, default_model_race, default_prompt_cache, default_race_after_ms,
-    default_response_cache, default_retain_every_n, default_retain_max_facts,
-    default_risk_threshold, default_sandbox_fallback, default_sandbox_mode,
-    default_session_min_score, default_session_top_k, default_swarm_max_agents,
-    default_tool_profile,
+    default_memory_top_k, default_model_race, default_prompt_cache, default_prompt_suggestions,
+    default_race_after_ms, default_response_cache, default_retain_every_n,
+    default_retain_max_facts, default_risk_threshold, default_sandbox_fallback,
+    default_sandbox_mode, default_session_min_score, default_session_top_k,
+    default_swarm_max_agents, default_tool_profile,
 };
 use whycodes_core::types::PermissionSet;
 
@@ -224,6 +224,9 @@ impl Config {
         if other.session.headless_ask.is_some() {
             self.session.headless_ask = other.session.headless_ask;
         }
+        if !other.session.fallback_models.is_empty() {
+            self.session.fallback_models = other.session.fallback_models.clone();
+        }
     }
 
     fn merge_tui(&mut self, other: &Config) {
@@ -233,6 +236,9 @@ impl Config {
         }
         if other.tui.key_bindings.is_some() {
             self.tui.key_bindings = other.tui.key_bindings.clone();
+        }
+        if other.tui.prompt_suggestions != default_prompt_suggestions() {
+            self.tui.prompt_suggestions = other.tui.prompt_suggestions.clone();
         }
         // Higher layer can only turn the sidebar on (default is off).
         self.tui.show_sidebar |= other.tui.show_sidebar;
@@ -273,6 +279,9 @@ impl Config {
         if other.lsp.idle_timeout_ms.is_some() {
             self.lsp.idle_timeout_ms = other.lsp.idle_timeout_ms;
         }
+        if other.lsp.edit_diagnostics_ms.is_some() {
+            self.lsp.edit_diagnostics_ms = other.lsp.edit_diagnostics_ms;
+        }
         for (name, server) in &other.lsp.servers {
             self.lsp.servers.insert(name.clone(), server.clone());
         }
@@ -287,6 +296,11 @@ impl Config {
         // Custom commands
         for (k, v) in &other.commands {
             self.commands.insert(k.clone(), v.clone());
+        }
+
+        // Model prices (USD per million tokens)
+        for (k, v) in &other.pricing {
+            self.pricing.insert(k.clone(), *v);
         }
     }
 
