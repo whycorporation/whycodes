@@ -221,3 +221,20 @@ fn list_valued_text_field_joins_its_items() {
     assert_eq!(a.name, "lister");
     assert_eq!(a.description, "checks tests, checks docs");
 }
+
+#[test]
+fn mcp_tool_names_use_the_bridge_wire_form() {
+    // Plain names keep the `{server}_{tool}` shape.
+    assert_eq!(map_tool("mcp__gh__search"), vec!["gh_search".to_string()]);
+    // Dots, slashes and long names are sanitised exactly like the bridge
+    // registers them, so the frontmatter entry matches a real tool.
+    let long_tool = "a".repeat(80);
+    for (server, tool) in [("my.server", "do/thing"), ("gh", long_tool.as_str())] {
+        let expected = crate::mcp_load::bridge_tool_name(server, tool);
+        assert_eq!(
+            map_tool(&format!("mcp__{server}__{tool}")),
+            vec![expected.clone()]
+        );
+        assert_ne!(expected, format!("{server}_{tool}"));
+    }
+}

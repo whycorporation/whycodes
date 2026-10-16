@@ -99,8 +99,9 @@ kind = classify(&e).kind
 ```
 
 `continue` re-enters the loop top: background completions and steering are
-drained again, `turn_count` increments, caps/shake/autocompact run, and the
-request is rebuilt from the session (`turn.rs:180-277`). There is no sleep on
+drained again, caps/shake/autocompact run, and the request is rebuilt from the
+session (`turn.rs:180-277`). `turn_count` only increments once a stream has
+finished, so a retried step is still the same step. There is no sleep on
 these loop-level retries; the transport already slept.
 
 **Credential rotation** (`Agent::failover_api_key`,
@@ -176,10 +177,9 @@ tools run after that (`:791-804`); results are appended at `:858`.
    rotation, fallback): no token was streamed, nothing was appended, no tool
    ran. The request is rebuilt from the session (`:275`), so a compaction or a
    steering message between attempts changes the payload. Replay is safe.
-   Caveat: `turn_count` was already incremented (`:200`), so on the retried
-   first step the intent posture and magic-keyword notice (gated on
-   `turn_count == 1`, `:291-313`) are **not** re-applied, and `max_turns`
-   counts the retry.
+   `turn_count` counts finished streams, so the retried first step still
+   gets the intent posture and magic-keyword notice (gated on
+   `turn_count == 0`) and `max_turns` does not count the retry.
 2. **After visible text streamed**: yes, for the three paths in §4.
    `accumulated_text` is a local created at `:315`; the retry paths `break`
    and `continue` before `:696-703`, so the partial text is **discarded** —

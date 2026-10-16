@@ -336,7 +336,9 @@ fn tool_names(field: &Field) -> Vec<String> {
 fn map_tool(raw: &str) -> Vec<String> {
     let t = raw.trim();
     if let Some((server, tool)) = t.strip_prefix("mcp__").and_then(|r| r.split_once("__")) {
-        return vec![format!("{server}_{tool}")];
+        // Same sanitising as the bridge, so dotted, slashed or long server
+        // and tool names match the registered `{server}_{tool}`.
+        return vec![crate::mcp_load::bridge_tool_name(server, tool)];
     }
     let mapped: &[&str] = match t {
         "Bash" | "bash" | "shell" => &["shell", "bash"],
