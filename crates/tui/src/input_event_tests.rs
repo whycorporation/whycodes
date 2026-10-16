@@ -6653,3 +6653,63 @@ fn paste_flood_enter_and_tab_in_file_popup_stay_text() {
     handle_event(&mut a, key(KeyCode::Tab));
     assert_eq!(a.input_buffer, "bak @sr\n@i");
 }
+
+#[test]
+fn provider_dialog_lists_local_servers_and_selects_them() {
+    let mut a = app();
+    open_provider_dialog(&mut a);
+    assert!(
+        a.pending_local_discovery,
+        "open must ask the run loop to probe"
+    );
+    assert!(a.provider_dialog.discovering);
+    assert!(a.provider_dialog.local_servers.is_empty());
+
+    let server = whycodes_llm::LocalServer {
+        provider: "lmstudio".into(),
+        label: "LM Studio".into(),
+        api_base: "http://127.0.0.1:1234/v1".into(),
+        models: vec!["qwen".into()],
+    };
+    a.provider_dialog.local_servers = vec![server.clone()];
+    a.provider_dialog.discovering = false;
+
+    // Cursor on a built-in row: no local server.
+    a.provider_dialog.selected = 0;
+    assert!(selected_local_server(&a).is_none());
+    confirm_dialog(&mut a, &DialogKind::Provider);
+    assert!(a.pending_local_server.is_none());
+
+    // Cursor on the discovered row: Enter queues it for the run loop.
+    open_provider_dialog(&mut a);
+    // Other tests may write the shared config between opens; recount.
+    let n = a.provider_dialog.providers.len();
+    a.provider_dialog.local_servers = vec![server.clone()];
+    move_in_dialog_to(&mut a, &DialogKind::Provider, n);
+    assert_eq!(a.provider_dialog.selected, n);
+    assert_eq!(selected_local_server(&a).as_ref(), Some(&server));
+    confirm_dialog(&mut a, &DialogKind::Provider);
+    assert_eq!(a.pending_local_server, Some(server));
+    assert!(a.dialogs.active().is_none(), "Enter closes the dialog");
+
+    // Keyboard navigation covers the extra row; the form mode never selects.
+    open_provider_dialog(&mut a);
+    a.provider_dialog.local_servers = vec![discovered_vllm()];
+    let n = a.provider_dialog.providers.len();
+    a.provider_dialog.selected = n;
+    move_in_dialog(&mut a, &DialogKind::Provider, 1);
+    assert_eq!(a.provider_dialog.selected, 0, "wraps after the local row");
+    move_in_dialog_to(&mut a, &DialogKind::Provider, 999);
+    assert_eq!(a.provider_dialog.selected, n + 1, "clamped to Add Custom");
+    a.provider_dialog.mode = crate::app::ProviderDialogMode::AddCustom;
+    assert!(selected_local_server(&a).is_none());
+}
+
+fn discovered_vllm() -> whycodes_llm::LocalServer {
+    whycodes_llm::LocalServer {
+        provider: "vllm".into(),
+        label: "vLLM".into(),
+        api_base: "http://127.0.0.1:8000/v1".into(),
+        models: Vec::new(),
+    }
+}

@@ -146,3 +146,66 @@ fn render_provider_add_custom_auth_methods_and_model_empty_query() {
         .draw(|f| render_model_dialog(f, &mut app, &palette))
         .unwrap();
 }
+
+#[test]
+fn render_provider_select_shows_discovered_local_servers() {
+    let palette = ThemeName::DefaultDark.palette();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.provider_dialog.providers = vec!["acme".into()];
+    app.provider_dialog.discovering = true;
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let grab = |terminal: &Terminal<TestBackend>| -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect()
+    };
+    terminal
+        .draw(|f| render_provider_dialog(f, &mut app, &palette))
+        .unwrap();
+    assert!(grab(&terminal).contains("Probing 127.0.0.1"));
+
+    app.provider_dialog.discovering = false;
+    app.provider_dialog.local_servers = vec![
+        whycodes_llm::LocalServer {
+            provider: "lmstudio".into(),
+            label: "LM Studio".into(),
+            api_base: "http://127.0.0.1:1234/v1".into(),
+            models: vec!["qwen".into()],
+        },
+        whycodes_llm::LocalServer {
+            provider: "vllm".into(),
+            label: "vLLM".into(),
+            api_base: "http://127.0.0.1:8000/v1".into(),
+            models: vec!["a".into(), "b".into()],
+        },
+    ];
+    app.provider_dialog.selected = 1;
+    terminal
+        .draw(|f| render_provider_dialog(f, &mut app, &palette))
+        .unwrap();
+    let text = grab(&terminal);
+    assert!(text.contains("2 local server(s) found"), "{text}");
+    assert!(text.contains("lmstudio · LM Studio · 1 model"), "{text}");
+    assert!(text.contains("http://127.0.0.1:1234/v1"), "{text}");
+    assert!(text.contains("vllm · vLLM · 2 models"), "{text}");
+
+    assert_eq!(
+        local_servers_status(false, 0),
+        "No local model servers running (LM Studio, vLLM, llama.cpp)."
+    );
+    let none = whycodes_llm::LocalServer {
+        provider: "llamacpp".into(),
+        label: "llama.cpp server".into(),
+        api_base: "http://127.0.0.1:8080/v1".into(),
+        models: Vec::new(),
+    };
+    assert_eq!(
+        local_server_row_label(&none),
+        "llamacpp · llama.cpp server · no models loaded"
+    );
+}
