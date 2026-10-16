@@ -216,9 +216,9 @@ fn candidates_in(dir: &Path) -> Vec<PathBuf> {
         dir.join(".gemini").join("GEMINI.md"),
         dir.join(".github").join("copilot-instructions.md"),
     ];
-    push_glob_files(dir.join(".cursor").join("rules"), "mdc", &mut paths);
-    push_glob_files(dir.join(".clinerules"), "md", &mut paths);
-    push_glob_files(dir.join(".github").join("instructions"), "md", &mut paths);
+    for (rules_dir, ext) in whycodes_core::project_rule_dirs(dir) {
+        push_glob_files(rules_dir, ext, &mut paths);
+    }
     paths
 }
 

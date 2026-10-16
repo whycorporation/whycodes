@@ -31,7 +31,7 @@ for line in sys.stdin:
     elif mode == "broken":
         fail(rid, "broken server")
     elif method == "resources/list":
-        ok(rid, {"resources":[
+        ok(rid, {"resources":[] if mode == "empty" else [
             {"uri":"doc://guide","name":"guide","description":"How to"},
             {"uri":"doc://logo","name":"logo"}
         ]})
@@ -256,4 +256,55 @@ async fn agent_keeps_connected_servers() {
         .map(|s| s.name.as_str())
         .collect();
     assert_eq!(names, ["docs"]);
+}
+
+#[tokio::test]
+async fn mcp_url_lists_servers_resources_and_reads_one() {
+    assert_eq!(
+        read_mcp_url(&[], "").await.unwrap(),
+        "No MCP servers connected. Add one under [mcp_servers] in config."
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let servers = [
+        server(dir.path(), "docs", "full").await,
+        server(dir.path(), "bare", "bare").await,
+        server(dir.path(), "broken", "broken").await,
+        server(dir.path(), "empty", "empty").await,
+    ];
+
+    let list = read_mcp_url(&servers, " / ").await.unwrap();
+    assert_eq!(
+        list,
+        "MCP servers (read `mcp://<server>` for its resources):\n\
+         - docs (stdio, resources)\n\
+         - bare (stdio, no resources)\n\
+         - broken (stdio, resources)\n\
+         - empty (stdio, resources)\n"
+    );
+
+    let docs = read_mcp_url(&servers, "docs").await.unwrap();
+    assert_eq!(
+        docs,
+        "Resources on 'docs' (read with `read mcp://docs/<uri>`):\n\
+         - guide <doc://guide> — How to\n\
+         - logo <doc://logo>\n"
+    );
+    assert_eq!(
+        read_mcp_url(&servers, "empty/").await.unwrap(),
+        "No resources on MCP server 'empty'."
+    );
+    let bare = read_mcp_url(&servers, "bare").await.unwrap_err();
+    assert_eq!(bare, "MCP server 'bare' offers no resources.");
+    let broken = read_mcp_url(&servers, "broken").await.unwrap_err();
+    assert!(broken.starts_with("[broken] error:"), "{broken}");
+    let unknown = read_mcp_url(&servers, "zzz/doc://guide").await.unwrap_err();
+    assert_eq!(
+        unknown,
+        "unknown MCP server 'zzz' (connected: docs, bare, broken, empty)"
+    );
+
+    let guide = read_mcp_url(&servers, "docs/doc://guide").await.unwrap();
+    assert_eq!(guide, "# mcp://docs/doc://guide\n\nGuide body");
+    let missing = read_mcp_url(&servers, "docs/doc://nope").await.unwrap_err();
+    assert!(missing.contains("no such resource"), "{missing}");
 }
