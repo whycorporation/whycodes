@@ -11243,3 +11243,89 @@ fn a_bash_call_that_finished_in_the_foreground_is_not_a_task() {
     assert_eq!(app.toasts.visible().len(), toasts);
     assert_eq!(app.bg_running_count, 0);
 }
+
+fn discovered(provider: &str, models: &[&str]) -> whycodes_llm::LocalServer {
+    whycodes_llm::LocalServer {
+        provider: provider.into(),
+        label: "Local".into(),
+        api_base: "http://127.0.0.1:1/v1".into(),
+        models: models.iter().map(|m| m.to_string()).collect(),
+    }
+}
+
+#[test]
+fn apply_local_server_choice_saves_provider_and_queues_model() {
+    let (_lock, home) = isolate_home_fresh();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut config = Config::seeded_openrouter();
+
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("lmstudio", &["qwen"]),
+    );
+    assert_eq!(
+        app.pending_model,
+        Some(("lmstudio".to_string(), "qwen".to_string()))
+    );
+    let saved = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
+    assert!(saved.contains("[providers.lmstudio]"), "{saved}");
+    assert!(
+        saved.contains("api_base = \"http://127.0.0.1:1/v1\""),
+        "{saved}"
+    );
+    assert!(!saved.contains("api_key = "), "{saved}");
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.content.contains("[providers.lmstudio]"))
+    );
+
+    // No model loaded: saved, but nothing to switch to yet.
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_server_choice(&mut app, &mut rt, &mut config, &discovered("vllm", &[]));
+    assert!(app.pending_model.is_none());
+    assert!(config.get_provider("vllm").is_some());
+
+    // A running turn refuses the switch and leaves config alone.
+    rt.agent_busy = true;
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("llamacpp", &["m"]),
+    );
+    assert!(config.get_provider("llamacpp").is_none());
+    assert!(app.pending_model.is_none());
+    rt.agent_busy = false;
+
+    // Unwritable config.toml: still usable this session, with a warning toast.
+    std::fs::remove_file(home.path().join("config.toml")).unwrap();
+    std::fs::create_dir(home.path().join("config.toml")).unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("llamacpp", &["m"]),
+    );
+    assert_eq!(
+        app.pending_model,
+        Some(("llamacpp".to_string(), "m".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn spawn_local_discovery_delivers_a_result_and_fills_the_dialog() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    spawn_local_discovery(tx);
+    let found = rx.recv().await.expect("probe result");
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.provider_dialog.discovering = true;
+    apply_local_discovery(&mut app, found.clone());
+    assert!(!app.provider_dialog.discovering);
+    assert_eq!(app.provider_dialog.local_servers, found);
+}

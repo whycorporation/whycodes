@@ -39,7 +39,7 @@ Commands:
   connect   Attach a TUI to a running serve daemon
   web       Open web UI (not yet implemented; use serve + browser)
   mcp       MCP server management
-  provider  Provider management (add, list, remove, default)
+  provider  Provider management (add, list, remove, default, discover)
   model     Model management
   agent     Agent configuration
   plugins   List shell plugins (plugins.toml + plugin.json)
@@ -720,6 +720,27 @@ Provider-specific behaviour: [providers.md](providers.md).
 The TUI asks for an OpenRouter API key (paste into the modal, or skip —
 `/connect` and Ctrl+P stay available). `WHYCODES_HOME` relocates the whole
 instance. `whycodes debug` / `whycodes config path` print the resolved path.
+
+**Local model servers.** A server on your own machine needs no key and no
+hand-written config. `whycodes provider discover` probes `127.0.0.1` for
+LM Studio (`:1234`), vLLM (`:8000`) and llama.cpp server (`:8080`) — one `GET /v1/models` each, 250 ms budget — and lists the
+servers that answered with their model ids (`--json` for a machine-readable
+list, `--save` to write them to `config.toml`). In the TUI the same probe
+runs when you open the provider dialog (Ctrl+P); found servers appear as
+rows after the configured providers, and selecting one saves it and
+switches to its first model. Either way the result is a provider named
+`lmstudio`, `vllm` or `llamacpp` with `api_base` set and no key:
+
+```toml
+[providers.lmstudio]
+name = "lmstudio"
+api_base = "http://127.0.0.1:1234/v1"
+models = ["qwen2.5-coder-7b-instruct"]
+```
+
+Use it with `whycodes -P lmstudio -m <model>` or `/models lmstudio/<model>`.
+Probing never runs at startup, and a server that is not running is silent
+(debug log only). Ollama is not probed: use its own `ollama` provider.
 
 **0.6.5 moved the instance root.** 0.6.4 and earlier kept config and data
 in the platform directory (`directories::ProjectDirs`):

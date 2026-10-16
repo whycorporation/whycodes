@@ -1643,6 +1643,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let (suggest_tx, mut suggest_rx) = mpsc::unbounded_channel::<String>();
     // In-TUI OAuth login (`/connect`): flow progress → event loop.
     let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<AuthFlowEvent>();
+    // Loopback model-server probe, spawned only when the provider dialog opens.
+    let (discover_tx, mut discover_rx) =
+        mpsc::unbounded_channel::<Vec<whycodes_llm::LocalServer>>();
     if let Some(win) = seed_catalog {
         seed_unbounded(&catalog_tx, win, "seed catalog");
     }
@@ -1938,6 +1941,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 apply_pending_agent(&mut app, &mut rt, &config, &project_dir, &name).await;
             }
 
+            if app.pending_local_discovery {
+                app.pending_local_discovery = false;
+                spawn_local_discovery(discover_tx.clone());
+            }
+            if let Some(server) = app.pending_local_server.take() {
+                apply_local_server_choice(&mut app, &mut rt, &mut config, &server);
+            }
+
             apply_pending_picker_choices(
                 &mut app,
                 &mut rt,
@@ -1982,6 +1993,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             // `/goal` verdicts for the visible session.
             while let Ok(check) = rt.goal_rx.try_recv() {
                 apply_goal_check(&mut app, &mut rt, check);
+            }
+
+            // Local model servers found by the provider-dialog probe.
+            while let Ok(found) = discover_rx.try_recv() {
+                apply_local_discovery(&mut app, found);
             }
 
             // OAuth login flow progress (`/connect` spawned task).
@@ -4085,6 +4101,70 @@ async fn apply_pending_picker_choices(
         );
     }
     apply_pending_openrouter_key(app, config, provider, model, api_key);
+}
+
+/// Probe loopback for local model servers; the result lands in the
+/// provider dialog through `tx`. Runs only after the user opened the dialog.
+fn spawn_local_discovery(tx: mpsc::UnboundedSender<Vec<whycodes_llm::LocalServer>>) {
+    tokio::spawn(async move {
+        let found =
+            whycodes_llm::discover_local_servers(whycodes_llm::DEFAULT_DISCOVERY_TIMEOUT).await;
+        seed_unbounded(&tx, found, "local server discovery");
+    });
+}
+
+/// Probe finished: list the servers in the provider dialog.
+fn apply_local_discovery(app: &mut TuiApp, found: Vec<whycodes_llm::LocalServer>) {
+    app.provider_dialog.discovering = false;
+    app.provider_dialog.local_servers = found;
+    app.mark_dirty();
+}
+
+/// Discovered server picked in the provider dialog: persist it as
+/// `[providers.<id>]` (api_base, no key), teach the live agent about it and
+/// queue a switch to its first model.
+fn apply_local_server_choice(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    config: &mut Config,
+    server: &whycodes_llm::LocalServer,
+) {
+    if rt.agent_busy {
+        app.toasts.push(
+            crate::toast::ToastKind::Warning,
+            "Can't switch provider while a turn is running",
+        );
+        return;
+    }
+    config
+        .providers
+        .insert(server.provider.clone(), server.provider_config());
+    if let Err(e) = config.save() {
+        tracing::warn!("could not persist provider '{}': {e}", server.provider);
+        app.toasts.push(
+            crate::toast::ToastKind::Warning,
+            format!("{} not saved to config.toml: {e}", server.provider),
+        );
+    }
+    // The registry was built at startup; the new id must exist before the next turn.
+    rt.agent.apply_config(config);
+    app.add_message(
+        ChatRole::System,
+        format!(
+            "✓ `{}` saved as `[providers.{}]` → {} (no API key needed)",
+            server.label, server.provider, server.api_base
+        ),
+    );
+    match server.models.first() {
+        Some(model) => app.pending_model = Some((server.provider.clone(), model.clone())),
+        None => app.toasts.push(
+            crate::toast::ToastKind::Info,
+            format!(
+                "{} has no model loaded · load one, then /models",
+                server.label
+            ),
+        ),
+    }
 }
 
 fn apply_pending_openrouter_key(

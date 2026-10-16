@@ -7,6 +7,7 @@ pub mod fallback;
 pub mod harmony;
 pub(crate) mod json_value;
 pub(crate) mod line_buffer;
+pub mod local_discovery;
 pub mod model_catalog;
 pub mod oauth_refresh;
 pub mod openai_compat;
@@ -43,6 +44,10 @@ pub use endpoint::{
 };
 pub use error_class::{ClassifiedError, ErrorKind, classify, classify_message};
 pub use harmony::uses_harmony_dialect;
+pub use local_discovery::{
+    DEFAULT_DISCOVERY_TIMEOUT, LOCAL_SERVER_CANDIDATES, LocalServer, LocalServerKind,
+    discover_local_servers, discover_servers_at, loopback_api_base, probe_openai_models,
+};
 pub use model_catalog::{
     CATALOG_TTL, CatalogFetchRequest, ModelCatalog, base_url_from_provider_config,
     catalog_request_from_config, context_window_for_model_id, fetch_model_catalog,

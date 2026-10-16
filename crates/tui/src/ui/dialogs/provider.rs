@@ -105,8 +105,8 @@ fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePa
 
     // Header (2 lines) is fixed; the selectable rows scroll below.
     const HEADER_ROWS: usize = 2;
-    // providers + "Add Custom"
-    let item_count = pd.providers.len() + 1;
+    // providers + discovered local servers + "Add Custom"
+    let item_count = pd.providers.len() + pd.local_servers.len() + 1;
     let list_budget = (area.height as usize).saturating_sub(HEADER_ROWS).max(1);
     let needs_scrollbar = item_count > list_budget;
     let list_width = if needs_scrollbar {
@@ -121,7 +121,10 @@ fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePa
             "Choose a provider or add a custom one:",
             Style::default().fg(palette.dim),
         )),
-        Line::from(""),
+        Line::from(Span::styled(
+            local_servers_status(pd.discovering, pd.local_servers.len()),
+            Style::default().fg(palette.dim),
+        )),
     ];
 
     // Hint + blank occupy HEADER_ROWS; selectable rows start below.
@@ -154,6 +157,16 @@ fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePa
                 row,
                 &pd.providers[i],
                 None,
+                i == pd.selected,
+                palette,
+                false,
+            );
+        } else if let Some(server) = pd.local_servers.get(i - pd.providers.len()) {
+            paint_picker_row(
+                frame.buffer_mut(),
+                row,
+                &local_server_row_label(server),
+                Some(&server.api_base),
                 i == pd.selected,
                 palette,
                 false,
@@ -205,6 +218,27 @@ fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePa
         item_count,
         Some(chrome.modal),
     );
+}
+
+/// Second header line: probe in flight, nothing found, or how many found.
+pub(crate) fn local_servers_status(discovering: bool, found: usize) -> String {
+    if discovering {
+        "Probing 127.0.0.1 for local model servers…".into()
+    } else if found == 0 {
+        "No local model servers running (LM Studio, vLLM, llama.cpp).".into()
+    } else {
+        format!("{found} local server(s) found — select one to save and use it.")
+    }
+}
+
+/// `lmstudio · LM Studio · 3 models` (saved as `[providers.lmstudio]` on select).
+pub(crate) fn local_server_row_label(server: &whycodes_llm::LocalServer) -> String {
+    let models = match server.models.len() {
+        0 => "no models loaded".to_string(),
+        1 => format!("1 model: {}", server.models[0]),
+        n => format!("{n} models"),
+    };
+    format!("{} · {} · {models}", server.provider, server.label)
 }
 
 fn render_provider_add(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {

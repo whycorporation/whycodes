@@ -134,3 +134,92 @@ async fn cmd_agent_prints_tool_lists_and_model() {
     cmd_agent(Some("locked")).await.unwrap();
     cmd_agent(Some("missing")).await.unwrap();
 }
+
+fn local_server(provider: &str, models: &[&str]) -> whycodes_llm::LocalServer {
+    whycodes_llm::LocalServer {
+        provider: provider.into(),
+        label: "Local".into(),
+        api_base: "http://127.0.0.1:1/v1".into(),
+        models: models.iter().map(|m| m.to_string()).collect(),
+    }
+}
+
+#[test]
+fn provider_discover_lines_text_json_and_empty() {
+    let found = vec![
+        local_server("lmstudio", &["qwen", "llama"]),
+        local_server("vllm", &[]),
+    ];
+    let text = provider_discover_lines(&found, false).unwrap();
+    assert!(text[0].contains("Local model servers"));
+    assert!(text.iter().any(|l| l.contains("lmstudio")));
+    assert!(text.iter().any(|l| l.trim() == "qwen"));
+    assert!(text.iter().any(|l| l.contains("no models loaded")));
+
+    let json = provider_discover_lines(&found, true).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json[0]).unwrap();
+    assert_eq!(parsed[0]["provider"], "lmstudio");
+    assert_eq!(parsed[0]["models"][1], "llama");
+    assert_eq!(parsed[1]["api_base"], "http://127.0.0.1:1/v1");
+
+    let none = provider_discover_lines(&[], false).unwrap();
+    assert!(none[0].contains("No local model servers"));
+    assert!(none[0].contains("LM Studio :1234"));
+    assert!(none[1].contains("--save"));
+    assert_eq!(provider_discover_lines(&[], true).unwrap(), vec!["[]"]);
+}
+
+#[test]
+fn save_discovered_providers_writes_api_base_without_key() {
+    let mut config = whycodes_config::Config::default();
+    let found = vec![local_server("llamacpp", &["m"])];
+    assert_eq!(
+        save_discovered_providers(&mut config, &found),
+        vec!["llamacpp".to_string()]
+    );
+    let pc = config.get_provider("llamacpp").unwrap();
+    assert_eq!(pc.api_base.as_deref(), Some("http://127.0.0.1:1/v1"));
+    assert!(pc.api_key.is_none());
+    assert_eq!(pc.models, vec!["m".to_string()]);
+}
+
+#[tokio::test]
+async fn cmd_provider_discover_runs_offline() {
+    let _home = IsolatedHome::new();
+    cmd_provider(&ProviderCmd::Discover {
+        json: true,
+        save: true,
+    })
+    .await
+    .unwrap();
+    cmd_provider(&ProviderCmd::Discover {
+        json: false,
+        save: false,
+    })
+    .await
+    .unwrap();
+}
+
+#[test]
+fn provider_discover_run_saves_and_keeps_json_clean() {
+    let _home = IsolatedHome::new();
+    let found = vec![local_server("vllm", &["m"])];
+
+    let mut config = whycodes_config::Config::default();
+    let json = provider_discover_run(&mut config, &found, true, true).unwrap();
+    assert_eq!(json.len(), 1, "--json --save prints only the JSON");
+    assert!(config.get_provider("vllm").is_some());
+
+    let mut config = whycodes_config::Config::default();
+    let text = provider_discover_run(&mut config, &found, false, true).unwrap();
+    assert!(text.last().unwrap().contains("vllm"));
+    assert!(text.last().unwrap().contains("saved (api_base, no key)"));
+    let on_disk = whycodes_config::Config::load().unwrap();
+    assert!(on_disk.get_provider("vllm").unwrap().api_key.is_none());
+
+    // Without --save (or with nothing found) the config is untouched.
+    let mut config = whycodes_config::Config::default();
+    provider_discover_run(&mut config, &found, false, false).unwrap();
+    provider_discover_run(&mut config, &[], false, true).unwrap();
+    assert!(config.get_provider("vllm").is_none());
+}

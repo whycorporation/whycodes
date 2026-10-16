@@ -147,6 +147,83 @@ pub(crate) fn plugins_header(n: usize) -> String {
     format!("{} Shell plugins ({n}):", "🔌".bold())
 }
 
+/// Text or JSON listing for `provider discover`.
+pub(crate) fn provider_discover_lines(
+    found: &[whycodes_llm::LocalServer],
+    json: bool,
+) -> anyhow::Result<Vec<String>> {
+    if json {
+        return Ok(vec![serde_json::to_string_pretty(found)?]);
+    }
+    if found.is_empty() {
+        let probed: Vec<String> = whycodes_llm::LOCAL_SERVER_CANDIDATES
+            .iter()
+            .map(|c| format!("{} :{}", c.label, c.port))
+            .collect();
+        return Ok(vec![
+            format!(
+                "{} No local model servers answered on 127.0.0.1 ({}).",
+                "ℹ".cyan(),
+                probed.join(", ")
+            ),
+            "Start one, then run `whycodes provider discover --save` or pick it with Ctrl+P in the TUI.".into(),
+        ]);
+    }
+    let mut lines = vec![format!("{} Local model servers:", "🔌".bold())];
+    for server in found {
+        lines.push(format!(
+            "  {} {}  {}",
+            server.provider.cyan(),
+            server.label.dimmed(),
+            server.api_base
+        ));
+        if server.models.is_empty() {
+            lines.push("    (no models loaded)".dimmed().to_string());
+        }
+        for model in &server.models {
+            lines.push(format!("    {model}"));
+        }
+    }
+    Ok(lines)
+}
+
+/// Write every found server into `config.providers`; returns the saved ids.
+pub(crate) fn save_discovered_providers(
+    config: &mut Config,
+    found: &[whycodes_llm::LocalServer],
+) -> Vec<String> {
+    found
+        .iter()
+        .map(|server| {
+            config
+                .providers
+                .insert(server.provider.clone(), server.provider_config());
+            server.provider.clone()
+        })
+        .collect()
+}
+
+/// `provider discover` body: with `save`, persist `found` to config first;
+/// the "saved" confirmations are text-mode only so `--json` stays parseable.
+pub(crate) fn provider_discover_run(
+    config: &mut Config,
+    found: &[whycodes_llm::LocalServer],
+    json: bool,
+    save: bool,
+) -> anyhow::Result<Vec<String>> {
+    let mut lines = provider_discover_lines(found, json)?;
+    if save && !found.is_empty() {
+        let saved = save_discovered_providers(config, found);
+        config.save()?;
+        if !json {
+            for name in saved {
+                lines.push(provider_saved_line(&name, "saved (api_base, no key)"));
+            }
+        }
+    }
+    Ok(lines)
+}
+
 fn empty_provider_lines() -> Vec<String> {
     provider_none_lines(&whycodes_llm::ProviderRegistry::default().names().join(", "))
 }
@@ -240,6 +317,13 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                 println!("{}", provider_default_use_line(name));
             } else {
                 eprintln!("{}", provider_default_missing_line(name));
+            }
+        }
+        ProviderCmd::Discover { json, save } => {
+            let found =
+                whycodes_llm::discover_local_servers(whycodes_llm::DEFAULT_DISCOVERY_TIMEOUT).await;
+            for line in provider_discover_run(&mut config, &found, *json, *save)? {
+                println!("{line}");
             }
         }
     }
