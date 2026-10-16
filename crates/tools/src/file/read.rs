@@ -34,7 +34,8 @@ impl Tool for ReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read a text file (line-numbered). Long notes: `read agent://tools/read`."
+        "Read a text file (line-numbered) or an internal URL: skill://, agent://, proc://, \
+         rule://, pr://, issue://, mcp:// (a bare scheme lists). Long notes: `read agent://tools/read`."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -43,7 +44,7 @@ impl Tool for ReadTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path (relative to project root or absolute)"
+                    "description": "File path (relative to project root or absolute), or an internal URL: skill://<name>, agent://<id>, proc://<job-id>, rule://<name>, pr://<number>[/diff], issue://<number>, mcp://<server>/<uri>"
                 },
                 "offset": {
                     "type": "integer",
@@ -69,7 +70,7 @@ impl Tool for ReadTool {
                 return err("Missing required parameter `path`.");
             }
 
-            match super::internal::read_internal(&path_str, ctx) {
+            match super::internal::read_internal_async(&path_str, ctx).await {
                 Some(internal) => return internal,
                 None => note_disk_read(),
             }

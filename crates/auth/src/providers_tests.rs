@@ -699,6 +699,7 @@ async fn access_token_resolves_fresh_direct_credentials() {
             "fixture-loopback",
             ProviderAuth {
                 method: "imported".to_string(),
+                validated_at: None,
                 token: OAuthToken {
                     access_token: "stored-access".to_string(),
                     refresh_token: None,
@@ -739,6 +740,7 @@ async fn force_refresh_without_renewal_path_keeps_credential() {
             "fixture-paste",
             ProviderAuth {
                 method: "oauth".to_string(),
+                validated_at: None,
                 token: OAuthToken {
                     access_token: "acc".to_string(),
                     refresh_token: None,
@@ -1306,6 +1308,7 @@ async fn force_refresh_with_spec_renews_stored_credential() {
             &spec.name,
             ProviderAuth {
                 method: "imported".into(),
+                validated_at: None,
                 token: OAuthToken {
                     access_token: "old".into(),
                     refresh_token: Some("refresh".into()),
@@ -1793,6 +1796,7 @@ async fn access_token_returns_derived_credential() {
             "fixture-device",
             ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: OAuthToken {
                     access_token: "github".into(),
                     refresh_token: None,
@@ -1806,4 +1810,23 @@ async fn access_token_returns_derived_credential() {
         access_token("fixture-device", dir.path()).await.as_deref(),
         Some("derived-access")
     );
+}
+
+#[test]
+fn persist_token_stamps_validated_at() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TokenStore::new(dir.path());
+    let token = OAuthToken {
+        access_token: "acc".into(),
+        refresh_token: None,
+        expires_at: None,
+        extra: Default::default(),
+    };
+    let before = chrono::Utc::now() - chrono::Duration::seconds(1);
+    let auth = persist_token(&store, "openai", "imported", &token).unwrap();
+    assert_eq!(auth.method, "imported");
+    let stamped = auth.validated_at.expect("stamped");
+    assert!(stamped >= before);
+    let stored = store.get("openai").unwrap().unwrap();
+    assert_eq!(stored.validated_at, Some(stamped));
 }

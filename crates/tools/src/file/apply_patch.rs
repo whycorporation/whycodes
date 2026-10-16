@@ -281,11 +281,13 @@ fn write_patched_result(
     match result {
         Ok(_) => {
             let hunks = count_hunks(patch_content);
+            let (added, removed) = count_changed_lines(patch_content);
             ToolResult {
                 tool_call_id: String::new(),
                 content: format!(
-                    "Patch applied to `{shown}` ({hunks} hunk{}).",
-                    if hunks == 1 { "" } else { "s" }
+                    "Patch applied to `{shown}` ({hunks} hunk{}).\n{}",
+                    if hunks == 1 { "" } else { "s" },
+                    whycodes_core::edit_trailer(added, removed)
                 ),
                 is_error: false,
             }
@@ -300,6 +302,20 @@ fn write_patch_error(shown: &str, e: &str) -> ToolResult {
         content: format!("Error writing '{shown}': {e}"),
         is_error: true,
     }
+}
+
+/// `+` / `-` hunk lines in `patch`, excluding the `+++` / `---` file headers.
+fn count_changed_lines(patch: &str) -> (usize, usize) {
+    let mut added = 0;
+    let mut removed = 0;
+    for line in patch.lines() {
+        if line.starts_with('+') && !line.starts_with("+++") {
+            added += 1;
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            removed += 1;
+        }
+    }
+    (added, removed)
 }
 
 fn pop_empty_split(lines: &mut Vec<String>) {

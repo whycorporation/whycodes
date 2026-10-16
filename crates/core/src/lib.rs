@@ -1,3 +1,4 @@
+pub mod edit_trailer;
 pub mod error;
 pub mod file_claims;
 pub mod harmony;
@@ -14,6 +15,7 @@ pub mod tokens;
 pub mod tool;
 pub mod types;
 
+pub use edit_trailer::{edit_trailer, parse_edit_trailers};
 pub use error::{Error, ErrorKind, Result, TransportError};
 pub use file_claims::{
     ClaimResult, ConflictListener, FileClaim, FileClaimRegistry, FileConflictEvent, FileStaleEvent,
@@ -23,7 +25,7 @@ pub use network::NetworkPolicy;
 pub use panel::{PanelSink, PanelUpdate};
 pub use paths::{
     config_dir, config_file, data_dir, display_path, instance_root, legacy_instance_roots,
-    project_dir, project_scratch_dir, user_home, whycodes_home,
+    project_dir, project_rule_dirs, project_scratch_dir, user_home, whycodes_home,
 };
 pub use sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
 pub use swarm_hub::{SwarmHub, SwarmMessage, SwarmMessageListener};

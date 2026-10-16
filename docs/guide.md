@@ -76,6 +76,18 @@ they were unique.
 `whycodes debug --json` prints a camelCase dump (paths, whether env names
 are set — never values or tokens).
 
+`whycodes auth status --json` prints one object per provider the config
+names or the token store holds: `provider`, `authKind` (`api_key` |
+`oauth` | `none`), `credentialSource` (`env:<VAR>` | `config` |
+`oauth_store` | `none`, the first hit in the CLI's own precedence), and for
+a stored login `expiry`, `validatedAt` and `stale` (not renewed for over a
+week). Never a secret. The text output is unchanged.
+
+`whycodes config get <key>` prints the value and the layer that set it,
+`debug  (from: global)`; `--json` prints `{ "key", "value",
+"overriddenBy" }` with `overriddenBy` one of `default`, `global`,
+`project`, `env` (the same layers `-d`/`--dir` resolves at startup).
+
 `whycodes serve` writes `.whycodes/serve.lock` (pid, port). A second
 invoke on a TTY offers takeover; stale locks (dead PID, 24h, clock skew)
 are removed. CI and `whycodes serve --no-takeover` exit non-zero instead
@@ -332,7 +344,7 @@ Both TUI and `--plain`:
 | `/memory` | Show memory path and recent entries |
 | `/themes` | Theme picker (TUI) / list names (plain) |
 | `/tools` | List tools for the current agent |
-| `/info` `/details` | Session details |
+| `/info` `/details` | Session details: model, context, token usage, and lines added/removed by this session's `write`/`edit`/`apply_patch` results (approximate: block counts, not a minimal diff) |
 | `/doctor` | Environment / config diagnostics |
 
 When a step reads far less from the provider's prompt cache than the step
@@ -566,7 +578,7 @@ The system prompt lists custom agents by name and description. An unknown
 
 | Category | Tools |
 |---|---|
-| Files | `read` (also `skill://`, `agent://`, `agent://tools/<name>`), `write`, `edit`, `apply_patch` |
+| Files | `read` (files and the internal URLs below: `skill://`, `agent://`, `proc://`, `rule://`, `pr://`, `issue://`, `mcp://`), `write`, `edit`, `apply_patch` |
 | Search | `grep`, `glob`, `list`, `repomap` |
 | Execution | `bash` (alias `shell`; auto-background after 20s unless `[tools.bash] auto_background = false`) |
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
@@ -578,6 +590,24 @@ The system prompt lists custom agents by name and description. An unknown
 
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
+
+**Internal URLs.** `read` resolves a few `scheme://` paths so the model has
+one interface for things that are not files; a bare scheme lists what it can
+read. `skill://<name>` is a skill body; `agent://<id>` a finished task/swarm
+artifact and `agent://tools/<name>` a long tool guide; `proc://<job-id>` the
+stored log of a background shell job (`.whycodes/scratch/<id>.log`, the file
+`bg` reads from memory); `rule://<name>` a project rule file by stem
+(`.whycodes/rules/*.md`, `.cursor/rules/*.mdc`, `.clinerules/*.md`,
+`.github/instructions/*.md`, the same set the context loader appends to the
+system prompt); `pr://<number>` the pull request of the `origin` GitHub
+remote with its metadata and body, `pr://<number>/diff` its diff, and
+`issue://<number>` an issue (`pr://` / `issue://` list the open ones, first
+page). The GitHub schemes use the same token discovery and network allowlist
+as `github_pr` / `github_issue` and fail with a clear message when there is
+no token or `origin` is not a github.com repository. `mcp://<server>/<uri>`
+reads an MCP resource like `mcp_read_resource`; `mcp://<server>` lists that
+server's resources and `mcp://` the connected servers. `grep` does not take
+these URLs.
 
 Every built-in tool has its own page with the parameter table and the long
 guide the model reads: [tools/](tools/README.md). How a call passes the
@@ -1370,6 +1400,7 @@ the default install; see [auth.md](auth.md).
 | Convention | Where |
 |---|---|
 | `AGENTS.md` project instructions | Repository root (also `CLAUDE.md`, `GEMINI.md`, Copilot, Cursor, Cline, Windsurf) |
+| Project rule files | `.whycodes/rules/*.md`, also `.cursor/rules/*.mdc`, `.clinerules/*.md`, `.github/instructions/*.md`; loaded into the system prompt, readable as `read rule://<name>` |
 | Markdown slash commands | `.whycodes/commands/`, also `.opencode/commands/` |
 | MCP servers | `[mcp_servers]` in `config.toml`, tools as `{server}_{tool}` |
 | Shell plugins | `plugins.toml` or `plugins/*/plugin.json` → `plugin_<name>` |

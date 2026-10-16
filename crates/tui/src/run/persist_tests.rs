@@ -223,6 +223,7 @@ fn session_details_lists_optional_models_and_usage() {
     let app = TuiApp::new(TuiAppConfig::default());
     let mut config = Config::default();
     let empty = session_details(&session, "build", &app, &config);
+    assert!(empty.contains("edits:     +0 -0 lines"), "{empty}");
     assert!(empty.contains("model_fast"), "{empty}");
     assert!(empty.contains("estimated"), "{empty}");
 
@@ -237,7 +238,11 @@ fn session_details_lists_optional_models_and_usage() {
         cache_creation_input_tokens: Some(2),
         cache_read_input_tokens: Some(1),
     };
+    session
+        .edit_stats
+        .record("apply_patch", "Patch applied to `a` (1 hunk).\n[+5 -2]");
     let filled = session_details(&session, "build", &app, &config);
+    assert!(filled.contains("edits:     +5 -2 lines"), "{filled}");
     assert!(filled.contains("model_fast: fast"), "{filled}");
     assert!(filled.contains("model_smol: smol"), "{filled}");
     assert!(filled.contains("model_plan: plan"), "{filled}");

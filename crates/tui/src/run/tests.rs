@@ -10269,6 +10269,7 @@ async fn handle_slash_login_marks_connected_when_token_store_has_auth() {
             "tui-cov-login-conn",
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "tok".into(),
                     refresh_token: None,

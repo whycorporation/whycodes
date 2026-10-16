@@ -56,7 +56,28 @@ pub struct ProviderAuth {
     /// How the credential was obtained: "oauth" today; leaves room for
     /// "imported" (credential discovery) later.
     pub method: String,
+    /// When the credential was last obtained or renewed from the provider
+    /// (login, refresh, derived-token exchange). Absent on entries written
+    /// before this field existed and on imported credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validated_at: Option<DateTime<Utc>>,
     pub token: OAuthToken,
+}
+
+/// Entries not renewed for this long are reported as stale by `auth status`.
+pub const STALE_AFTER: Duration = Duration::days(7);
+
+impl ProviderAuth {
+    /// True when the credential was last validated more than
+    /// [`STALE_AFTER`] before `now`. With no validation timestamp, an
+    /// access token that expired that long ago counts too; otherwise the
+    /// entry is not called stale on no evidence.
+    pub fn is_stale_at(&self, now: DateTime<Utc>) -> bool {
+        match self.validated_at.or(self.token.expires_at) {
+            Some(at) => now - at > STALE_AFTER,
+            None => false,
+        }
+    }
 }
 
 #[cfg(test)]
