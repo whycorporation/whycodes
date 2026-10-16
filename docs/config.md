@@ -84,7 +84,7 @@ A map keyed by provider id. When a table omits `name`, the key is used.
 |---|---|---|---|
 | `name` | table key | — | Provider id (`openai`, `anthropic`, `openrouter`, `xai`, `ollama`, …). Picks the built-in base URL when `base_url` / `api_base` are unset. |
 | `api_key` | — | — | API key. Unset means the key comes from `<NAME>_API_KEY` (then `WHYCODES_<NAME>_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) or an OAuth login; validation warns when none of these exist. |
-| `api_base` | — | — | Base URL for the API. Unset means the provider's well-known endpoint. |
+| `api_base` | — | — | Base URL for the API. Unset means the provider's well-known endpoint. `whycodes provider discover --save` and the TUI provider dialog write it for a discovered local server (`lmstudio`, `vllm`, `llamacpp`), with no `api_key`; an existing block is never overwritten (only a missing `api_base` is filled; a different one is skipped). |
 | `base_url` | — | — | Base URL that overrides `api_base` when both are set. A `localhost` / `127.0.0.1` value only logs a warning. |
 | `headers` | — | — | Map of extra HTTP headers sent with every request to this provider. |
 | `models` | `[]` | — | Known model ids for this provider; optional, used by listings and completion. |

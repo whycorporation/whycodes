@@ -1148,6 +1148,12 @@ cargo build --release -p whycodes-cli
 python scripts/bench_memory.py --skip-cli --sessions 1 10 --runs 3
 ```
 
+These numbers are the measured side of memory. The bounds that decide how far a
+long session can grow past them (cache entries, retained output, live sessions)
+are recorded in [`scripts/memory_budget.json`](../scripts/memory_budget.json) and
+checked on every PR by `check_memory_budget.py` ([budgets.md](budgets.md#memory)).
+A PR that raises one of those bounds should re-run this table.
+
 ## Resumed long session (2026-10-15)
 
 An idle, empty TUI says little about a working one. `bench_resume_memory.py`

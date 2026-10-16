@@ -17,6 +17,8 @@ Write content to a file, creating it if it doesn't exist.
 The model reads this with `read agent://tools/write`.
 
 Write content to a file, creating it if it doesn't exist.
+For a `.ipynb`, cell-marker text (as `read` shows it) becomes notebook JSON;
+raw JSON is written as given.
 
 ## Related
 

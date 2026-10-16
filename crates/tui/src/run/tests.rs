@@ -2417,6 +2417,23 @@ async fn handle_slash_covers_local_commands() {
     h.run("/tools").await;
     h.run("/info").await;
     h.run("/doctor").await;
+    h.run("/keys").await;
+    assert!(
+        h.app
+            .messages
+            .last()
+            .is_some_and(|m| m.content.starts_with("Key bindings"))
+    );
+    h.run("/terminal-setup").await;
+    assert!(
+        h.app
+            .messages
+            .iter()
+            .any(|m| m.content.starts_with("Terminal setup"))
+    );
+    // Inside tmux this opens the y/N confirm; never accept it here.
+    h.app.dialogs.clear();
+    h.app.mode = AppMode::Normal;
     h.run("/diff").await;
     h.run("/context").await;
     h.run("/cost").await;
@@ -11243,4 +11260,172 @@ fn a_bash_call_that_finished_in_the_foreground_is_not_a_task() {
     assert!(app.bg_jobs.is_empty());
     assert_eq!(app.toasts.visible().len(), toasts);
     assert_eq!(app.bg_running_count, 0);
+}
+
+#[test]
+fn key_conflict_notice_sets_status_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = TuiApp::from_config(crate::config::TuiAppConfig::default());
+    app.config
+        .key_bindings
+        .insert("cmd+k".into(), "toggle_sidebar".into());
+    key_conflict_notice(&mut app, dir.path());
+    assert!(
+        app.status_message.contains("cmd+k"),
+        "{}",
+        app.status_message
+    );
+    app.status_message.clear();
+    key_conflict_notice(&mut app, dir.path());
+    assert!(app.status_message.is_empty(), "same conflicts: no repeat");
+}
+
+fn discovered(provider: &str, models: &[&str]) -> whycodes_llm::LocalServer {
+    whycodes_llm::LocalServer {
+        provider: provider.into(),
+        label: "Local".into(),
+        api_base: "http://127.0.0.1:1/v1".into(),
+        models: models.iter().map(|m| m.to_string()).collect(),
+    }
+}
+
+#[test]
+fn apply_local_server_choice_saves_provider_and_queues_model() {
+    let (_lock, home) = isolate_home_fresh();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut config = Config::seeded_openrouter();
+
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("lmstudio", &["qwen"]),
+    );
+    assert_eq!(
+        app.pending_model,
+        Some(("lmstudio".to_string(), "qwen".to_string()))
+    );
+    let saved = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
+    assert!(saved.contains("[providers.lmstudio]"), "{saved}");
+    assert!(
+        saved.contains("api_base = \"http://127.0.0.1:1/v1\""),
+        "{saved}"
+    );
+    assert!(!saved.contains("api_key = "), "{saved}");
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.content.contains("[providers.lmstudio]"))
+    );
+
+    // No model loaded: saved, but nothing to switch to yet.
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_server_choice(&mut app, &mut rt, &mut config, &discovered("vllm", &[]));
+    assert!(app.pending_model.is_none());
+    assert!(config.get_provider("vllm").is_some());
+
+    // A running turn refuses the switch and leaves config alone.
+    rt.agent_busy = true;
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("llamacpp", &["m"]),
+    );
+    assert!(config.get_provider("llamacpp").is_none());
+    assert!(app.pending_model.is_none());
+    rt.agent_busy = false;
+
+    // Unwritable config.toml: still usable this session, with a warning toast.
+    std::fs::remove_file(home.path().join("config.toml")).unwrap();
+    std::fs::create_dir(home.path().join("config.toml")).unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("llamacpp", &["m"]),
+    );
+    assert_eq!(
+        app.pending_model,
+        Some(("llamacpp".to_string(), "m".to_string()))
+    );
+
+    // Already pointing at this server: no rewrite, just switch.
+    config.providers.get_mut("llamacpp").unwrap().api_key = Some("mine".into());
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("llamacpp", &["m2"]),
+    );
+    assert_eq!(
+        app.pending_model,
+        Some(("llamacpp".to_string(), "m2".to_string()))
+    );
+    let pc = config.get_provider("llamacpp").unwrap();
+    assert_eq!(pc.api_key.as_deref(), Some("mine"));
+    assert_eq!(pc.models, vec!["m".to_string()]);
+
+    // Pointing elsewhere: block untouched, no switch, a warning.
+    config.providers.get_mut("llamacpp").unwrap().api_base = Some("http://gpu:8080/v1".into());
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("llamacpp", &["m"]),
+    );
+    assert!(app.pending_model.is_none());
+    assert_eq!(
+        config.get_provider("llamacpp").unwrap().api_base.as_deref(),
+        Some("http://gpu:8080/v1")
+    );
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("different api_base")),
+    );
+}
+
+#[tokio::test]
+async fn spawn_local_discovery_delivers_a_result_and_fills_the_dialog() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    spawn_local_discovery(tx);
+    let found = rx.recv().await.expect("probe result");
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.provider_dialog.discovering = true;
+    apply_local_discovery(&mut app, &Config::default(), found.clone());
+    assert!(!app.provider_dialog.discovering);
+    assert_eq!(app.provider_dialog.local_servers, found);
+}
+
+#[test]
+fn apply_local_discovery_hides_servers_already_configured() {
+    let mut config = Config::default();
+    let same = discovered("lmstudio", &["qwen"]);
+    config
+        .providers
+        .insert("lmstudio".into(), same.provider_config());
+    let mut elsewhere = discovered("vllm", &[]).provider_config();
+    elsewhere.api_base = Some("http://gpu:8000/v1".into());
+    config.providers.insert("vllm".into(), elsewhere);
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_discovery(
+        &mut app,
+        &config,
+        vec![same, discovered("vllm", &[]), discovered("llamacpp", &[])],
+    );
+    let ids: Vec<&str> = app
+        .provider_dialog
+        .local_servers
+        .iter()
+        .map(|s| s.provider.as_str())
+        .collect();
+    assert_eq!(ids, vec!["vllm", "llamacpp"]);
 }
