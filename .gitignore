@@ -4,16 +4,13 @@
 !.cargo/config.toml
 !.cargo/audit.toml
 target/
+target-*/
 **/*.rs.bk
 
 # Local agent / session / ops scratch (do not commit)
-.omo/
 .whycode/
 .whycodes/
-.cline/
 local/
-# Unexpanded editor env vars sometimes land as a literal directory name
-$JCODE_SCRATCH_DIR/
 
 # Python bytecode from scripts/ (never commit)
 __pycache__/

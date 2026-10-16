@@ -84,7 +84,6 @@ reads as a fresh install rather than as a locked file. The fix distinguishes
 
 - **Warnings.** `-D warnings` already means zero; a budget adds nothing.
 - **Startup time and memory.** Harness exists ([benchmarks.md](benchmarks.md));
-  CI ceilings shipped; residual notes in [archive/plan-performance.md](archive/plan-performance.md).
+  CI ceilings shipped.
 - **Test size, wildcard re-exports.** Reasonable ideas, low value at this size.
-- **Binary size.** Needs release artifacts; belongs with
-  [archive/plan-distribution.md](archive/plan-distribution.md) rather than here.
+- **Binary size.** Needs release artifacts; belongs with packaging rather than here.

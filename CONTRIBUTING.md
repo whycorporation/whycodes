@@ -22,7 +22,7 @@ sh scripts/install_git_hooks.sh
 ```
 
 The pre-push hook (`scripts/pre-push`) only allows `refs/heads/*` and
-`refs/tags/*`; checkpoint refs under `refs/cline/` stay on your machine.
+`refs/tags/*`; other local refs (editor checkpoints etc.) stay on your machine.
 
 ## Before opening a pull request
 
@@ -146,7 +146,7 @@ documented there under “Releases”.
 
 ## Secrets and local scratch
 
-Do not commit `.env`, `auth.json`, private keys, `.omo/`, `.whycode/`,
+Do not commit `.env`, `auth.json`, private keys, `.whycode/`,
 `.whycodes/todos/`, coverage dumps, or editor scratch. CI runs
 `python scripts/check_tracked_secrets.py` on the index (not rewritten
 history). Author emails in `git log` are left as-is.
