@@ -29,6 +29,20 @@ const COMMANDS: &[(&str, &str)] = &[
         "pipeline",
         "cargo build 2>&1 | rg --line-number error | head -20 > errors.txt",
     ),
+    // About 200 characters: the size the 1 ms budget is stated for.
+    (
+        "typical_200",
+        concat!(
+            "cd crates/cli && RUST_LOG=debug cargo test -p whycodes-cli --test cli_args ",
+            "test_cli_help -- --exact 2>&1 | tee /tmp/test.log | grep -E '^(test|error)'; ",
+            "echo \"exit: $?\" && git status --short | head -20"
+        ),
+    ),
+    // Propagation and a here-document: the parser's extra work.
+    (
+        "assign_heredoc",
+        "OUT=target/tmp; mkdir -p \"$OUT\" && cat <<'EOF' > \"$OUT/notes.md\"\nrm -rf ~\nEOF\nls \"$OUT\"",
+    ),
 ];
 
 fn bench_assess(c: &mut Criterion) {
