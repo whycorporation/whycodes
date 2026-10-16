@@ -578,6 +578,10 @@ The system prompt lists custom agents by name and description. An unknown
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
 
+Every built-in tool has its own page with the parameter table and the long
+guide the model reads: [tools/](tools/README.md). How a call passes the
+permission, risk, sandbox and hook gates: [internals/permission-gate.md](internals/permission-gate.md).
+
 MCP servers that offer **resources** add two tools: `mcp_list_resources`
 (optionally for one `server`) and `mcp_read_resource` (`server` + `uri`).
 Text comes back as is; binary contents are summarized by MIME type and size.
@@ -669,7 +673,9 @@ On by default, per project:
 
 - **Auto memory** — a human-editable `MEMORY.md`.
 - **Semantic facts** — durable facts in SQLite with embeddings. Top hits are
-  injected into the system prompt; new facts are retained after each turn.
+  appended to your message when the request is built (not to the system
+  prompt, so the cached prefix stays stable); new facts are retained after
+  each turn.
 - **Code RAG** — chunk index via `whycodes memory index`, searched with
   `whycodes memory code-search`.
 
@@ -693,7 +699,7 @@ embedder is a local hashing model; `--features onnx` adds MiniLM
 
 Past turns are embedded after each turn. Search them with
 `whycodes memory session-search "<query>"`; matching excerpts are also
-injected as `# Past sessions`. After retain, the fact bank is capped
+appended to your message as `# Past sessions`. After retain, the fact bank is capped
 (`memory.consolidate_max`, default 80) by dropping the least-recalled
 entries.
 
@@ -708,6 +714,8 @@ not *none exist*, and the output names the next call. `grep` keeps its
 
 `~/.whycodes/config.toml` on every OS (`%USERPROFILE%\.whycodes\config.toml`
 on Windows). First launch writes that file with `[providers.openrouter]`.
+Every key, its default and its env override: [config.md](config.md).
+Provider-specific behaviour: [providers.md](providers.md).
 The TUI asks for an OpenRouter API key (paste into the modal, or skip —
 `/connect` and Ctrl+P stay available). `WHYCODES_HOME` relocates the whole
 instance. `whycodes debug` / `whycodes config path` print the resolved path.

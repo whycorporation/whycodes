@@ -174,8 +174,12 @@ coverage — see [docs/coverage.md](docs/coverage.md).
 | Doc | What it covers |
 |---|---|
 | [docs/guide.md](docs/guide.md) | Usage: CLI, TUI, agents, tools, config, SDK |
+| [docs/tools/](docs/tools/README.md) | One page per built-in tool |
+| [docs/config.md](docs/config.md) | Every config key with default and env override |
+| [docs/providers.md](docs/providers.md) | Provider catalogue: quirks, auth, model handling |
 | [docs/auth.md](docs/auth.md) | API keys, OAuth, credential import |
 | [docs/architecture.md](docs/architecture.md) | Crate map and layering |
+| [docs/internals/](docs/internals/) | Turn loop, permission gate, compaction, prompt cache, retry, MCP |
 | [docs/roadmap.md](docs/roadmap.md) | Current focus and deferred work |
 | [docs/knowhow.md](docs/knowhow.md) | Hard-won bugs (TUI, tty, silent exits) |
 | [docs/tui-term-matrix.md](docs/tui-term-matrix.md) | Manual TUI pass on Alacritty / Kitty / VTE |

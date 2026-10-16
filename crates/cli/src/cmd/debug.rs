@@ -112,7 +112,113 @@ pub(crate) fn cmd_version(bin: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
+/// Built-in tools whose registration is a second name for another tool.
+/// The pair is only reported as an alias when both definitions match, so a
+/// drifted alias shows up as its own catalog entry instead of hiding.
+const TOOL_ALIASES: &[(&str, &str)] = &[("shell", "bash"), ("todo", "todowrite")];
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ToolCatalogEntry {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) parameters: serde_json::Value,
+    /// `core` is advertised on every request; `deferred` needs `tool_search`
+    /// or `session.tool_profile = "full"`.
+    pub(crate) profile: &'static str,
+    /// Primary name when this entry is a registered alias.
+    pub(crate) alias_of: Option<String>,
+    /// Long guide body (`read agent://tools/<name>`), when one exists.
+    pub(crate) guide: Option<String>,
+}
+
+/// Snapshot of every built-in tool, sorted by name. The source for
+/// `docs/tools/catalog.json` (`scripts/gen_tool_docs.py`); MCP and plugin
+/// tools are per-install and not included.
+pub(crate) fn collect_tool_catalog() -> Vec<ToolCatalogEntry> {
+    let executor = whycodes_tools::ToolExecutor::new();
+    let ctx = whycodes_core::tool::ToolContext::new(".");
+    let defs: Vec<_> = executor
+        .tool_names()
+        .into_iter()
+        .filter_map(|name| executor.get(&name).map(|t| t.definition()))
+        .collect();
+    defs.iter()
+        .map(|def| {
+            let alias_of = TOOL_ALIASES
+                .iter()
+                .find(|(alias, _)| *alias == def.name)
+                .map(|(_, primary)| (*primary).to_string())
+                .filter(|primary| {
+                    defs.iter().any(|d| {
+                        &d.name == primary
+                            && d.description == def.description
+                            && d.parameters == def.parameters
+                    })
+                });
+            ToolCatalogEntry {
+                name: def.name.clone(),
+                description: def.description.clone(),
+                parameters: def.parameters.clone(),
+                profile: if whycodes_tools::ToolProfile::Core.includes(&def.name) {
+                    "core"
+                } else {
+                    "deferred"
+                },
+                alias_of,
+                guide: tool_guide_body(&def.name, &ctx),
+            }
+        })
+        .collect()
+}
+
+/// The long guide without its `# agent://tools/<name>` heading.
+fn tool_guide_body(name: &str, ctx: &whycodes_core::tool::ToolContext) -> Option<String> {
+    let path = format!("agent://tools/{name}");
+    let result = whycodes_tools::file::internal::read_internal(&path, ctx)?;
+    if result.is_error {
+        return None;
+    }
+    let body = result
+        .content
+        .split_once(
+            "
+
+",
+        )
+        .map_or(result.content.as_str(), |(_, rest)| rest);
+    Some(body.trim().to_string())
+}
+
+fn print_tool_catalog(json: bool) -> anyhow::Result<()> {
+    let catalog = collect_tool_catalog();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&catalog)?);
+        return Ok(());
+    }
+    for entry in &catalog {
+        println!("{}", tool_catalog_line(entry));
+    }
+    Ok(())
+}
+
+fn tool_catalog_line(entry: &ToolCatalogEntry) -> String {
+    let tag = match &entry.alias_of {
+        Some(primary) => format!("alias of {primary}"),
+        None => entry.profile.to_string(),
+    };
+    format!(
+        "{:<20} {:<16} {}",
+        entry.name,
+        tag,
+        entry.description.lines().next().unwrap_or_default()
+    )
+}
+
+pub(crate) async fn cmd_debug(json: bool, tools: bool) -> anyhow::Result<()> {
+    if tools {
+        return print_tool_catalog(json);
+    }
     if json {
         let dump = collect_debug();
         println!("{}", serde_json::to_string_pretty(&dump)?);
