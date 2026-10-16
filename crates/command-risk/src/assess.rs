@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::parse::{self, ParseError};
 use crate::paths::{self, PathScope};
 use crate::tokenize::{self, Segment, Word};
 
@@ -89,18 +90,47 @@ pub fn assess(command: &str, working_dir: &Path) -> Assessment {
 /// [`assess`] with the home directory supplied explicitly, so tests do not
 /// depend on the environment they run in.
 pub fn assess_with_home(command: &str, working_dir: &Path, home: Option<&Path>) -> Assessment {
-    let tokens = tokenize::tokenize(command);
+    // The parser is the front-end; whatever it cannot parse goes to the
+    // tokenizer, which is cruder but never gives up.
+    let (variants, malformed, parsed_bodies, scripts) = match parse::parse(command) {
+        Ok(l) => (l.variants, l.malformed, l.bodies, l.scripts),
+        Err(ParseError) => {
+            let tokens = tokenize::tokenize(command);
+            (
+                vec![tokens.segments],
+                tokens.malformed,
+                Vec::new(),
+                Vec::new(),
+            )
+        }
+    };
     let mut worst = Assessment::safe();
 
-    for (i, segment) in tokens.segments.iter().enumerate() {
-        let previous = i.checked_sub(1).and_then(|p| tokens.segments.get(p));
-        worst = worst.worse_of(assess_segment(segment, previous, working_dir, home));
+    // One variant per reading of the variables assigned in the line; the
+    // first keeps them as written. The worst reading wins.
+    for segments in &variants {
+        for (i, segment) in segments.iter().enumerate() {
+            let previous = i.checked_sub(1).and_then(|p| segments.get(p));
+            worst = worst.worse_of(assess_segment(segment, previous, working_dir, home));
+        }
+    }
+
+    // A here-document or here-string fed to a shell is a script.
+    for script in &scripts {
+        let inner = assess_with_home(script, working_dir, home);
+        if inner.level > worst.level {
+            let why = inner.reason.unwrap_or_default();
+            worst = Assessment::at(
+                inner.level,
+                format!("a shell reads a script from stdin: {why}"),
+            );
+        }
     }
 
     // A command line we could not split reliably is only worth escalating when
     // it contains something that destroys; otherwise a stray quote in an echo
     // would prompt.
-    if tokens.malformed && mentions_destructive_command(command) {
+    if malformed && mentions_destructive_command(command) {
         worst = worst.worse_of(Assessment::at(
             RiskLevel::Destructive,
             "command could not be parsed reliably and contains a destructive command",
@@ -110,7 +140,17 @@ pub fn assess_with_home(command: &str, working_dir: &Path, home: Option<&Path>) 
     // A command substitution runs its body before the outer command sees a
     // single argument: `echo $(rm -rf ~)` is the inner command, not an echo.
     // Each body is assessed on its own (recursively), and the worst wins.
-    for body in tokenize::substitution_bodies(command) {
+    // The raw scan also sees substitutions the parser knows are literal
+    // (inside single quotes, a quoted here-document) and is kept for that
+    // pessimism; the parser adds the bodies the scan cuts short (a `)` inside
+    // quotes) and process-substitution bodies.
+    let mut bodies = tokenize::substitution_bodies(command);
+    for body in parsed_bodies {
+        if !bodies.contains(&body) {
+            bodies.push(body);
+        }
+    }
+    for body in bodies {
         let inner = assess_with_home(&body, working_dir, home);
         if inner.level > worst.level {
             let why = inner.reason.unwrap_or_default();
@@ -1064,5 +1104,156 @@ mod tests {
         // The reason names the body and carries the inner verdict's reason.
         let r = reason("echo $(rm -rf target)");
         assert!(r.contains("rm -rf target"), "{r}");
+    }
+
+    // ── The parser front-end ────────────────────────────────────────────
+
+    /// What an agent actually runs, with the verdict each must get. Builds
+    /// and tests come first: prompting on every build is the regression that
+    /// makes users turn the gate off.
+    const CORPUS: &[(&str, RiskLevel)] = &[
+        ("cargo build --release", RiskLevel::Safe),
+        (
+            "cargo test -p whycodes-command-risk --lib 2>&1 | tail -20",
+            RiskLevel::Safe,
+        ),
+        (
+            "cargo clippy --workspace --all-targets -- -D warnings",
+            RiskLevel::Safe,
+        ),
+        ("npm ci && npm run build && npm test", RiskLevel::Safe),
+        ("make -j8 CC=clang", RiskLevel::Safe),
+        ("go test ./... -run TestFoo -count=1", RiskLevel::Safe),
+        ("pytest -q tests/ 2>&1 | head -50", RiskLevel::Safe),
+        ("RUST_LOG=debug cargo run -- -d .", RiskLevel::Safe),
+        ("git diff --stat HEAD~1 | cat", RiskLevel::Safe),
+        ("git log --format='%H %s' -n 5", RiskLevel::Safe),
+        (r#"for f in src/*.rs; do wc -l "$f"; done"#, RiskLevel::Safe),
+        (
+            "if [ -f Cargo.toml ]; then cargo fmt --all --check; fi",
+            RiskLevel::Safe,
+        ),
+        ("cat <<'EOF' > /dev/null\nrm -rf ~\nEOF", RiskLevel::Safe),
+        ("cat <<EOF\nrm -rf /\nEOF\necho ok", RiskLevel::Safe),
+        (r#"echo "done: $(date +%s)" >> build.log"#, RiskLevel::Safe),
+        (
+            "find . -name '*.rs' -newer Cargo.toml | xargs wc -l",
+            RiskLevel::Safe,
+        ),
+        ("ls -la 2>&1 >/dev/null", RiskLevel::Safe),
+        ("cargo build 2>&1 | tee build.log", RiskLevel::Safe),
+        ("python -m pip install -r requirements.txt", RiskLevel::Safe),
+        ("docker build -t app:dev .", RiskLevel::Safe),
+        (r#"grep -rn "TODO" src/ || true"#, RiskLevel::Safe),
+        ("(cd crates/cli && cargo check)", RiskLevel::Safe),
+        (
+            "export CARGO_TARGET_DIR=target/alt && cargo build",
+            RiskLevel::Safe,
+        ),
+        (
+            r#"case "$OSTYPE" in darwin*) brew list ;; *) apt list --installed ;; esac"#,
+            RiskLevel::Safe,
+        ),
+        (
+            r#"while read -r line; do echo "$line"; done < Cargo.lock"#,
+            RiskLevel::Safe,
+        ),
+        (r"echo $'tab\there'", RiskLevel::Safe),
+        ("jq -r '.packages[] | .name' metadata.json", RiskLevel::Safe),
+        (
+            "cmake -S . -B build && cmake --build build -j",
+            RiskLevel::Safe,
+        ),
+        (
+            r#"git commit -m "fix: handle a) and b); done""#,
+            RiskLevel::Safe,
+        ),
+        ("mkdir -p out && cp -r assets out/", RiskLevel::Safe),
+        ("[[ -d node_modules ]] || npm install", RiskLevel::Safe),
+        ("time cargo build --timings", RiskLevel::Safe),
+        ("cargo build >&2", RiskLevel::Safe),
+        ("rm -rf target && cargo build", RiskLevel::Caution),
+        ("echo x >| notes.txt", RiskLevel::Caution),
+        // `>&file` writes a file; the tokenizer read `&` as a separator.
+        ("echo x >&/tmp/out.txt", RiskLevel::Destructive),
+        ("cargo build > /tmp/build.log 2>&1", RiskLevel::Destructive),
+        (r#"OUT=dist; rm -rf "$OUT""#, RiskLevel::Destructive),
+        (
+            r#"for d in build /tmp/cache; do rm -rf "$d"; done"#,
+            RiskLevel::Destructive,
+        ),
+        // Assignment propagation.
+        ("DIR=/; rm -rf $DIR", RiskLevel::Catastrophic),
+        ("X=~ rm -rf $X", RiskLevel::Catastrophic),
+        (r#"d=~; rm -rf "$d""#, RiskLevel::Catastrophic),
+        (
+            r#"export TARGET=$HOME && rm -rf "$TARGET""#,
+            RiskLevel::Catastrophic,
+        ),
+        (
+            "for d in build ~; do rm -rf $d; done",
+            RiskLevel::Catastrophic,
+        ),
+        (
+            "if x; then D=build; else D=/etc; fi; rm -rf $D",
+            RiskLevel::Catastrophic,
+        ),
+        // Exact quoting: ANSI-C escapes are decoded.
+        (r"rm -rf $'\x2f'etc", RiskLevel::Catastrophic),
+        // A leading redirect no longer sits in the command slot.
+        (">/dev/null rm -rf ~", RiskLevel::Catastrophic),
+        // The substitution body is delimited by the parser, not by the first `)`.
+        (r#"echo $(echo ")"; rm -rf ~)"#, RiskLevel::Catastrophic),
+        ("diff <(rm -rf ~) x", RiskLevel::Catastrophic),
+        // A here-document or here-string fed to a shell is a script.
+        ("bash <<EOF\nrm -rf ~\nEOF", RiskLevel::Catastrophic),
+        ("cat <<EOF | sh\nrm -rf /\nEOF", RiskLevel::Catastrophic),
+        ("bash <<< 'rm -rf ~'", RiskLevel::Catastrophic),
+        ("f() { rm -rf ~; }; f", RiskLevel::Catastrophic),
+        // `cmd.exe` has no `#` comments, so a comment cannot hide a command.
+        ("# build first\ncargo build", RiskLevel::Safe),
+        ("echo # & rm -rf ~", RiskLevel::Catastrophic),
+    ];
+
+    #[test]
+    fn corpus_verdicts() {
+        assert!(CORPUS.len() >= 40);
+        let got: Vec<(&str, RiskLevel)> = CORPUS.iter().map(|(c, _)| (*c, level(c))).collect();
+        assert_eq!(got, CORPUS);
+    }
+
+    /// A typical agent command: a test run filtered through a pipeline,
+    /// then a status check. About 200 characters.
+    const TYPICAL: &str = concat!(
+        "cd crates/cli && RUST_LOG=debug cargo test -p whycodes-cli --test cli_args ",
+        "test_cli_help -- --exact 2>&1 | tee /tmp/test.log | grep -E '^(test|error)'; ",
+        "echo \"exit: $?\" && git status --short | head -20"
+    );
+
+    #[test]
+    fn a_typical_command_is_assessed_well_under_a_millisecond() {
+        // The gate runs before every shell call. Best of several batches, so
+        // a busy machine does not fail the test.
+        assert!((180..=240).contains(&TYPICAL.len()), "{}", TYPICAL.len());
+        assert_eq!(level(TYPICAL), RiskLevel::Safe);
+        let best = (0..5)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                for _ in 0..20 {
+                    std::hint::black_box(level(std::hint::black_box(TYPICAL)));
+                }
+                start.elapsed() / 20
+            })
+            .min()
+            .unwrap();
+        eprintln!("assess({} chars): {best:?}", TYPICAL.len());
+        // 1 ms is the budget in an optimised build (`cargo bench -p
+        // whycodes-command-risk` measures it); an unoptimised, instrumented
+        // test build only has to show the work is not blowing up.
+        const BUDGET_MS: u64 = if cfg!(debug_assertions) { 10 } else { 1 };
+        assert!(
+            best < std::time::Duration::from_millis(BUDGET_MS),
+            "{best:?}"
+        );
     }
 }

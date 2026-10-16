@@ -439,6 +439,8 @@ impl Agent {
                 .await
         } else if tc.name == "bg" {
             self.execute_bg_tool(tc)
+        } else if let Some(rest) = super::dispatch::mcp_read_target(tc) {
+            self.execute_mcp_read(tc, rest).await
         } else if tc.name == "schedule" {
             self.execute_schedule_tool(tc, tool_ctx, events).await
         } else if tc.name == "wait" {

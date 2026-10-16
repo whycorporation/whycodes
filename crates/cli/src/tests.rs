@@ -912,6 +912,7 @@ fn auth_expiry_labels() {
     use whycodes_auth::token::ProviderAuth;
     let auth = |token: whycodes_auth::token::OAuthToken| ProviderAuth {
         method: "oauth".into(),
+        validated_at: None,
         token,
     };
 
@@ -1084,7 +1085,7 @@ fn runtime_choice_covers_remaining_commands() {
         session: None,
     }))));
     assert!(command_needs_multi_thread(&cli(Some(Commands::Auth {
-        cmd: AuthCmd::Status,
+        cmd: AuthCmd::Status { json: false },
     }))));
     #[cfg(feature = "server")]
     assert!(command_needs_multi_thread(&cli(Some(Commands::Serve {
@@ -2210,6 +2211,7 @@ async fn dispatch_offline_commands() {
         &Commands::Config {
             cmd: ConfigCmd::Get {
                 key: "default_agent".into(),
+                json: false,
             },
         },
         &c,
@@ -2267,7 +2269,7 @@ async fn dispatch_offline_commands() {
     .unwrap();
     dispatch_command(
         &Commands::Auth {
-            cmd: AuthCmd::Status,
+            cmd: AuthCmd::Status { json: false },
         },
         &c,
     )
@@ -2561,13 +2563,18 @@ fn init_logging_from_cli_debug() {
 #[tokio::test]
 async fn cmd_auth_unknown_provider_and_status() {
     let _home = IsolatedHome::new();
-    let err = cmd_auth(&AuthCmd::Login {
-        provider: "not-a-provider".into(),
-        no_browser: true,
-    })
+    let err = cmd_auth(
+        std::path::Path::new("."),
+        &AuthCmd::Login {
+            provider: "not-a-provider".into(),
+            no_browser: true,
+        },
+    )
     .await;
     assert!(err.is_err(), "{err:?}");
-    cmd_auth(&AuthCmd::Status).await.unwrap();
+    cmd_auth(std::path::Path::new("."), &AuthCmd::Status { json: false })
+        .await
+        .unwrap();
     cmd_auth_import(&Config::data_dir().unwrap()).await.unwrap();
 }
 
@@ -3017,6 +3024,7 @@ async fn cmd_auth_logout_status_and_oauth_error() {
             "openai",
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "tok".into(),
                     refresh_token: None,
@@ -3026,21 +3034,32 @@ async fn cmd_auth_logout_status_and_oauth_error() {
             },
         )
         .unwrap();
-    cmd_auth(&AuthCmd::Status).await.unwrap();
-    cmd_auth(&AuthCmd::Logout {
-        provider: "openai".into(),
-    })
+    cmd_auth(std::path::Path::new("."), &AuthCmd::Status { json: false })
+        .await
+        .unwrap();
+    cmd_auth(
+        std::path::Path::new("."),
+        &AuthCmd::Logout {
+            provider: "openai".into(),
+        },
+    )
     .await
     .unwrap();
-    cmd_auth(&AuthCmd::Logout {
-        provider: "missing".into(),
-    })
+    cmd_auth(
+        std::path::Path::new("."),
+        &AuthCmd::Logout {
+            provider: "missing".into(),
+        },
+    )
     .await
     .unwrap();
-    let err = cmd_auth(&AuthCmd::Login {
-        provider: "openai".into(),
-        no_browser: true,
-    })
+    let err = cmd_auth(
+        std::path::Path::new("."),
+        &AuthCmd::Login {
+            provider: "openai".into(),
+            no_browser: true,
+        },
+    )
     .await;
     assert!(err.is_err(), "{err:?}");
 }
@@ -3364,9 +3383,13 @@ async fn cmd_auth_import_subcommand_lists_denied() {
     )
     .unwrap();
     install_test_repl_lines(["n"]);
-    cmd_auth(&AuthCmd::Import).await.unwrap();
+    cmd_auth(std::path::Path::new("."), &AuthCmd::Import)
+        .await
+        .unwrap();
     clear_test_repl_lines();
-    cmd_auth(&AuthCmd::Import).await.unwrap();
+    cmd_auth(std::path::Path::new("."), &AuthCmd::Import)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -3486,16 +3509,24 @@ async fn cmd_auth_login_stub_stores_credential() {
     let _home = IsolatedHome::new();
     let _llm = TestLlmEnv;
     unsafe { std::env::set_var("WHYCODES_TEST_AUTH_LOGIN", "1") };
-    cmd_auth(&AuthCmd::Login {
-        provider: "anthropic".into(),
-        no_browser: true,
-    })
+    cmd_auth(
+        std::path::Path::new("."),
+        &AuthCmd::Login {
+            provider: "anthropic".into(),
+            no_browser: true,
+        },
+    )
     .await
     .unwrap();
-    cmd_auth(&AuthCmd::Status).await.unwrap();
-    cmd_auth(&AuthCmd::Logout {
-        provider: "anthropic".into(),
-    })
+    cmd_auth(std::path::Path::new("."), &AuthCmd::Status { json: false })
+        .await
+        .unwrap();
+    cmd_auth(
+        std::path::Path::new("."),
+        &AuthCmd::Logout {
+            provider: "anthropic".into(),
+        },
+    )
     .await
     .unwrap();
     unsafe { std::env::remove_var("WHYCODES_TEST_AUTH_LOGIN") };
@@ -4077,6 +4108,7 @@ async fn cmd_debug_with_oauth_and_missing_bin() {
             "openai",
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "tok".into(),
                     refresh_token: None,
@@ -4702,21 +4734,36 @@ async fn ensure_api_key_local_provider_without_key() {
 #[tokio::test]
 async fn cmd_config_set_and_get_unknown() {
     let _home = IsolatedHome::new();
-    cmd_config(&ConfigCmd::Set {
-        key: "log_level".into(),
-        value: "debug".into(),
-    })
+    cmd_config(
+        std::path::Path::new("."),
+        &ConfigCmd::Set {
+            key: "log_level".into(),
+            value: "debug".into(),
+        },
+    )
     .await
     .unwrap();
-    cmd_config(&ConfigCmd::Get {
-        key: "log_level".into(),
-    })
+    cmd_config(
+        std::path::Path::new("."),
+        &ConfigCmd::Get {
+            key: "log_level".into(),
+            json: false,
+        },
+    )
     .await
     .unwrap();
-    cmd_config(&ConfigCmd::Get { key: "nope".into() })
+    cmd_config(
+        std::path::Path::new("."),
+        &ConfigCmd::Get {
+            key: "nope".into(),
+            json: false,
+        },
+    )
+    .await
+    .unwrap();
+    cmd_config(std::path::Path::new("."), &ConfigCmd::Show)
         .await
         .unwrap();
-    cmd_config(&ConfigCmd::Show).await.unwrap();
 }
 
 #[test]
@@ -5272,6 +5319,7 @@ async fn cmd_run_connect_oauth_hint_and_login_list() {
             "anthropic",
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "tok".into(),
                     refresh_token: None,
@@ -5722,28 +5770,43 @@ async fn cmd_auth_import_symlink_approved_and_bad_json() {
 #[tokio::test]
 async fn cmd_config_path_and_project_path_roundtrip() {
     let _home = IsolatedHome::new();
-    cmd_config(&ConfigCmd::Path).await.unwrap();
-    cmd_config(&ConfigCmd::Set {
-        key: "project_path".into(),
-        value: "/tmp/proj".into(),
-    })
+    cmd_config(std::path::Path::new("."), &ConfigCmd::Path)
+        .await
+        .unwrap();
+    cmd_config(
+        std::path::Path::new("."),
+        &ConfigCmd::Set {
+            key: "project_path".into(),
+            value: "/tmp/proj".into(),
+        },
+    )
     .await
     .unwrap();
-    cmd_config(&ConfigCmd::Get {
-        key: "project_path".into(),
-    })
+    cmd_config(
+        std::path::Path::new("."),
+        &ConfigCmd::Get {
+            key: "project_path".into(),
+            json: false,
+        },
+    )
     .await
     .unwrap();
-    cmd_config(&ConfigCmd::Set {
-        key: "default_agent".into(),
-        value: "plan".into(),
-    })
+    cmd_config(
+        std::path::Path::new("."),
+        &ConfigCmd::Set {
+            key: "default_agent".into(),
+            value: "plan".into(),
+        },
+    )
     .await
     .unwrap();
-    let err = cmd_config(&ConfigCmd::Set {
-        key: "nope".into(),
-        value: "x".into(),
-    })
+    let err = cmd_config(
+        std::path::Path::new("."),
+        &ConfigCmd::Set {
+            key: "nope".into(),
+            value: "x".into(),
+        },
+    )
     .await;
     assert!(err.is_err());
 }
@@ -5794,6 +5857,7 @@ async fn get_api_key_from_oauth_store() {
             "anthropic",
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "oat-from-store".into(),
                     refresh_token: Some("refresh".into()),
@@ -6627,13 +6691,18 @@ async fn cmd_run_tui_upgrade_without_skip() {
 async fn cmd_auth_login_stub_non_oauth_provider() {
     let _home = IsolatedHome::new();
     unsafe { std::env::set_var("WHYCODES_TEST_AUTH_LOGIN", "1") };
-    cmd_auth(&AuthCmd::Login {
-        provider: "ollama".into(),
-        no_browser: true,
-    })
+    cmd_auth(
+        std::path::Path::new("."),
+        &AuthCmd::Login {
+            provider: "ollama".into(),
+            no_browser: true,
+        },
+    )
     .await
     .unwrap();
-    cmd_auth(&AuthCmd::Status).await.unwrap();
+    cmd_auth(std::path::Path::new("."), &AuthCmd::Status { json: false })
+        .await
+        .unwrap();
     unsafe { std::env::remove_var("WHYCODES_TEST_AUTH_LOGIN") };
 }
 
@@ -6879,4 +6948,99 @@ fn install_redactor_is_a_no_op_when_disabled() {
     let mut config = Config::default();
     config.security.redact_secrets = false;
     assert!(!crate::cmd::helpers::install_redactor(&config));
+}
+
+#[tokio::test]
+async fn cmd_auth_status_json_lists_store_and_config_providers() {
+    let home = IsolatedHome::new();
+    let store = whycodes_auth::TokenStore::new(home.path());
+    store
+        .set(
+            "openai",
+            whycodes_auth::ProviderAuth {
+                method: "oauth".into(),
+                validated_at: Some(chrono::Utc::now() - chrono::Duration::days(30)),
+                token: whycodes_auth::OAuthToken {
+                    access_token: "tok".into(),
+                    refresh_token: None,
+                    expires_at: None,
+                    extra: Default::default(),
+                },
+            },
+        )
+        .unwrap();
+    cmd_auth(home.path(), &AuthCmd::Status { json: true })
+        .await
+        .unwrap();
+    cmd_auth(home.path(), &AuthCmd::Status { json: false })
+        .await
+        .unwrap();
+    let config = Config::load_layered(home.path()).unwrap();
+    let entries = crate::cmd::auth::auth_status_entries(
+        &config,
+        &store.list().unwrap(),
+        |_| None,
+        chrono::Utc::now(),
+    );
+    let openai = entries.iter().find(|e| e.provider == "openai").unwrap();
+    assert_eq!(openai.auth_kind, "oauth");
+    assert!(openai.stale);
+}
+
+#[tokio::test]
+async fn cmd_config_get_reports_the_winning_layer() {
+    let home = IsolatedHome::new();
+    let project = home.path().join("proj");
+    std::fs::create_dir_all(project.join(".whycodes")).unwrap();
+    std::fs::write(
+        project.join(".whycodes/config.toml"),
+        "default_agent = \"explore\"\n",
+    )
+    .unwrap();
+    cmd_config(
+        &project,
+        &ConfigCmd::Set {
+            key: "log_level".into(),
+            value: "debug".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let global = Config::load_or_create().unwrap();
+    let layers = crate::cmd::config::config_layers(&global, &project);
+    assert_eq!(
+        crate::cmd::config::resolve_config_value(&layers, "default_agent"),
+        Some(("explore".into(), "project"))
+    );
+    assert_eq!(
+        crate::cmd::config::resolve_config_value(&layers, "log_level"),
+        Some(("debug".into(), "global"))
+    );
+    unsafe { std::env::set_var("WHYCODES_LOG_LEVEL", "trace") };
+    let layers = crate::cmd::config::config_layers(&global, &project);
+    unsafe { std::env::remove_var("WHYCODES_LOG_LEVEL") };
+    assert_eq!(
+        crate::cmd::config::resolve_config_value(&layers, "log_level"),
+        Some(("trace".into(), "env"))
+    );
+    for json in [false, true] {
+        cmd_config(
+            &project,
+            &ConfigCmd::Get {
+                key: "default_agent".into(),
+                json,
+            },
+        )
+        .await
+        .unwrap();
+        cmd_config(
+            &project,
+            &ConfigCmd::Get {
+                key: "nope".into(),
+                json,
+            },
+        )
+        .await
+        .unwrap();
+    }
 }

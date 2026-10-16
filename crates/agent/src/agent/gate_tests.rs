@@ -1356,6 +1356,60 @@ async fn intent_refuse_does_not_prompt() {
     assert_eq!(asks.asks.load(Ordering::SeqCst), 0, "{result:?}");
 }
 
+#[tokio::test]
+async fn read_mcp_url_is_dispatched_in_process() {
+    let a = agent();
+    let (session, ctx) = session_ctx(&a);
+    let r = a
+        .execute_with_permission(
+            &tc("read", json!({"path": "mcp://"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(!r.is_error, "{r:?}");
+    assert!(r.content.contains("No MCP servers connected"), "{r:?}");
+    assert_eq!(r.tool_call_id, "t1");
+
+    let unknown = a
+        .execute_with_permission(
+            &tc("read", json!({"path": " mcp://zzz "})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(unknown.is_error, "{unknown:?}");
+    assert!(
+        unknown.content.contains("unknown MCP server 'zzz'"),
+        "{unknown:?}"
+    );
+
+    use crate::agent::dispatch::mcp_read_target;
+    assert_eq!(
+        mcp_read_target(&tc("read", json!({"path": "mcp://a/b"}))),
+        Some("a/b")
+    );
+    assert_eq!(
+        mcp_read_target(&tc("read", json!({"path": "src/x.rs"}))),
+        None
+    );
+    assert_eq!(mcp_read_target(&tc("read", json!({}))), None);
+    assert_eq!(
+        mcp_read_target(&tc("grep", json!({"path": "mcp://a"}))),
+        None
+    );
+}
+
 #[cfg(windows)]
 fn gate_hang_cmd() -> &'static str {
     "ping -n 4 127.0.0.1 >NUL"

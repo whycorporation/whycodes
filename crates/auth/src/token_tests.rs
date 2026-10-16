@@ -33,3 +33,42 @@ fn expiry_refresh_and_debug_are_safe() {
     assert!(!no_expiry.can_refresh());
     assert!(format!("{no_expiry:?}").contains("refresh_token: None"));
 }
+
+#[test]
+fn stale_after_a_week_without_renewal() {
+    let now = Utc::now();
+    let week_and_a_bit = Duration::days(7) + Duration::hours(1);
+    let mut auth = ProviderAuth {
+        method: "oauth".to_string(),
+        validated_at: Some(now - week_and_a_bit),
+        token: token(None, None),
+    };
+    assert!(auth.is_stale_at(now));
+    auth.validated_at = Some(now - Duration::days(6));
+    assert!(!auth.is_stale_at(now));
+
+    // No validation stamp: an access token that expired a week ago is stale,
+    // one that expired yesterday is not, and no evidence at all is not.
+    auth.validated_at = None;
+    auth.token.expires_at = Some(now - week_and_a_bit);
+    assert!(auth.is_stale_at(now));
+    auth.token.expires_at = Some(now - Duration::days(1));
+    assert!(!auth.is_stale_at(now));
+    auth.token.expires_at = None;
+    assert!(!auth.is_stale_at(now));
+}
+
+#[test]
+fn validated_at_is_optional_on_disk() {
+    let legacy: ProviderAuth =
+        serde_json::from_str(r#"{"method":"oauth","token":{"access_token":"a"}}"#).unwrap();
+    assert!(legacy.validated_at.is_none());
+    let json = serde_json::to_string(&legacy).unwrap();
+    assert!(!json.contains("validated_at"), "{json}");
+    let stamped = ProviderAuth {
+        validated_at: Some(Utc::now()),
+        ..legacy
+    };
+    let json = serde_json::to_string(&stamped).unwrap();
+    assert!(json.contains("validated_at"), "{json}");
+}

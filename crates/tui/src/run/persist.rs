@@ -867,6 +867,7 @@ pub(super) fn session_details(
         "  swarm:     enabled={} max_agents={} worktrees={}\n",
         config.swarm.enabled, config.swarm.max_agents, config.swarm.worktrees
     ));
+    out.push_str(&format!("  edits:     {}\n", session.edit_stats.label()));
 
     if usage.is_empty() {
         out.push_str(&format!(

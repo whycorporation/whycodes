@@ -358,6 +358,21 @@ impl Agent {
         }
     }
 
+    /// `read mcp://…` is answered here: the MCP clients live on the agent,
+    /// not in the tool executor.
+    pub(crate) async fn execute_mcp_read(&self, call: &ToolCall, rest: &str) -> ToolResult {
+        let (content, is_error) =
+            match crate::mcp_content::read_mcp_url(&self.mcp_servers, rest).await {
+                Ok(text) => (text, false),
+                Err(e) => (e, true),
+            };
+        ToolResult {
+            tool_call_id: call.id.clone(),
+            content,
+            is_error,
+        }
+    }
+
     pub(crate) fn execute_tool_search(&self, call: &ToolCall) -> ToolResult {
         let action = call
             .arguments
@@ -1620,6 +1635,17 @@ impl Agent {
             is_error: !result.success,
         }
     }
+}
+
+/// The part after `mcp://` when `call` is a `read` of an MCP URL.
+pub(crate) fn mcp_read_target(call: &ToolCall) -> Option<&str> {
+    if call.name != "read" {
+        return None;
+    }
+    call.arguments
+        .get("path")
+        .and_then(|v| v.as_str())
+        .and_then(|p| p.trim().strip_prefix("mcp://"))
 }
 
 /// How often `wait` looks at the job registry and the steer inbox.

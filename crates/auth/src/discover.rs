@@ -245,6 +245,7 @@ pub fn import(store: &TokenStore, consent: &ConsentStore, found: &FoundSource) -
         found.source.provider,
         ProviderAuth {
             method: "imported".to_string(),
+            validated_at: None,
             token,
         },
     )

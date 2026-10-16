@@ -558,11 +558,11 @@ fn invalid_token_error(e: impl std::fmt::Display) -> String {
     format!("Invalid token: {e}")
 }
 
-fn github_api_request_error(e: impl std::fmt::Display) -> String {
+pub(crate) fn github_api_request_error(e: impl std::fmt::Display) -> String {
     format!("GitHub API request failed: {e}")
 }
 
-fn github_api_response_error(e: impl std::fmt::Display) -> String {
+pub(crate) fn github_api_response_error(e: impl std::fmt::Display) -> String {
     format!("Failed to read GitHub API response: {e}")
 }
 
