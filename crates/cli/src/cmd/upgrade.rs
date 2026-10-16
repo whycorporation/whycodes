@@ -10,10 +10,6 @@ pub(crate) fn upgrade_current_line(current: &str) -> String {
     format!("  Current version: {}", current.cyan())
 }
 
-pub(crate) fn upgrade_checking_line() -> &'static str {
-    "  Checking for a newer release…"
-}
-
 pub(crate) fn upgrade_ok_line(current: &str, version: Option<String>) -> String {
     format!(
         "  {} {}",
@@ -53,7 +49,8 @@ pub(crate) async fn cmd_upgrade() -> anyhow::Result<()> {
     let current = PKG_VERSION;
     println!("{}", upgrade_header_line());
     println!("{}", upgrade_current_line(current));
-    println!("{}", upgrade_checking_line());
+    // The progress line from `upgrade::run` shows "Checking for a newer
+    // release" and the download from here on.
 
     match crate::upgrade::run().await {
         Ok(Some(version)) => {
