@@ -3800,19 +3800,31 @@ mod tests {
             },
         );
         let before_tokens = session.token_count_cached();
-        let mut stored: Vec<(String, usize)> = Vec::new();
+        // One store for every call below: it logs what it was asked to keep
+        // and declines while `decline` is set.
+        let stored: std::cell::RefCell<Vec<(String, usize)>> = std::cell::RefCell::new(Vec::new());
+        let decline = std::cell::Cell::new(false);
         let mut store = |id: &str, body: &str| {
-            stored.push((id.to_string(), body.chars().count()));
+            stored
+                .borrow_mut()
+                .push((id.to_string(), body.chars().count()));
+            if decline.get() {
+                return None;
+            }
             Some(format!(".whycodes/scratch/artifacts/{id}.txt"))
         };
         let spilled = session.spill_old_tool_results(&mut store);
+        let stored_now = || stored.borrow().clone();
         // Seven tool messages; the last four (t2..t5) stay as they are.
-        assert_eq!(spilled, 4, "{stored:?}");
+        assert_eq!(spilled, 4, "{:?}", stored_now());
         assert_eq!(
-            stored.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            stored_now()
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>(),
             ["blk", "msg-1", "t0", "t1"]
         );
-        assert_eq!(stored[2].1, 5_001, "the full body reaches the store");
+        assert_eq!(stored_now()[2].1, 5_001, "the full body reaches the store");
         let first = session.messages[2].content.as_text().unwrap();
         assert!(first.starts_with("0zzz"), "{first}");
         assert!(
@@ -3831,8 +3843,8 @@ mod tests {
         );
 
         // Spilled bodies are not spilled again; short ones never are.
-        let mut again = |_: &str, _: &str| Some("again".to_string());
-        assert_eq!(session.spill_old_tool_results(&mut again), 0);
+        assert_eq!(session.spill_old_tool_results(&mut store), 0);
+        assert_eq!(stored_now().len(), 4, "the store is not asked again");
         assert_eq!(
             session.prune_old_tool_results(),
             0,
@@ -3853,9 +3865,11 @@ mod tests {
                 is_error: false,
             }]);
         }
-        let mut decline = |_: &str, _: &str| None;
-        assert_eq!(fresh.spill_old_tool_results(&mut decline), 0);
+        decline.set(true);
+        assert_eq!(fresh.spill_old_tool_results(&mut store), 0);
+        assert_eq!(stored_now().len(), 5, "the store was asked and declined");
         assert_eq!(fresh.messages[0].content.as_text().unwrap().len(), 3_000);
+        decline.set(false);
 
         // Few tool messages: nothing is old enough.
         let mut small = Session::new(test_project_path(), test_system_prompt());
@@ -3864,7 +3878,7 @@ mod tests {
             content: "w".repeat(3_000),
             is_error: false,
         }]);
-        let mut never = |_: &str, _: &str| Some("never".to_string());
-        assert_eq!(small.spill_old_tool_results(&mut never), 0);
+        assert_eq!(small.spill_old_tool_results(&mut store), 0);
+        assert_eq!(stored_now().len(), 5, "nothing old enough to store");
     }
 }
