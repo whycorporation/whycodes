@@ -1016,6 +1016,29 @@ bash_risk_threshold = "destructive"   # caution | destructive | off
 The threshold is the lowest level that prompts. Default is `destructive`:
 `caution` would prompt on ordinary cleanup like `rm -rf target`.
 
+The command is parsed as shell, not matched as text, so the level follows
+what would actually run:
+
+- Variables assigned earlier in the line are followed: `DIR=/; rm -rf $DIR`,
+  `d=~; rm -rf "$d"`, `X=~ rm -rf $X`, `export T=$HOME && rm -rf "$T"` and
+  `for d in build ~; do rm -rf $d; done` are refused. A variable whose value
+  is not known still prompts (`rm -rf "$OUT"` is `destructive`).
+- Command and process substitutions are judged by their body:
+  `echo $(rm -rf ~)` and `diff <(rm -rf ~) x` are refused.
+- Here-documents are data: `cat <<EOF` with `rm -rf ~` in its body is `safe`.
+  Fed to a shell (`bash <<EOF`, `cat <<EOF | sh`, `bash <<< '…'`) the body is
+  judged as a script.
+- Redirections are typed: `2>&1` and `>&2` touch no file, `> /tmp/x`,
+  `>| file`, `&> file` and `>&file` truncate one. A redirection written first
+  (`>/dev/null rm -rf ~`) does not hide the command.
+- Quoting is exact, including `$'…'` escapes (`rm -rf $'\x2f'etc` is
+  `rm -rf /etc`).
+
+A line the parser cannot read (unbalanced quotes, PowerShell, `cmd.exe`
+syntax) falls back to a simpler word splitter, which errs towards asking.
+Comments are read by that splitter too, because `cmd.exe` has no `#`
+comments: `echo # & rm -rf ~` is refused.
+
 `catastrophic` is refused outright and **cannot be approved** — not by a
 prompt, not by `bash = "allow"`, not by `bash_risk_threshold = "off"`.
 

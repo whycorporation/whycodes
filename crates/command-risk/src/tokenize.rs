@@ -17,7 +17,7 @@ pub struct Word {
 }
 
 impl Word {
-    fn new(text: String, dynamic: bool) -> Self {
+    pub(crate) fn new(text: String, dynamic: bool) -> Self {
         Self { text, dynamic }
     }
 }
