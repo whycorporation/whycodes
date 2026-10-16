@@ -20,6 +20,7 @@ Start here, then pick the page you need.
 | [errata.md](errata.md) | Contributors | Claims that were retracted, with the evidence |
 | [message-voice.md](message-voice.md) | Contributors | How user-facing strings are written |
 | [acceptance/](acceptance/TEMPLATE.md) | Contributors | Requirement-to-observation ledgers for features that need real-world checks |
+| [proposals/](proposals/embedded-shell-spike.md) | Contributors | Design spikes that are not decided yet (status header says so) |
 | [tui-term-matrix.md](tui-term-matrix.md) | Contributors | Manual TUI pass on Alacritty / Kitty / VTE |
 | [benchmarks.md](benchmarks.md) | Contributors | How to measure startup, RSS, idle draws |
 | [coverage.md](coverage.md) | Contributors | How to measure line coverage |
