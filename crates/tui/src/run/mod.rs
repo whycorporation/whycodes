@@ -1997,7 +1997,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
             // Local model servers found by the provider-dialog probe.
             while let Ok(found) = discover_rx.try_recv() {
-                apply_local_discovery(&mut app, found);
+                apply_local_discovery(&mut app, &config, found);
             }
 
             // OAuth login flow progress (`/connect` spawned task).
@@ -4113,16 +4113,26 @@ fn spawn_local_discovery(tx: mpsc::UnboundedSender<Vec<whycodes_llm::LocalServer
     });
 }
 
-/// Probe finished: list the servers in the provider dialog.
-fn apply_local_discovery(app: &mut TuiApp, found: Vec<whycodes_llm::LocalServer>) {
+/// Probe finished: list the servers in the provider dialog. A server that a
+/// configured provider already points at is listed once, as that provider.
+fn apply_local_discovery(app: &mut TuiApp, config: &Config, found: Vec<whycodes_llm::LocalServer>) {
     app.provider_dialog.discovering = false;
-    app.provider_dialog.local_servers = found;
+    app.provider_dialog.local_servers = found
+        .into_iter()
+        .filter(|s| {
+            !matches!(
+                s.plan_save(config.get_provider(&s.provider)),
+                whycodes_llm::LocalSave::AlreadyConfigured
+            )
+        })
+        .collect();
     app.mark_dirty();
 }
 
 /// Discovered server picked in the provider dialog: persist it as
 /// `[providers.<id>]` (api_base, no key), teach the live agent about it and
-/// queue a switch to its first model.
+/// queue a switch to its first model. A configured block is never
+/// overwritten: one pointing elsewhere makes this a no-op with a warning.
 fn apply_local_server_choice(
     app: &mut TuiApp,
     rt: &mut SessionRuntime,
@@ -4136,9 +4146,24 @@ fn apply_local_server_choice(
         );
         return;
     }
-    config
-        .providers
-        .insert(server.provider.clone(), server.provider_config());
+    let block = match server.plan_save(config.get_provider(&server.provider)) {
+        whycodes_llm::LocalSave::New(pc) | whycodes_llm::LocalSave::FillApiBase(pc) => pc,
+        whycodes_llm::LocalSave::AlreadyConfigured => {
+            queue_local_server_model(app, server);
+            return;
+        }
+        whycodes_llm::LocalSave::Conflict { configured } => {
+            app.toasts.push(
+                crate::toast::ToastKind::Warning,
+                format!(
+                    "`{}` is already configured with a different api_base ({configured}); skipped",
+                    server.provider
+                ),
+            );
+            return;
+        }
+    };
+    config.providers.insert(server.provider.clone(), block);
     if let Err(e) = config.save() {
         tracing::warn!("could not persist provider '{}': {e}", server.provider);
         app.toasts.push(
@@ -4155,6 +4180,11 @@ fn apply_local_server_choice(
             server.label, server.provider, server.api_base
         ),
     );
+    queue_local_server_model(app, server);
+}
+
+/// Switch to the server's first model, or say none is loaded.
+fn queue_local_server_model(app: &mut TuiApp, server: &whycodes_llm::LocalServer) {
     match server.models.first() {
         Some(model) => app.pending_model = Some((server.provider.clone(), model.clone())),
         None => app.toasts.push(

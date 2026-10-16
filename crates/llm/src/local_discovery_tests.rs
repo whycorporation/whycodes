@@ -37,11 +37,16 @@ fn serve_silent() -> String {
     format!("http://{addr}/v1")
 }
 
-/// A port nothing listens on.
+/// A port that drops every connection without answering. (Freeing a bound
+/// port instead races with parallel tests that bind port 0 and reuse it.)
 fn refused_base() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    drop(listener);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            drop(stream);
+        }
+    });
     format!("http://{addr}/v1")
 }
 
@@ -154,4 +159,56 @@ fn provider_config_uses_api_base_and_no_key() {
     let json = serde_json::to_value(&server).unwrap();
     assert_eq!(json["provider"], "vllm");
     assert_eq!(json["models"][0], "m");
+}
+
+#[test]
+fn plan_save_never_overwrites_a_configured_block() {
+    let server = LocalServer {
+        provider: "lmstudio".into(),
+        label: "LM Studio".into(),
+        api_base: "http://127.0.0.1:1234/v1".into(),
+        models: vec!["qwen".into()],
+    };
+    let LocalSave::New(fresh) = server.plan_save(None) else {
+        panic!("expected New");
+    };
+    assert_eq!(fresh.api_base.as_deref(), Some("http://127.0.0.1:1234/v1"));
+
+    // Same server (trailing slash / case aside): nothing to write.
+    let mut same = server.provider_config();
+    same.api_base = Some("HTTP://127.0.0.1:1234/v1/".into());
+    same.api_key = Some("user-key".into());
+    assert!(matches!(
+        server.plan_save(Some(&same)),
+        LocalSave::AlreadyConfigured
+    ));
+
+    // `base_url` wins over `api_base`, as in the provider registry.
+    let mut via_base_url = server.provider_config();
+    via_base_url.api_base = None;
+    via_base_url.base_url = Some("http://127.0.0.1:1234/v1".into());
+    assert!(matches!(
+        server.plan_save(Some(&via_base_url)),
+        LocalSave::AlreadyConfigured
+    ));
+
+    // Elsewhere: untouched, reported.
+    let mut other = server.provider_config();
+    other.api_base = Some("http://10.0.0.5:1234/v1".into());
+    let LocalSave::Conflict { configured } = server.plan_save(Some(&other)) else {
+        panic!("expected Conflict");
+    };
+    assert_eq!(configured, "http://10.0.0.5:1234/v1");
+
+    // No base at all: only api_base is filled, the rest is kept.
+    let mut bare = server.provider_config();
+    bare.api_base = None;
+    bare.api_key = Some("user-key".into());
+    bare.models = vec!["mine".into()];
+    let LocalSave::FillApiBase(filled) = server.plan_save(Some(&bare)) else {
+        panic!("expected FillApiBase");
+    };
+    assert_eq!(filled.api_base.as_deref(), Some("http://127.0.0.1:1234/v1"));
+    assert_eq!(filled.api_key.as_deref(), Some("user-key"));
+    assert_eq!(filled.models, vec!["mine".to_string()]);
 }

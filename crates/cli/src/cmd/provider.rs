@@ -187,24 +187,47 @@ pub(crate) fn provider_discover_lines(
     Ok(lines)
 }
 
-/// Write every found server into `config.providers`; returns the saved ids.
+/// Save every found server into `config.providers` without overwriting a
+/// configured block; returns one status line per server and whether
+/// `config` changed.
 pub(crate) fn save_discovered_providers(
     config: &mut Config,
     found: &[whycodes_llm::LocalServer],
-) -> Vec<String> {
-    found
-        .iter()
-        .map(|server| {
-            config
-                .providers
-                .insert(server.provider.clone(), server.provider_config());
-            server.provider.clone()
-        })
-        .collect()
+) -> (Vec<String>, bool) {
+    let mut lines = Vec::new();
+    let mut changed = false;
+    for server in found {
+        let id = &server.provider;
+        let (block, summary) = match server.plan_save(config.get_provider(id)) {
+            whycodes_llm::LocalSave::New(pc) => (pc, "saved (api_base, no key)"),
+            whycodes_llm::LocalSave::FillApiBase(pc) => (pc, "api_base filled in, rest kept"),
+            whycodes_llm::LocalSave::AlreadyConfigured => {
+                lines.push(format!(
+                    "{} Provider '{}' already points at {}; left as is",
+                    "ℹ".cyan(),
+                    id.cyan(),
+                    server.api_base
+                ));
+                continue;
+            }
+            whycodes_llm::LocalSave::Conflict { configured } => {
+                lines.push(format!(
+                    "{} Provider '{}' already configured with a different api_base ({configured}); skipped",
+                    "⚠".yellow(),
+                    id.cyan()
+                ));
+                continue;
+            }
+        };
+        config.providers.insert(id.clone(), block);
+        lines.push(provider_saved_line(id, summary));
+        changed = true;
+    }
+    (lines, changed)
 }
 
 /// `provider discover` body: with `save`, persist `found` to config first;
-/// the "saved" confirmations are text-mode only so `--json` stays parseable.
+/// the save status lines are text-mode only so `--json` stays parseable.
 pub(crate) fn provider_discover_run(
     config: &mut Config,
     found: &[whycodes_llm::LocalServer],
@@ -212,13 +235,13 @@ pub(crate) fn provider_discover_run(
     save: bool,
 ) -> anyhow::Result<Vec<String>> {
     let mut lines = provider_discover_lines(found, json)?;
-    if save && !found.is_empty() {
-        let saved = save_discovered_providers(config, found);
-        config.save()?;
+    if save {
+        let (status, changed) = save_discovered_providers(config, found);
+        if changed {
+            config.save()?;
+        }
         if !json {
-            for name in saved {
-                lines.push(provider_saved_line(&name, "saved (api_base, no key)"));
-            }
+            lines.extend(status);
         }
     }
     Ok(lines)

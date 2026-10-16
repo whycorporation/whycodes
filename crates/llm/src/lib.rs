@@ -45,7 +45,7 @@ pub use endpoint::{
 pub use error_class::{ClassifiedError, ErrorKind, classify, classify_message};
 pub use harmony::uses_harmony_dialect;
 pub use local_discovery::{
-    DEFAULT_DISCOVERY_TIMEOUT, LOCAL_SERVER_CANDIDATES, LocalServer, LocalServerKind,
+    DEFAULT_DISCOVERY_TIMEOUT, LOCAL_SERVER_CANDIDATES, LocalSave, LocalServer, LocalServerKind,
     discover_local_servers, discover_servers_at, loopback_api_base, probe_openai_models,
 };
 pub use model_catalog::{

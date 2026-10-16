@@ -739,6 +739,11 @@ models = ["qwen2.5-coder-7b-instruct"]
 ```
 
 Use it with `whycodes -P lmstudio -m <model>` or `/models lmstudio/<model>`.
+Saving never overwrites a provider you configured yourself: a block that
+already points at the server is left as is (and the dialog lists it only
+once, as that provider), a block with no `api_base` / `base_url` only gets
+`api_base` filled in, and a block pointing somewhere else is skipped with
+"already configured with a different api_base; skipped".
 Probing never runs at startup, and a server that is not running is silent
 (debug log only). Ollama is not probed: use its own `ollama` provider.
 

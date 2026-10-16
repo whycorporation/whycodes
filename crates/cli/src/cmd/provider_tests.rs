@@ -170,17 +170,49 @@ fn provider_discover_lines_text_json_and_empty() {
 }
 
 #[test]
-fn save_discovered_providers_writes_api_base_without_key() {
+fn save_discovered_providers_never_overwrites_configured_blocks() {
     let mut config = whycodes_config::Config::default();
-    let found = vec![local_server("llamacpp", &["m"])];
-    assert_eq!(
-        save_discovered_providers(&mut config, &found),
-        vec!["llamacpp".to_string()]
-    );
+    let (lines, changed) =
+        save_discovered_providers(&mut config, &[local_server("llamacpp", &["m"])]);
+    assert!(changed);
+    assert!(lines[0].contains("saved (api_base, no key)"));
     let pc = config.get_provider("llamacpp").unwrap();
     assert_eq!(pc.api_base.as_deref(), Some("http://127.0.0.1:1/v1"));
     assert!(pc.api_key.is_none());
     assert_eq!(pc.models, vec!["m".to_string()]);
+
+    // Same api_base again: left as is (user edits to the block survive).
+    config.providers.get_mut("llamacpp").unwrap().api_key = Some("mine".into());
+    let (lines, changed) =
+        save_discovered_providers(&mut config, &[local_server("llamacpp", &["other"])]);
+    assert!(!changed);
+    assert!(lines[0].contains("left as is"), "{}", lines[0]);
+    let pc = config.get_provider("llamacpp").unwrap();
+    assert_eq!(pc.api_key.as_deref(), Some("mine"));
+    assert_eq!(pc.models, vec!["m".to_string()]);
+
+    // Different api_base: skipped, block untouched.
+    config.providers.get_mut("llamacpp").unwrap().api_base = Some("http://gpu:8080/v1".into());
+    let (lines, changed) = save_discovered_providers(&mut config, &[local_server("llamacpp", &[])]);
+    assert!(!changed);
+    assert!(
+        lines[0].contains("different api_base (http://gpu:8080/v1); skipped"),
+        "{}",
+        lines[0]
+    );
+    assert_eq!(
+        config.get_provider("llamacpp").unwrap().api_base.as_deref(),
+        Some("http://gpu:8080/v1")
+    );
+
+    // No base configured: only api_base is filled in.
+    config.providers.get_mut("llamacpp").unwrap().api_base = None;
+    let (lines, changed) = save_discovered_providers(&mut config, &[local_server("llamacpp", &[])]);
+    assert!(changed);
+    assert!(lines[0].contains("api_base filled in, rest kept"));
+    let pc = config.get_provider("llamacpp").unwrap();
+    assert_eq!(pc.api_base.as_deref(), Some("http://127.0.0.1:1/v1"));
+    assert_eq!(pc.api_key.as_deref(), Some("mine"));
 }
 
 #[tokio::test]

@@ -130,7 +130,11 @@ non-JSON and non-success replies are "not running" and debug-logged only.
 It runs on demand (`whycodes provider discover`, the TUI provider dialog),
 never at startup. `LocalServer::provider_config` is the block that gets
 saved: `api_base`, no key, the listed `models`; each id becomes a
-`CustomProvider`. Ollama is not a candidate because it already has the
+`CustomProvider`. `LocalServer::plan_save` keeps a configured block safe:
+no block → `New`; a block without `base_url` / `api_base` → `FillApiBase`
+(only that field changes); the same base (trailing `/` and case ignored) →
+`AlreadyConfigured`, and the TUI drops that row from the dialog; any other
+base → `Conflict`, nothing written. Ollama is not a candidate because it already has the
 native `OllamaProvider`. `provider_requires_api_key` is false for all of
 them because the host is loopback.
 

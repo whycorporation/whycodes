@@ -11316,6 +11316,44 @@ fn apply_local_server_choice_saves_provider_and_queues_model() {
         app.pending_model,
         Some(("llamacpp".to_string(), "m".to_string()))
     );
+
+    // Already pointing at this server: no rewrite, just switch.
+    config.providers.get_mut("llamacpp").unwrap().api_key = Some("mine".into());
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("llamacpp", &["m2"]),
+    );
+    assert_eq!(
+        app.pending_model,
+        Some(("llamacpp".to_string(), "m2".to_string()))
+    );
+    let pc = config.get_provider("llamacpp").unwrap();
+    assert_eq!(pc.api_key.as_deref(), Some("mine"));
+    assert_eq!(pc.models, vec!["m".to_string()]);
+
+    // Pointing elsewhere: block untouched, no switch, a warning.
+    config.providers.get_mut("llamacpp").unwrap().api_base = Some("http://gpu:8080/v1".into());
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("llamacpp", &["m"]),
+    );
+    assert!(app.pending_model.is_none());
+    assert_eq!(
+        config.get_provider("llamacpp").unwrap().api_base.as_deref(),
+        Some("http://gpu:8080/v1")
+    );
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("different api_base")),
+    );
 }
 
 #[tokio::test]
@@ -11325,7 +11363,33 @@ async fn spawn_local_discovery_delivers_a_result_and_fills_the_dialog() {
     let found = rx.recv().await.expect("probe result");
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.provider_dialog.discovering = true;
-    apply_local_discovery(&mut app, found.clone());
+    apply_local_discovery(&mut app, &Config::default(), found.clone());
     assert!(!app.provider_dialog.discovering);
     assert_eq!(app.provider_dialog.local_servers, found);
+}
+
+#[test]
+fn apply_local_discovery_hides_servers_already_configured() {
+    let mut config = Config::default();
+    let same = discovered("lmstudio", &["qwen"]);
+    config
+        .providers
+        .insert("lmstudio".into(), same.provider_config());
+    let mut elsewhere = discovered("vllm", &[]).provider_config();
+    elsewhere.api_base = Some("http://gpu:8000/v1".into());
+    config.providers.insert("vllm".into(), elsewhere);
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_local_discovery(
+        &mut app,
+        &config,
+        vec![same, discovered("vllm", &[]), discovered("llamacpp", &[])],
+    );
+    let ids: Vec<&str> = app
+        .provider_dialog
+        .local_servers
+        .iter()
+        .map(|s| s.provider.as_str())
+        .collect();
+    assert_eq!(ids, vec!["vllm", "llamacpp"]);
 }

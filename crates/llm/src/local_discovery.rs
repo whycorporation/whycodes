@@ -81,6 +81,51 @@ impl LocalServer {
     }
 }
 
+/// What saving a discovered server does to an existing `[providers.<id>]`.
+#[derive(Debug, Clone)]
+pub enum LocalSave {
+    /// No block yet: write this one.
+    New(ProviderConfig),
+    /// A block without `api_base` / `base_url`: the same block with the
+    /// discovered `api_base` filled in; every other field is kept.
+    FillApiBase(ProviderConfig),
+    /// A block already pointing at this server: nothing to write.
+    AlreadyConfigured,
+    /// A block pointing somewhere else: left untouched, nothing written.
+    Conflict {
+        /// The base the user configured (`base_url`, else `api_base`).
+        configured: String,
+    },
+}
+
+impl LocalServer {
+    /// Decide how to save this server next to `existing` without ever
+    /// overwriting a user-configured block.
+    pub fn plan_save(&self, existing: Option<&ProviderConfig>) -> LocalSave {
+        let Some(existing) = existing else {
+            return LocalSave::New(self.provider_config());
+        };
+        let configured = existing.base_url.as_ref().or(existing.api_base.as_ref());
+        match configured {
+            None => {
+                let mut filled = existing.clone();
+                filled.api_base = Some(self.api_base.clone());
+                LocalSave::FillApiBase(filled)
+            }
+            Some(base) if same_base(base, &self.api_base) => LocalSave::AlreadyConfigured,
+            Some(base) => LocalSave::Conflict {
+                configured: base.clone(),
+            },
+        }
+    }
+}
+
+/// Bases equal up to trailing slashes and ASCII case.
+fn same_base(a: &str, b: &str) -> bool {
+    a.trim_end_matches('/')
+        .eq_ignore_ascii_case(b.trim_end_matches('/'))
+}
+
 /// Loopback `/v1` base for a candidate port.
 pub fn loopback_api_base(port: u16) -> String {
     format!("http://127.0.0.1:{port}/v1")
