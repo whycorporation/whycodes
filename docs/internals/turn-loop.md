@@ -235,9 +235,12 @@ results in call order:
 
 Every gate a call passes inside `execute_with_permission` is listed in
 [permission-gate.md](permission-gate.md). `dispatch_tool` then routes `task`,
-`swarm`, `bg`, `schedule`, `tool_search`, `worktree`, background and
+`swarm`, `bg`, `read` of an `mcp://` URL (`execute_mcp_read`, the MCP clients
+live on the agent), `schedule`, `tool_search`, `worktree`, background and
 auto-background shell in-process (`crates/agent/src/agent/dispatch.rs`) and
-everything else to `ToolExecutor::execute`.
+everything else to `ToolExecutor::execute`. The other internal `read` URLs
+(`skill://`, `agent://`, `proc://`, `rule://`, `pr://`, `issue://`) resolve
+inside the tool (`crates/tools/src/file/internal.rs`).
 
 If the batch returns `Err` (cancel), `close_unanswered_calls` appends an error
 result `Tool not run: the turn was stopped before this call finished.` for
@@ -352,7 +355,7 @@ written back to the parent session.
 - `crates/agent/src/agent/turn.rs` — `run_turn`, `run_turn_with_events`, `run_turn_steps`: the step loop, stream handling, retries, result appending.
 - `crates/agent/src/agent/mod.rs` — `Agent` struct and config application; steering / background injection; `would_doom_loop`, `first_stream_rule_hit`, `settle_checkpoint_rewind`, `tool_context`, fallback and race resolution.
 - `crates/agent/src/agent/gate.rs` — `execute_tool_calls` scheduling and `execute_with_permission` gates.
-- `crates/agent/src/agent/dispatch.rs` — in-process tools: background shell, `bg`, `schedule`, `tool_search`, `worktree`, `swarm`, `task`.
+- `crates/agent/src/agent/dispatch.rs` — in-process tools: background shell, `bg`, `read mcp://`, `schedule`, `tool_search`, `worktree`, `swarm`, `task`.
 - `crates/agent/src/agent/lifecycle.rs` — `session_start`, `user_prompt_submit`, `stop`, `pre_compact` hooks.
 - `crates/agent/src/agent/compact.rs` — `compact_session` (auto and `/compact`).
 - `crates/agent/src/agent/spawn.rs` — public `spawn_subagent` / `spawn_parallel`.
