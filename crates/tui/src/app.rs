@@ -417,6 +417,9 @@ pub enum ConfirmAction {
     /// User accepted the home-screen / `/import` settings confirm. The run
     /// loop copies MCP, permissions, and hooks from other agents.
     ImportSettings,
+    /// User accepted `/terminal-setup`: the run loop appends the missing
+    /// settings to `~/.tmux.conf` (after a `.bak` copy).
+    TerminalSetup,
 }
 
 /// One checkbox row in the import picker (MCP / permission / hook).
@@ -1585,6 +1588,10 @@ pub struct TuiApp {
     pub(crate) import_prompted: bool,
     /// User accepted Import settings — run loop merges MCP / permission / hooks.
     pub(crate) pending_import: bool,
+    /// User accepted the `/terminal-setup` tmux edit.
+    pub(crate) pending_terminal_setup: bool,
+    /// The startup probe enabled the kitty keyboard protocol.
+    pub(crate) keyboard_enhanced: bool,
     /// Checkbox picker for which MCP / permission / hook rows to copy.
     pub(crate) import_picker: ImportPickerState,
     /// Draft in the first-launch OpenRouter API-key modal.
@@ -2038,6 +2045,14 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Environment / config diagnostics",
     },
     SlashCommand {
+        name: "/terminal-setup",
+        hint: "What this terminal can deliver; offer the tmux fix",
+    },
+    SlashCommand {
+        name: "/keys",
+        hint: "Active key bindings and conflicts",
+    },
+    SlashCommand {
         name: "/diff",
         hint: "Git status + diff --stat for the project",
     },
@@ -2337,6 +2352,8 @@ impl TuiApp {
             pending_upgrade: false,
             import_prompted: false,
             pending_import: false,
+            pending_terminal_setup: false,
+            keyboard_enhanced: false,
             import_picker: ImportPickerState::default(),
             openrouter_key_input: String::new(),
             openrouter_key_prompted: false,

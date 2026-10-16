@@ -2417,6 +2417,23 @@ async fn handle_slash_covers_local_commands() {
     h.run("/tools").await;
     h.run("/info").await;
     h.run("/doctor").await;
+    h.run("/keys").await;
+    assert!(
+        h.app
+            .messages
+            .last()
+            .is_some_and(|m| m.content.starts_with("Key bindings"))
+    );
+    h.run("/terminal-setup").await;
+    assert!(
+        h.app
+            .messages
+            .iter()
+            .any(|m| m.content.starts_with("Terminal setup"))
+    );
+    // Inside tmux this opens the y/N confirm; never accept it here.
+    h.app.dialogs.clear();
+    h.app.mode = AppMode::Normal;
     h.run("/diff").await;
     h.run("/context").await;
     h.run("/cost").await;
@@ -11242,4 +11259,22 @@ fn a_bash_call_that_finished_in_the_foreground_is_not_a_task() {
     assert!(app.bg_jobs.is_empty());
     assert_eq!(app.toasts.visible().len(), toasts);
     assert_eq!(app.bg_running_count, 0);
+}
+
+#[test]
+fn key_conflict_notice_sets_status_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = TuiApp::from_config(crate::config::TuiAppConfig::default());
+    app.config
+        .key_bindings
+        .insert("cmd+k".into(), "toggle_sidebar".into());
+    key_conflict_notice(&mut app, dir.path());
+    assert!(
+        app.status_message.contains("cmd+k"),
+        "{}",
+        app.status_message
+    );
+    app.status_message.clear();
+    key_conflict_notice(&mut app, dir.path());
+    assert!(app.status_message.is_empty(), "same conflicts: no repeat");
 }

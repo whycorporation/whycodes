@@ -1286,6 +1286,17 @@ fn restore_terminal_on(out: &mut impl Write) {
     windows_console::restore_windows_console();
 }
 
+/// One-time status-line notice when `[tui.key_bindings]` conflicts with
+/// this terminal (debounced by a hash of the conflict set in `dir`).
+fn key_conflict_notice(app: &mut TuiApp, dir: &std::path::Path) {
+    let env = crate::terminal_setup::TerminalEnv::detect(app.keyboard_enhanced);
+    let issues = crate::key_audit::configured_issues(&app.config.key_bindings, &env);
+    if let Some(notice) = crate::key_audit::startup_notice(&issues, dir) {
+        app.status_message = notice;
+        app.mark_dirty();
+    }
+}
+
 /// Probe + enable the kitty keyboard protocol.
 ///
 /// Returns whether flags were pushed (so shutdown can pop them). A 0×0 PTY
@@ -1733,6 +1744,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // clipboard. Scripted/headless queues deliver one event per batch and
     // must keep same-turn Enter submits.
     app.paste_enter_guard = paste_enter_guard_for(cfg!(windows), headless);
+    app.keyboard_enhanced = keyboard_enhanced;
+    if !headless && let Ok(dir) = Config::data_dir() {
+        key_conflict_notice(&mut app, &dir);
+    }
 
     if !bench_clock {
         whycodes_core::logging::emit(
@@ -1950,6 +1965,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 &auth_tx,
             )
             .await;
+
+            if app.pending_terminal_setup {
+                app.pending_terminal_setup = false;
+                apply_terminal_setup(&mut app, whycodes_import::discover::home_dir().as_deref());
+            }
 
             if app.pending_import && !rt.agent_busy {
                 app.pending_import = false;
