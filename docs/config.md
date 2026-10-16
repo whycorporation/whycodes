@@ -285,7 +285,7 @@ add `WHYCODES_PROMPT`, `WHYCODES_RESPONSE`, `WHYCODES_SUBAGENT_*`.
 
 | Key | Default | Env override | Meaning |
 |---|---|---|---|
-| `event` | `"pre_tool"` | — | `pre_tool`, `post_tool`, `session_start`, `user_prompt_submit`, `stop`, `pre_compact` or `subagent_stop`. |
+| `event` | `"pre_tool"` | — | `pre_tool`, `pre_tool_transform` (stdout JSON object replaces the tool input, before every gate), `post_tool`, `session_start`, `user_prompt_submit`, `stop`, `pre_compact` or `subagent_stop`. |
 | `match` | `"*"` | — | Tool name pattern: exact, `*`, `prefix*` or `*suffix`. For `subagent_stop` it filters the agent type; ignored for the other lifecycle events. |
 | `command` | required | — | Shell command (`sh -c` on Unix, `cmd /C` on Windows). |
 | `block_on_failure` | `false` | — | On `pre_tool` / `user_prompt_submit`, a non-zero exit refuses the tool call or the turn. Other events only log failures. |

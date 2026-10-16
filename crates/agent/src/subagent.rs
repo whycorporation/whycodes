@@ -11,6 +11,7 @@ use whycodes_llm::provider::ProviderRegistry;
 use whycodes_memory::MemorySettings;
 use whycodes_plugin::hooks::{
     HookContext, PreHookDecision, append_feedback, run_hooks, run_post_hooks, run_pre_hooks,
+    run_transform_hooks,
 };
 use whycodes_session::session::Session;
 use whycodes_tools::executor::ToolExecutor;
@@ -551,6 +552,8 @@ impl SubagentRunner {
             };
             return run_question_tool(prompter, &tc.arguments, &tc.id).await;
         }
+        let transformed = self.transform_tool_call(tc, tool_ctx).await;
+        let tc = transformed.as_ref().unwrap_or(tc);
         if let Some(reason) = self.headless_gate(tc, permission, &tool_ctx.working_dir) {
             tracing::warn!(tool = %tc.name, reason, "subagent tool call refused");
             return whycodes_core::types::ToolResult {
@@ -590,6 +593,32 @@ impl SubagentRunner {
         let feedback = run_post_hooks(&self.hooks, &post_ctx).await;
         append_feedback(&mut result.content, feedback);
         result
+    }
+
+    /// `pre_tool_transform` hooks rewrite the arguments before the headless
+    /// gate, as in the parent.
+    async fn transform_tool_call(
+        &self,
+        tc: &whycodes_core::types::ToolCall,
+        tool_ctx: &ToolContext,
+    ) -> Option<whycodes_core::types::ToolCall> {
+        if self.hooks.is_empty() {
+            return None;
+        }
+        let ctx = HookContext::pre(
+            tc.name.clone(),
+            tc.id.clone(),
+            tc.arguments.to_string(),
+            tool_ctx.session_id.clone(),
+            tool_ctx.working_dir.clone(),
+        );
+        let arguments = run_transform_hooks(&self.hooks, &ctx).await?;
+        tracing::info!(tool = %tc.name, "pre_tool_transform rewrote a worker tool input");
+        Some(whycodes_core::types::ToolCall {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            arguments,
+        })
     }
 
     /// The parent's blast-radius gates, without a prompter: catastrophic shell

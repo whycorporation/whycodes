@@ -237,3 +237,142 @@ fn turn_context_goes_to_the_latest_user_message() {
     assert_eq!(blocks.len(), 2);
     assert!(matches!(&blocks[1], ContentBlock::Text { text } if text.contains("ctx")));
 }
+
+/// Shell snippet that prints a JSON object literally.
+fn json_echo(json: &str) -> String {
+    if cfg!(windows) {
+        format!("echo {json}")
+    } else {
+        format!("echo '{json}'")
+    }
+}
+
+/// Appends the value of env var `name` to `marker`.
+fn log_var_to(marker: &std::path::Path, name: &str) -> String {
+    if cfg!(windows) {
+        // A space before `>>`: `echo 0>>file` would redirect handle 0.
+        format!("echo %{name}% >>{}", marker.display())
+    } else {
+        format!("echo \"${name}\" >> '{}'", marker.display())
+    }
+}
+
+fn tool_results(session: &Session) -> String {
+    session
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .filter_map(|m| m.content.as_text())
+        .collect()
+}
+
+#[tokio::test]
+async fn transform_hook_rewrites_arguments_before_the_gates() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = whycodes_config::Config {
+        hooks: vec![
+            HookConfig {
+                tool_match: "write".into(),
+                ..hook(
+                    HookEvent::PreToolTransform,
+                    &json_echo(r#"{"path":"moved.txt","content":"x"}"#),
+                    false,
+                    false,
+                )
+            },
+            HookConfig {
+                tool_match: "bash".into(),
+                ..hook(
+                    HookEvent::PreToolTransform,
+                    &json_echo(r#"{"command":"rm -rf /"}"#),
+                    false,
+                    false,
+                )
+            },
+        ],
+        ..Default::default()
+    };
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(ScriptedProvider::batched(
+        "script",
+        [
+            vec![
+                ScriptedStep::ToolCall {
+                    id: "w1".into(),
+                    name: "write".into(),
+                    input: serde_json::json!({"path": "orig.txt", "content": "x"}),
+                },
+                ScriptedStep::ToolCall {
+                    id: "b1".into(),
+                    name: "bash".into(),
+                    input: serde_json::json!({"command": "echo hi"}),
+                },
+            ],
+            vec![ScriptedStep::Text("done".into())],
+        ],
+    )));
+    let agent = Agent::new(info())
+        .with_config(&config)
+        .with_provider_registry(registry);
+    let mut session = Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message("write the file and say hi");
+    agent
+        .run_turn(&mut session, "script", MODEL, "k", Some(4))
+        .await
+        .unwrap();
+    let listing: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .collect();
+    assert!(
+        dir.path().join("moved.txt").exists(),
+        "transformed path is written; dir = {listing:?}; results = {}",
+        tool_results(&session)
+    );
+    assert!(
+        !dir.path().join("orig.txt").exists(),
+        "original path is not written"
+    );
+    let results = tool_results(&session);
+    assert!(
+        results.contains("catastrophic"),
+        "the risk gate must judge the transformed command: {results}"
+    );
+}
+
+#[tokio::test]
+async fn stop_hook_gets_turn_and_session_token_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("tokens.txt");
+    let agent = agent_with(
+        vec![
+            hook(
+                HookEvent::Stop,
+                &log_var_to(&marker, "WHYCODES_TURN_OUTPUT_TOKENS"),
+                false,
+                false,
+            ),
+            hook(
+                HookEvent::Stop,
+                &log_var_to(&marker, "WHYCODES_SESSION_INPUT_TOKENS"),
+                false,
+                false,
+            ),
+        ],
+        vec![ScriptedStep::Text("counted".into())],
+    );
+    let mut session = Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message("count this");
+    agent
+        .run_turn(&mut session, "script", MODEL, "k", Some(2))
+        .await
+        .unwrap();
+    let lines = logged(&marker);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    for line in &lines {
+        line.parse::<u64>()
+            .unwrap_or_else(|_| panic!("token counter must be a number: {line:?}"));
+    }
+    let turn_out: u64 = lines[0].parse().unwrap();
+    assert_eq!(turn_out, session.usage.output_tokens);
+}
