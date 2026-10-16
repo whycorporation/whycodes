@@ -4260,6 +4260,14 @@ fn dialog_import_fold_page_and_confirm_remaining_arms() {
     assert!(a.pending_import);
 
     let mut a = app();
+    a.confirm("Terminal setup", "append?", ConfirmAction::TerminalSetup);
+    assert!(handle_event(&mut a, key(KeyCode::Char('n'))));
+    assert!(!a.pending_terminal_setup, "n must not edit the tmux config");
+    a.confirm("Terminal setup", "append?", ConfirmAction::TerminalSetup);
+    assert!(handle_event(&mut a, key(KeyCode::Char('y'))));
+    assert!(a.pending_terminal_setup);
+
+    let mut a = app();
     a.model_selection.models = vec![("acme".into(), "m1".into()), ("acme".into(), "m2".into())];
     open_model_dialog(&mut a);
     handle_event(&mut a, key(KeyCode::Left));

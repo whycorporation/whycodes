@@ -1,5 +1,6 @@
 use serde_json::json;
 
+use crate::file::notebook::Notebook;
 use crate::file::paths::display_path;
 use crate::file::tolerant;
 use crate::tool::{Tool, ToolContext};
@@ -149,7 +150,11 @@ impl EditTool {
                     to: to.as_deref(),
                     insert_after: insert_after.as_deref(),
                 };
-                match plan_edit(&original, &target, &new_string) {
+                let notebook = Notebook::open(std::path::Path::new(&full_path), &original);
+                let text = editable_text(&original, notebook.as_ref());
+                match plan_edit(text, &target, &new_string)
+                    .and_then(|plan| map_back(plan, notebook.as_ref()))
+                {
                     Ok(plan) => write_edit(
                         &full_path,
                         &shown,
@@ -239,6 +244,22 @@ fn plan_edit(
     }
 }
 
+/// The text an edit applies to: a notebook's rendering, or the file itself.
+fn editable_text<'a>(original: &'a str, notebook: Option<&'a Notebook>) -> &'a str {
+    match notebook {
+        Some(nb) => &nb.rendering,
+        None => original,
+    }
+}
+
+/// `plan` with an edited notebook rendering turned back into notebook JSON.
+fn map_back(mut plan: EditPlan, notebook: Option<&Notebook>) -> Result<EditPlan, String> {
+    if let Some(nb) = notebook {
+        plan.modified = nb.apply(&plan.modified)?;
+    }
+    Ok(plan)
+}
+
 /// The diff an `edit` call would apply, without writing (approval prompt).
 /// `None` when the file cannot be read or the edit would not apply; the tool
 /// reports that error itself once it runs.
@@ -253,7 +274,11 @@ pub fn preview_edit(args: &serde_json::Value, working_dir: &str) -> Option<Strin
         to: args["to"].as_str(),
         insert_after: args["insert_after"].as_str(),
     };
-    let plan = plan_edit(&original, &target, new_string).ok()?;
+    let notebook = Notebook::open(&full, &original);
+    let text = editable_text(&original, notebook.as_ref());
+    let plan = plan_edit(text, &target, new_string)
+        .and_then(|plan| map_back(plan, notebook.as_ref()))
+        .ok()?;
     let shown = display_path(&full, working_dir);
     let preview = format_edit_preview_at(
         &shown,
