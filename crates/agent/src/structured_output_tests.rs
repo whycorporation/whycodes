@@ -219,3 +219,9 @@ fn optional_property_may_be_absent() {
     assert!(validate(&schema, &json!({"count": 3})).is_empty());
     assert_eq!(validate(&schema, &json!({"count": 3, "note": 7})).len(), 1);
 }
+
+#[test]
+fn object_schema_without_properties_accepts_any_fields() {
+    assert!(validate(&json!({"type": "object"}), &json!({"a": 1})).is_empty());
+    assert!(validate(&json!({"required": ["a"]}), &json!({"a": 1})).is_empty());
+}
