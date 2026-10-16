@@ -211,6 +211,22 @@ The default interface is a full-screen TUI. `--plain` is a line-based REPL.
 Contributors checking a TUI change on Alacritty / Kitty / WezTerm / VTE: see
 [tui-term-matrix.md](tui-term-matrix.md).
 
+The screen, top to bottom:
+
+- **Top bar** — git branch and working directory (click to copy the path) on
+  the left; the goal, background jobs and the context meter on the right.
+- **Transcript** — your prompts (`❯`), tool calls and thinking (`◆`, grouped
+  calls `◈`), and answers. A finished turn ends with `Worked for …`.
+- **Turn status** (while a turn runs) — `Thinking…`, `Responding…` or
+  `Waiting for …`, then elapsed time, streamed tokens and `[stop]`.
+- **Prompt box** — the session title on the top border; agent, provider/model
+  and approval mode on the bottom border.
+- **Shortcut bar** — the keys that apply in the current focus or dialog.
+
+With no messages yet, a welcome box shows the version, the current route and
+what to do next (connect a provider, new session, resume, commands), with
+recent sessions under it.
+
 | Key | Action |
 |---|---|
 | `Tab` | Focus prompt ↔ scrollback |
@@ -371,7 +387,7 @@ has to show the evidence (test output, the finished change) in the session.
   `/new` and `/clear` do too. One goal per session, up to 4,000 characters.
 - Three turns in a row without a tool call, a failed or cancelled turn, or a
   failed check pause the goal; your next prompt resumes it.
-- The footer shows `◎ goal` (or `◎ goal paused`). A goal is saved with the
+- The top bar shows `◎ goal` (or `◎ goal paused`). A goal is saved with the
   session and restored on resume, with fresh counters.
 - There is no built-in turn or token cap; put one in the condition
   (`…or stop after 20 turns`). The goal does not change permission prompts.
@@ -875,7 +891,7 @@ Each file provides `name` and `name-light`. Only `background`, `text`,
 A file theme wins over a built-in of the same name. A malformed file is
 skipped without taking the TUI down.
 
-The prompt footer (bottom-right of the input box) and the header chip
+The prompt footer (bottom-right of the input box) and the home welcome box
 color the active agent and the provider/model. Built-ins: `build` uses
 `success`, `plan` uses `accent`, `ask` uses `info`, and the model uses
 `info`. Override per agent (or `model`) in config:

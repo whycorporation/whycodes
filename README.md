@@ -147,20 +147,23 @@ configuration — is in **[docs/guide.md](docs/guide.md)**.
 
 ## Performance
 
-Latest re-measure, Windows AMD64, 2026-10-11 (Ryzen 7 3800X). Linux
-2026-09-02 remains the last PTY / PSS snapshot — do not compare Windows
-first-frame to the Linux ~12 ms PTY row. Method and machines in
+Measured 2026-10-16 on one machine (Ryzen 7 3800X): Windows 11 natively
+and Linux under WSL2. Method, older runs and caveats in
 [docs/benchmarks.md](docs/benchmarks.md):
 
-| Metric | Windows 2026-10-11 | Linux 2026-09-02 |
+| Metric | Windows | Linux (WSL2) |
 |---|---|---|
-| 1 session PSS | — (`/proc` only) | **10.5 MB** |
-| 10 sessions PSS | — | **32.0 MB** (~2.4 MB each extra) |
-| `--version` | **13.7 ms** | **1.4 ms** |
-| First frame (harness, in-proc) | **0.3 ms** (console inherit) | **12 ms** (80×24 PTY) |
-| Idle redraws (harness, 3 s) | **0.0 /s** | **0.3 /s** |
+| `--version` | **12.9 ms** | **1.4 ms** |
+| First frame (harness, in-proc) | **0.25 ms** | **0.08 ms** |
+| Idle redraws (3 s) | **0.0 /s** | **0.0 /s** |
+| 1 idle session PSS | — (`/proc` only) | **13.6 MB** |
+| 10 idle sessions PSS | — | **41.9 MB** (~3.1 MB each extra) |
+| Resumed 3000-message session PSS | — | **34.7 MB** |
 
-The TUI paints only when something changed. This Windows run’s 3 s harness idle is **0.0 redraws/s** (Linux 2026-09-02 was 0.3/s); the product target is still **0 redraws/s**, not a frames-per-second race. The first-frame harness writes one CSI splash (no ratatui); spawn-to-exit matches `--version` (~14–15 ms). Interactive home still hydrates after that paint.
+The TUI paints only when something changed, so an idle session draws
+nothing. A resumed 3000-message transcript holds 34.7 MB, down from
+216 MB before the October memory work. The first-frame harness times one
+splash paint, not the full home screen.
 
 Workspace line coverage is **98.7%** (Linux x86_64, 2026-10-10). CI fails
 below 98.5%, with twenty-four crates held at 100% production-code line
