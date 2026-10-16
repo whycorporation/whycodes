@@ -145,22 +145,32 @@ impl PermissionPrompter for StdinPrompter {
 /// Build a prompter from environment / defaults.
 /// - `WHYCODES_AUTO_APPROVE=1` → auto-allow
 /// - `WHYCODES_AUTO_DENY=1` → auto-deny
-/// - else stdin
+/// - else stdin, when it is a terminal; otherwise auto-deny
 pub fn default_prompter() -> Arc<dyn PermissionPrompter> {
-    if std::env::var("WHYCODES_AUTO_APPROVE")
+    prompter_for(
+        env_flag("WHYCODES_AUTO_APPROVE"),
+        env_flag("WHYCODES_AUTO_DENY"),
+        atty_stderr(),
+    )
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
-    {
+}
+
+/// `auto_approve` wins over `auto_deny`; without either, a non-interactive
+/// stdin auto-denies for safety.
+pub(crate) fn prompter_for(
+    auto_approve: bool,
+    auto_deny: bool,
+    interactive: bool,
+) -> Arc<dyn PermissionPrompter> {
+    if auto_approve {
         return Arc::new(AutoApprovePrompter);
     }
-    if std::env::var("WHYCODES_AUTO_DENY")
-        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false)
-    {
-        return Arc::new(AutoDenyPrompter);
-    }
-    // Non-interactive stdin (piped) → auto-deny for safety
-    if !atty_stderr() {
+    if auto_deny || !interactive {
         return Arc::new(AutoDenyPrompter);
     }
     Arc::new(StdinPrompter::default())
