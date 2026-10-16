@@ -473,6 +473,12 @@ impl Config {
         if let Ok(val) = std::env::var("WHYCODES_SANDBOX_FALLBACK") {
             self.security.sandbox_fallback = val;
         }
+        if let Ok(val) = std::env::var("WHYCODES_REDACT_SECRETS") {
+            self.security.redact_secrets = matches!(
+                val.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            );
+        }
         if let Ok(val) = std::env::var("WHYCODES_NETWORK_ALLOWLIST") {
             self.security.network_allowlist = network::parse_domain_list(&val);
         }

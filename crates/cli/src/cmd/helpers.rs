@@ -606,6 +606,7 @@ pub(crate) fn switch_agent(
             name
         )
     })?;
+    install_redactor(config);
     let mut agent = Agent::new(info).with_config(config);
     agent.set_route(provider, model);
     let prompt = with_project_memory(
@@ -1218,3 +1219,22 @@ pub(crate) fn mask_secret(val: &str) -> String {
 #[cfg(test)]
 #[path = "helpers_tests.rs"]
 mod tests;
+
+/// Process-wide secret redaction for provider-bound text
+/// (`[security] redact_secrets`, default on). Returns whether this call
+/// installed it; a later call is a no-op, and `false` with the setting off.
+pub(crate) fn install_redactor(config: &Config) -> bool {
+    if !config.security.redact_secrets {
+        return false;
+    }
+    let dir = whycodes_core::paths::data_dir();
+    match whycodes_llm::Redactor::load_or_create_key(&dir) {
+        Ok(key) => whycodes_llm::secrets::install(std::sync::Arc::new(
+            whycodes_llm::Redactor::from_env(key),
+        )),
+        Err(err) => {
+            tracing::warn!(error = %err, "secret redaction off: cannot create the key file");
+            false
+        }
+    }
+}

@@ -464,6 +464,13 @@ pub struct SecurityConfig {
     /// allowlist).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub network_denylist: Vec<String>,
+
+    /// Replace credential-looking values (environment variables named like
+    /// secrets, known token shapes, URL passwords) with placeholders in every
+    /// request sent to a provider, and restore them inside the model's tool
+    /// arguments before execution. Default `true`.
+    #[serde(default = "default_true_bool")]
+    pub redact_secrets: bool,
 }
 
 pub(crate) fn default_risk_threshold() -> String {
@@ -491,6 +498,7 @@ impl Default for SecurityConfig {
             sandbox_fallback: default_sandbox_fallback(),
             network_allowlist: Vec::new(),
             network_denylist: Vec::new(),
+            redact_secrets: true,
         }
     }
 }

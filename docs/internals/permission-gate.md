@@ -32,7 +32,10 @@ user already approved this call with the command or path in hand, so later
    `transform_tool_call`: `pre_tool_transform` hooks
    (`whycodes_plugin::hooks::run_transform_hooks`) may replace the arguments
    with the JSON object they print, and every later step judges the
-   rewritten call. Workers do the same before their headless gate.
+   rewritten call. Then `restore_tool_call` puts real values back where the
+   model used secret placeholders (`whycodes_llm::Redactor::restore_json`),
+   so the shell risk classifier and the tool see what will actually run.
+   Workers do both before their headless gate.
 1. **`question` short-circuit.** In `ApprovalMode::Auto` with open session
    todos or running background jobs the call is refused
    (`refuse_question_open_work`). Otherwise `should_prompt_questions` picks

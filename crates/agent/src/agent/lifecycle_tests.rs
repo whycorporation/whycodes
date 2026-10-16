@@ -376,3 +376,71 @@ async fn stop_hook_gets_turn_and_session_token_counts() {
     let turn_out: u64 = lines[0].parse().unwrap();
     assert_eq!(turn_out, session.usage.output_tokens);
 }
+
+#[tokio::test]
+async fn secret_placeholders_are_restored_before_the_tool_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let redactor = std::sync::Arc::new(whycodes_llm::Redactor::with_key([4u8; 32]));
+    let placeholder = redactor.register("real-api-key-value-123");
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(ScriptedProvider::batched(
+        "script",
+        [
+            vec![
+                ScriptedStep::ToolCall {
+                    id: "w1".into(),
+                    name: "write".into(),
+                    input: serde_json::json!({"path": "config.env", "content": format!("KEY={placeholder}\n")}),
+                },
+                // No placeholder: the call passes through untouched.
+                ScriptedStep::ToolCall {
+                    id: "w2".into(),
+                    name: "write".into(),
+                    input: serde_json::json!({"path": "plain.txt", "content": "plain"}),
+                },
+            ],
+            vec![ScriptedStep::Text("written".into())],
+        ],
+    )));
+    let agent = Agent::new(info())
+        .with_provider_registry(registry)
+        .with_redactor(Some(std::sync::Arc::clone(&redactor)));
+    let mut session = Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message("write the env file");
+    agent
+        .run_turn(&mut session, "script", MODEL, "k", Some(4))
+        .await
+        .unwrap();
+    let written = std::fs::read_to_string(dir.path().join("config.env")).unwrap();
+    assert_eq!(written, "KEY=real-api-key-value-123\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("plain.txt")).unwrap(),
+        "plain"
+    );
+
+    // No redactor: the placeholder is written literally.
+    let dir2 = tempfile::tempdir().unwrap();
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(ScriptedProvider::batched(
+        "script",
+        [
+            vec![ScriptedStep::ToolCall {
+                id: "w1".into(),
+                name: "write".into(),
+                input: serde_json::json!({"path": "config.env", "content": format!("KEY={placeholder}\n")}),
+            }],
+            vec![ScriptedStep::Text("written".into())],
+        ],
+    )));
+    let plain = Agent::new(info())
+        .with_provider_registry(registry)
+        .with_redactor(None);
+    let mut session = Session::new(dir2.path().to_path_buf(), "test".into());
+    session.add_user_message("write the env file");
+    plain
+        .run_turn(&mut session, "script", MODEL, "k", Some(4))
+        .await
+        .unwrap();
+    let literal = std::fs::read_to_string(dir2.path().join("config.env")).unwrap();
+    assert!(literal.contains("$$SECRET:"), "{literal}");
+}

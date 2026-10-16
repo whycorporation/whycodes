@@ -41,6 +41,9 @@ pub struct Agent {
     permission_prompter: Arc<dyn PermissionPrompter>,
     question_prompter: Arc<dyn QuestionPrompter>,
     risk_threshold: RiskThreshold,
+    /// Restores secret placeholders inside tool arguments; the transport
+    /// redacts outgoing requests with the same redactor.
+    secrets: Option<Arc<whycodes_llm::Redactor>>,
     sandbox: SandboxSettings,
     network: NetworkPolicy,
     /// Config-driven tool and lifecycle hooks (empty by default).
@@ -387,6 +390,7 @@ impl Agent {
             permission_prompter: default_prompter(),
             question_prompter: default_question_prompter(),
             risk_threshold: RiskThreshold::default(),
+            secrets: whycodes_llm::secrets::installed(),
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
             hooks: Vec::new(),
@@ -589,6 +593,13 @@ impl Agent {
     /// Load custom providers from config and merge global permission rules.
     pub fn with_config(mut self, config: &whycodes_config::Config) -> Self {
         self.apply_config(config);
+        self
+    }
+
+    /// Use `redactor` instead of the process default for this agent and
+    /// its workers.
+    pub fn with_redactor(mut self, redactor: Option<Arc<whycodes_llm::Redactor>>) -> Self {
+        self.secrets = redactor;
         self
     }
 

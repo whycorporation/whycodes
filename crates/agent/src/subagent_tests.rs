@@ -1002,3 +1002,41 @@ async fn worker_transform_hook_runs_before_the_headless_gate() {
         result.content
     );
 }
+
+#[tokio::test]
+async fn worker_restores_secret_placeholders_before_the_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    let redactor = std::sync::Arc::new(whycodes_llm::Redactor::with_key([4u8; 32]));
+    let placeholder = redactor.register("worker-secret-value-99");
+    let runner = gate_runner(dir.path(), ApprovalMode::Auto)
+        .with_redactor(Some(std::sync::Arc::clone(&redactor)));
+    let ctx = ToolContext::new(dir.path().display().to_string());
+    let result = runner
+        .execute_tool_call(
+            &call(
+                "write",
+                serde_json::json!({"path": "k.txt", "content": placeholder.clone()}),
+            ),
+            &ctx,
+            &gate_perms(&[]),
+        )
+        .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("k.txt")).unwrap(),
+        "worker-secret-value-99"
+    );
+
+    // Nothing to restore: the call passes through unchanged.
+    let plain = runner
+        .execute_tool_call(
+            &call(
+                "write",
+                serde_json::json!({"path": "p.txt", "content": "plain"}),
+            ),
+            &ctx,
+            &gate_perms(&[]),
+        )
+        .await;
+    assert!(!plain.is_error, "{}", plain.content);
+}

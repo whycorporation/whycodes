@@ -6873,3 +6873,10 @@ fn examples_command_markdown_loads_as_slash_command() {
     assert_eq!(test.agent.as_deref(), Some("build"));
     assert!(test.template.contains("$ARGUMENTS"));
 }
+
+#[test]
+fn install_redactor_is_a_no_op_when_disabled() {
+    let mut config = Config::default();
+    config.security.redact_secrets = false;
+    assert!(!crate::cmd::helpers::install_redactor(&config));
+}

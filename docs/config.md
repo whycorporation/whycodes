@@ -212,6 +212,7 @@ win over patterns; patterns are `*` or `prefix*` (for example `mymcp_*`).
 | `sandbox_network` | `true` | `WHYCODES_SANDBOX_NETWORK` (`1/true/yes/on` = on, anything else = off) | Whether the sandboxed shell may use the network. Does not affect `webfetch` / `websearch`. |
 | `sandbox_fallback` | `"allow"` | `WHYCODES_SANDBOX_FALLBACK` | When the requested sandbox cannot be applied (no `bwrap`, non-Linux): `allow` warns and runs on the host, `deny` fails the tool call. |
 | `network_allowlist` | `[]` | `WHYCODES_NETWORK_ALLOWLIST` (comma/space separated) | Host patterns allowed for HTTP tools (`webfetch`, `websearch`, GitHub API). Empty means unrestricted; `example.com` matches the apex and subdomains, `*.example.com` subdomains only, `*` any host. |
+| `redact_secrets` | `true` | `WHYCODES_REDACT_SECRETS` | Replace credential-looking values with placeholders in every provider request and restore them inside tool arguments before execution ([guide](guide.md#secret-redaction)). An explicit `false` in any layer wins. |
 | `network_denylist` | `[]` | `WHYCODES_NETWORK_DENYLIST` (comma/space separated) | Host patterns always blocked for HTTP tools; wins over the allowlist. |
 
 ## `[tools]`, `[tools.question]`, `[tools.bash]`, `[tools.format]`, `[tools.custom_tools.<name>]`

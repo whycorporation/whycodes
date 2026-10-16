@@ -3,7 +3,9 @@
 //! Call sites (agent, subagent, title, memory) should use these helpers instead
 //! of invoking `provider.stream` / `complete` bare — keeps behaviour uniform.
 
+use std::borrow::Cow;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::Stream;
@@ -15,6 +17,7 @@ use crate::provider::LlmProvider;
 use crate::race::{EventStream, RaceOutcome, StreamTarget, stream_raced};
 use crate::response_cache::{ResponseCache, text_only_response};
 use crate::retry::{RetryPolicy, execute_with_policy};
+use crate::secrets::Redactor;
 
 /// Bundle of transport defaults used across the product.
 #[derive(Debug, Clone)]
@@ -22,6 +25,10 @@ pub struct LlmTransport {
     pub retry: RetryPolicy,
     /// Optional wall-clock timeout around a **complete** call (not stream body).
     pub complete_timeout: Option<Duration>,
+    /// Redacts every outgoing request. `None` falls back to the process
+    /// default from [`crate::secrets::install`]; without either, requests
+    /// leave as they are.
+    pub redactor: Option<Arc<Redactor>>,
 }
 
 impl Default for LlmTransport {
@@ -30,6 +37,7 @@ impl Default for LlmTransport {
             retry: RetryPolicy::default(),
             // Completions (title, retain) stay bounded; agent stream has no outer cap.
             complete_timeout: Some(Duration::from_secs(120)),
+            redactor: None,
         }
     }
 }
@@ -38,6 +46,20 @@ impl LlmTransport {
     pub fn with_retry(mut self, policy: RetryPolicy) -> Self {
         self.retry = policy;
         self
+    }
+
+    pub fn with_redactor(mut self, redactor: Option<Arc<Redactor>>) -> Self {
+        self.redactor = redactor;
+        self
+    }
+
+    /// The request as it may leave the machine: secrets replaced by
+    /// placeholders when a redactor is set or installed.
+    fn outgoing<'a>(&self, request: &'a LlmRequest) -> Cow<'a, LlmRequest> {
+        match self.redactor.clone().or_else(crate::secrets::installed) {
+            Some(redactor) => Cow::Owned(redactor.redact_request(request)),
+            None => Cow::Borrowed(request),
+        }
     }
 
     /// Open a streaming response with retry on the HTTP open only.
@@ -52,8 +74,9 @@ impl LlmTransport {
         let name = provider.name();
         let max_retries = self.retry.max_retries;
         debug!("llm.stream_open provider={name} model={model} max_retries={max_retries}");
+        let request = self.outgoing(request);
         execute_with_policy(&self.retry, "stream_open", || {
-            provider.stream(request, api_key, model)
+            provider.stream(&request, api_key, model)
         })
         .await
     }
@@ -69,15 +92,16 @@ impl LlmTransport {
         api_key: &str,
         model: &str,
     ) -> whycodes_core::Result<LlmResponse> {
-        if let Some(hit) = ResponseCache::global().lookup(request, model) {
+        let request = self.outgoing(request);
+        if let Some(hit) = ResponseCache::global().lookup(&request, model) {
             debug!("llm.complete_cache_hit model={model}");
             return Ok(ResponseCache::to_response(&hit, model));
         }
         let resp = self
-            .complete_uncached(provider, request, api_key, model)
+            .complete_prepared(provider, &request, api_key, model)
             .await?;
         if let Some(text) = text_only_response(&resp) {
-            ResponseCache::global().store(request, model, &text);
+            ResponseCache::global().store(&request, model, &text);
         }
         Ok(resp)
     }
@@ -86,6 +110,19 @@ impl LlmTransport {
     /// must reflect this exact request (a `/goal` check: a semantic hit on a
     /// near-identical transcript would replay an old verdict).
     pub async fn complete_uncached(
+        &self,
+        provider: &dyn LlmProvider,
+        request: &LlmRequest,
+        api_key: &str,
+        model: &str,
+    ) -> whycodes_core::Result<LlmResponse> {
+        let request = self.outgoing(request);
+        self.complete_prepared(provider, &request, api_key, model)
+            .await
+    }
+
+    /// `complete_uncached` for a request that is already redacted.
+    async fn complete_prepared(
         &self,
         provider: &dyn LlmProvider,
         request: &LlmRequest,
@@ -121,6 +158,8 @@ impl LlmTransport {
         request: &LlmRequest,
         opts: StreamTurnOpts<'_>,
     ) -> whycodes_core::Result<StreamTurn> {
+        let request = self.outgoing(request);
+        let request = &*request;
         if opts.cache
             && let Some(hit) = ResponseCache::global().lookup(request, primary.model)
         {

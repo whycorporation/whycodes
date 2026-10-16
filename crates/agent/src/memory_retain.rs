@@ -334,6 +334,7 @@ async fn llm_extract_facts(
     };
 
     let transport = whycodes_llm::LlmTransport {
+        redactor: None,
         complete_timeout: Some(std::time::Duration::from_secs(12)),
         retry: whycodes_llm::RetryPolicy {
             max_retries: 1,

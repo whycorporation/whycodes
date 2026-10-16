@@ -983,6 +983,7 @@ pub(super) fn suggestion_llm_request(
 
 pub(super) fn suggestion_transport() -> whycodes_llm::LlmTransport {
     whycodes_llm::LlmTransport {
+        redactor: None,
         complete_timeout: Some(std::time::Duration::from_secs(8)),
         retry: whycodes_llm::RetryPolicy {
             max_retries: 0,

@@ -297,6 +297,23 @@ impl Agent {
         .any(|event| !matching_hooks(&self.hooks, event, "read").is_empty())
     }
 
+    /// Secret placeholders in model-authored arguments become the real
+    /// values before any gate sees them, so the shell risk classifier and
+    /// the tool run what the model meant.
+    fn restore_tool_call(&self, tc: &ToolCall) -> Option<ToolCall> {
+        let redactor = self.secrets.as_ref()?;
+        let mut arguments = tc.arguments.clone();
+        if !redactor.restore_json(&mut arguments) {
+            return None;
+        }
+        tracing::debug!(tool = %tc.name, "restored secret placeholders in tool input");
+        Some(ToolCall {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            arguments,
+        })
+    }
+
     /// `pre_tool_transform` hooks rewrite the arguments before any gate
     /// sees them, so the risk and permission checks judge what will run.
     async fn transform_tool_call(
@@ -467,6 +484,8 @@ impl Agent {
     ) -> ToolResult {
         let transformed = self.transform_tool_call(tc, session, tool_ctx).await;
         let tc = transformed.as_ref().unwrap_or(tc);
+        let restored = self.restore_tool_call(tc);
+        let tc = restored.as_ref().unwrap_or(tc);
 
         // Questionnaire: UI-backed channel (TUI) or stdin/auto — never race in
         // parallel with other tools (SERIAL_TOOLS). Skip permission map; asking
