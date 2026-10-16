@@ -419,7 +419,12 @@ pub enum AuthCmd {
         provider: String,
     },
     /// Show which providers have stored OAuth credentials (never prints tokens)
-    Status,
+    Status {
+        /// Machine-readable: one object per provider (`provider`, `authKind`,
+        /// `credentialSource`, `expiry`, `validatedAt`, `stale`); never secrets
+        #[arg(long)]
+        json: bool,
+    },
     /// Find credentials of other CLIs (Claude Code, Codex, Gemini, Copilot, Grok Build)
     /// and import them after explicit per-path approval
     Import,
@@ -468,10 +473,13 @@ pub enum PluginsCmd {
 pub enum ConfigCmd {
     /// Show current configuration
     Show,
-    /// Get a specific configuration value
+    /// Get a specific configuration value and which layer set it
     Get {
         /// Configuration key (dot-separated, e.g. "default_agent")
         key: String,
+        /// Machine-readable: `{ "key", "value", "overriddenBy" }`
+        #[arg(long)]
+        json: bool,
     },
     /// Set a configuration value
     Set {

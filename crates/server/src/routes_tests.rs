@@ -511,6 +511,7 @@ async fn resolve_api_key_reads_oauth_store() {
             "server-cov-oauth",
             whycodes_auth::token::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::token::OAuthToken {
                     access_token: "oauth-tok".into(),
                     refresh_token: None,

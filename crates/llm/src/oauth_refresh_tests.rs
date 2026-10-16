@@ -113,6 +113,7 @@ async fn stored_extra_reads_oauth_map_and_force_refresh_without_token() {
             "google-extra-test",
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "ya29.x".into(),
                     refresh_token: None,
@@ -242,6 +243,7 @@ async fn send_retries_once_after_force_refresh_new_token() {
             &name,
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "stale-token".into(),
                     refresh_token: Some("refresh".into()),
@@ -284,6 +286,7 @@ async fn send_returns_original_401_when_refresh_yields_same_token() {
             &name,
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "same-token".into(),
                     refresh_token: Some("refresh".into()),
@@ -332,6 +335,7 @@ async fn send_maps_connect_error_and_refresh_retry_connect_error() {
             &name,
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "stale-token".into(),
                     refresh_token: Some("refresh".into()),

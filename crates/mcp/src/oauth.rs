@@ -332,6 +332,7 @@ pub async fn login(
     }
     let auth = ProviderAuth {
         method: "oauth".into(),
+        validated_at: None,
         token: to_token(response, None, extra),
     };
     store(data_dir).set(&key(server), auth).map_err(auth_err)
@@ -368,6 +369,7 @@ pub async fn bearer(server: &str, data_dir: &Path) -> Option<String> {
             let access = token.access_token.clone();
             let renewed = ProviderAuth {
                 method: auth.method,
+                validated_at: None,
                 token,
             };
             if let Err(e) = store.set(&key(server), renewed) {
