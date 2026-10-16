@@ -155,6 +155,11 @@ fn request_round_trips_through_redact_and_restore() {
                     name: "bash".into(),
                     input: serde_json::json!({"command": "curl -H 'x: TOPSECRET-VALUE-1'", "n": 1, "list": ["TOPSECRET-VALUE-1", 2]}),
                 },
+                ContentBlock::ToolUse {
+                    id: "t0".into(),
+                    name: "read".into(),
+                    input: serde_json::json!({"path": "clean.txt"}),
+                },
             ]),
             tool_call_id: None,
             name: None,
@@ -187,6 +192,15 @@ fn request_round_trips_through_redact_and_restore() {
         Message {
             role: Role::Assistant,
             content: MessageContent::Text("no secrets".into()),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        },
+        Message {
+            role: Role::User,
+            content: MessageContent::Blocks(vec![ContentBlock::Text {
+                text: "blocks without secrets".into(),
+            }]),
             tool_call_id: None,
             name: None,
             created_at: None,
@@ -227,6 +241,7 @@ fn request_round_trips_through_redact_and_restore() {
         _ => panic!("blocks"),
     }
     assert_eq!(redacted.messages[3].content.as_text(), Some("no secrets"));
+    assert!(matches!(&redacted.messages[4].content, MessageContent::Blocks(b) if b.len() == 1));
 
     // Restoring the tool-use input brings the secret back, arrays included.
     let mut input = match &redacted.messages[1].content {
