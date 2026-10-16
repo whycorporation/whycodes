@@ -1,6 +1,6 @@
 //! Interactive questionnaire tool (`question`).
 //!
-//! Schema is Grok-style: one or more questions, each with labelled options,
+//! Schema: one or more questions, each with labelled options,
 //! optional multi-select, and an implicit **Other** free-text path.
 //!
 //! Execution is UI-backed when the agent installs a [`QuestionPrompter`]-style
@@ -127,7 +127,7 @@ fn too_many_single_select(selected: &[String]) -> bool {
 /// Parse tool arguments into question specs.
 ///
 /// Accepts:
-/// - Grok-style: `{ "questions": [ { "question", "options": [{label,description}], "multi_select" } ] }`
+/// - Array form: `{ "questions": [ { "question", "options": [{label,description}], "multi_select" } ] }`
 /// - Legacy: `{ "question": "...", "choices": ["a","b"] }`
 pub fn parse_questions(args: &serde_json::Value) -> Result<Vec<QuestionSpec>, String> {
     match args.get("questions").and_then(|v| v.as_array()) {

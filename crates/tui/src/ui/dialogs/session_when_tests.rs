@@ -28,6 +28,6 @@ fn detail_puts_time_next_to_the_message_count() {
     );
     assert!(
         detail.contains("just now") || detail.contains("m ago") || detail.contains("h ago"),
-        "detail {detail:?} should use a Grok-style relative clock"
+        "detail {detail:?} should use a relative clock"
     );
 }

@@ -1,12 +1,11 @@
 //! User-intent signals for coding agents (question / change / plan).
 //!
-//! ## Design (industry pattern)
+//! ## Design
 //!
-//! Competitors (Cursor Ask/Plan/Agent, OpenCode Build/Plan, Claude Code plan mode)
-//! primarily rely on **explicit modes** (hard tool gates) + **system-prompt
-//! rules**. They do **not** ship a silent ML router that rewrites every turn.
+//! The primary mechanism is **explicit modes** (hard tool gates) +
+//! **system-prompt rules**, not a silent ML router that rewrites every turn.
 //!
-//! WhyCodes mirrors that, then adds a **zero-cost heuristic** layer:
+//! WhyCodes adds a **zero-cost heuristic** layer on top:
 //!
 //! 1. **Hard modes** — `build` / `plan` / `ask` primary agents (tool denylists).
 //! 2. **Static prompt protocol** — when to answer, edit, plan, or `question`.
@@ -14,7 +13,7 @@
 //!    message **only in the LLM request** (not stored in session history), so
 //!    the system prompt stays cache-stable.
 //!
-//! Authorization-style classifiers (Claude Code auto mode) are a separate
+//! Authorization-style classifiers (auto-approve modes) are a separate
 //! concern: "is this tool call authorized?", not "what does the user want?".
 
 use whycodes_core::types::{LlmRequest, MessageContent, Role};

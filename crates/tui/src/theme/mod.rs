@@ -131,9 +131,9 @@ impl ThemeName {
         }
     }
 
-    /// Grok syntax tmTheme for this TUI theme.
+    /// Syntax tmTheme for this TUI theme.
     ///
-    /// Matches Grok Build: Night for dark UIs, Day for light, Tokyo Night
+    /// Night for dark UIs, Day for light, Tokyo Night
     /// only when the TUI theme is Tokyo Night.
     pub fn syntax_theme(self) -> whycodes_format::highlight::SyntaxTheme {
         use whycodes_format::highlight::SyntaxTheme;
@@ -345,11 +345,11 @@ impl ThemePalette {
         paint_color(Color::Rgb(mix(ar, br), mix(ag, bgc), mix(ab, bb)))
     }
 
-    /// Elevated band behind a user prompt (Grok `bg_light` on the canvas).
+    /// Elevated band behind a user prompt (`bg_light` on the canvas).
     ///
-    /// GrokNight lifts the canvas by ~16 (`#141414` → `#242424`). Light
+    /// The default dark theme lifts the canvas by ~16 (`#141414` → `#242424`). Light
     /// themes drop the same amount so the strip still reads as a bubble.
-    /// Selected prompts step one more notch (Grok native `Gray` cue).
+    /// Selected prompts step one more notch (native `Gray` cue).
     pub fn prompt_band(&self, selected: bool) -> Color {
         let delta = if selected { 28 } else { 16 };
         self.elevate_bg(delta)
@@ -366,11 +366,11 @@ impl ThemePalette {
         }
     }
 
-    /// Stronger wash for diff add/remove rows (Grok-style green/red bands).
+    /// Stronger wash for diff add/remove rows (green/red bands).
     ///
     /// `callout_bg` is ~20% accent — invisible as a row band on dark themes.
     /// Diff rows use ~55% accent so the full-width fill reads as a real
-    /// green/red strip (same family as Grok Build / IDE diff gutters).
+    /// green/red strip (same family as IDE diff gutters).
     pub fn diff_line_bg(&self, accent: Color) -> Color {
         let (ar, ag, ab) = to_rgb(accent);
         let (br, bgc, bb) = to_rgb(self.bg);
@@ -543,7 +543,7 @@ fn palette_default_dark() -> ThemePalette {
         border: STEP7_BORDER,
         border_focused: PRIMARY,
         accent: SECONDARY,
-        // Grok Build `accent_user` is text_secondary gray (#c8c8c8), not an
+        // `accent_user` is text_secondary gray (#c8c8c8), not an
         // accent color — the user bubble `❯` must not read as a blue arrow.
         user_msg: TEXT_SECONDARY,
         assistant_msg: PRIMARY_BRIGHT,
@@ -564,7 +564,7 @@ fn palette_default_dark() -> ThemePalette {
         dialog_bg: STEP3_ELEMENT,
         dialog_border: SECONDARY,
         scrollbar: STEP6,
-        // Classic green / red (Grok-style); not teal — full-line diffs must read as add/remove.
+        // Classic green / red; not teal — full-line diffs must read as add/remove.
         diff_add: Color::Rgb(0x9e, 0xce, 0x6a),
         diff_remove: Color::Rgb(0xf7, 0x76, 0x8e),
         diff_hunk: SECONDARY,

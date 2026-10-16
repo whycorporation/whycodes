@@ -189,7 +189,7 @@ fn test_anthropic_build_body() {
     let content = &messages[0]["content"];
     assert!(content.is_array());
     assert_eq!(content[0]["text"].as_str().unwrap(), "Hello!");
-    // OpenCode auto: latest user message also gets cache_control.
+    // Auto policy: latest user message also gets cache_control.
     assert_eq!(
         content[0]["cache_control"]["type"].as_str().unwrap(),
         "ephemeral"

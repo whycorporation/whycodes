@@ -26,7 +26,7 @@ use whycodes_core::types::ApprovalMode;
 
 /// Placeholder when the prompt is empty and unfocused.
 ///
-/// Grok Build: the box itself stays empty (native `|` caret). Hints live
+/// The box itself stays empty (native `|` caret). Hints live
 /// under the box on home, not inside the input.
 fn empty_prompt_hint(
     buf_empty: bool,
@@ -60,7 +60,7 @@ const INFO_BLOCK: u16 = 1;
 /// Extra inner row when one or more images are staged on the prompt.
 const ATTACH_ROW: u16 = 1;
 
-/// Inner padding between side borders and content (Grok: left 2, right 1).
+/// Inner padding between side borders and content (left 2, right 1).
 const PAD_LEFT: u16 = 2;
 const PAD_RIGHT: u16 = 1;
 /// `"❯ "` / `": "` / `"> "` — always 2 columns.
@@ -132,7 +132,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
     let prompt_focused =
         app.focus == crate::app::FocusPane::Prompt || matches!(app.mode, AppMode::Command);
 
-    // Box chrome is the neutral theme border (Grok noir gray); only the
+    // Box chrome is the neutral theme border; only the
     // ❯ prefix and bottom meta pick up the agent identity color.
     // Prefix stays bright when focused, dim idle.
     // No panel fill — canvas bg shows through.
@@ -216,7 +216,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
     }
 
     // ── Text rows: │  ❯ body  │ ────────────────────────────────────
-    // Prefix is always 2 columns. Grok Build: empty focused prompt is a
+    // Prefix is always 2 columns. Empty focused prompt is a
     // bare caret after ❯ — no in-box ellipsis, even while the agent is busy.
     let prefix: &str = match app.mode {
         AppMode::Command => ": ",
@@ -470,7 +470,7 @@ fn paint_side_borders(frame: &mut Frame, text_area: Rect, full: Rect, style: Sty
 }
 
 /// Right-aligned ` agent · provider/model · effort · mode ` on the bottom border, with
-/// leading/trailing spaces blanking adjacent `─` (Grok chrome caption).
+/// leading/trailing spaces blanking adjacent `─` (chrome caption).
 ///
 /// Agent and model pick up theme / `[tui.agent_colors]` so the caption is
 /// not a dim grey smear — same identity color as the header chip.

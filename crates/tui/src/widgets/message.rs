@@ -135,7 +135,7 @@ impl MessageWidget {
 
 fn thinking_widget_lines(t: &ThinkingBlock, palette: &ThemePalette) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    // Grok-style: muted bold header, dim primary body, full-height ┃ rail.
+    // Muted bold header, dim primary body, full-height ┃ rail.
     let label = Style::default()
         .fg(palette.dim)
         .add_modifier(Modifier::BOLD);

@@ -68,7 +68,7 @@ pub enum DialogKind {
         tool_name: String,
         detail: String,
     },
-    /// Grok-style interactive questionnaire (`question` tool).
+    /// Interactive questionnaire (`question` tool).
     Question(QuestionDialogState),
     SessionList,
     /// Live multi-session dashboard (S2/S3): grouped rows, peek, attach.
@@ -735,7 +735,7 @@ pub struct ChatMessage {
     /// Cached painted lines for closed messages at `(width, closed)`.
     /// `Arc` so a scroll frame can paint by reference (no per-row String clone).
     pub line_cache: Option<(u16, bool, std::sync::Arc<Vec<ratatui::text::Line<'static>>>)>,
-    /// Live-tail markdown freeze (Grok checkpoint). Only the growing
+    /// Live-tail markdown freeze (checkpoint). Only the growing
     /// assistant bubble uses this; closed messages sit in `line_cache`.
     pub stream_md: Option<crate::md_stream::IncrementalMarkdown>,
 }
@@ -829,7 +829,7 @@ impl StreamSpeed {
 }
 
 /// How many trailing reasoning lines to show while the block is still streaming.
-/// Matches Grok Build default `truncated_lines: 3`.
+/// Default `truncated_lines: 3`.
 pub const THINKING_LIVE_TAIL_LINES: usize = 3;
 
 /// Max lines painted when the user expands a finished thinking block.
@@ -897,7 +897,7 @@ pub enum ChatBlock {
         content: String,
         is_error: bool,
     },
-    /// Compact Grok-style subagent lifecycle row in the parent scrollback.
+    /// Compact subagent lifecycle row in the parent scrollback.
     Subagent {
         id: String,
         kind: String,
@@ -1011,7 +1011,7 @@ fn truncate_mid(s: &str, max: usize) -> String {
     format!("{start}…{end}")
 }
 
-/// One reasoning segment with lifecycle (Grok-style Thought for Xs).
+/// One reasoning segment with lifecycle (`Thought for Xs`).
 ///
 /// - **Running** (`finished_at == None`): live truncated tail of the stream.
 /// - **Finished** + `collapsed`: single header line (`Thought for 1.4s`).
@@ -1070,7 +1070,7 @@ impl ThinkingBlock {
 
     /// Collapsed/finished header label without expand hint.
     ///
-    /// Grok-style: running is `Thinking…` (U+2026); finished is `Thought for Xs`.
+    /// Running is `Thinking…` (U+2026); finished is `Thought for Xs`.
     pub fn header_label(&self) -> String {
         if self.is_running() {
             "Thinking…".into()
@@ -1186,7 +1186,7 @@ fn line_count_gt(text: &str, n: usize) -> bool {
 /// Format elapsed wall time for display (`1.4s`, `12s`, `1m12s`).
 ///
 /// Used for thinking blocks and full agent-turn latency.
-/// Compact duration for chrome / turn footers (Grok `format_duration`).
+/// Compact duration for chrome / turn footers.
 ///
 /// - under 10s: `5.2s`
 /// - 10–59s: `32s`
@@ -1268,7 +1268,7 @@ pub fn context_tokens_from_usage(usage: &whycodes_core::types::Usage) -> u64 {
         + usage.cache_read_input_tokens.unwrap_or(0)
 }
 
-/// Grok-style default context label: `1.2k / 200k`.
+/// Default context label: `1.2k / 200k`.
 pub fn format_context_usage(used: u64, max: u64) -> String {
     format!(
         "{} / {}",
@@ -1283,12 +1283,12 @@ pub fn context_usage_pct(used: u64, max: u64) -> f64 {
     (used as f64 / max) * 100.0
 }
 
-/// Grok `fmt_pct5`: fixed 5-char percentage for hover (`0.00%`…`99.9%` / `MAX %`).
+/// `fmt_pct5`: fixed 5-char percentage for hover (`0.00%`…`99.9%` / `MAX %`).
 pub fn format_context_percent(used: u64, max: u64) -> String {
     fmt_pct5(context_usage_pct(used, max))
 }
 
-/// Fixed-width 5-char percent (matches Grok Build `context_bar::fmt_pct5`).
+/// Fixed-width 5-char percent.
 pub fn fmt_pct5(pct: f64) -> String {
     if pct >= 100.0 {
         "MAX %".to_string()
@@ -1299,7 +1299,7 @@ pub fn fmt_pct5(pct: f64) -> String {
     }
 }
 
-/// Grok hover line: 1/8 progress bar + gap + 5-char %, same display width as
+/// Hover line: 1/8 progress bar + gap + 5-char %, same display width as
 /// the default `used / total` token string (no layout shift).
 pub fn format_context_hover(used: u64, max: u64) -> String {
     let token_str = format_context_usage(used, max);
@@ -1353,10 +1353,10 @@ pub enum AgentState {
     Error(String),
 }
 
-// ── Focus (Grok Build: Prompt vs Scrollback) ───────────────────────────
+// ── Focus (Prompt vs Scrollback) ───────────────────────────────────────
 /// Which pane owns the keyboard.
 ///
-/// Grok's model: when scrollback is focused, j/k navigate the transcript
+/// When scrollback is focused, j/k navigate the transcript
 /// without typing into the prompt; when the prompt is focused, every letter
 /// goes to the draft. Tab toggles. Typing while scrollback is focused
 /// auto-focuses the prompt (simple mode). Overflowing sticky todos take a
@@ -1370,7 +1370,7 @@ pub enum FocusPane {
     Todos,
 }
 
-/// Double-Esc window for "press again to clear" (Grok: 800ms).
+/// Double-Esc window for "press again to clear" (800ms).
 pub const ESC_DOUBLE_MS: u128 = 800;
 
 // ── TuiApp ─────────────────────────────────────────────────────────────
@@ -1381,7 +1381,7 @@ pub struct TuiApp {
     pub(crate) key_context: KeymapContext,
     /// Default bindings plus `[tui.key_bindings]` overrides.
     pub(crate) keymap: crate::keymap::Keymap,
-    /// Prompt or scrollback owns keys (Grok focus model).
+    /// Prompt or scrollback owns keys (focus model).
     pub(crate) focus: FocusPane,
 
     // ── session ──
@@ -1654,7 +1654,7 @@ pub struct TuiApp {
     pub(crate) session_id: String,
     /// Session todo list (sticky panel under the header).
     pub(crate) todos: Vec<whycodes_core::TodoItem>,
-    /// Fold the sticky todo list to a single header row (Grok chevron).
+    /// Fold the sticky todo list to a single header row (chevron).
     /// Auto-collapses when every item is done; click / `t` reopens it.
     pub(crate) todos_collapsed: bool,
     /// Header row of the sticky todo panel (click to fold).
@@ -3182,7 +3182,7 @@ impl TuiApp {
             && (self.todos_hit.contains(col, row) || self.todos_wheel_hit(col, row))
     }
 
-    /// Save non-empty draft to history and clear the prompt (Grok double-Esc).
+    /// Save non-empty draft to history and clear the prompt (double-Esc).
     pub fn clear_prompt_draft(&mut self) {
         let text = self.input_buffer.trim();
         if !text.is_empty() {
@@ -3283,7 +3283,7 @@ impl TuiApp {
         !self.input_buffer.trim().is_empty() || !self.pending_images.is_empty()
     }
 
-    /// Jump selection to previous/next user message (Grok turn navigation).
+    /// Jump selection to previous/next user message (turn navigation).
     pub fn jump_user_turn(&mut self, forward: bool) {
         if self.messages.is_empty() {
             return;
@@ -3321,7 +3321,7 @@ impl TuiApp {
         if let Some(i) = self.selected_msg
             && let Some(msg) = self.messages.get_mut(i)
         {
-            // Grok `e`/`h` also unfolds a collapsed user prompt.
+            // `e`/`h` also unfolds a collapsed user prompt.
             if msg.role == ChatRole::User {
                 msg.results_expanded = !msg.results_expanded;
                 msg.invalidate_layout();
@@ -4067,7 +4067,7 @@ pub fn chat_messages_from_session(
 
         match &msg.content {
             MessageContent::Text(t) => {
-                // Compact carriers are model-facing user_meta. Grok paints a
+                // Compact carriers are model-facing user_meta. Paint a
                 // session event, not a collapsed ❯ prompt — show the summary
                 // body as a system card so the 9 sections stay readable.
                 let (role, content) =
@@ -4220,7 +4220,7 @@ fn resolve_git_branch_fast(dir: &std::path::Path) -> Option<String> {
     }
 }
 
-/// How long we will wait on `git` before giving up (Grok/jcode: a wedged
+/// How long we will wait on `git` before giving up (a wedged
 /// index.lock must not freeze the TUI).
 const GIT_BRANCH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 

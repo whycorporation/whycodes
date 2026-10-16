@@ -1,5 +1,5 @@
 // ── ui/dialogs/help.rs: Keyboard Shortcuts cheatsheet ─────────────────
-// Visual model: Grok Build `shortcuts_help` (searchable cheatsheet).
+// Visual model: searchable cheatsheet.
 //   ModalWindow chrome · " / to search" · full-width divider ·
 //   `── Section ──` headers · `◆ key` + right-aligned description.
 

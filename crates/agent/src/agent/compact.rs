@@ -1,11 +1,11 @@
-//! Grok-style full-replace session compaction.
+//! Full-replace session compaction.
 
 use whycodes_core::types::ContentBlock;
 use whycodes_session::session::Session;
 
 use super::Agent;
 
-/// Structured compact prompt (Grok full-replace), with optional `/compact` note.
+/// Structured compact prompt (full-replace), with optional `/compact` note.
 fn build_compact_summary_prompt(transcript: &str, user_context: Option<&str>) -> String {
     let user_context_section = match user_context.map(str::trim).filter(|s| !s.is_empty()) {
         Some(context) => format!(
@@ -59,7 +59,7 @@ Conversation:
 }
 
 impl Agent {
-    /// Grok-style full-replace compact: summarize the whole conversation,
+    /// Full-replace compact: summarize the whole conversation,
     /// keep the last real user query + current-turn tail, replace the rest
     /// with a continuation carrier.
     ///

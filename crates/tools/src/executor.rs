@@ -70,7 +70,7 @@ impl ToolExecutor {
         executor.register(Box::new(glob::GlobTool::new()));
         executor.register(Box::new(list::ListTool::new()));
         executor.register(Box::new(repomap::RepoMapTool::new()));
-        // Primary name matches OpenCode (`bash`); `shell` kept as legacy alias
+        // Primary name is `bash`; `shell` kept as legacy alias
         executor.register(Box::new(shell::ShellTool::new()));
         executor.register(Box::new(shell::ShellTool::as_shell()));
         executor.register(Box::new(browser::BrowserTool::new()));

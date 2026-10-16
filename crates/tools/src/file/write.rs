@@ -120,7 +120,7 @@ impl WriteTool {
         match crate::file::atomic::write_atomic(std::path::Path::new(&full_path), &content) {
             Ok(_) => ToolResult {
                 tool_call_id: String::new(),
-                // Grok-like: +lines preview so the TUI can paint add colours
+                // +lines preview so the TUI can paint add colours
                 // (and syntax-highlight when the path has a known extension).
                 content: format_write_preview(&shown, &content),
                 is_error: false,

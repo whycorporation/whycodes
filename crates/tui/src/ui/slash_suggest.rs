@@ -1,5 +1,5 @@
 // ── ui/slash_suggest.rs: Command completion above the prompt ───────────────
-// Opens on `/` at an empty prompt. Layout mirrors Grok's slash_dropdown:
+// Opens on `/` at an empty prompt. Layout:
 //   • panel wash (bg_light) with top/bottom hairlines only
 //   • selected row wash (bg_visual)
 //   • solid-fill scrollbar track/thumb when the list overflows
@@ -16,15 +16,15 @@ use ratatui::{
     widgets::Clear,
 };
 
-/// Visible rows (excluding hairlines). Matches Grok's MAX_VISIBLE_SUGGESTIONS.
+/// Visible rows (excluding hairlines).
 const MAX_ROWS: u16 = 6;
 
 /// Columns reserved for gap + scrollbar track when content overflows.
 const SCROLLBAR_GUTTER: u16 = 2;
 
-/// Local Grok-like surface colours derived from the active palette.
+/// Local surface colours derived from the active palette.
 ///
-/// GrokNight dropdown uses:
+/// The default dark dropdown uses:
 ///   bg_light   ≈ #242424  (row / panel)
 ///   bg_visual  ≈ #363636  (selected)
 ///   bg_base    ≈ #141414  (hairline bg)
@@ -73,7 +73,7 @@ impl DropdownColors {
             panel,
             selected,
             chrome,
-            chrome_fg: elevate(p.bg, 26), // ≈ Grok bg_highlight on hairline
+            chrome_fg: elevate(p.bg, 26), // ≈ bg_highlight on hairline
             track,
             thumb,
             name: p.fg,
@@ -99,7 +99,7 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
         app.slash_suggest.list_hit = None;
         return;
     }
-    // Sit just above the prompt, full prompt width (Grok anchors to prompt).
+    // Sit just above the prompt, full prompt width (anchored to prompt).
     let area = Rect {
         x: prompt_area.x,
         y: prompt_area.y.saturating_sub(height),
@@ -119,7 +119,7 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
     // ── panel wash ──────────────────────────────────────────────────────
     fill_bg(buf, area, colors.panel);
 
-    // ── top / bottom hairlines (Grok: ─ on bg_base, count on the right) ─
+    // ── top / bottom hairlines (─ on bg_base, count on the right) ─
     let rule = "─".repeat(area.width as usize);
     let rule_style = Style::default().fg(colors.chrome_fg).bg(colors.chrome);
     set_line(buf, area.x, area.y, &rule, area.width, rule_style);
@@ -131,7 +131,7 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
         area.width,
         rule_style,
     );
-    // Count hint on the top hairline, right-aligned (Grok: gray on bg_base).
+    // Count hint on the top hairline, right-aligned (gray on bg_base).
     let hint = format!("{}/{total}", app.slash_suggest.selected + 1);
     let hint_w = hint.len() as u16;
     if hint_w + 2 <= area.width {
@@ -218,7 +218,7 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
         );
     }
 
-    // ── scrollbar (solid Grok thumb; last, so nothing paints over it) ───
+    // ── scrollbar (solid thumb; last, so nothing paints over it) ───
     if needs_scrollbar {
         let sb = Rect {
             x: items_area.x + items_area.width.saturating_sub(1),

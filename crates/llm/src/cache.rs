@@ -1,6 +1,6 @@
-//! Prompt caching — OpenCode-compatible policy for Anthropic Messages.
+//! Prompt caching policy for Anthropic Messages.
 //!
-//! OpenCode `packages/llm/src/cache-policy.ts` default `"auto"` places:
+//! The default `"auto"` policy places:
 //! 1. last tool definition
 //! 2. last system content block
 //! 3. latest user message (last content part)
@@ -19,7 +19,7 @@ use crate::json_value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CachePolicy {
-    /// Tools + system + latest user message (OpenCode auto). Default.
+    /// Tools + system + latest user message. Default.
     #[default]
     Auto,
     /// No automatic markers (manual / disabled).
@@ -40,7 +40,7 @@ impl CachePolicy {
 pub struct CacheConfig {
     #[serde(default = "default_true")]
     pub system: bool,
-    /// When > 0, mark the latest user message (OpenCode auto). Count is ignored
+    /// When > 0, mark the latest user message. Count is ignored
     /// beyond “enabled”; kept for backward-compatible TOML.
     #[serde(default = "default_messages")]
     pub messages: usize,
@@ -94,7 +94,7 @@ fn ephemeral() -> Value {
     CacheConfig::cache_control_value()
 }
 
-/// Apply OpenCode-style cache breakpoints onto a fully built Anthropic request body.
+/// Apply cache breakpoints onto a fully built Anthropic request body.
 ///
 /// Expects `body` shaped like Messages API: optional `system` (string or array),
 /// `tools` array, `messages` array of `{role, content: [...]}`.

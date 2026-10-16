@@ -164,8 +164,7 @@ pub(crate) const SERIAL_TOOLS: &[&str] = &[
 
 /// Whether this tool can safely run beside other tools in the same step.
 ///
-/// Industry pattern (OpenCode issue #24764, Codex parallel function calls):
-/// fan out independent reads; keep mutators and permission-gated tools serial.
+/// Fan out independent reads; keep mutators and permission-gated tools serial.
 pub(crate) fn is_parallel_safe_tool(
     name: &str,
     _permission: &whycodes_core::types::PermissionSet,

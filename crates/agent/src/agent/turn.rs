@@ -35,8 +35,8 @@ impl Agent {
 
     /// Run a single conversation turn (no streaming UI events).
     ///
-    /// `max_turns` is a headless safety cap (`None` = unlimited, Grok TUI
-    /// parity). Interactive sessions pass `None` and stop on end-of-turn,
+    /// `max_turns` is a headless safety cap (`None` = unlimited, as in
+    /// the TUI). Interactive sessions pass `None` and stop on end-of-turn,
     /// cancel, or doom-loop instead.
     pub async fn run_turn(
         &self,
@@ -165,7 +165,7 @@ impl Agent {
         // Latency: wall clock for the whole user turn (all LLM steps + tools).
         let user_turn_t0 = Instant::now();
         let mut ttft_ms: Option<u128> = None;
-        // Recent tool signatures for OpenCode-style doom-loop detection.
+        // Recent tool signatures for doom-loop detection.
         let mut recent_tool_sigs: VecDeque<String> = VecDeque::with_capacity(8);
         // Autocompact circuit breaker: stop retrying after N ineffective passes.
         let mut compact_failures: u32 = 0;
@@ -743,7 +743,6 @@ impl Agent {
             }
 
             // Doom-loop: refuse identical tool+args repeated DOOM_LOOP_THRESHOLD times
-            // (OpenCode processor.ts doom_loop permission pattern).
             let results = if would_doom_loop(&recent_tool_sigs, &tool_calls) {
                 crate::speculative_read::abort_all(&mut speculative_reads);
                 emit(
@@ -785,7 +784,7 @@ impl Agent {
                 }
                 refused
             } else {
-                // Parallel when safe (OpenCode / Codex / Claude Code pattern).
+                // Parallel when safe.
                 // Sequential for shell / mutating / permission-ask tools so risk
                 // gates and the TUI single-slot permission UI stay correct.
                 let tool_t0 = Instant::now();

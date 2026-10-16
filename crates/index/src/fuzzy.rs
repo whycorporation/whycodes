@@ -2,7 +2,7 @@
 //! injection, so keystroke queries never touch the filesystem and matches
 //! appear while the initial walk is still running.
 //!
-//! Query handling mirrors the proven helix / Grok Build patterns:
+//! Query handling mirrors the proven helix patterns:
 //! path-aware scoring (`Config::match_paths`), smart case, incremental
 //! reparse when the query grows by one char, and a length-scaled minimum
 //! score to keep junk out of short queries.
@@ -53,7 +53,7 @@ pub struct FileMatch {
 }
 
 /// Length-scaled floor that keeps weak tail matches out of the picker
-/// (helix completion uses `7 * len + 14`; Grok Build uses `7 + len * 14`).
+/// (helix completion uses `7 * len + 14`; this uses `7 + len * 14`).
 fn min_score(query: &str) -> u32 {
     7 + query.chars().count() as u32 * 14
 }

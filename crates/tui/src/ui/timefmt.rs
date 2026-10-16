@@ -1,11 +1,11 @@
-//! Grok Build clock labels for chat bubbles and the session picker.
+//! Clock labels for chat bubbles and the session picker.
 //!
-//! Chat clocks (always on): `2:32 PM` — Grok pager `%-I:%M %p`.
+//! Chat clocks (always on): `2:32 PM` — `%-I:%M %p`.
 //! History / welcome: `just now`, `5m ago`, `3h ago`, then the long absolute.
 
 use chrono::{Datelike, Timelike};
 
-/// Short bubble clock — Grok overlay `%-I:%M %p` (`2:32 PM`).
+/// Short bubble clock — `%-I:%M %p` (`2:32 PM`).
 pub fn format_clock(ts: chrono::DateTime<chrono::Utc>) -> String {
     let local = ts.with_timezone(&chrono::Local);
     let (pm, hour) = local.hour12();
@@ -25,7 +25,7 @@ pub fn format_absolute(ts: chrono::DateTime<chrono::Utc>) -> String {
     )
 }
 
-/// Relative, then absolute — Grok session picker / welcome list.
+/// Relative, then absolute — session picker / welcome list.
 pub fn format_relative(ts: chrono::DateTime<chrono::Utc>) -> String {
     format_relative_at(ts, chrono::Local::now())
 }

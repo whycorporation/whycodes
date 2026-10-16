@@ -22,8 +22,8 @@ pub mod dark {
     pub const CYAN: Color = Color::Rgb(0x56, 0xb6, 0xc2);
     pub const YELLOW: Color = Color::Rgb(0xe5, 0xc0, 0x7b);
     pub const TEXT: Color = Color::Rgb(0xee, 0xee, 0xee);
-    /// Grok `text_secondary` / `accent_user` (`FG_DARK` #c8c8c8): the user
-    /// prompt `❯` is a neutral light gray in Grok Build, not an accent hue.
+    /// `text_secondary` / `accent_user` (`FG_DARK` #c8c8c8): the user
+    /// prompt `❯` is a neutral light gray, not an accent hue.
     pub const TEXT_SECONDARY: Color = Color::Rgb(0xc8, 0xc8, 0xc8);
     pub const TEXT_MUTED: Color = Color::Rgb(0x80, 0x80, 0x80);
 }
@@ -86,12 +86,11 @@ pub mod layout {
     pub const SIDEBAR_WIDTH: u16 = 42;
     /// Hide the sidebar below this body width so a tmux/iTerm split (½ or ¼
     /// of an 80-col PTY) keeps the transcript instead of a 24-col rail.
-    /// Grok drops extra chrome the same way when the overlay cannot fit both.
     pub const SIDEBAR_MIN_BODY: u16 = 72;
     /// Chat column that must remain after the sidebar is reserved.
     pub const SIDEBAR_MIN_CHAT: u16 = 32;
 
-    /// Grok popup formula: `max(percent of outer, min).min(outer)`.
+    /// Popup formula: `max(percent of outer, min).min(outer)`.
     pub fn popup_dim(outer: u16, percent: u16, min: u16) -> u16 {
         if outer == 0 {
             return 0;

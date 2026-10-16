@@ -480,7 +480,7 @@ use serde_json::json;
 
 #[test]
 fn sanitize_strips_unsupported_keywords_recursively() {
-    // jcode#687 (uniqueItems) + jcode#754 (propertyNames): a single
+    // Regression (uniqueItems + propertyNames): a single
     // unsupported keyword used to 400 the whole tool catalog.
     let schema = json!({
         "type": "object",
@@ -521,7 +521,7 @@ fn sanitize_strips_unsupported_keywords_recursively() {
 
 #[test]
 fn sanitize_adds_missing_types() {
-    // jcode#713: a property without `type` used to 400 OpenAI.
+    // Regression: a property without `type` used to 400 OpenAI.
     let schema = json!({
         "properties": {
             "key": { "type": "string" },
@@ -624,7 +624,7 @@ fn error_source_chain_walks_nested_sources() {
 
 #[test]
 fn truncated_tool_arguments_yield_empty_object() {
-    // opencode#36766: a truncated stream yields a harmless {} instead of a panic/400.
+    // Regression: a truncated stream yields a harmless {} instead of a panic/400.
     let parsed = parse_tool_arguments(&json!(r#"{"patchText": "@@ -1,3"#));
     assert_eq!(parsed, json!({}));
     assert_eq!(parse_tool_arguments(&json!("")), json!({}));

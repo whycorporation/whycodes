@@ -1,4 +1,4 @@
-//! Sticky hit-test targets (Grok Build `HitArea`).
+//! Sticky hit-test targets (`HitArea`).
 //!
 //! Pattern:
 //! - Paint **ends** by setting `rect` from the drawn geometry.

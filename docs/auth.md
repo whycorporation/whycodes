@@ -105,7 +105,7 @@ imports them **only after explicit per-path approval**:
 | GitHub Copilot | `~/.config/github-copilot/hosts.json` | `github-copilot` |
 | Grok Build | `~/.grok/auth.json` | `xai` |
 
-The consent model (mirroring jcode's `OAUTH.md`):
+The consent model:
 
 - Discovery reports existence **without reading contents**; a file is read
   only after you answer `y` for that exact path, and the decision is

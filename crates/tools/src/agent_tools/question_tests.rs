@@ -60,7 +60,7 @@ fn parse_important_flag() {
 }
 
 #[test]
-fn parse_grok_style_questions() {
+fn parse_questions_array_schema() {
     let questions = parse_questions(&fixture(WAVE4_QUESTIONNAIRE)).unwrap();
 
     assert_eq!(questions.len(), 3);

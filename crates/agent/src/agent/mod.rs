@@ -52,9 +52,9 @@ pub struct Agent {
     /// Discord / Telegram session notifications (off by default).
     notify: NotifyConfig,
     /// When session estimate exceeds this, compact before the next LLM call
-    /// (Claude Code / OpenCode style). `0` disables auto-compact.
+    /// `0` disables auto-compact.
     compaction_threshold: usize,
-    /// `"auto"` = LLM summary on compact (Grok full-replace); `"off"` = local stub.
+    /// `"auto"` = LLM summary on compact (full-replace); `"off"` = local stub.
     compaction_llm: bool,
     /// Tools schema sent to the model (`core` = smaller TTFT).
     tool_profile: ToolProfile,
@@ -154,10 +154,10 @@ pub(crate) fn recover_lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Stop auto-compact after this many consecutive ineffective passes (Claude Code).
+/// Stop auto-compact after this many consecutive ineffective passes.
 pub(crate) const MAX_CONSECUTIVE_COMPACT_FAILURES: u32 = 3;
 
-/// Identical tool name+args this many times in a row → refuse (OpenCode doom_loop).
+/// Identical tool name+args this many times in a row → refuse (doom loop).
 pub(crate) const DOOM_LOOP_THRESHOLD: usize = 3;
 
 /// Validate checkpoint/rewind tool results and return pending side effects.

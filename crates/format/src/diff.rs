@@ -4,7 +4,7 @@ const PREVIEW_BODY_LINES: usize = 40;
 /// Width of the right-aligned line-number gutter in edit/write previews.
 const LINE_NO_WIDTH: usize = 4;
 
-/// Format a right-aligned line number + marker + body (Grok-style).
+/// Format a right-aligned line number + marker + body.
 ///
 /// ```text
 ///   12|-old line
@@ -77,7 +77,7 @@ pub fn format_edit_preview_at(
         return out;
     }
 
-    // Multi-line: emit removals then additions (compact, Grok-like).
+    // Multi-line: emit removals then additions (compact).
     let old_trunc = old_lines.len() > PREVIEW_BODY_LINES;
     let new_trunc = new_lines.len() > PREVIEW_BODY_LINES;
     for (i, line) in old_lines.iter().take(PREVIEW_BODY_LINES).enumerate() {

@@ -1,6 +1,6 @@
 //! Redraw cadence — ported from jcode `redraw_schedule`.
 //!
-//! jcode measured a real lag bug: a static status notice ("Swarm plan
+//! A real lag bug: a static status notice ("Swarm plan
 //! synced") pulled the whole client to animation FPS (~180 full frames
 //! for a 3s toast). Toasts and notices are text-only; they appear on an
 //! event (already `mark_dirty`) and expire on a multi-second timer.

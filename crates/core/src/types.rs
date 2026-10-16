@@ -308,7 +308,7 @@ pub struct LlmRequest {
     pub stop_sequences: Option<Vec<String>>,
     pub thinking: Option<serde_json::Value>,
     /// When true (default), providers that support inline prompt caching
-    /// (Anthropic) attach OpenCode-style cache breakpoints.
+    /// (Anthropic) attach cache breakpoints.
     #[serde(default = "default_use_prompt_cache")]
     pub use_prompt_cache: bool,
 }
@@ -737,7 +737,7 @@ impl std::fmt::Display for ApprovalMode {
     }
 }
 
-/// OpenCode-style permission action for a tool or pattern.
+/// Permission action for a tool or pattern.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionAction {
@@ -771,7 +771,7 @@ pub struct PermissionSet {
     pub allow_network: bool,
     pub allow_shell: bool,
     pub allowed_paths: Option<Vec<PathBuf>>,
-    /// OpenCode-style rules: tool name or glob pattern → allow|ask|deny.
+    /// Rules: tool name or glob pattern → allow|ask|deny.
     /// Patterns support trailing `*` (e.g. `mymcp_*`, `git *` is for bash args later).
     /// Last matching rule wins when multiple match (map iteration order is unstable;
     /// prefer more-specific keys). Exact name match always wins over patterns.
@@ -780,7 +780,7 @@ pub struct PermissionSet {
 }
 
 impl PermissionSet {
-    /// Resolve the effective permission action for a tool name (OpenCode parity).
+    /// Resolve the effective permission action for a tool name.
     pub fn action_for(&self, tool_name: &str) -> PermissionAction {
         // 1. Exact rule match
         match self.rules.get(tool_name) {
@@ -1083,8 +1083,8 @@ pub(crate) fn match_simple_star(pat: &str, s: &str) -> bool {
     pi == pb.len()
 }
 
-/// Glob-ish match for shell rule payloads. `:` is treated as a separator like
-/// Claude Code's `Bash(git:*)` form.
+/// Glob-ish match for shell rule payloads. `:` is treated as a separator, as in
+/// the `Bash(git:*)` form.
 pub(crate) fn shell_arg_matches(pat: &str, command: &str) -> bool {
     let pat = pat.trim().replace(':', " ");
     let cmd = command.trim();

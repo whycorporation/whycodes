@@ -2,7 +2,7 @@
 // Translates raw crossterm events into actions via the keymap,
 // then updates application state accordingly.
 //
-// Focus model (Grok Build): Prompt vs Scrollback own the keyboard.
+// Focus model: Prompt vs Scrollback own the keyboard.
 // Esc hierarchy: overlays → cancel turn (run loop) → double-Esc clear draft.
 
 use crate::app::{
@@ -852,7 +852,7 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
             true
         }
         None => {
-            // Unmapped key — treat as text input. Grok simple mode: any letter
+            // Unmapped key — treat as text input. Simple mode: any letter
             // while scrollback is focused auto-focuses the prompt.
             // Stale key_context (still Normal) still has to close help on `q`.
             if app.mode == AppMode::Help
@@ -941,7 +941,7 @@ fn is_bare_slash_draft(buf: &str) -> bool {
     !buf.is_empty() && buf.bytes().all(|b| b == b'/')
 }
 
-/// Grok Esc hierarchy (steal-Esc first, then double-Esc clear).
+/// Esc hierarchy (steal-Esc first, then double-Esc clear).
 ///
 /// Cancel-while-busy is owned by the run loop (has the CancelFlag); here we
 /// only handle idle clear / mode exit. Slash + help still steal Esc.
@@ -1019,13 +1019,13 @@ fn handle_escape(app: &mut TuiApp) {
     }
 
     // Busy cancel is handled in run.rs before this path; if we still get here
-    // while busy, do not clear the draft (Grok: Esc preserves draft on cancel).
+    // while busy, do not clear the draft (Esc preserves draft on cancel).
     if app.is_busy() {
         app.esc_armed_at = None;
         return;
     }
 
-    // Double-Esc clear when prompt has a draft or staged images (Grok: 800ms).
+    // Double-Esc clear when prompt has a draft or staged images (800ms).
     if app.prompt_has_content() {
         let now = Instant::now();
         if let Some(armed) = app.esc_armed_at
@@ -1342,7 +1342,7 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     // mouse motion — that was killing the TUI on the first mouse-move after
     // EnableMouseCapture (seen as `tui.exit reason=handle_event=false`).
     //
-    // Sticky hover (Grok HitArea): mouse_pos first, then update all chrome
+    // Sticky hover (HitArea): mouse_pos first, then update all chrome
     // hits against the *previous* frame’s rects.
     app.mouse_pos = Some((mouse.column, mouse.row));
     if app.update_chrome_hover() {
@@ -1622,7 +1622,7 @@ pub fn coalesce_chat_wheels(app: &mut TuiApp, events: &mut Vec<Event>) {
     }
 }
 
-/// Keep only the last `Resize` in a drained batch (jcode / Grok: a
+/// Keep only the last `Resize` in a drained batch (a
 /// window-manager snap floods `TIOCGWINSZ`; laying out each size is wasted).
 pub fn coalesce_resizes(events: &mut Vec<Event>) {
     let last = events.iter().rev().find_map(|e| match e {
@@ -2070,7 +2070,7 @@ fn handle_help_type(app: &mut TuiApp, key: &KeyEvent) -> bool {
             true
         }
         KeyCode::Char('q') if !app.help_searching && app.help_query.is_empty() => {
-            // Grok Esc · WhyCodes `q` — close even when key_context is stale.
+            // Esc or `q` — close even when key_context is stale.
             app.mode = AppMode::Normal;
             app.key_context = KeymapContext::Normal;
             true

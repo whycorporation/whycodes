@@ -8,7 +8,7 @@ use std::sync::{Mutex, OnceLock};
 /// Derive a filesystem-safe key for the project that owns `path`.
 ///
 /// Prefers the git toplevel so all worktrees of the same repo share memory
-/// (Claude Code / Grok Build parity). Falls back to the canonical path.
+/// Falls back to the canonical path.
 pub fn project_key(path: &Path) -> String {
     let root = toplevel_cached(path).unwrap_or_else(|| canonicalize_or_self(path));
     sanitize_key(&root.to_string_lossy())

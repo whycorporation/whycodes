@@ -575,7 +575,7 @@ impl Config {
         }
     }
 
-    /// Load custom commands from markdown files (OpenCode paths adapted):
+    /// Load custom commands from markdown files:
     /// - global: `~/.config/.../commands/*.md`
     /// - project: `<project>/.whycodes/commands/*.md`
     pub fn load_command_files(&mut self, project_dir: &Path) {
@@ -613,7 +613,7 @@ impl Config {
         );
     }
 
-    /// Claude Code–style PromptCommands: fixed prompts that kick a turn.
+    /// PromptCommands: fixed prompts that kick a turn.
     /// Does not overwrite user-defined `commands.*` or `commands/*.md`.
     pub fn ensure_builtin_prompt_commands(&mut self) {
         for (name, cmd) in builtin_prompt_commands() {
@@ -797,7 +797,7 @@ fn load_commands_from_dir(into: &mut HashMap<String, CustomCommandConfig>, dir: 
     }
 }
 
-/// Parse OpenCode-style command markdown with YAML frontmatter.
+/// Parse command markdown with YAML frontmatter.
 pub(crate) fn parse_command_markdown(content: &str) -> Option<CustomCommandConfig> {
     let content = content.trim();
     if !content.starts_with("---") {

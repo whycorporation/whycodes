@@ -1,5 +1,5 @@
 //! `/goal <condition>`: keep taking turns until a fast evaluator says the
-//! condition holds (Claude Code's `/goal`).
+//! condition holds.
 //!
 //! After each finished turn a no-tools call to `session.model_fast` reads the
 //! condition plus the recent transcript and answers met / not met /

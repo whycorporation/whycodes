@@ -285,7 +285,7 @@ pub struct TuiRunOptions {
     pub model: String,
     pub api_key: String,
     pub agent_name: String,
-    /// Headless-only cap. Interactive TUI passes `None` (Grok: no default turn limit).
+    /// Headless-only cap. Interactive TUI passes `None` (no default turn limit).
     pub max_turns: Option<usize>,
     pub initial_prompt: Option<String>,
     pub config: Config,
@@ -1566,7 +1566,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
         });
     }
 
-    // Wall clock for the Cline-style exit summary (process open → quit).
+    // Wall clock for the exit summary (process open → quit).
     let session_started = Instant::now();
 
     if !headless {
@@ -1748,7 +1748,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // cannot sit in the unpainted rows beside the prompt. Ordinary
     // Backspace/Delete must not bump `pending_full_clears` — home gutters
     // already fill_blank.
-    // Deep-idle + malloc_trim clocks (jcode redraw_schedule / idle_heap).
+    // Deep-idle + malloc_trim clocks (redraw_schedule / idle_heap).
     let mut last_user_input = Instant::now();
     let mut idle_trim_armed = true;
     let mut retention = crate::heap::RetentionTicker::new(
@@ -1814,13 +1814,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             // paint this iteration instead of one poll (≤40 ms) later.
             after_turn_events_drain(&mut app, &mut rt.event_rx, &config, &file_index);
 
-            // Paced wheel/trackpad backlog (Grok scroll clock): one capped
+            // Paced wheel/trackpad backlog (scroll clock): one capped
             // chunk per 16 ms instead of the whole flick in one frame.
             app.tick_wheel();
 
             // Paint only when something changed. Busy turns used to paint
             // every iteration; deltas and spinner ticks already mark dirty,
-            // and static toasts never did (jcode: ~180 wasted frames each).
+            // and static toasts never did (~180 wasted frames each).
             if app.needs_redraw {
                 if app.pending_full_clears > 0 {
                     // Full *themed* redraw, not CSI erase: Windows paints
@@ -2111,7 +2111,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             // ── Input ─────────────────────────────────────────────────
             // Paint is gated by `needs_redraw` / animation — poll timeout no
             // longer implies a full redraw. Cadence policy lives in
-            // `redraw_schedule` (jcode: toasts ≠ animation; 30s → 5s deep idle).
+            // `redraw_schedule` (toasts ≠ animation; 30s → 5s deep idle).
             let awaiting_matches = app.file_suggest.awaiting_matches();
             let poll_for =
                 crate::redraw_schedule::poll_interval(&crate::redraw_schedule::RedrawNeed {
@@ -2267,7 +2267,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         continue;
                     }
 
-                    // While busy: Esc cancels (draft preserved — Grok). Typing, scroll,
+                    // While busy: Esc cancels (draft preserved). Typing, scroll,
                     // and focus still work so the user can queue thoughts.
                     // Permission / question overlays own Esc/Enter — do not steal them.
                     let overlay_owns_keys = dialog_overlay_owns_keys(app.dialogs.active());
@@ -2367,7 +2367,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
         crate::bench::write_results(bench);
     }
 
-    // Final flush + Cline-style summary on the normal terminal (scrollback).
+    // Final flush + exit summary on the normal terminal (scrollback).
     rt.persist("exit");
     let model_label = format!("{provider}/{model}");
     let summary =
@@ -3136,7 +3136,7 @@ fn rebuild_agent_after_force_stop(
 
 /// Status line after a turn ends (header chrome).
 ///
-/// Grok-like: `Worked for 4.2s · 1.2k in / 340 out` — no `agent=` noise.
+/// Format: `Worked for 4.2s · 1.2k in / 340 out` — no `agent=` noise.
 /// Cancelled: `Turn cancelled in 4.2s`.
 fn format_turn_done_status(
     app: &TuiApp,
@@ -5036,7 +5036,7 @@ fn maybe_offer_update(app: &mut TuiApp) {
     }
 }
 
-/// Spawn `/compact` off the event loop (Grok CommandRunning). The pager
+/// Spawn `/compact` off the event loop (as a running command). The pager
 /// keeps painting and Esc still force-stops after [`CANCEL_FORCE_AFTER`].
 #[allow(clippy::too_many_arguments)]
 fn start_compact_task(
@@ -5271,7 +5271,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
         }
         TurnEvent::ToolStart { id, name, input } => {
             app.finish_open_thinking();
-            // Grok-style labels in the busy strip (`bash` → `run`).
+            // Short labels in the busy strip (`bash` → `run`).
             app.status_message = format!("tool: {}", shown_tool_name(&name));
             if matches!(name.as_str(), "todowrite" | "todo")
                 && let Some(next) = whycodes_core::todo::apply_todowrite_args(&app.todos, &input)
@@ -5325,7 +5325,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
         TurnEvent::Usage(usage) => {
             app.stream_speed.close_step(usage.output_tokens);
             app.turn_usage = Some(usage.clone());
-            // Per-step input size ≈ context window fill (Grok-style meter).
+            // Per-step input size ≈ context window fill (meter).
             app.set_context_from_usage(&usage);
             let mut parts = Vec::new();
             if let Some(ms) = app.turn_elapsed_ms() {
@@ -5922,7 +5922,7 @@ fn handle_question_key(
             app.dialogs.push(DialogKind::Question(state));
             true
         }
-        // Multi-question navigate (Grok-style ←/→ between questions)
+        // Multi-question navigate (←/→ between questions)
         KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('[') if !state.free_text_focus => {
             let _ = state.go_prev_question();
             app.dialogs.push(DialogKind::Question(state));

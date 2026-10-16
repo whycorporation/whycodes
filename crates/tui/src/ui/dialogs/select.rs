@@ -14,9 +14,9 @@ use super::base::dialog_frame;
 use crate::theme::ThemePalette;
 use crate::ui::scrollbar::{ScrollbarColors, elevate, paint_scrollbar, scroll_to_selected};
 
-/// Grok picker leaf mark (`diamond_filled`).
+/// Picker leaf mark (`diamond_filled`).
 const DIAMOND: &str = "◆ ";
-/// Selected-row wash — Grok `bg_visual` ≈ +44 on the canvas.
+/// Selected-row wash — `bg_visual` ≈ +44 on the canvas.
 const SELECTED_LIFT: u8 = 44;
 
 /// One row: what to show, and an optional dimmed detail after it.
@@ -208,7 +208,7 @@ fn render_select_body(
     }
 }
 
-/// Grok Keyboard Shortcuts / picker row: `◆ label` left, optional detail
+/// Keyboard Shortcuts / picker row: `◆ label` left, optional detail
 /// right-aligned. Selected row is a `bg_visual` wash + bold primary text —
 /// no `▸` caret (selection is the wash).
 pub fn paint_picker_row(
@@ -285,7 +285,7 @@ pub fn paint_picker_row(
     }
 }
 
-/// Grok section header: `── Label ──` in dim, not selectable.
+/// Section header: `── Label ──` in dim, not selectable.
 pub fn paint_section_header(buf: &mut Buffer, row: Rect, label: &str, palette: &ThemePalette) {
     if row.width == 0 || row.height == 0 {
         return;
@@ -301,7 +301,7 @@ pub fn paint_section_header(buf: &mut Buffer, row: Rect, label: &str, palette: &
     buf.set_stringn(row.x, row.y, &text, row.width as usize, style);
 }
 
-/// Grok picker search bar (` / to search` / ` search: query` + inverse cursor).
+/// Picker search bar (` / to search` / ` search: query` + inverse cursor).
 pub fn paint_search_bar(
     frame: &mut Frame,
     area: Rect,

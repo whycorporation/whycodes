@@ -14,7 +14,7 @@ use crate::error::Result;
 /// re-read files if it needs more. ~32 KiB ≈ 8k tokens under the char/4 heuristic.
 pub const TOOL_RESULT_MAX_CHARS: usize = 32_768;
 
-/// Cap for *older* tool results during compact (OpenCode-style prune ~2k chars).
+/// Cap for *older* tool results during compact (prune to ~2k chars).
 /// Recent tool dumps stay at [`TOOL_RESULT_MAX_CHARS`] so the model can still
 /// use the last step's output; older steps shrink hard for TTFT.
 pub const TOOL_RESULT_PRUNE_CHARS: usize = 2_048;
@@ -34,10 +34,10 @@ const SUMMARY_TOKEN_SLACK: usize = 256;
 /// Max chars of dropped-message transcript retained for optional LLM summary.
 const DROPPED_TRANSCRIPT_MAX_CHARS: usize = 12_000;
 
-/// Whole-session transcript cap for Grok-style full-replace compact.
+/// Whole-session transcript cap for full-replace compact.
 const FULL_TRANSCRIPT_MAX_CHARS: usize = 48_000;
 
-/// Preamble prepended to the post-compact summary carrier (Grok full-replace).
+/// Preamble prepended to the post-compact summary carrier (full-replace).
 pub const COMPACT_CONTINUATION_PREAMBLE: &str = "This session is being continued from a previous conversation that ran out of context. \
      The summary below covers the earlier portion of the conversation.";
 
@@ -312,7 +312,7 @@ pub fn format_compact_summary(raw: &str) -> String {
     result.trim().to_string()
 }
 
-/// Continuation carrier that replaces compacted history (Grok full-replace).
+/// Continuation carrier that replaces compacted history (full-replace).
 pub fn format_compact_summary_content(raw: &str) -> String {
     let cleaned = format_compact_summary(raw);
     if cleaned.is_empty() {
@@ -964,7 +964,7 @@ impl Session {
         }
     }
 
-    /// Cline-style exit summary printed after the terminal is restored.
+    /// Exit summary printed after the terminal is restored.
     ///
     /// `model_label` is typically `provider/model`. `binary` is the CLI name
     /// used in the resume hint (e.g. `"whycodes"`).
@@ -974,7 +974,7 @@ impl Session {
         model_label: &str,
         binary: &str,
     ) -> String {
-        // Labels padded to 8 so values line up (matches Cline's "Session Summary").
+        // Labels padded to 8 so values line up.
         let mut out = String::from("\nSession Summary\n");
         out.push_str(&format!("  {:8}  {}\n", "ID", self.id));
         out.push_str(&format!("  {:8}  {}s\n", "Duration", duration.as_secs()));
@@ -1102,7 +1102,7 @@ impl Session {
     ///
     /// When already under budget after tool caps, the message list is not
     /// reshuffled (avoids churn on `/compact` for small sessions).
-    /// Shrink older tool outputs more aggressively (OpenCode prune spirit).
+    /// Shrink older tool outputs more aggressively.
     ///
     /// Keeps the last [`PRUNE_KEEP_RECENT_TOOLS`] tool-role messages at the
     /// normal cap; everything older is cut to [`TOOL_RESULT_PRUNE_CHARS`].
@@ -1253,7 +1253,7 @@ impl Session {
         messages_transcript(&self.messages[..end], max_chars)
     }
 
-    /// Whole-session transcript for Grok-style full-replace compact.
+    /// Whole-session transcript for full-replace compact.
     pub fn transcript_for_full_summary(&self, max_chars: usize) -> String {
         let cap = if max_chars == 0 {
             FULL_TRANSCRIPT_MAX_CHARS
@@ -1289,7 +1289,7 @@ impl Session {
 
     /// Replace history with last user query + recent tail + summary carrier.
     ///
-    /// Grok full-replace: the model-visible conversation becomes
+    /// Full-replace: the model-visible conversation becomes
     /// `[last_user?, recent…, continuation_summary]`. System prompt stays
     /// on the session, not in `messages`.
     pub fn apply_full_replace(&mut self, summary: &str) -> CompactOutcome {
@@ -1718,7 +1718,7 @@ impl Session {
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(&share_path, json)?;
 
-        // Also write a human-readable Markdown share (OpenCode /export style)
+        // Also write a human-readable Markdown share (`/export`)
         let md_path = shares_dir.join(format!("{}.md", self.id));
         let _ = std::fs::write(&md_path, self.export_markdown());
 

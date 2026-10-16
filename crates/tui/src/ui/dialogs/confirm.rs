@@ -1,5 +1,5 @@
 // ── ui/dialogs/confirm.rs: Confirmation + permission dialogs ───────────
-// Grok-style ModalWindow chrome + y/n footer shortcuts.
+// Modal window chrome + y/n footer shortcuts.
 // Permission prompts get a structured layout (tool · body · risk).
 
 use crate::theme::ThemePalette;

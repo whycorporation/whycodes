@@ -166,7 +166,7 @@ unchanged.
 | Harness `--idle-ms 0` (12 runs) | **2024 ms** median | 0.0/s | 0×0 PTY + ~2 s keyboard-enhancement timeout |
 | Harness `--idle-ms 3000` (10 runs) | **2023 ms** median | **0.0/s** | was ~16.6/s on 2026-08-13 |
 
-Idle redraws hitting **zero** on the harness is the dirty-draw + jcode cadence
+Idle redraws hitting **zero** on the harness is the dirty-draw + redraw cadence
 work landing: toasts no longer keep the short poll alive, and a settled
 session does not paint. Do not quote the ~2 s first-frame number as TTFF.
 
@@ -1088,7 +1088,7 @@ session.
 (1) / **33.0 MB** (10) / **~2.4 MB** per added session. See the process-level
 table above.
 
-Method matches the shape jcode publishes: N live interactive processes, PSS
+Method: N live interactive processes, PSS
 from `smaps_rollup`, not RSS. These are idle sessions (prompt drawn, no
 agent turn), so they are a lower bound on a working multi-session desk — a
 turn with tool output will cost more private memory per session.
@@ -1178,9 +1178,7 @@ Session / subagent totals across steps still `add`.
 Not attempted, on purpose. Publishing a comparison means reproducing the other
 tool's numbers fairly — same machine, same terminal, same definition of
 "started" — which is a separate and much larger commitment than measuring
-ourselves. jcode's published figures (27.8 MB, 14.0 ms time-to-first-frame) are
-its own claims and remain unverified here; note also that they are not measuring
-the same thing as the table above.
+ourselves.
 
 ## Regression gating
 

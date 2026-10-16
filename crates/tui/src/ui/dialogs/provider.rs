@@ -1,6 +1,6 @@
 // ── ui/dialogs/provider.rs: Provider dialog ────────────────────────────
 // Two modes: Select from list, or Add Custom.
-// Chrome matches Grok ModalWindow via dialog_frame.
+// Modal window chrome via dialog_frame.
 // List modes paint a scrollbar when the item list overflows the content area.
 
 use crate::app::{AuthMethod, ProviderDialogMode, TuiApp};

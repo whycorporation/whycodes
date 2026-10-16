@@ -1,4 +1,4 @@
-//! Interactive questionnaire panel (Grok-style ask_user_question).
+//! Interactive questionnaire panel (ask_user_question).
 //!
 //! Docked to the **bottom** of the screen, options as one selectable row each:
 //! ```text

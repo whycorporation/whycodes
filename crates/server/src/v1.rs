@@ -452,7 +452,7 @@ pub async fn compact(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
     let mut s = handle.lock().await;
-    // `max_tokens` is accepted for SDK compat; Grok-style compact is
+    // `max_tokens` is accepted for SDK compat; full-replace compact is
     // full-replace (not a budget drop), so the field is unused.
     let _ = req.max_tokens;
     s.compact_full_replace_local();

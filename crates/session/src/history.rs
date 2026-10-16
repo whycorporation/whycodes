@@ -1,4 +1,4 @@
-//! Session undo/redo with optional git file restore (OpenCode parity).
+//! Session undo/redo with optional git file restore.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

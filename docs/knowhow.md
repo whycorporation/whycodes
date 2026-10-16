@@ -150,19 +150,19 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 **Root cause:** The worker id was set only by `SubagentRunner::with_file_claims`, which worktree mode skips, so every worker used the shared `worker` inbox. `SwarmHub::drain` removed the inbox key, so `all` (which targets known keys) skipped drained workers. Nothing drained `parent`; the parent is blocked on the `swarm` call anyway.
 
-**Fix:** `with_identity(worker-N, label)` on every worker. `drain` empties the inbox but keeps it registered. The swarm report gets a `### Messages to parent` section. A DM to an unknown id returns a `swarm_msg` error listing known ids (oh-my-pi refuses unknown recipients too).
+**Fix:** `with_identity(worker-N, label)` on every worker. `drain` empties the inbox but keeps it registered. The swarm report gets a `### Messages to parent` section. A DM to an unknown id returns a `swarm_msg` error listing known ids.
 
 **Prevention:** `execute_swarm_worktree_worker_mail_reaches_parent_under_its_own_id` and `broadcast_still_reaches_an_inbox_after_it_was_drained`. Identity and file claims are separate concerns; do not tie a worker's name to claims again.
 
 ---
 
-### 2026-10-12 — Wheel flick teleported the transcript (Grok scroll pacer)
+### 2026-10-12 — Wheel flick teleported the transcript (scroll pacer)
 
-**Symptom:** Mouse wheel / trackpad scrolling felt jumpy next to Grok. A trackpad flick moved hundreds of rows in one frame, and the speed of one notch depended on the terminal.
+**Symptom:** Mouse wheel / trackpad scrolling felt jumpy. A trackpad flick moved hundreds of rows in one frame, and the speed of one notch depended on the terminal.
 
 **Root cause:** `coalesce_chat_wheels` summed every wheel event in a drained batch at `viewport/3` (3–12) rows each and applied it in one `scroll_rows`. Terminals send 1 or 3 events per notch, and terminal events carry only a direction.
 
-**Fix:** `crate::wheel` (trimmed port of Grok Build `input/mouse.rs`). Events form a gesture (80 ms gap or direction flip ends it). One notch is 3 lines (events-per-notch: 1 on `WT_SESSION` / VS Code family, else 3). Trackpads are detected and accelerated by event rate. Each 16 ms flush moves at most half the viewport, and after input stops the backlog tapers within one cap. The loop calls `tick_wheel` every pass and `redraw_schedule` polls at 16 ms while `wheel_scrolling`.
+**Fix:** `crate::wheel` (gesture-based wheel normalization). Events form a gesture (80 ms gap or direction flip ends it). One notch is 3 lines (events-per-notch: 1 on `WT_SESSION` / VS Code family, else 3). Trackpads are detected and accelerated by event rate. Each 16 ms flush moves at most half the viewport, and after input stops the backlog tapers within one cap. The loop calls `tick_wheel` every pass and `redraw_schedule` polls at 16 ms while `wheel_scrolling`.
 
 **Prevention:** Do not apply a drained wheel batch as one jump again. `a_flood_is_paced_across_frames_not_dumped_at_once` and `tick_wheel_drains_a_flick_over_frames_and_stops_under_a_modal`. If one notch feels too slow or fast on a terminal, fix `events_per_notch`, not the line price.
 
@@ -424,7 +424,7 @@ is empty, and that the old files stay. Shipped in the 0.6.5 notes
 ### 2026-09-17 — Ctrl+C prints Session Summary then the process never exits
 
 **Symptom:** Interactive `whycodes` on Windows PowerShell: Ctrl+C restores the
-terminal and prints the Cline-style Session Summary, but the process stays
+terminal and prints the Session Summary, but the process stays
 alive. A second Ctrl+C does nothing. Task Manager is needed.
 
 **Root cause:** (1) Loop teardown aborted parked sessions' turns but left the
@@ -1649,7 +1649,7 @@ locks the Cellar/prefix check.
 ### 2026-08-28 — Ctrl+G is a sticky Tasks panel, not the sidebar
 
 **Symptom:** Ctrl+G opened the Agents sidebar (block borders, “No subagents”,
-a `Ctrl+G` hint) while Todos sat as a Grok header + progress track under the
+a `Ctrl+G` hint) while Todos sat as a header + progress track under the
 status bar. Hovering off the effort chip left it underlined. Opening a child
 transcript left the native prompt caret blinking through the overlay.
 
@@ -1908,7 +1908,7 @@ so there is no dead `unwrap_or_else` closure for llvm-cov to miss.
 when the path is constructed with a directory prefix. Prefer `unwrap_or`
 on a known fallback so there is no uncovered else brace.
 
-### 2026-08-20 — TUI has no default max-turns cap (Grok parity)
+### 2026-08-20 — TUI has no default max-turns cap
 
 **Symptom:** After ~19 minutes / 25 LLM steps a TUI turn died with
 `Agent error: Exceeded maximum turns (25)` even though the task was still
@@ -1917,8 +1917,8 @@ in progress.
 **JSONL / crash:** none (user-facing `Error::Agent`).
 
 **Root cause:** `whycodes run` defaulted `-t/--max-turns` to 25 and the TUI
-passed that into `Agent::run_turn`. Grok's `--max-turns` is **headless-only**;
-the interactive TUI is unlimited and ignores the flag.
+passed that into `Agent::run_turn`. `--max-turns` should be **headless-only**;
+the interactive TUI should be unlimited and ignore the flag.
 
 **Fix:** `max_turns: Option<usize>` (`None` = unlimited). Interactive TUI /
 `--plain` REPL drop `--max-turns` with a stderr warning. `generate` and
@@ -2000,7 +2000,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 **Prevention:** Never re-wrap a growing fence from scratch. Do not `clone()` frozen `Line`s on the stream frame. Do not concatenate the live answer into a throwaway `Vec` just to measure height.
 
-### 2026-08-19 — `/compact` is Grok full-replace, not a 150k no-op
+### 2026-08-19 — `/compact` is full-replace, not a 150k no-op
 
 **Symptom:** `/compact` printed `Compacted N → N` and left the chat unchanged unless the session was already over ~112k tokens.
 
@@ -2008,7 +2008,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 **Root cause:** Manual compact reused `Session::compact(compaction_threshold)` (drop-oldest only when over ¾ of 150k). TUI did not reload the view. LLM summary ran only on auto-compact after a drop.
 
-**Fix:** `/compact [context]` always full-replaces like grok-build: LLM structured summary (session model), keep last real user query + current-turn tail, prepend the continuation carrier, reload TUI from the session. Local stub when LLM is off or fails. Auto-compact uses the same path at `compaction_threshold`.
+**Fix:** `/compact [context]` always full-replaces: LLM structured summary (session model), keep last real user query + current-turn tail, prepend the continuation carrier, reload TUI from the session. Local stub when LLM is off or fails. Auto-compact uses the same path at `compaction_threshold`.
 
 **Prevention:** Do not gate manual `/compact` on the auto-compact token threshold. Do not skip `load_messages_from_session` after a compact that mutates `session.messages`.
 
@@ -2018,7 +2018,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 **JSONL / crash:** none.
 
-**Root cause:** The model carrier is a user message. TUI paints user prompts like Grok `UserPromptBlock` (3 lines + ellipsis). The long preamble filled the cap. Grok does not put that carrier in the scrollback — it paints a session event ("Compaction completed" / "Context compacted: 48.8k → 27.1k") and keeps the summary model-only.
+**Root cause:** The model carrier is a user message. TUI paints user prompts as a collapsed block (3 lines + ellipsis). The long preamble filled the cap. The carrier does not belong in the scrollback — paint a session event ("Compaction completed" / "Context compacted: 48.8k → 27.1k") and keeps the summary model-only.
 
 **Fix:** `chat_messages_from_session` maps compact carriers to a system card titled `Conversation compacted` with the summary body (preamble stripped). System callouts wrap so the sections stay readable.
 
@@ -2030,7 +2030,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 **JSONL / crash:** none.
 
-**Root cause:** `handle_slash` awaited `Agent::compact_session` on the event loop. That LLM complete can take tens of seconds (timeout 60s, retries ~90s). Grok runs compact as `CommandRunning` so the pager keeps pumping.
+**Root cause:** `handle_slash` awaited `Agent::compact_session` on the event loop. That LLM complete can take tens of seconds (timeout 60s, retries ~90s). Compact must run as a background command so the pager keeps pumping.
 
 **Fix:** `/compact` only queues `SessionRuntime.pending_compact`. The loop spawns it like a turn (`take_turn_owner` + `TurnOutcome::Compact`). Esc still force-stops.
 
@@ -2062,15 +2062,15 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ### 2026-08-19 — Keyboard Shortcuts popup is 70%/max 80, not 90%
 
-**Symptom:** whycodes dialogs were stretched to 90% of the terminal after copying the generic `ModalSizing::large()` numbers. They did not look like Grok's Ctrl+. cheatsheet.
+**Symptom:** whycodes dialogs were stretched to 90% of the terminal after copying the generic `ModalSizing::large()` numbers. They did not look like a compact cheatsheet.
 
 **JSONL / crash:** none.
 
-**Root cause:** Grok's keyboard shortcuts modal uses `shortcuts_help::modal_sizing`: `width_pct=0.70`, `max_width=80`, `min_width=44`, `v_margin=4`, `footer_lines=2`. Rows are `◆` + right-aligned detail with a selected-row wash — not `▸` + accent text. 90% is the import-claude / form size, not the cheatsheet.
+**Root cause:** The keyboard shortcuts modal sizing should be `width_pct=0.70`, `max_width=80`, `min_width=44`, `v_margin=4`, `footer_lines=2`. Rows are `◆` + right-aligned detail with a selected-row wash — not `▸` + accent text. 90% is the import-claude / form size, not the cheatsheet.
 
 **Fix:** `DialogSizing::popup()` matches those numbers. List/help rows share `paint_picker_row`. Help is titled "Keyboard Shortcuts" with `/ to search`.
 
-**Prevention:** Do not bump dialog `percent_x` to 90 to "match Grok". Use `popup_rect` / `DialogSizing::popup()`. Test: `popup_rect_matches_grok_shortcuts_sizing`.
+**Prevention:** Do not bump dialog `percent_x` to 90. Use `popup_rect` / `DialogSizing::popup()`. Test: `popup_rect_matches_shortcuts_sizing`.
 
 ---
 
@@ -2086,15 +2086,15 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ---
 
-### 2026-08-18 — Split/quarter pane: Grok popup formula + drop sidebar
+### 2026-08-18 — Split/quarter pane: popup formula + drop sidebar
 
 **Symptom:** A tmux/iTerm split (½ or ¼ of ~80 cols) left confirm/help as a thin % box and still reserved a 24-col sidebar, crushing the transcript.
 
-**Root cause:** Dialogs passed 50–70% into `centered_rect`. Grok uses `max(percent of outer, min).min(outer)` at ~90%. Sidebar gated on `width >= 36`, so a 40-col pane still paid for the rail.
+**Root cause:** Dialogs passed 50–70% into `centered_rect`. The right formula is `max(percent of outer, min).min(outer)` at ~90%. Sidebar gated on `width >= 36`, so a 40-col pane still paid for the rail.
 
-**Fix:** Shared `layout::popup_dim`. Callers use 90% (Grok). Compact inner pad under 48×14. Sidebar only when `width >= 72` *and* chat keeps 32 cols.
+**Fix:** Shared `layout::popup_dim`. Callers use 90%. Compact inner pad under 48×14. Sidebar only when `width >= 72` *and* chat keeps 32 cols.
 
-**Prevention:** `popup_dim_matches_grok_max_percent_then_clamp`, `split_pane_hides_sidebar_so_chat_keeps_the_width`.
+**Prevention:** `popup_dim_takes_max_percent_then_clamps`, `split_pane_hides_sidebar_so_chat_keeps_the_width`.
 
 ---
 
@@ -2110,33 +2110,33 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ---
 
-### 2026-08-17 — Competitor audit: draw recovery, resize coalesce, git timeout
+### 2026-08-17 — Robustness audit: draw recovery, resize coalesce, git timeout
 
-**Symptom / gap:** jcode keeps the TUI alive after a widget panic; Grok never `malloc_trim`s inside a frame; a wedged `git` or a resize flood can stall whycodes.
+**Symptom / gap:** A widget panic tore down the TUI; `malloc_trim` could run inside a frame; a wedged `git` or a resize flood could stall whycodes.
 
-**Fix:** `catch_unwind` around `render_inner` + fallback banner. Coalesce `Resize` to the last size in a batch. `git rev-parse` capped at 250 ms (child killed). Turn-done heap trim is `request_release_after_draw` (Grok), drained after `terminal.draw`.
+**Fix:** `catch_unwind` around `render_inner` + fallback banner. Coalesce `Resize` to the last size in a batch. `git rev-parse` capped at 250 ms (child killed). Turn-done heap trim is `request_release_after_draw`, drained after `terminal.draw`.
 
 **Prevention:** Recovered-frame paint test. Resize-coalesce keeps one event. Sleep+timeout test must finish ≪ 2s.
 
 ---
 
-### 2026-08-17 — jcode: toasts are not animation; deep idle + malloc_trim
+### 2026-08-17 — Toasts are not animation; deep idle + malloc_trim
 
-**Symptom:** A visible toast (or any static chrome) kept the loop at 40 ms full paints. jcode measured the same class of bug at ~180 frames per 3s notice and 0.22 CPU cores on decorative 60 fps.
+**Symptom:** A visible toast (or any static chrome) kept the loop at 40 ms full paints. The same class of bug costs ~180 frames per 3s notice and 0.22 CPU cores on decorative 60 fps.
 
 **Root cause:** `animate = agent_busy || !toasts.is_empty()`. Toasts are event-driven text; they already `mark_dirty` on push/prune.
 
-**Fix:** `redraw_schedule` — only spinner/stream/subagents animate. Idle 500 ms; 30s without a real key/click/paste → 5s deep idle. Mouse *move* does not reset the clock. Linux `malloc_trim(0)` after each turn and once per 60s idle (jcode `idle_heap_release`).
+**Fix:** `redraw_schedule` — only spinner/stream/subagents animate. Idle 500 ms; 30s without a real key/click/paste → 5s deep idle. Mouse *move* does not reset the clock. Linux `malloc_trim(0)` after each turn and once per 60s idle (`idle_heap_release`).
 
 **Prevention:** A visible toast must poll at idle, not animation cadence. Assert in `redraw_schedule` tests.
 
 ---
 
-### 2026-08-17 — Port Grok paint-window + markdown checkpoints + packed cells
+### 2026-08-17 — Paint-window + markdown checkpoints + packed cells
 
 **Symptom:** Long transcripts walked every message each frame. Streaming a reply re-parsed the whole bubble (O(N²)). Mouse-select allocated one `String` per cell.
 
-**Root cause:** Grok Build already solved these: `partition_point` on prefix-sum `virtual_y`, freeze markdown at `last_checkpoint`, pack the selection grid as UTF-8 + `u32` offsets.
+**Root cause:** Known fixes were missing: `partition_point` on prefix-sum `virtual_y`, freeze markdown at `last_checkpoint`, pack the selection grid as UTF-8 + `u32` offsets.
 
 **Fix:** `visible_message_range` (two `partition_point`s). `IncrementalMarkdown` on the live assistant bubble. `CellGrid` for `screen_cells`.
 
@@ -2168,7 +2168,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ---
 
-### 2026-08-17 — Code token colours come from Grok's tmTheme
+### 2026-08-17 — Code token colours come from an embedded tmTheme
 
 **Symptom:** Fenced Rust/JS looked like Tokyo Night even on the default dark UI. Grok Night uses a cooler grey/magenta palette (`#b2b2b2` fg, `#51597d` comments).
 
@@ -2178,9 +2178,9 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ---
 
-### 2026-08-17 — Fenced code matches Grok (band + line numbers)
+### 2026-08-17 — Fenced code as a band with line numbers
 
-**Symptom:** Assistant ` ``` ` blocks used `┌ rust` / `│` / `└` chrome. Next to Grok they looked like a broken box.
+**Symptom:** Assistant ` ``` ` blocks used `┌ rust` / `│` / `└` chrome. They looked like a broken box.
 
 **Fix:** Elevated `status_bar_bg` band, dim language chip, right-aligned line numbers, syntax highlight on the band. No box drawing. Diff fences keep add/remove wash on the same layout.
 
@@ -2188,9 +2188,9 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ---
 
-### 2026-08-17 — Thinking / Run left rail matches Grok status pulse
+### 2026-08-17 — Thinking / Run left rail as a status pulse
 
-**Symptom:** Thinking had a faint wave; Run had no left ┃. Grok paints a full-height accent whose color follows the block (purple thinking, green run, red error) and a 2-row hot band walks down the column while the work is live.
+**Symptom:** Thinking had a faint wave; Run had no left ┃. It should paint a full-height accent whose color follows the block (purple thinking, green run, red error) and a 2-row hot band walks down the column while the work is live.
 
 **Fix:** Shared `accent_rail_style`. Thinking header always has ┃. Execute header + body share a status-colored ┃ that pulses while `result` is `None`.
 
@@ -2204,17 +2204,17 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 **Root cause:** Tools always painted a 12-line preview. No `sticky_headers`. Thinking `┃` used a static dim color.
 
-**Fix:** Pin the last scrolled-past user ❯ band at the chat top. Wave the live thinking rail with `spinner_frame`. Collapsed tools are header-only (`›` to open). Shell bodies use Grok `first 2 + last 3`.
+**Fix:** Pin the last scrolled-past user ❯ band at the chat top. Wave the live thinking rail with `spinner_frame`. Collapsed tools are header-only (`›` to open). Shell bodies use `first 2 + last 3`.
 
 **Prevention:** Paint-test overflow sticky headers. Collapsed `tool_block` must be one line. Execute expand must hide the middle dump.
 
 ---
 
-### 2026-08-17 — Thinking / tool chrome must follow Grok pager defaults
+### 2026-08-17 — Thinking / tool chrome defaults
 
 **Symptom:** Reply clocks matched; thinking still said `Thinking · 1.4s` and tools used lowercase `read · path` / `(l expand)`.
 
-**Root cause:** Grok live thinking is `Thinking...` with the timer on the right. Finished is `Thought for Xs` + `›`. Tools use gerunds while open (`Reading`) and labels when done (`Read`), with `◆` and `›`.
+**Root cause:** Live thinking should be `Thinking...` with the timer on the right. Finished is `Thought for Xs` + `›`. Tools use gerunds while open (`Reading`) and labels when done (`Read`), with `◆` and `›`.
 
 **Fix:** Paint that header/tool chrome. Do not invent a mid-dot timer or `(l expand)`.
 
@@ -2222,11 +2222,11 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ---
 
-### 2026-08-17 — Agent replies must carry the same clock as Grok
+### 2026-08-17 — Agent replies must carry the same clock as user messages
 
-**Symptom:** User ❯ bands had `August 17, 14:32` on the right; the answer body did not. Grok settings copy is "clock time next to user messages and agent".
+**Symptom:** User ❯ bands had `August 17, 14:32` on the right; the answer body did not. The setting means "clock time next to user messages and agent".
 
-**Root cause:** `/timestamps` only stamped the user band and the `Worked for` footer. Agent markdown was unstamped. Tools also lacked Grok's `◆` bullet and folded thinking used `(e expand)` instead of `›`.
+**Root cause:** `/timestamps` only stamped the user band and the `Worked for` footer. Agent markdown was unstamped. Tools also lacked the `◆` bullet and folded thinking used `(e expand)` instead of `›`.
 
 **Fix:** Stamp the first answer line with `line_with_right`. Tool headers start with `◆ `. Folded thinking puts `›` on the right of the header.
 
@@ -2343,7 +2343,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ### 2026-08-06 — Question panel: bottom dock, navigate, copy
 
-**Symptom:** Questionnaire felt like a center modal, not Grok’s bottom line-by-line picker. No way to revisit a previous question in a multi-q set or copy the prompt/options.
+**Symptom:** Questionnaire felt like a center modal, not a bottom line-by-line picker. No way to revisit a previous question in a multi-q set or copy the prompt/options.
 
 **Fix:** Bottom-docked `dialog_frame_placed(Bottom)`; one selectable row per option (label + description) with mouse hit → index; `←/→`/`[/]`/`h`/`l` navigate questions (forward only when answered); `y`/`c` copies full questionnaire via clipboard; click single-select confirms (multi toggles). Run loop drains `pending_question_answers` like `question_dismissed`.
 
@@ -2351,11 +2351,11 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ---
 
-### 2026-08-06 — Interactive `question` tool (Grok-style questionnaire)
+### 2026-08-06 — Interactive `question` tool (questionnaire)
 
 **Symptom:** Agent needed clarification; TUI had no way to answer with options. Old `question` wrote to stderr and blocked on stdin (broken under alt-screen).
 
-**Fix:** Channel prompter (like permissions): `ChannelQuestionPrompter` → TUI modal with ↑/↓, Enter, Space multi-select, Other free-text, digit shortcuts. Schema supports Grok-style `questions[]` + `options[{label,description}]` + `multi_select`, plus legacy `question`/`choices`. Config: `[tools.question] timeout_enabled` / `timeout_secs` (default 30m). Core tool profile includes `question`.
+**Fix:** Channel prompter (like permissions): `ChannelQuestionPrompter` → TUI modal with ↑/↓, Enter, Space multi-select, Other free-text, digit shortcuts. Schema supports `questions[]` + `options[{label,description}]` + `multi_select`, plus legacy `question`/`choices`. Config: `[tools.question] timeout_enabled` / `timeout_secs` (default 30m). Core tool profile includes `question`.
 
 **Prevention:** Never read stdin from tools under TUI raw mode; use oneshot/channel and always complete the reply on Esc/`[✗]`/exit.
 
@@ -2377,7 +2377,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 **Symptom:** In build mode the model often edits when the user only asked a question, or skips planning on large design asks.
 
-**Root cause:** No product-level intent layer — only free-form model judgment. Competitors use hard modes (Cursor Ask/Plan/Agent, OpenCode Build/Plan) plus prompt rules, not a silent ML router.
+**Root cause:** No product-level intent layer — only free-form model judgment. Hard modes plus prompt rules work better than a silent ML router.
 
 **Fix:** Three layers: (1) primary agents `build` / `plan` / `ask` with tool denylists; (2) prompt protocol in `prompts/{build,plan,ask}.txt`; (3) zero-LLM heuristic (`crates/agent/src/intent.rs`) injects ephemeral `<whycodes_intent>` on the **request** only (not session history) so system prompt cache stays stable. Config: `session.intent_guidance = auto|off|always`.
 
@@ -2508,15 +2508,15 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
-### 2026-08-05 — Competitive latency pack (cache + parallel tools)
+### 2026-08-05 — Latency pack (cache + parallel tools)
 
-**What:** Match Claude Code / OpenCode / Codex / jcode latency patterns:
+**What:** Latency patterns:
 
 | Piece | Behavior |
 |-------|----------|
-| Anthropic cache (OpenCode auto) | last tool + system + **latest user message** (`llm/cache.rs`) |
+| Anthropic cache (auto) | last tool + system + **latest user message** (`llm/cache.rs`) |
 | Parallel tools | fan-out read-safe tools; shell/mutators serial |
-| Doom-loop | 3× same tool+args → refuse (OpenCode `doom_loop`) |
+| Doom-loop | 3× same tool+args → refuse (`doom_loop`) |
 | Core tools | default `session.tool_profile = "core"` (~12 tools); `"full"` for all |
 | Metrics | JSONL `turn.step` / `turn.done` (`ttft_ms`, `step_ms`, `tool_batch_ms`, cache tokens) |
 | Model routing | trivial chat → `model_fast` or haiku/mini sibling |
@@ -2588,9 +2588,9 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
-### 2026-08-05 — Grok-style chrome pack (HitArea, turn strip, status bar)
+### 2026-08-05 — Chrome pack (HitArea, turn strip, status bar)
 
-**What:** Ported portable Grok Build TUI patterns (no xAI product chrome):
+**What:** Portable TUI patterns:
 
 | Piece | Module |
 |-------|--------|
@@ -2608,7 +2608,7 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ### 2026-08-05 — Context meter hover never swaps (always tokens)
 
-**Symptom:** Bottom-right stays `1.2k / 200k`; hover does not show Grok’s bar+`%`.
+**Symptom:** Bottom-right stays `1.2k / 200k`; hover does not show the bar+`%`.
 
 **Root cause:** `render_footer` cleared `context_hit` then hit-tested that rect → always false during paint.
 
@@ -2677,9 +2677,8 @@ scripts locally before push. They run in seconds and are the whole
 **Context:** The TUI had a dead `ui/autocomplete.rs` (never wired, sync
 `read_dir` per keystroke) and three drifted hand-rolled walkers
 (`tools/file/paths.rs`, `memory/code_index.rs`, autocomplete). Researched
-Grok Build (`xai-grok-workspace/file_system/`: `ignore`-crate walk → streaming
-`nucleo` injection, interned FileIndex, fsnotify deltas) and jcode
-(`jcode-fuzzy` typo-tolerant matcher, agentgrep's `ignore`+`globset` walk).
+an `ignore`-crate walk → streaming `nucleo` injection, interned FileIndex,
+fsnotify deltas, a typo-tolerant matcher, and an `ignore`+`globset` walk.
 
 **What shipped:** `crates/index` — background parallel `ignore` walk
 (gitignore-aware, `require_git(false)`, symlink-confined, policy-pruned via
@@ -2690,8 +2689,8 @@ prompt (or Ctrl+Space) opens the picker; dirs drill down on Tab.
 
 **Pitfalls encoded in the design:**
 
-- nucleo **0.5.0 (crates.io) has no `snapshot.matches()`** — Grok pins a git
-  rev. Use `matched_items()` + per-item `pattern.indices(..)` for score and
+- nucleo **0.5.0 (crates.io) has no `snapshot.matches()`** — a git rev pin
+  would be needed. Use `matched_items()` + per-item `pattern.indices(..)` for score and
   highlight positions (cheap at picker sizes).
 - Injector pushes are thread-safe and stream during the walk; `restart()`
   is the only way to remove items.
@@ -2711,7 +2710,7 @@ prompt (or Ctrl+Space) opens the picker; dirs drill down on Tab.
 
 - `nucleo.tick(10)` per keystroke blocks 3–16 ms and *returns a stale/empty
   snapshot on timeout* → picker flashes "no matches" while typing. The fix is
-  Grok's daemon insight: `reparse + tick(0)` (never blocks), worker threads
+  `reparse + tick(0)` (never blocks), worker threads
   publish, the nucleo `notify` callback flips a shared `AtomicBool`, and the
   run loop adopts results via `poll_matches()` at the loop top.
 - Poll-cadence race: when the picker is awaiting results, the idle 500 ms
@@ -2724,7 +2723,7 @@ prompt (or Ctrl+Space) opens the picker; dirs drill down on Tab.
   (never blocks), settle 6–16 ms (~1 frame), whole-example RSS **~22 MB**
   (~0.6 KB/entry — nucleo stores Utf32 columns; the 200k-entry cap implies
   ~120 MB. If that ever bites, the escape hatch is a custom matcher over the
-  store, jcode-fuzzy style — nucleo is the RAM cost, not the store).
+  store — nucleo is the RAM cost, not the store).
 
 ### 2026-08-14 — Stream usage is a snapshot, not a delta
 
@@ -2949,7 +2948,7 @@ static-suffix route on the same path pattern is rejected. (axum 0.8 renamed `:id
 **Symptom:** `google-antigravity` browser sign-in succeeds, then fails with
 `Google Code Assist: This client is no longer supported for Gemini Code Assist`.
 
-**Cause:** Native Antigravity (and oh-my-pi's working client) request
+**Cause:** Native Antigravity (and other working clients) request
 `cclog` + `experimentsandconfigs` in addition to `cloud-platform` / userinfo,
 identify as `antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64;
 cl=963137146)` regardless of host OS, and poll `:onboardUser` LROs with GET.
@@ -2977,8 +2976,8 @@ Two silent-failure traps when onboarding a fresh Google token via
    ("not eligible for individuals"). Pick the user-defined-project tier first.
 2. **LRO result & project resolution.** The operation can take minutes;
    polling for ~10 s then reading `response.cloudaicompanionProject.id` fails
-   with "no project id". Two subtleties confirmed by diffing oh-my-pi's proven
-   implementation (`packages/ai/src/registry/oauth/google-antigravity.ts`):
+   with "no project id". Two subtleties confirmed against a proven
+   implementation:
    accounts whose `loadCodeAssist` response carries a `currentTier` are ALREADY
    onboarded — never call `onboardUser` for them; and the authoritative source
    of the project is a **fresh** `:loadCodeAssist` call after provisioning,
@@ -3176,13 +3175,13 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 
 **Date:** 2026-09-14 · **Area:** `crates/tui` chat / spinner / turn-status
 
-**Symptom:** Busy frames flash white, or the label after the spinner / thinking rail jumps one cell. Live `Thinking...` (three ASCII dots) also fails to match Grok Build.
+**Symptom:** Busy frames flash white, or the label after the spinner / thinking rail jumps one cell. Live `Thinking...` (three ASCII dots) also renders inconsistently.
 
 **JSONL / crash:** none.
 
 **Root cause:** Braille spinner glyphs are missing from CP437 ConHost (tofu / white flash). Spans with no background leak host-default `Color::Reset`. ASCII `Thinking...` is not U+2026.
 
-**Fix:** Grok `braille_spinner_frames` (`⠋⠙⠹⠸⠼⠴⠦⠧`) with `| / - \` fallback; pin every chat/spinner span onto `palette.bg`; live header is `Thinking…`.
+**Fix:** Braille spinner frames (`⠋⠙⠹⠸⠼⠴⠦⠧`) with `| / - \` fallback; pin every chat/spinner span onto `palette.bg`; live header is `Thinking…`.
 
 **Prevention:** Consecutive TestBackend paints of a live transcript must keep non-spinner cells identical and never `Color::Reset` on the canvas.
 

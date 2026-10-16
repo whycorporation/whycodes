@@ -205,7 +205,7 @@ fn a_streaming_fence_renders_without_a_bottom_edge() {
     assert!(out.iter().any(|l| l.contains("let x = 1;")), "{:?}", out);
     assert!(
         !out.iter().any(|l| l.contains('┌') || l.contains('└')),
-        "Grok code blocks have no box edges: {:?}",
+        "code blocks have no box edges: {:?}",
         out
     );
 }

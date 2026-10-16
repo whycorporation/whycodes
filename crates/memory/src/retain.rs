@@ -1,4 +1,4 @@
-//! Post-turn auto-retain (Grok Hindsight / Claude auto-memory spirit).
+//! Post-turn auto-retain.
 //!
 //! v1: high-precision **heuristic** extraction (no extra LLM call).
 //! Optional LLM extract can feed the same [`filter_and_normalize`] path.

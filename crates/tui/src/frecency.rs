@@ -3,7 +3,7 @@
 //! Pure fuzzy score ranks *patterns*; users think in *files they touch*.
 //! Every accepted picker selection is recorded (`count`, `last_used`) and
 //! future queries get a bounded additive boost, so habitual files surface
-//! first — the Claude Code picker feel — without drowning strong matches.
+//! first without drowning strong matches.
 //!
 //! Persisted per project at `<data_dir>/frecency/<key>.json` (machine-local
 //! state; deliberately NOT under the project's `.whycodes/`, which users

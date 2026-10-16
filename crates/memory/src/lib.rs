@@ -1,7 +1,7 @@
 //! Cross-session semantic / auto memory for whycodes.
 //!
-//! - **Auto memory**: human-editable `MEMORY.md` (Claude Code parity)
-//! - **Semantic facts**: SQLite + embeddings, auto-recall (jcode / Grok style)
+//! - **Auto memory**: human-editable `MEMORY.md`
+//! - **Semantic facts**: SQLite + embeddings, auto-recall
 //! - **Auto-retain**: post-turn heuristic extraction (Hindsight spirit)
 //! - **Code RAG**: lightweight chunk index over the repo
 //! - **Scopes**: user (data_dir) or project (`.whycodes/memory`, git-shareable)

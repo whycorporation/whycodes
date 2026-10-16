@@ -7,7 +7,7 @@
 //! `whycodes_format::highlight`. Fenced `mermaid` / `mmd` blocks render as
 //! Unicode box-drawing diagrams via `whycodes_format::mermaid`.
 //!
-//! Prose soft-wraps to `max_width` (Grok-style transcript; no hard overflow).
+//! Prose soft-wraps to `max_width` (transcript; no hard overflow).
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -273,7 +273,7 @@ fn wrap_prose(spans: Vec<Span<'static>>, max_width: Option<usize>) -> Vec<Line<'
     }
 }
 
-/// Grok fenced code: elevated `bg_light` band, dim language chip, numbered
+/// Fenced code: elevated `bg_light` band, dim language chip, numbered
 /// gutter. No box-drawing `┌│└` chrome.
 fn render_code(
     language: Option<&str>,

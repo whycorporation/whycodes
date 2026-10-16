@@ -189,7 +189,7 @@ pub fn parse_markdown(text: &str) -> Vec<Block> {
 
 /// Last byte offset of a *stable* prefix while `text` is still growing.
 ///
-/// Grok Build checkpoint: content before this offset cannot change if more
+/// Checkpoint: content before this offset cannot change if more
 /// bytes are appended, so a streaming renderer freezes those output lines
 /// and only re-parses the tail (O(N) instead of O(N²) over a turn).
 ///

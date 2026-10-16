@@ -1,5 +1,5 @@
 // ── ui/dialogs/alert.rs: Alert/info dialog ─────────────────────────────
-// Grok-style ModalWindow chrome + dismiss footer.
+// Modal window chrome + dismiss footer.
 
 use crate::theme::ThemePalette;
 use ratatui::{

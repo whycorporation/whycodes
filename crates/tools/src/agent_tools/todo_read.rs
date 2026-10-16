@@ -5,7 +5,7 @@ use crate::tool::{Tool, ToolContext};
 use whycodes_core::todo::load_todos;
 use whycodes_core::types::ToolResult;
 
-/// Read the current session todo list — OpenCode `todoread` tool.
+/// Read the current session todo list (`todoread` tool).
 pub struct TodoReadTool;
 
 impl Default for TodoReadTool {

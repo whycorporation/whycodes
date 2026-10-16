@@ -104,7 +104,7 @@ pub(crate) fn serve_config(project_dir: &std::path::Path) -> anyhow::Result<Conf
 }
 
 /// Loads config, MCP, plugins, and a workspace file index once so clients
-/// reconnect without cold startup cost (jcode/OpenCode daemon spirit).
+/// reconnect without cold startup cost.
 #[cfg(feature = "server")]
 pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()> {
     use std::collections::HashMap;

@@ -36,7 +36,7 @@ pub struct AppState {
     pub project_dir: PathBuf,
     /// In-process session map (warm across requests).
     pub sessions: Arc<std::sync::Mutex<HashMap<String, SessionHandle>>>,
-    /// Max agent steps per chat request (`None` = unlimited, Grok TUI parity).
+    /// Max agent steps per chat request (`None` = unlimited, as in the TUI).
     pub max_turns: Option<usize>,
     /// True when MCP / plugins were loaded at startup.
     pub mcp_warm: bool,
