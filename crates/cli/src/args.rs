@@ -272,6 +272,10 @@ pub enum Commands {
         /// Machine-readable dump (stable camelCase keys; never token material)
         #[arg(long)]
         json: bool,
+        /// Dump the built-in tool catalog (name, description, parameter
+        /// schema, profile, long guide) instead of environment info
+        #[arg(long)]
+        tools: bool,
     },
 
     /// Measure agent-induced code slop (ΔLOC / verbosity / erosion)

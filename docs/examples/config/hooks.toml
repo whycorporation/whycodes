@@ -1,0 +1,23 @@
+# Example hooks. Copy the tables you want into ~/.whycodes/config.toml or
+# <project>/.whycodes/config.toml. Every key is documented in ../../config.md.
+
+# Refuse a tool call when the hook exits non-zero (pre_tool only).
+[[hooks]]
+event = "pre_tool"
+match = "bash"
+command = "test -z \"$CI\" || echo 'no shell in CI' >&2 && test -z \"$CI\""
+block_on_failure = true
+timeout_secs = 10
+
+# Append the formatter's complaints to the tool result the model sees.
+[[hooks]]
+event = "post_tool"
+match = "edit"
+command = "cargo fmt --all --check 2>&1 | tail -20"
+feedback = true
+
+# Give the first turn of every session a short git summary.
+[[hooks]]
+event = "session_start"
+command = "git status --short | head -20"
+feedback = true

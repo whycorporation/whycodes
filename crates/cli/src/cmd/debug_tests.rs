@@ -92,3 +92,104 @@ fn debug_printer_helpers() {
     assert!(after_tui_upgrade_ok_line("1.0", "1.1").contains("1.1"));
     assert!(after_tui_upgrade_failed_line("offline").contains("offline"));
 }
+
+#[test]
+fn tool_catalog_is_sorted_and_marks_profiles_aliases_and_guides() {
+    let catalog = collect_tool_catalog();
+    let names: Vec<&str> = catalog.iter().map(|e| e.name.as_str()).collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        names, sorted,
+        "catalog must be sorted by name without duplicates"
+    );
+
+    let by_name = |n: &str| catalog.iter().find(|e| e.name == n).expect(n);
+    assert_eq!(by_name("bash").profile, "core");
+    assert_eq!(by_name("swarm").profile, "deferred");
+    assert_eq!(by_name("shell").alias_of.as_deref(), Some("bash"));
+    assert_eq!(by_name("todo").alias_of.as_deref(), Some("todowrite"));
+    assert!(by_name("bash").alias_of.is_none());
+
+    let guide = by_name("bash").guide.as_deref().expect("bash guide");
+    assert!(guide.starts_with("Execute a shell command"), "{guide}");
+    assert!(
+        !guide.contains("# agent://tools/"),
+        "heading must be stripped"
+    );
+    assert!(by_name("swarm").guide.is_none());
+
+    let v = serde_json::to_value(&catalog).unwrap();
+    let first = &v[0];
+    for key in [
+        "name",
+        "description",
+        "parameters",
+        "profile",
+        "aliasOf",
+        "guide",
+    ] {
+        assert!(first.get(key).is_some(), "missing {key}");
+    }
+    assert!(first.get("alias_of").is_none());
+}
+
+#[test]
+fn tool_guide_body_drops_heading_and_skips_unknown_tools() {
+    let ctx = whycodes_core::tool::ToolContext::new(".");
+    let body = tool_guide_body("read", &ctx).expect("read guide");
+    assert!(body.starts_with("Read a text file"), "{body}");
+    assert!(tool_guide_body("no_such_tool", &ctx).is_none());
+    assert!(
+        tool_guide_body("", &ctx).is_some(),
+        "index text has no heading"
+    );
+}
+
+#[test]
+fn tool_catalog_line_shows_profile_or_alias() {
+    let entry = ToolCatalogEntry {
+        name: "x".into(),
+        description: "first line\nsecond".into(),
+        parameters: serde_json::json!({}),
+        profile: "core",
+        alias_of: None,
+        guide: None,
+    };
+    let line = tool_catalog_line(&entry);
+    assert!(line.starts_with("x "), "{line}");
+    assert!(line.contains(" core "), "{line}");
+    assert!(line.ends_with("first line"), "{line}");
+
+    let alias = ToolCatalogEntry {
+        alias_of: Some("y".into()),
+        description: String::new(),
+        ..entry
+    };
+    assert!(tool_catalog_line(&alias).contains("alias of y"));
+}
+
+#[tokio::test]
+async fn cmd_debug_tools_prints_text_and_json() {
+    cmd_debug(false, true).await.unwrap();
+    cmd_debug(true, true).await.unwrap();
+}
+
+/// `docs/tools/catalog.json` is the source for the generated tool pages.
+/// Regenerate it after changing a tool's name, description, schema, profile
+/// or long guide: `whycodes debug --tools --json > docs/tools/catalog.json`
+/// then `python scripts/gen_tool_docs.py`.
+#[test]
+fn committed_tool_catalog_matches_binary() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/tools/catalog.json");
+    let committed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("docs/tools/catalog.json"))
+            .expect("catalog json");
+    let live = serde_json::to_value(collect_tool_catalog()).unwrap();
+    assert_eq!(
+        committed, live,
+        "docs/tools/catalog.json is stale — run `whycodes debug --tools --json > docs/tools/catalog.json && python scripts/gen_tool_docs.py`"
+    );
+}

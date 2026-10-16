@@ -570,7 +570,13 @@ fn cli_parser_accepts_unique_subcommand_prefixes() {
         })
     ));
     let dbg = Cli::try_parse_from(["whycodes", "deb"]).unwrap();
-    assert!(matches!(dbg.command, Some(Commands::Debug { json: false })));
+    assert!(matches!(
+        dbg.command,
+        Some(Commands::Debug {
+            json: false,
+            tools: false
+        })
+    ));
 }
 
 #[test]
@@ -1121,7 +1127,8 @@ fn runtime_choice_covers_remaining_commands() {
     }))));
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Stats))));
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Debug {
-        json: false
+        json: false,
+        tools: false
     }))));
     assert!(!command_needs_multi_thread(&cli(Some(
         Commands::Completions {
@@ -2149,8 +2156,8 @@ fn should_auto_update_reads_process_env() {
 #[tokio::test]
 async fn cmd_debug_and_stats_on_isolated_home() {
     let _home = IsolatedHome::new();
-    cmd_debug(false).await.unwrap();
-    cmd_debug(true).await.unwrap();
+    cmd_debug(false, false).await.unwrap();
+    cmd_debug(true, false).await.unwrap();
     cmd_stats().await.unwrap();
 }
 
@@ -2181,9 +2188,15 @@ async fn dispatch_offline_commands() {
     )
     .await
     .unwrap();
-    dispatch_command(&Commands::Debug { json: false }, &c)
-        .await
-        .unwrap();
+    dispatch_command(
+        &Commands::Debug {
+            json: false,
+            tools: false,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
     dispatch_command(&Commands::Stats, &c).await.unwrap();
     dispatch_command(
         &Commands::Config {
@@ -4074,8 +4087,8 @@ async fn cmd_debug_with_oauth_and_missing_bin() {
         )
         .unwrap();
     unsafe { std::env::set_var("OPENAI_API_KEY", "sk-set") };
-    cmd_debug(false).await.unwrap();
-    cmd_debug(true).await.unwrap();
+    cmd_debug(false, false).await.unwrap();
+    cmd_debug(true, false).await.unwrap();
     unsafe { std::env::remove_var("OPENAI_API_KEY") };
     assert!(crate::cmd::debug::cmd_version("definitely-not-a-bin-xyz").is_none());
 }
@@ -6529,8 +6542,8 @@ async fn cmd_debug_oauth_store_error_when_auth_json_is_dir() {
     let home = IsolatedHome::new();
     let auth = home.path().join("auth.json");
     std::fs::create_dir_all(&auth).unwrap();
-    cmd_debug(false).await.unwrap();
-    cmd_debug(true).await.unwrap();
+    cmd_debug(false, false).await.unwrap();
+    cmd_debug(true, false).await.unwrap();
 }
 
 #[tokio::test]
@@ -6696,7 +6709,13 @@ async fn cmd_provider_list_with_configured() {
 fn dispatch_process_runs_completions_and_stats() {
     dispatch_process(["completions", "bash"]).unwrap();
     let cli = parse_cli_args(["debug", "--json"]);
-    assert!(matches!(cli.command, Some(Commands::Debug { json: true })));
+    assert!(matches!(
+        cli.command,
+        Some(Commands::Debug {
+            json: true,
+            tools: false
+        })
+    ));
     run_parsed_cli(parse_cli_args(["stats"])).unwrap();
 }
 
@@ -6792,4 +6811,65 @@ fn serve_config_applies_the_project_layer() {
     .unwrap();
     let cfg = crate::cmd::serve_config(proj.path()).unwrap();
     assert_eq!(cfg.session.cache_warm_minutes, 7);
+}
+
+// ---------------------------------------------------------------------------
+// docs/examples: every shipped example loads through the runtime code paths.
+// ---------------------------------------------------------------------------
+
+fn examples_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples")
+}
+
+#[test]
+fn examples_plugin_is_discovered() {
+    let mut manager = whycodes_plugin::PluginManager::new();
+    assert_eq!(manager.discover_dir(&examples_dir().join("plugins")), 1);
+    let hello = manager.find("hello").expect("example plugin");
+    assert_eq!(hello.manifest.command.as_deref(), Some("./run.sh"));
+    assert!(hello.manifest.description.contains("example"));
+    assert_eq!(manager.shell_specs().len(), 1);
+}
+
+#[test]
+fn examples_hooks_toml_parses_every_table() {
+    let text = std::fs::read_to_string(examples_dir().join("config/hooks.toml")).unwrap();
+    let cfg: Config = toml::from_str(&text).expect("hooks.toml parses as config");
+    assert_eq!(cfg.hooks.len(), 3);
+    assert!(matches!(
+        cfg.hooks[0].event,
+        whycodes_config::HookEvent::PreTool
+    ));
+    assert!(cfg.hooks[0].block_on_failure);
+    assert_eq!(cfg.hooks[0].tool_match, "bash");
+    assert!(matches!(
+        cfg.hooks[1].event,
+        whycodes_config::HookEvent::PostTool
+    ));
+    assert!(cfg.hooks[1].feedback);
+    assert!(matches!(
+        cfg.hooks[2].event,
+        whycodes_config::HookEvent::SessionStart
+    ));
+}
+
+#[test]
+fn examples_command_markdown_loads_as_slash_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let commands = whycodes_core::project_dir(tmp.path()).join("commands");
+    std::fs::create_dir_all(&commands).unwrap();
+    std::fs::copy(
+        examples_dir().join("commands/test.md"),
+        commands.join("test.md"),
+    )
+    .unwrap();
+    let mut cfg = Config::default();
+    cfg.load_command_files(tmp.path());
+    let test = cfg.commands.get("test").expect("example command");
+    assert_eq!(
+        test.description.as_deref(),
+        Some("Run the test suite and summarize failures")
+    );
+    assert_eq!(test.agent.as_deref(), Some("build"));
+    assert!(test.template.contains("$ARGUMENTS"));
 }

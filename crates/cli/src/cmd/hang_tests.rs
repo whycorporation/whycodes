@@ -11,7 +11,8 @@ fn cli(command: Option<Commands>) -> Cli {
 #[test]
 fn short_commands_are_debug_config_session() {
     assert!(is_short_command(&cli(Some(Commands::Debug {
-        json: false
+        json: false,
+        tools: false
     }))));
     assert!(is_short_command(&cli(Some(Commands::Stats))));
     assert!(is_short_command(&cli(Some(Commands::Config {
