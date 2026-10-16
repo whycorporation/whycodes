@@ -91,6 +91,23 @@ fn jitter_and_retry_after_floor() {
     let classified = crate::error_class::classify_message("(429) retry-after: 2");
     let d = p.sleep_duration(1, &classified);
     assert!(d >= Duration::from_secs(2), "{d:?}");
+    // With jitter on, the floor still holds: jitter applies to the backoff,
+    // not to the provider's wait.
+    let jittered = RetryPolicy {
+        full_jitter: true,
+        ..p.clone()
+    };
+    for attempt in 1..=5 {
+        let d = jittered.sleep_duration(attempt, &classified);
+        assert!(d >= Duration::from_secs(2), "attempt {attempt}: {d:?}");
+        assert!(
+            d <= Duration::from_secs(2),
+            "backoff below the floor never raises it: {d:?}"
+        );
+    }
+    // Without Retry-After, jitter stays within the backoff.
+    let plain = crate::error_class::classify_message("(503) unavailable");
+    assert!(jittered.sleep_duration(3, &plain) <= Duration::from_millis(50));
     assert!(is_retryable(&whycodes_core::Error::llm(
         "API error (503): unavailable"
     )));

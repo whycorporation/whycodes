@@ -72,15 +72,18 @@ impl RetryPolicy {
         Duration::from_millis(capped.max(1))
     }
 
-    /// Apply full jitter and optional Retry-After floor.
+    /// Full jitter on the exponential backoff, then the Retry-After floor.
+    ///
+    /// Jitter runs first so a provider's `Retry-After` is a real minimum:
+    /// the sleep is in `[retry_after, max(jittered backoff, retry_after)]`,
+    /// never below what the provider asked for.
     pub fn sleep_duration(&self, failed_attempts: usize, classified: &ClassifiedError) -> Duration {
         let mut d = self.backoff_for_attempt(failed_attempts);
-        if let Some(ra) = classified.retry_after {
-            // Never sleep less than Retry-After when the provider asked us to wait.
-            d = d.max(ra).min(self.max_backoff.max(ra));
-        }
         if self.full_jitter {
             d = full_jitter(d);
+        }
+        if let Some(ra) = classified.retry_after {
+            d = d.max(ra).min(self.max_backoff.max(ra));
         }
         d
     }
