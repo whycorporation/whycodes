@@ -175,6 +175,9 @@ def main() -> int:
 
     report = {"turns": args.turns, "transcript_kib": round(size_kib), "binaries": {}}
     for binary in args.binary:
+        # The child chdirs into the project before exec, so a relative path
+        # (the documented `target/release/whycodes`) would not be found.
+        binary = os.path.abspath(binary)
         runs = [run_once(binary, transcript, args.settle, args.idle) for _ in range(args.runs)]
         errors = [r["error"] for r in runs if "error" in r]
         if errors:

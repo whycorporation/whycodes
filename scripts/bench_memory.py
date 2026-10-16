@@ -20,7 +20,7 @@ dependency should not break a pipeline that also runs the budgets.
 
 Usage:
     python scripts/bench_memory.py [--runs 5] [--sessions 1 10]
-                                   [--settle 1.5] [--binary path] [--json out.json]
+                                   [--settle 5] [--binary path] [--json out.json]
 """
 
 from __future__ import annotations
@@ -50,11 +50,6 @@ CASES = [
 # How often to sample RSS. Short-lived processes need a tight loop or the peak
 # is missed entirely; this is the trade-off between accuracy and burning CPU.
 SAMPLE_INTERVAL_S = 0.001
-
-# Keep the TUI drawing well past settle so PSS is sampled on a live session,
-# not during teardown. The harness kills the process group after the sample.
-SESSION_HOLD_MS = 60_000
-
 
 def default_binary() -> Path:
     name = "whycodes.exe" if IS_WINDOWS else "whycodes"
@@ -187,9 +182,13 @@ def session_env(home: Path, project: Path) -> dict[str, str]:
     env["ANTHROPIC_API_KEY"] = ""
     env["OPENAI_API_KEY"] = ""
     env["WHYCODES_AUTO_DENY"] = "1"
-    # Hold the session open long enough to sample; harness kills after.
-    env["WHYCODES_BENCH"] = str(home / "bench-hold.json")
-    env["WHYCODES_BENCH_DURATION_MS"] = str(SESSION_HOLD_MS)
+    env["WHYCODES_NO_AUTO_UPDATE"] = "1"
+    env["WHYCODES_SKIP_IMPORT"] = "1"
+    # No WHYCODES_BENCH: that makes `run` paint the first-frame splash and
+    # stop, so PSS would be the splash, not an idle TUI. The real TUI stays
+    # open until the harness kills the process group after the sample.
+    env.pop("WHYCODES_BENCH", None)
+    env.pop("WHYCODES_BENCH_DURATION_MS", None)
     # Avoid inheriting a weird cwd-dependent project path for config layering.
     env["PWD"] = str(project)
     return env
@@ -439,8 +438,9 @@ def main() -> int:
     parser.add_argument(
         "--settle",
         type=float,
-        default=1.5,
-        help="seconds to wait after spawning sessions before sampling PSS",
+        default=5.0,
+        help="seconds to wait after spawning sessions before sampling PSS "
+        "(the TUI paints first and loads the rest within a few seconds)",
     )
     parser.add_argument(
         "--skip-cli",
