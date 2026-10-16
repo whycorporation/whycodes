@@ -78,11 +78,17 @@ fn cursor_mdc_and_clinerules_dir_are_picked_up() {
     std::fs::create_dir(dir.path().join(".clinerules")).unwrap();
     std::fs::write(dir.path().join(".clinerules/style.md"), "no unwrap").unwrap();
     std::fs::write(dir.path().join(".cursorrules"), "cursor root").unwrap();
+    std::fs::create_dir_all(dir.path().join(".whycodes/rules")).unwrap();
+    std::fs::write(dir.path().join(".whycodes/rules/tests.md"), "test first").unwrap();
     let files = discover(dir.path());
     let labels: Vec<&str> = files.iter().map(|f| f.label.as_str()).collect();
     assert!(labels.iter().any(|l| l.contains("rust.mdc")), "{labels:?}");
     assert!(labels.iter().any(|l| l.contains("style.md")), "{labels:?}");
     assert!(labels.contains(&".cursorrules"), "{labels:?}");
+    assert!(labels.contains(&".whycodes/rules/tests.md"), "{labels:?}");
+    let whycodes = labels.iter().position(|l| l.ends_with("tests.md")).unwrap();
+    let cursor = labels.iter().position(|l| l.ends_with("rust.mdc")).unwrap();
+    assert!(whycodes < cursor, "{labels:?}");
 }
 
 #[test]
