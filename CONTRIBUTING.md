@@ -34,6 +34,7 @@ cargo clippy --workspace --all-targets --features whycodes-storage/bundled -- -D
 python scripts/affected_tests.py --execute   # only the tests the diff touches
 python scripts/check_panic_budget.py
 python scripts/check_swallowed_error_budget.py
+python scripts/check_memory_budget.py   # cache / buffer bounds may only shrink
 python scripts/check_dependency_boundaries.py
 python scripts/check_sdk_protocol.py   # Rust ↔ TypeScript protocol v1 tags
 python scripts/check_tracked_secrets.py

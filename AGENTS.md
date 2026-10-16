@@ -33,6 +33,7 @@ Whenever you edit Rust source, `Cargo.toml`, or anything that affects compilatio
    ```bash
    python scripts/check_panic_budget.py
    python scripts/check_swallowed_error_budget.py
+   python scripts/check_memory_budget.py
    python scripts/check_dependency_boundaries.py
    python scripts/check_tracked_secrets.py
    cargo fmt --all --check
