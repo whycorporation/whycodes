@@ -519,7 +519,18 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
 fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyEvent) -> bool {
     match action {
         Some(Action::Quit) => {
-            if app.mode != AppMode::Command && app.mode != AppMode::Dialog {
+            if app.mode != AppMode::Command
+                && app.mode != AppMode::Dialog
+                && !app.input_buffer.is_empty()
+            {
+                // A draft is cleared first, as while a turn runs; the next
+                // Ctrl+C asks to quit.
+                app.clear_prompt_draft();
+                app.toasts.push(
+                    crate::toast::ToastKind::Info,
+                    "Draft cleared — Ctrl+C again to quit",
+                );
+            } else if app.mode != AppMode::Command && app.mode != AppMode::Dialog {
                 app.confirm(
                     "Quit",
                     "Are you sure you want to quit whycodes?",

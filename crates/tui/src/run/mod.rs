@@ -3492,7 +3492,7 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                 rt.last_error = !cancelled;
                 with_view_scratch(&mut rt.view, |scratch| {
                     if cancelled {
-                        scratch.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
+                        scratch.add_message(ChatRole::System, "⏹ Generation cancelled.");
                     } else {
                         let display = whycodes_llm::format_turn_error(&whycodes_core::Error::llm(
                             error.clone(),
@@ -3738,7 +3738,7 @@ fn apply_turn_outcome(
                     elapsed_ms,
                     true,
                 );
-                app.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
+                app.add_message(ChatRole::System, "⏹ Generation cancelled.");
                 rt.persist("cancelled");
             } else {
                 let display =
