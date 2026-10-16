@@ -1051,6 +1051,10 @@ cache_read = 1.25   # optional
 Long tool notes live at `agent://tools/<name>` (`read agent://tools/bash`).
 The default tool schema keeps a one-line description.
 
+A command substitution is judged by what it runs, not by the command that
+receives its output: `echo $(rm -rf ~)` is `catastrophic`, and so is the
+same body inside backticks or nested substitutions.
+
 Limits: an unrecognised command is treated as `safe` (the alternative is
 prompting on every build). An obfuscated command can defeat a static
 parser, which is why the catastrophic tier checks paths. This layer is

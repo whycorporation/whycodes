@@ -310,6 +310,36 @@ fn find_closing_paren(chars: &[char], from: usize) -> Option<usize> {
     None
 }
 
+/// The bodies of `$(…)` and backtick substitutions in `input`, outermost
+/// first and in order; nested ones are found again when a body is assessed.
+/// Process substitutions (`<(…)`, `>(…)`, `=(…)`) are not listed: they are
+/// escalated as a whole elsewhere. An unclosed substitution yields nothing.
+pub fn substitution_bodies(input: &str) -> Vec<String> {
+    let chars: Vec<char> = input.chars().collect();
+    let mut bodies = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '$' if chars.get(i + 1) == Some(&'(') => match find_closing_paren(&chars, i + 2) {
+                Some(close) => {
+                    bodies.push(chars[i + 2..close].iter().collect());
+                    i = close + 1;
+                }
+                None => return bodies,
+            },
+            '`' => match chars[i + 1..].iter().position(|&c| c == '`') {
+                Some(len) => {
+                    bodies.push(chars[i + 1..i + 1 + len].iter().collect());
+                    i += len + 2;
+                }
+                None => return bodies,
+            },
+            _ => i += 1,
+        }
+    }
+    bodies
+}
+
 fn contains_substitution(s: &str) -> bool {
     s.contains("$(") || s.contains('`') || s.contains("<(") || s.contains(">(") || s.contains("=(")
 }
@@ -547,5 +577,23 @@ mod tests {
             words("echo hi >| out"),
             vec![vec!["echo", "hi", ">|", "out"]]
         );
+    }
+
+    #[test]
+    fn lists_substitution_bodies_outermost_first() {
+        assert_eq!(
+            substitution_bodies("echo $(rm -rf ~) and `cat list` done"),
+            ["rm -rf ~", "cat list"]
+        );
+        assert_eq!(
+            substitution_bodies("echo $(echo $(cat a))"),
+            ["echo $(cat a)"],
+            "the nested one is found when the body is assessed"
+        );
+        assert!(substitution_bodies("echo plain").is_empty());
+        assert!(substitution_bodies("echo $(unclosed").is_empty());
+        assert!(substitution_bodies("echo `unclosed").is_empty());
+        assert_eq!(substitution_bodies("$(a) `b`"), ["a", "b"]);
+        assert!(substitution_bodies("diff <(ls a) >(ls b)").is_empty());
     }
 }
