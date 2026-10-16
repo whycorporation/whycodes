@@ -667,6 +667,11 @@ pub struct ProviderDialogState {
     pub selected: usize,
     /// Provider names loaded from config.
     pub providers: Vec<String>,
+    /// Local servers found on loopback after the dialog opened; listed
+    /// after `providers`, before "Add Custom".
+    pub local_servers: Vec<whycodes_llm::LocalServer>,
+    /// True while the loopback probe spawned on open is still running.
+    pub discovering: bool,
     // ── Add-custom form fields ──
     pub form_name: String,
     pub form_api_key: String,
@@ -693,6 +698,8 @@ impl Default for ProviderDialogState {
             mode: ProviderDialogMode::Select,
             selected: 0,
             providers: vec![],
+            local_servers: Vec::new(),
+            discovering: false,
             form_name: String::new(),
             form_api_key: String::new(),
             form_base_url: String::new(),
@@ -1593,6 +1600,11 @@ pub struct TuiApp {
     pub(crate) openrouter_key_prompted: bool,
     /// Confirmed OpenRouter key waiting for the run loop to persist + `/connect`.
     pub(crate) pending_openrouter_key: Option<String>,
+    /// Provider dialog opened: the run loop probes loopback once (never at startup).
+    pub(crate) pending_local_discovery: bool,
+    /// Discovered local server picked in the provider dialog; the run loop
+    /// saves it as a provider and switches to it.
+    pub(crate) pending_local_server: Option<whycodes_llm::LocalServer>,
 
     /// Primary agent names for Ctrl+T cycling (build/plan).
     pub(crate) primary_agents: Vec<String>,
@@ -2341,6 +2353,8 @@ impl TuiApp {
             openrouter_key_input: String::new(),
             openrouter_key_prompted: false,
             pending_openrouter_key: None,
+            pending_local_discovery: false,
+            pending_local_server: None,
             primary_agents: vec!["build".into(), "plan".into(), "ask".into()],
             agent_cycle_idx: 0,
             provider_name: String::new(),
