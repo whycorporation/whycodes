@@ -76,6 +76,9 @@ impl Agent {
         user_context: Option<&str>,
     ) -> whycodes_session::CompactOutcome {
         session.truncate_large_tool_results();
+        session.spill_old_tool_results(&mut super::spill::artifact_store(
+            session.project_path.clone(),
+        ));
         session.prune_old_tool_results();
         if session.messages.is_empty() {
             return whycodes_session::CompactOutcome::default();

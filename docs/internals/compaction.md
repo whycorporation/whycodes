@@ -28,10 +28,22 @@ triggers call the same `Agent::compact_session`
 
 ```
 truncate_large_tool_results   every tool body  <= 32_768 chars   (TOOL_RESULT_MAX_CHARS)
+spill_old_tool_results        all but last 4 tool msgs > 2_048 chars: full body written to
+                              .whycodes/scratch/artifacts/<tool_call_id>.txt once; the
+                              message keeps 400 chars + "[N more chars; full output saved:
+                              read <path>]"                        (SPILL_HEAD_CHARS, SPILL_MARK)
 prune_old_tool_results        all but last 4 tool msgs <= 2_048  (TOOL_RESULT_PRUNE_CHARS)
 shake_old_tool_results        all but last 4 tool msgs <= 512    (TOOL_RESULT_SHAKE_CHARS)
                               only when tokens > 3/4 * compaction_threshold
 ```
+
+The spill runs before prune and shake, so a long old output is not cut in
+place and lost: the model can `read` the artifact instead of re-running the
+tool. The store lives in the agent (`crates/agent/src/agent/spill.rs`); the
+session only receives a `store(id, body) -> Option<pointer>` callback and
+keeps the body when the store declines (unwritable scratch dir). A spilled
+body is under the shake cap and carries `SPILL_MARK`, so later passes leave
+it alone.
 
 `turn.rs:212-221`; constants and bodies in `crates/session/src/session.rs:15-25`,
 `1048`, `1109-1158`, `1160-1208`. A cut body ends with `\n[N chars truncated]`

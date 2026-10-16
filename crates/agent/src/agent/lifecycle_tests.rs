@@ -444,3 +444,41 @@ async fn secret_placeholders_are_restored_before_the_tool_runs() {
     let literal = std::fs::read_to_string(dir2.path().join("config.env")).unwrap();
     assert!(literal.contains("$$SECRET:"), "{literal}");
 }
+
+#[tokio::test]
+async fn old_tool_outputs_are_spilled_to_scratch_before_the_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = agent_with(Vec::new(), vec![ScriptedStep::Text("summarized".into())]);
+    let mut session = Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message("look at the logs");
+    for i in 0..6 {
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
+            tool_call_id: format!("call_{i}"),
+            content: format!("log {i}\n{}", "line\n".repeat(1_000)),
+            is_error: false,
+        }]);
+    }
+    session.add_user_message("what do they say?");
+    agent
+        .run_turn(&mut session, "script", MODEL, "k", Some(2))
+        .await
+        .unwrap();
+    let artifact = dir.path().join(".whycodes/scratch/artifacts/call_0.txt");
+    let saved = std::fs::read_to_string(&artifact).unwrap();
+    assert!(
+        saved.starts_with("log 0\n") && saved.len() > 5_000,
+        "{}",
+        saved.len()
+    );
+    let spilled = session.messages[1].content.as_text().unwrap();
+    assert!(
+        spilled.contains("full output saved: .whycodes/scratch/artifacts/call_0.txt"),
+        "{spilled}"
+    );
+    assert!(
+        !dir.path()
+            .join(".whycodes/scratch/artifacts/call_5.txt")
+            .exists(),
+        "recent results stay inline"
+    );
+}

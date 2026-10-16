@@ -20,6 +20,12 @@ pub const TOOL_RESULT_MAX_CHARS: usize = 32_768;
 pub const TOOL_RESULT_PRUNE_CHARS: usize = 2_048;
 /// Harder shake when the session is still over ~¾ of the compact threshold.
 pub const TOOL_RESULT_SHAKE_CHARS: usize = 512;
+/// What stays in the transcript when an old tool body is spilled to disk:
+/// this many leading chars, then a pointer line. Under the shake cap, so
+/// neither prune nor shake cuts the pointer away.
+pub const SPILL_HEAD_CHARS: usize = 400;
+/// Marks a spilled body; a body that carries it is not spilled again.
+pub const SPILL_MARK: &str = "full output saved: ";
 
 /// How many recent tool-role messages keep the large cap when pruning.
 const PRUNE_KEEP_RECENT_TOOLS: usize = 4;
@@ -182,6 +188,24 @@ fn split_whycodes_image_payload(content: &str) -> Option<(String, String, String
         preface
     };
     Some((media.to_string(), b64.to_string(), preface))
+}
+
+/// The transcript stand-in for a spilled body, or `None` when the body is
+/// short, already spilled, or `store` declined it.
+fn spill_body(
+    text: &str,
+    id: &str,
+    store: &mut dyn FnMut(&str, &str) -> Option<String>,
+) -> Option<String> {
+    if text.chars().count() <= TOOL_RESULT_PRUNE_CHARS || text.contains(SPILL_MARK) {
+        return None;
+    }
+    let pointer = store(id, text)?;
+    let head: String = text.chars().take(SPILL_HEAD_CHARS).collect();
+    let omitted = text.chars().count() - head.chars().count();
+    Some(format!(
+        "{head}\n[{omitted} more chars; {SPILL_MARK}{pointer}]"
+    ))
 }
 
 /// Cap a tool result string; no-op when already under the limit.
@@ -1194,6 +1218,67 @@ impl Session {
                             if text.len() != before {
                                 n += 1;
                             }
+                        }
+                    }
+                }
+            }
+        }
+        if n > 0 {
+            self.rebuild_token_cache();
+            self.touch();
+        }
+        n
+    }
+
+    /// Move old tool bodies longer than [`TOOL_RESULT_PRUNE_CHARS`] out of
+    /// the transcript through `store(id, body) -> Some(pointer)`: the message
+    /// keeps the first [`SPILL_HEAD_CHARS`] chars plus a pointer line, so the
+    /// model can `read` the full output instead of re-running the tool. The
+    /// last [`PRUNE_KEEP_RECENT_TOOLS`] tool messages, short bodies, bodies
+    /// already spilled and bodies `store` declines are left alone. Returns
+    /// how many bodies were spilled.
+    pub fn spill_old_tool_results(
+        &mut self,
+        store: &mut dyn FnMut(&str, &str) -> Option<String>,
+    ) -> usize {
+        let tool_indices: Vec<usize> = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == Role::Tool)
+            .map(|(i, _)| i)
+            .collect();
+        if tool_indices.len() <= PRUNE_KEEP_RECENT_TOOLS {
+            return 0;
+        }
+        let keep_from = tool_indices.len() - PRUNE_KEEP_RECENT_TOOLS;
+        let mut n = 0;
+        for &i in &tool_indices[..keep_from] {
+            let fallback_id = self.messages[i]
+                .tool_call_id
+                .clone()
+                .unwrap_or_else(|| format!("msg-{i}"));
+            match &mut self.messages[i].content {
+                MessageContent::Text(t) => {
+                    if let Some(spilled) = spill_body(t, &fallback_id, store) {
+                        *t = spilled;
+                        n += 1;
+                    }
+                }
+                MessageContent::Blocks(blocks) => {
+                    for block in blocks.iter_mut() {
+                        let (text, id) = match block {
+                            ContentBlock::ToolResult {
+                                content,
+                                tool_use_id,
+                                ..
+                            } => (content, tool_use_id.as_str()),
+                            ContentBlock::Text { text } => (text, fallback_id.as_str()),
+                            _ => continue,
+                        };
+                        if let Some(spilled) = spill_body(text, id, store) {
+                            *text = spilled;
+                            n += 1;
                         }
                     }
                 }
@@ -3675,5 +3760,111 @@ mod tests {
             .join("shares")
             .join(format!("{}.md", session.id));
         assert!(md.exists());
+    }
+
+    #[test]
+    fn spill_old_tool_results_keeps_head_and_pointer() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("start");
+        for i in 0..6 {
+            session.add_tool_results(vec![whycodes_core::types::ToolResult {
+                tool_call_id: format!("t{i}"),
+                content: format!("{i}{}", "z".repeat(5_000)),
+                is_error: false,
+            }]);
+        }
+        // A block-shaped tool message: a result block and a plain text block.
+        session.messages.insert(
+            1,
+            Message {
+                role: Role::Tool,
+                content: MessageContent::Blocks(vec![
+                    ContentBlock::ToolResult {
+                        tool_use_id: "blk".into(),
+                        content: "b".repeat(3_000),
+                        is_error: Some(false),
+                    },
+                    ContentBlock::Text {
+                        text: "x".repeat(3_000),
+                    },
+                    ContentBlock::Image {
+                        source: whycodes_core::types::ImageSource::Base64 {
+                            media_type: "image/png".into(),
+                            data: "AAAA".into(),
+                        },
+                    },
+                ]),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            },
+        );
+        let before_tokens = session.token_count_cached();
+        let mut stored: Vec<(String, usize)> = Vec::new();
+        let mut store = |id: &str, body: &str| {
+            stored.push((id.to_string(), body.chars().count()));
+            Some(format!(".whycodes/scratch/artifacts/{id}.txt"))
+        };
+        let spilled = session.spill_old_tool_results(&mut store);
+        // Seven tool messages; the last four (t2..t5) stay as they are.
+        assert_eq!(spilled, 4, "{stored:?}");
+        assert_eq!(
+            stored.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            ["blk", "msg-1", "t0", "t1"]
+        );
+        assert_eq!(stored[2].1, 5_001, "the full body reaches the store");
+        let first = session.messages[2].content.as_text().unwrap();
+        assert!(first.starts_with("0zzz"), "{first}");
+        assert!(
+            first.contains(
+                "[4601 more chars; full output saved: .whycodes/scratch/artifacts/t0.txt]"
+            ),
+            "{first}"
+        );
+        assert!(first.chars().count() < TOOL_RESULT_SHAKE_CHARS);
+        // The recent four are untouched.
+        let last = session.messages.last().unwrap().content.as_text().unwrap();
+        assert_eq!(last.chars().count(), 5_001);
+        assert!(
+            session.token_count_cached() < before_tokens,
+            "token cache rebuilt"
+        );
+
+        // Spilled bodies are not spilled again; short ones never are.
+        let mut again = |_: &str, _: &str| Some("again".to_string());
+        assert_eq!(session.spill_old_tool_results(&mut again), 0);
+        assert_eq!(
+            session.prune_old_tool_results(),
+            0,
+            "spilled bodies are under the prune cap"
+        );
+        assert_eq!(
+            session.shake_old_tool_results(),
+            0,
+            "and under the shake cap"
+        );
+
+        // A store that declines leaves the body as it was.
+        let mut fresh = Session::new(test_project_path(), test_system_prompt());
+        for i in 0..5 {
+            fresh.add_tool_results(vec![whycodes_core::types::ToolResult {
+                tool_call_id: format!("t{i}"),
+                content: "q".repeat(3_000),
+                is_error: false,
+            }]);
+        }
+        let mut decline = |_: &str, _: &str| None;
+        assert_eq!(fresh.spill_old_tool_results(&mut decline), 0);
+        assert_eq!(fresh.messages[0].content.as_text().unwrap().len(), 3_000);
+
+        // Few tool messages: nothing is old enough.
+        let mut small = Session::new(test_project_path(), test_system_prompt());
+        small.add_tool_results(vec![whycodes_core::types::ToolResult {
+            tool_call_id: "a".into(),
+            content: "w".repeat(3_000),
+            is_error: false,
+        }]);
+        let mut never = |_: &str, _: &str| Some("never".to_string());
+        assert_eq!(small.spill_old_tool_results(&mut never), 0);
     }
 }

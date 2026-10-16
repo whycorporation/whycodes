@@ -214,6 +214,12 @@ impl Agent {
             // Full-replace compact when over the configured token threshold —
             // and only while the circuit breaker has not tripped.
             let _truncated = session.truncate_large_tool_results();
+            let spilled = session.spill_old_tool_results(&mut super::spill::artifact_store(
+                session.project_path.clone(),
+            ));
+            if spilled > 0 {
+                tracing::debug!(spilled, "spilled old tool results to scratch artifacts");
+            }
             let _pruned = session.prune_old_tool_results();
             if self.compaction_threshold > 0
                 && session.token_count_cached() > self.compaction_threshold.saturating_mul(3) / 4
