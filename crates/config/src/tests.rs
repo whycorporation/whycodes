@@ -2927,3 +2927,24 @@ fn merge_with_carries_fallback_models_prompt_suggestions_edit_diagnostics_and_pr
     assert_eq!(again.lsp.edit_diagnostics_ms, Some(250));
     assert_eq!(again.pricing.len(), 1);
 }
+
+#[test]
+fn hook_event_names_round_trip_through_toml() {
+    let all = [
+        (HookEvent::PreTool, "pre_tool", true),
+        (HookEvent::PreToolTransform, "pre_tool_transform", false),
+        (HookEvent::PostTool, "post_tool", false),
+        (HookEvent::SessionStart, "session_start", false),
+        (HookEvent::UserPromptSubmit, "user_prompt_submit", true),
+        (HookEvent::Stop, "stop", false),
+        (HookEvent::PreCompact, "pre_compact", false),
+        (HookEvent::SubagentStop, "subagent_stop", false),
+    ];
+    for (event, name, blocks) in all {
+        assert_eq!(event.as_str(), name);
+        assert_eq!(event.can_block(), blocks, "{name}");
+        let text = format!("[[hooks]]\nevent = \"{name}\"\ncommand = \"true\"\n");
+        let cfg: Config = toml::from_str(&text).unwrap();
+        assert_eq!(cfg.hooks[0].event, event, "{name}");
+    }
+}

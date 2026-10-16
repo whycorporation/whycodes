@@ -317,6 +317,9 @@ pub enum HookEvent {
     /// Before the tool executes. Non-zero exit can block when `block_on_failure`.
     #[default]
     PreTool,
+    /// Before every gate: a successful hook whose stdout is a JSON object
+    /// replaces the tool input. Failures keep the input (fail open).
+    PreToolTransform,
     /// After the tool finishes. Failures are logged only.
     PostTool,
     /// Once per session in this process (new or resumed), before its first turn.
@@ -336,6 +339,7 @@ impl HookEvent {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::PreTool => "pre_tool",
+            Self::PreToolTransform => "pre_tool_transform",
             Self::PostTool => "post_tool",
             Self::SessionStart => "session_start",
             Self::UserPromptSubmit => "user_prompt_submit",
@@ -370,8 +374,8 @@ impl HookEvent {
 /// variables (`WHYCODES_PROMPT`, `WHYCODES_RESPONSE`, `WHYCODES_SUBAGENT_*`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookConfig {
-    /// `pre_tool`, `post_tool`, `session_start`, `user_prompt_submit`, `stop`,
-    /// `pre_compact`, or `subagent_stop`.
+    /// `pre_tool`, `pre_tool_transform`, `post_tool`, `session_start`,
+    /// `user_prompt_submit`, `stop`, `pre_compact`, or `subagent_stop`.
     #[serde(default)]
     pub event: HookEvent,
 

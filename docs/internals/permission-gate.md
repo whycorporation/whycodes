@@ -26,7 +26,13 @@ user already approved this call with the command or path in hand, so later
 0. **Before the gate.** Tools whose `action_for` is `Deny` are left out of
    the schema sent to the model (`ToolExecutor::get_definitions*`; exact
    filtering not verified). A matching speculative `read`
-   (`take_speculative_read`) is returned **without** entering this function.
+   (`take_speculative_read`) is returned **without** entering this function;
+   speculation is off for `read` when any `pre_tool_transform`, `pre_tool`
+   or `post_tool` hook matches it. The first thing inside the function is
+   `transform_tool_call`: `pre_tool_transform` hooks
+   (`whycodes_plugin::hooks::run_transform_hooks`) may replace the arguments
+   with the JSON object they print, and every later step judges the
+   rewritten call. Workers do the same before their headless gate.
 1. **`question` short-circuit.** In `ApprovalMode::Auto` with open session
    todos or running background jobs the call is refused
    (`refuse_question_open_work`). Otherwise `should_prompt_questions` picks

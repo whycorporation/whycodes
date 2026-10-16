@@ -9,6 +9,51 @@ use whycodes_config::{HookConfig, HookEvent};
 /// Truncate long tool output before stuffing it into an env var.
 const OUTPUT_ENV_MAX: usize = 8_192;
 
+/// Set to `1` in every hook's environment. A hook that runs `whycodes`
+/// itself therefore gets a child that skips its own hooks instead of
+/// recursing; set it yourself to run without hooks.
+pub const HOOKS_DISABLED_ENV: &str = "WHYCODES_HOOKS_DISABLED";
+
+/// Newline-separated paths named by the tool input (`path`, `file_path`,
+/// `old_path`, `new_path`, `paths[]`, `files[]`), for tool hooks.
+pub const TOUCHED_PATHS_ENV: &str = "WHYCODES_HOOK_TOUCHED_PATHS";
+
+fn hooks_disabled() -> bool {
+    disabled_by(std::env::var_os(HOOKS_DISABLED_ENV).as_deref())
+}
+
+/// `WHYCODES_HOOKS_DISABLED` disables hooks unless empty or `0`.
+fn disabled_by(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Paths a tool call names in its input, in argument order, deduplicated.
+pub fn touched_paths(tool_input: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(tool_input) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |s: &str| {
+        let s = s.trim();
+        if !s.is_empty() && !out.iter().any(|seen| seen == s) {
+            out.push(s.to_string());
+        }
+    };
+    for key in ["path", "file_path", "old_path", "new_path"] {
+        if let Some(s) = value.get(key).and_then(|v| v.as_str()) {
+            push(s);
+        }
+    }
+    for key in ["paths", "files"] {
+        if let Some(items) = value.get(key).and_then(|v| v.as_array()) {
+            for s in items.iter().filter_map(|v| v.as_str()) {
+                push(s);
+            }
+        }
+    }
+    out
+}
+
 /// Context passed into a hook invocation.
 #[derive(Debug, Clone)]
 pub struct HookContext {
@@ -173,7 +218,10 @@ pub fn matching_hooks<'a>(
 ) -> Vec<&'a HookConfig> {
     let uses_match = matches!(
         event,
-        HookEvent::PreTool | HookEvent::PostTool | HookEvent::SubagentStop
+        HookEvent::PreTool
+            | HookEvent::PreToolTransform
+            | HookEvent::PostTool
+            | HookEvent::SubagentStop
     );
     hooks
         .iter()
@@ -188,8 +236,11 @@ pub async fn run_hook(hook: &HookConfig, ctx: &HookContext) -> HookRunResult {
     let mut cmd = {
         #[cfg(windows)]
         {
+            // `raw_arg`: cmd does not understand the `\"` escaping that
+            // `arg` applies, so a command with quotes (JSON for a
+            // transform hook, a quoted log message) must go through verbatim.
             let mut c = tokio::process::Command::new("cmd");
-            c.arg("/C").arg(&hook.command);
+            c.arg("/C").raw_arg(&hook.command);
             c
         }
         #[cfg(not(windows))]
@@ -207,12 +258,20 @@ pub async fn run_hook(hook: &HookConfig, ctx: &HookContext) -> HookRunResult {
         .kill_on_drop(true)
         .env("WHYCODES_HOOK_EVENT", event_env(ctx.event))
         .env("WHYCODES_WORKING_DIR", &ctx.working_dir)
+        .env(HOOKS_DISABLED_ENV, "1")
         .envs(ctx.extra_env.iter().map(|(k, v)| (*k, v.as_str())));
 
-    if matches!(ctx.event, HookEvent::PreTool | HookEvent::PostTool) {
+    if matches!(
+        ctx.event,
+        HookEvent::PreTool | HookEvent::PreToolTransform | HookEvent::PostTool
+    ) {
         cmd.env("WHYCODES_TOOL_NAME", &ctx.tool_name)
             .env("WHYCODES_TOOL_ID", &ctx.tool_id)
             .env("WHYCODES_TOOL_INPUT", &ctx.tool_input);
+        let touched = touched_paths(&ctx.tool_input);
+        if !touched.is_empty() {
+            cmd.env(TOUCHED_PATHS_ENV, touched.join("\n"));
+        }
     }
 
     if let Some(ref sid) = ctx.session_id {
@@ -290,6 +349,13 @@ pub fn truncate_output(s: &str) -> String {
 /// `post_tool` / `session_start` / `user_prompt_submit`. Other failures are
 /// logged only.
 pub async fn run_hooks(hooks: &[HookConfig], ctx: &HookContext) -> HookOutcome {
+    run_hooks_unless(hooks_disabled(), hooks, ctx).await
+}
+
+async fn run_hooks_unless(disabled: bool, hooks: &[HookConfig], ctx: &HookContext) -> HookOutcome {
+    if disabled {
+        return HookOutcome::default();
+    }
     let label = event_env(ctx.event);
     let blockable = ctx.event.can_block();
     let speaks = matches!(
@@ -319,6 +385,55 @@ pub async fn run_hooks(hooks: &[HookConfig], ctx: &HookContext) -> HookOutcome {
         tracing::warn!(event = label, subject = %ctx.tool_name, %detail, "hook failed (non-blocking)");
     }
     outcome
+}
+
+/// Run `pre_tool_transform` hooks for a tool call. A successful hook whose
+/// stdout is a JSON object replaces the tool input, and later hooks see the
+/// rewritten input. Failures, empty output and non-object output keep the
+/// input (fail open). Returns the final input when any hook rewrote it.
+pub async fn run_transform_hooks(
+    hooks: &[HookConfig],
+    ctx: &HookContext,
+) -> Option<serde_json::Value> {
+    run_transform_hooks_unless(hooks_disabled(), hooks, ctx).await
+}
+
+async fn run_transform_hooks_unless(
+    disabled: bool,
+    hooks: &[HookConfig],
+    ctx: &HookContext,
+) -> Option<serde_json::Value> {
+    if disabled {
+        return None;
+    }
+    let mut current = ctx.clone();
+    current.event = HookEvent::PreToolTransform;
+    let mut transformed = None;
+    for hook in matching_hooks(hooks, HookEvent::PreToolTransform, &ctx.tool_name) {
+        if hook.command.trim().is_empty() {
+            continue;
+        }
+        let result = run_hook(hook, &current).await;
+        if !result.success() {
+            let detail = format_failure(hook, &result);
+            tracing::warn!(subject = %ctx.tool_name, %detail, "pre_tool_transform failed; input kept");
+            continue;
+        }
+        let out = result.stdout.trim();
+        if out.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(out) {
+            Ok(value) if value.is_object() => {
+                current.tool_input = value.to_string();
+                transformed = Some(value);
+            }
+            _ => {
+                tracing::warn!(subject = %ctx.tool_name, "pre_tool_transform stdout is not a JSON object; input kept");
+            }
+        }
+    }
+    transformed
 }
 
 /// Run all matching pre-tool hooks. First blocking failure wins.
@@ -782,5 +897,124 @@ mod tests {
             .with_env("WHYCODES_RESPONSE", &"r".repeat(OUTPUT_ENV_MAX + 1));
         assert!(ctx.extra_env[0].1.ends_with("…[truncated]"));
         assert_eq!(event_env(HookEvent::SubagentStop), "subagent_stop");
+    }
+
+    /// Shell snippet that prints a JSON object literally (cmd keeps quotes).
+    #[cfg(windows)]
+    fn json_echo(json: &str) -> String {
+        format!("echo {json}")
+    }
+
+    /// Shell snippet that prints a JSON object literally (sh needs quoting).
+    #[cfg(not(windows))]
+    fn json_echo(json: &str) -> String {
+        format!("echo '{json}'")
+    }
+
+    fn transform(tool_match: &str, command: &str) -> HookConfig {
+        hook(HookEvent::PreToolTransform, tool_match, command, false, 5)
+    }
+
+    #[test]
+    fn touched_paths_collects_known_keys_in_order_without_duplicates() {
+        let input = r#"{"path":" a.txt ","file_path":"b.txt","old_path":"a.txt","new_path":"c.txt","paths":["d.txt",""],"files":["b.txt","e.txt",7],"content":"x"}"#;
+        assert_eq!(
+            touched_paths(input),
+            ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"]
+        );
+        assert!(touched_paths("not json").is_empty());
+        assert!(touched_paths(r#"{"command":"ls"}"#).is_empty());
+    }
+
+    #[test]
+    fn hooks_disabled_env_values() {
+        use std::ffi::OsStr;
+        assert!(!disabled_by(None));
+        assert!(!disabled_by(Some(OsStr::new(""))));
+        assert!(!disabled_by(Some(OsStr::new("0"))));
+        assert!(disabled_by(Some(OsStr::new("1"))));
+        assert!(disabled_by(Some(OsStr::new("yes"))));
+        // The real reader only consults the process environment.
+        let _ = hooks_disabled();
+    }
+
+    #[tokio::test]
+    async fn disabled_hooks_neither_block_nor_transform() {
+        let hooks = vec![
+            hook(HookEvent::PreTool, "*", "exit 1", true, 5),
+            transform("*", &json_echo(r#"{"path":"b.txt"}"#)),
+        ];
+        let ctx = HookContext::pre("write", "w1", r#"{"path":"a.txt"}"#, None, work_dir());
+        assert_eq!(
+            run_hooks_unless(true, &hooks, &ctx).await,
+            HookOutcome::default()
+        );
+        assert!(
+            run_transform_hooks_unless(true, &hooks, &ctx)
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn transform_hooks_chain_and_fail_open() {
+        let ctx = HookContext::pre("write", "w1", r#"{"path":"a.txt"}"#, None, work_dir());
+        // No transform hook for this tool: nothing changes.
+        let only_pre = vec![hook(HookEvent::PreTool, "write", "exit 0", false, 5)];
+        assert!(run_transform_hooks(&only_pre, &ctx).await.is_none());
+
+        let hooks = vec![
+            transform("write", &json_echo(r#"{"path":"b.txt"}"#)),
+            transform("write", "exit 1"),
+            transform("write", "exit 0"),
+            transform("write", "echo not-json"),
+            transform("write", "   "),
+            transform("write", &json_echo(r#"[1,2]"#)),
+            transform("bash", &json_echo(r#"{"path":"ignored.txt"}"#)),
+            transform("write", &json_echo(r#"{"path":"c.txt","extra":1}"#)),
+        ];
+        assert_eq!(
+            matching_hooks(&hooks, HookEvent::PreToolTransform, "write").len(),
+            7,
+            "`match` applies to transform hooks"
+        );
+        let out = run_transform_hooks(&hooks, &ctx).await.expect("rewritten");
+        assert_eq!(out["path"], "c.txt");
+        assert_eq!(out["extra"], 1);
+
+        // Only failures and non-objects: the input is kept.
+        let kept = vec![
+            transform("write", "exit 3"),
+            transform("write", "echo plain"),
+        ];
+        assert!(run_transform_hooks(&kept, &ctx).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn tool_hooks_see_touched_paths_and_the_recursion_guard() {
+        let hooks = vec![
+            speaking(HookEvent::PostTool, "*", &echo_var(TOUCHED_PATHS_ENV)),
+            speaking(HookEvent::PostTool, "*", &echo_var(HOOKS_DISABLED_ENV)),
+        ];
+        let ctx = HookContext::post(
+            "edit",
+            "e1",
+            r#"{"path":"a.txt"}"#,
+            None,
+            work_dir(),
+            false,
+            "ok",
+        );
+        let feedback = run_post_hooks(&hooks, &ctx).await.expect("feedback");
+        assert!(feedback.contains("a.txt"), "{feedback}");
+        assert!(feedback.ends_with('1'), "{feedback}");
+
+        // A transform hook gets the tool variables too.
+        let hooks = vec![transform("edit", &json_echo(r#"{"path":"z.txt"}"#))];
+        let pre = HookContext::pre("edit", "e1", r#"{"path":"a.txt"}"#, None, work_dir());
+        assert_eq!(
+            run_transform_hooks(&hooks, &pre).await.unwrap()["path"],
+            "z.txt"
+        );
     }
 }
