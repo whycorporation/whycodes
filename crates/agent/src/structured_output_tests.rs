@@ -208,3 +208,14 @@ fn note_shows_value_or_errors() {
         "\n\nstructured: null\nStructured result errors:\n- /: x\n- /a: y"
     );
 }
+
+#[test]
+fn optional_property_may_be_absent() {
+    let schema = json!({
+        "type": "object",
+        "properties": {"note": {"type": "string"}, "count": {"type": "integer"}},
+        "required": ["count"]
+    });
+    assert!(validate(&schema, &json!({"count": 3})).is_empty());
+    assert_eq!(validate(&schema, &json!({"count": 3, "note": 7})).len(), 1);
+}
