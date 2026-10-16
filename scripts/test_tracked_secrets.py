@@ -81,6 +81,32 @@ def test_live_pat_rejected() -> None:
             raise SystemExit(f"missing PAT label:\n{proc.stdout}")
 
 
+def test_google_and_sk_keys_rejected() -> None:
+    for leak, label in [
+        ("key = AIza" + ("B" * 35) + "\n", "Google API key"),
+        ("key = sk-" + ("c" * 40) + "\n", "API key (sk- prefix)"),
+        ("key = sk-ant-" + ("d" * 40) + "\n", "API key (sk- prefix)"),
+    ]:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            init_repo(tmp)
+            (tmp / "leak.txt").write_text(leak, encoding="utf-8")
+            git(tmp, "add", "leak.txt")
+            proc = run_check(tmp)
+            if proc.returncode == 0:
+                raise SystemExit(f"expected {label} to fail")
+            if label not in proc.stdout:
+                raise SystemExit(f"missing {label} label:\n{proc.stdout}")
+    # Short placeholders in docs stay allowed.
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        init_repo(tmp)
+        (tmp / "doc.md").write_text("export OPENAI_API_KEY=sk-...\n", encoding="utf-8")
+        git(tmp, "add", "doc.md")
+        if run_check(tmp).returncode != 0:
+            raise SystemExit("sk-... placeholder must pass")
+
+
 def test_env_example_allowed() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -128,6 +154,7 @@ def main() -> int:
     test_current_repo_passes()
     test_scratch_dir_rejected()
     test_live_pat_rejected()
+    test_google_and_sk_keys_rejected()
     test_env_example_allowed()
     test_shareable_whycodes_commands_allowed()
     test_whycodes_todos_rejected()
