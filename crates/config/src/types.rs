@@ -1704,6 +1704,27 @@ pub struct WebSearchConfig {
 }
 
 impl WebSearchConfig {
+    /// Remove what a project layer may not set: the `custom` table (its
+    /// endpoint, headers and `header_env` could send env secrets to a host the
+    /// repository chose) and `custom` as `engine` or in `fallback`. Returns
+    /// the dropped keys.
+    pub(crate) fn strip_project_only_keys(&mut self) -> Vec<&'static str> {
+        let mut dropped = Vec::new();
+        if self.custom.take().is_some() {
+            dropped.push("websearch.custom");
+        }
+        if self.engine.as_deref().is_some_and(is_custom_engine) {
+            self.engine = None;
+            dropped.push("websearch.engine = \"custom\"");
+        }
+        let before = self.fallback.len();
+        self.fallback.retain(|e| !is_custom_engine(e));
+        if self.fallback.len() != before {
+            dropped.push("\"custom\" in websearch.fallback");
+        }
+        dropped
+    }
+
     pub(crate) fn merge_with(&self, other: &WebSearchConfig) -> WebSearchConfig {
         let mut merged = self.clone();
         if other.engine.is_some() {
@@ -1717,6 +1738,10 @@ impl WebSearchConfig {
         }
         merged
     }
+}
+
+fn is_custom_engine(name: &str) -> bool {
+    name.trim().eq_ignore_ascii_case("custom")
 }
 
 /// `[websearch.custom]` — a JSON search API mapped with JSON Pointers.

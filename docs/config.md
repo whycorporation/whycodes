@@ -376,6 +376,11 @@ table the tool behaves as before: SerpAPI when `SERPAPI_API_KEY` is set, else
 DuckDuckGo HTML. A higher layer that sets `[websearch.custom]` replaces the
 whole table; `endpoint` is required in it.
 
+The project layer (`.whycodes/config.toml`) cannot set `[websearch.custom]`
+or `custom` as `engine` / in `fallback`: those keys are dropped with a
+warning, so a repository cannot send `header_env` secrets to its own host.
+Set them in the global config or with `WHYCODES_WEBSEARCH_ENGINE`.
+
 | Key | Default | Env override | Meaning |
 |---|---|---|---|
 | `engine` | — | `WHYCODES_WEBSEARCH_ENGINE` | `serpapi`, `duckduckgo` or `custom`. Unset = SerpAPI when `SERPAPI_API_KEY` is set, else DuckDuckGo. Case-insensitive; an unknown name fails the call with the list of valid names. |
@@ -386,7 +391,7 @@ whole table; `endpoint` is required in it.
 | `custom.count_param` | — | — | Parameter that carries `num_results`. Unset = not sent. |
 | `custom.params` | `{}` | — | Extra static parameters sent with every request. |
 | `custom.headers` | `{}` | — | Static request headers. |
-| `custom.header_env` | `{}` | — | Header name → environment variable that holds its value, read at request time and never stored. A variable that is not set fails the call with its name. |
+| `custom.header_env` | `{}` | — | Header name → environment variable that holds its value, read at request time and never stored. Global config only. A variable that is not set fails the call with its name. |
 | `custom.results_pointer` | `"/results"` | — | [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901) to the result array. A pointer that does not reach an array is an error. |
 | `custom.title_pointer` | `"/title"` | — | JSON Pointer, inside one result, to its title. Results without a string title or URL are skipped; if none has both, the call fails. |
 | `custom.url_pointer` | `"/url"` | — | JSON Pointer, inside one result, to its URL. |

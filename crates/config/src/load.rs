@@ -89,6 +89,19 @@ fn warn_project_config(kind: &str, path: &Path, e: impl std::fmt::Display) {
     tracing::warn!("{msg}");
 }
 
+/// Warning for `[websearch]` keys a project config may not set (see
+/// [`crate::WebSearchConfig`]); `None` when nothing was dropped.
+pub(crate) fn project_websearch_warning(path: &Path, dropped: &[&str]) -> Option<String> {
+    if dropped.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Ignoring {} from project config at {}: the custom search endpoint, its headers and header_env are read only from the global config.",
+        dropped.join(", "),
+        path.display()
+    ))
+}
+
 /// Copy `config.toml` / `auth.json` / `whycodes.db` from a pre-0.7 ProjectDirs
 /// location into `~/.whycodes` when the new root is empty. Best-effort: a
 /// read-only dest or missing source is a no-op. `WHYCODES_HOME` skips this
@@ -252,6 +265,11 @@ impl Config {
                     Ok(mut project) => {
                         if project.schema_version < CONFIG_SCHEMA_VERSION {
                             project.schema_version = CONFIG_SCHEMA_VERSION;
+                        }
+                        let dropped = project.websearch.strip_project_only_keys();
+                        if let Some(msg) = project_websearch_warning(&project_config_path, &dropped)
+                        {
+                            tracing::warn!("{msg}");
                         }
                         config = config.merge_with(&project);
                     }

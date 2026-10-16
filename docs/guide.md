@@ -1184,9 +1184,14 @@ snippet_pointer = "/snippet"
 The network allowlist applies to `endpoint`; with an allowlist set, add the
 endpoint's host. Redirects are not followed and each request times out after
 20 seconds. Errors name the endpoint without its query string and never
-quote the response body. `header_env` sends the named variable's value, so
-only set it in a config you trust: a project's `.whycodes/config.toml` can
-set it too. All keys: [config reference](config.md#websearch-websearchcustom).
+quote the response body.
+
+`[websearch.custom]` (endpoint, `headers`, `header_env`) and `custom` as an
+engine are read only from the global config and the environment. A
+project's `.whycodes/config.toml` that sets them is ignored for those keys,
+with a warning in the log, so a cloned repository cannot point search at its
+own host and send it your environment secrets. A project may still choose
+`serpapi` or `duckduckgo` as `engine` and `fallback`. All keys: [config reference](config.md#websearch-websearchcustom).
 
 ### Hooks
 
