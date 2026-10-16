@@ -156,11 +156,7 @@ async fn login_with_spec(
             FlowKind::DeviceCode => device_login(spec, open_browser, ui).await?,
         }
     };
-    persist_token(store, spec.name.as_str(), "oauth", &token)?;
-    Ok(ProviderAuth {
-        method: "oauth".to_string(),
-        token,
-    })
+    persist_token(store, spec.name.as_str(), "oauth", &token)
 }
 
 /// Return a usable API credential for `provider` from the store under
@@ -582,17 +578,21 @@ async fn reexchange_derived(
     Ok(token)
 }
 
+/// Store a credential the provider just issued or renewed, stamping
+/// `validated_at` so `auth status` can tell a live login from a stale one.
 fn persist_token(
     store: &TokenStore,
     provider: &str,
     method: &str,
     token: &OAuthToken,
-) -> Result<()> {
+) -> Result<ProviderAuth> {
     let auth = ProviderAuth {
         method: method.to_string(),
+        validated_at: Some(chrono::Utc::now()),
         token: token.clone(),
     };
-    store.set(provider, auth)
+    store.set(provider, auth.clone())?;
+    Ok(auth)
 }
 
 // ────────────────────────────────────────────────────────────────────────

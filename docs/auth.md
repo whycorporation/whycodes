@@ -38,6 +38,40 @@ whycodes auth logout <provider>        # remove stored credential
 
 `whycodes debug` also lists stored logins (method + expiry only).
 
+`whycodes auth status --json` reports, for every provider the config names
+or the store holds, what the CLI would actually use:
+
+```json
+[
+  {
+    "provider": "anthropic",
+    "authKind": "api_key",
+    "credentialSource": "env:ANTHROPIC_API_KEY",
+    "expiry": null,
+    "validatedAt": null,
+    "stale": false
+  },
+  {
+    "provider": "openai",
+    "authKind": "oauth",
+    "credentialSource": "oauth_store",
+    "expiry": "2026-10-16T18:02:11Z",
+    "validatedAt": "2026-10-09T12:00:00Z",
+    "stale": false
+  }
+]
+```
+
+`authKind` is `api_key`, `oauth` or `none`; `credentialSource` is the
+first hit in the resolution order above (`env:<VAR>`, `config`,
+`oauth_store`, `none`). `expiry`, `validatedAt` and `stale` describe a
+stored login only: `validatedAt` is when the credential was last obtained
+or renewed (login, refresh, derived-token exchange — `validated_at` in
+`auth.json`, absent on entries written before the field existed and on imported
+credentials), and `stale` is true when that was more than seven days ago
+(or, without a stamp, when the access token expired that long ago). The
+output never contains token material.
+
 In the TUI, `/connect` reloads the credential for the active provider; when
 none exists and the provider supports OAuth (a plugin is loaded), it starts
 the login flow in-place — the browser opens from the TUI, loopback/device

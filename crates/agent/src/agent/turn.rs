@@ -887,6 +887,7 @@ impl Agent {
                 }
             }
 
+            session.record_edit_results(&tool_calls, &results);
             session.add_tool_results(results);
             let goal = checkpoint_goal.unwrap_or_default();
             if !goal.is_empty() {

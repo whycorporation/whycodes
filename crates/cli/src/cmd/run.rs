@@ -932,6 +932,7 @@ pub(crate) async fn cmd_run(
                             session.usage.cache_creation_input_tokens.unwrap_or(0)
                         );
                     }
+                    println!("  Edits: {}", session.edit_stats.label());
                     println!(
                         "  Created: {} | Project: {}",
                         i.created_at.format("%Y-%m-%d %H:%M:%S"),
@@ -1300,10 +1301,13 @@ pub(crate) async fn cmd_run(
                             "whycodes auth login <provider>".cyan()
                         );
                     } else if whycodes_auth::providers::supports_oauth(arg) {
-                        if let Err(e) = super::auth::cmd_auth(&AuthCmd::Login {
-                            provider: arg.to_string(),
-                            no_browser: false,
-                        })
+                        if let Err(e) = super::auth::cmd_auth(
+                            &project_dir,
+                            &AuthCmd::Login {
+                                provider: arg.to_string(),
+                                no_browser: false,
+                            },
+                        )
                         .await
                         {
                             eprintln!("{} {e}", "sign-in failed:".red());
