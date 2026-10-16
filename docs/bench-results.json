@@ -1,6 +1,6 @@
 {
-  "date": "2026-10-11",
-  "git": "fe41214",
+  "date": "2026-10-16",
+  "git": "9a756f2",
   "machine": {
     "platform": "Windows AMD64",
     "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
@@ -11,30 +11,30 @@
   "features": [
     "bundled-sqlite"
   ],
-  "binary_size_mb": 16.9,
-  "version_ms_p95": 18.69,
+  "binary_size_mb": 18.5,
+  "version_ms_p95": 17.44,
   "version_rss_mb": 8.12,
   "startup": {
     "version": {
       "runs": 20,
-      "median_ms": 14.84,
-      "p95_ms": 18.69,
-      "min_ms": 12.38,
-      "max_ms": 18.69
+      "median_ms": 12.86,
+      "p95_ms": 17.44,
+      "min_ms": 12.53,
+      "max_ms": 17.44
     },
     "help": {
       "runs": 20,
-      "median_ms": 41.14,
-      "p95_ms": 58.13,
-      "min_ms": 36.51,
-      "max_ms": 58.13
+      "median_ms": 29.86,
+      "p95_ms": 39.28,
+      "min_ms": 28.1,
+      "max_ms": 39.28
     },
     "config-show": {
       "runs": 20,
-      "median_ms": 51.64,
-      "p95_ms": 60.34,
-      "min_ms": 48.67,
-      "max_ms": 60.34
+      "median_ms": 41.3,
+      "p95_ms": 46.9,
+      "min_ms": 39.35,
+      "max_ms": 46.9
     }
   },
   "memory": {
@@ -45,34 +45,34 @@
     },
     "config-show": {
       "runs": 5,
-      "median_mb": 13.63,
-      "max_mb": 13.69
+      "median_mb": 13.77,
+      "max_mb": 13.8
     },
     "session-list": {
       "runs": 5,
-      "median_mb": 13.63,
-      "max_mb": 13.66
+      "median_mb": 13.8,
+      "max_mb": 13.84
     }
   },
   "multi_session": {
     "skipped": true,
     "reason": "not-linux"
   },
-  "first_frame_note": "Windows 11, AMD Ryzen 7 3800X, HEAD fe41214 on main. Release binary built with --features bundled-sqlite. Windows has no stdlib ConPTY: bench_first_frame.py inherits the console, and the harness splash is one CSI burst, so in-proc TTFF (~0.3 ms) is not comparable to the Linux 80x24 PTY figure (~12 ms on 2026-09-02); spawn-to-exit (~15 ms) matches the --version floor. Idle draws over 3 s are 0.0/s. hot_paths and index are criterion results from 2026-09-11 (f5686a9) and were not re-run.",
+  "first_frame_note": "Windows 11, AMD Ryzen 7 3800X, HEAD 9a756f2 on main. Release binary built with --features bundled-sqlite. Windows has no stdlib ConPTY: bench_first_frame.py inherits the console, and the harness splash is one CSI burst, so in-proc TTFF is not comparable to a Linux PTY figure; spawn-to-exit (~14 ms) matches the --version floor. Idle draws over 3 s are 0.0/s. hot_paths and index are criterion results from 2026-09-11 (f5686a9) and were not re-run.",
   "first_frame_harness": {
-    "median_ms": 0.28,
+    "median_ms": 0.25,
     "min_ms": 0.22,
-    "max_ms": 0.47,
+    "max_ms": 0.57,
     "runs": 12,
     "idle_ms": 0,
-    "spawn_to_exit_median_ms": 15.08,
-    "spawn_to_exit_min_ms": 13.93,
-    "spawn_to_exit_max_ms": 22.39
+    "spawn_to_exit_median_ms": 13.78,
+    "spawn_to_exit_min_ms": 12.89,
+    "spawn_to_exit_max_ms": 14.73
   },
   "idle_draws_harness": {
     "median_per_s": 0.0,
     "window_ms": 3000,
-    "first_frame_median_ms": 0.3,
+    "first_frame_median_ms": 0.29,
     "runs": 10
   },
   "hot_paths": {
@@ -115,22 +115,5 @@
     "query_now_nonblocking_20k_us": 17.0,
     "query_settle_20k_us": 17.4
   },
-  "hot_paths_date": "2026-09-11",
-  "version_ab_interleaved": {
-    "rounds": 10,
-    "runs_per_round": 20,
-    "f5686a9": {
-      "median_ms": 13.98,
-      "p95_ms": 20.53,
-      "min_ms": 11.83,
-      "rss_median_mb": 8.56
-    },
-    "fe41214": {
-      "median_ms": 13.68,
-      "p95_ms": 17.54,
-      "min_ms": 11.91,
-      "rss_median_mb": 8.51
-    },
-    "note": "Same boot, alternating binaries. No regression; the 7.6 -> 8.1 MB RSS step vs 2026-09-11 is the OS update (10.0.26200 -> 10.0.26300): f5686a9 also measures 8.1 MB today."
-  }
+  "hot_paths_date": "2026-09-11"
 }

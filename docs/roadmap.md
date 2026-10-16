@@ -2,7 +2,7 @@
 
 Current focus and standing decisions.
 
-Last updated: **2026-08-29**.
+Last updated: **2026-10-16**.
 
 ## Now
 
@@ -17,7 +17,6 @@ ACP (`whycodes acp`, editor ↔ agent over stdio) shipped.
 
 | Item | Notes |
 |---|---|
-| Public release | **Last.** Repo public, Windows install smoke. Homebrew binary formula auto-bumps from `release.yml`. Assets already cut as `v0.1.0`. |
 | `web` surface | Use `whycodes serve` + a browser for local share. |
 
 ## Out
@@ -40,8 +39,6 @@ These are still in force.
 - Catastrophic commands cannot be approved.
 - Sandbox defaults to `workspace`, network on, fallback allow (so
   non-Linux keeps working).
-- Public release is last: coding, perf and plugins rank ahead of opening
-  the repo.
 - No CLI telemetry or phone-home. Interactive sessions may check GitHub
   Releases for a newer binary (opt-out). Install volume is GitHub
   release `download_count` (`python scripts/release_downloads.py`) and,

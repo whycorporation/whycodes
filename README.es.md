@@ -156,23 +156,24 @@ herramientas y configuración — está en **[docs/guide.md](docs/guide.md)**.
 
 ## Rendimiento
 
-Última medición, Windows AMD64, 2026-10-11 (Ryzen 7 3800X). Linux
-2026-09-02 sigue siendo la última instantánea PTY / PSS — no comparar el
-primer fotograma de Windows con los ~12 ms del PTY en Linux. Método y
-máquinas en [docs/benchmarks.md](docs/benchmarks.md):
+Medido el 2026-10-16 en una sola máquina (Ryzen 7 3800X): Windows 11
+nativo y Linux bajo WSL2. Método, mediciones anteriores y salvedades en
+[docs/benchmarks.md](docs/benchmarks.md):
 
-| Métrica | Windows 2026-10-11 | Linux 2026-09-02 |
+| Métrica | Windows | Linux (WSL2) |
 |---|---|---|
-| 1 sesión PSS | — (solo `/proc`) | **10.5 MB** |
-| 10 sesiones PSS | — | **32.0 MB** (~2.4 MB cada extra) |
-| `--version` | **13.7 ms** | **1.4 ms** |
-| Primer fotograma (harness, in-proc) | **0.3 ms** (consola heredada) | **12 ms** (PTY 80×24) |
-| Redibujos en reposo (harness, 3 s) | **0.0 /s** | **0.3 /s** |
+| `--version` | **12.9 ms** | **1.4 ms** |
+| Primer fotograma (harness, in-proc) | **0.25 ms** | **0.08 ms** |
+| Redibujos en reposo (3 s) | **0.0 /s** | **0.0 /s** |
+| PSS de 1 sesión en reposo | — (solo `/proc`) | **13.6 MB** |
+| PSS de 10 sesiones en reposo | — | **41.9 MB** (~3.1 MB cada extra) |
+| PSS de una sesión reanudada de 3000 mensajes | — | **34.7 MB** |
 
-La TUI pinta solo cuando algo cambia. El reposo de 3 s de este harness en
-Windows es **0.0 redibujos/s** (Linux 2026-09-02 era 0.3/s); el objetivo
-del producto sigue siendo **0 redibujos/s**, no una carrera de fotogramas
-por segundo.
+La TUI pinta solo cuando algo cambia, así que una sesión en reposo no
+redibuja nada. Una sesión reanudada de 3000 mensajes ocupa 34.7 MB; antes
+del trabajo de memoria de octubre eran 216 MB. El harness del primer
+fotograma mide un solo pintado de la pantalla inicial, no la pantalla de
+inicio completa.
 
 La cobertura de líneas del workspace es **98.7%** (Linux x86_64,
 2026-10-10). CI falla por debajo del 98.5%, con veinticuatro crates

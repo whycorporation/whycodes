@@ -663,6 +663,47 @@ sits on that path now. Still far under the CI ceiling (50 ms / 40 MB). **Multi-s
 skipped (Linux only); the Linux column in the README stays 2026-09-02.
 
 
+### Re-measure, 2026-10-16 (Windows AMD64 and Linux x86_64, release, HEAD `9a756f2`)
+
+Same machine (AMD Ryzen 7 3800X). Windows 11 Pro 10.0.26300 natively;
+Linux is Arch on WSL2 (kernel 6.18), so its column is not comparable to the
+earlier native Linux rows (Intel i5-4200H, CachyOS). Release binaries,
+`--features bundled-sqlite` on Windows.
+
+| Case | Windows median | Windows p95 | Linux median | Linux p95 |
+|---|---|---|---|---|
+| `--version` | **12.9 ms** | 17.4 ms | **1.4 ms** | 2.1 ms |
+| `--help` | **29.9 ms** | 39.3 ms | **4.5 ms** | 5.6 ms |
+| `config show` | **41.3 ms** | 46.9 ms | **5.1 ms** | 6.5 ms |
+
+| Peak RSS | Windows | Linux |
+|---|---|---|
+| `--version` | **8.1 MB** | 0.4 MB (exits before most samples) |
+| `config show` | **13.8 MB** | **9.8 MB** |
+| `session list` | **13.8 MB** | **11.2 MB** |
+| binary size | **18.5 MB** | 18.3 MB |
+
+`--help` and `config show` are 11 and 10 ms faster on Windows than on
+2026-10-11. The binary grew 1.6 MB over the 104 commits since then; this
+run did not break that down by crate.
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Windows harness `--idle-ms 0` (12 runs) | **0.25 ms** in-proc | 0.0/s | spawn-to-exit **13.8 ms** |
+| Windows harness `--idle-ms 3000` (10 runs) | **0.29 ms** in-proc | **0.0/s** | |
+| Linux harness `--idle-ms 0` (12 runs) | **0.08 ms** in-proc | 0.0/s | spawn-to-exit **3.1 ms** |
+| Linux harness `--idle-ms 3000` (10 runs) | **0.08 ms** in-proc | **0.0/s** | |
+
+**Multi-session PSS** (Linux, idle TUI, 5 s settle, 3 runs, median):
+**13.6 MB** (1) / **41.9 MB** (10) / **~3.1 MB** per added session. This is
+the first run since the harness was fixed to measure a real TUI (see
+[Multi-session PSS](#multi-session-pss)). The 5 s settle samples after the
+TUI finished loading, so it is not comparable to the 2 s rows below it.
+
+**Resumed long session** (3000 messages, Linux, 3 runs, median): PSS
+**34.7 MB** both right after the first paint and after 75 s idle, against
+76.0 MB / 35.0 MB on 2026-10-15. The open figure now matches the idle one.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
@@ -1132,6 +1173,7 @@ Linux x86_64 (WSL2), release builds, 3 runs, median.
 | before (`89ed870`) | 216.4 MB | 216.6 MB | 203.7 MB |
 | Oniguruma highlighting (#220) | 76.5 MB | 75.8 MB | 63.7 MB |
 | all of #220–#224 | 76.0 MB | **35.0 MB** | **22.5 MB** |
+| 2026-10-16 (`9a756f2`) | **34.7 MB** | **34.7 MB** | **22.4 MB** |
 
 - fancy-regex grammars compiled for 16 languages were most of the "before"
   figure, and they were live memory, so no trim could return them.

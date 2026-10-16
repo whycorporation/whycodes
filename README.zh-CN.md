@@ -140,20 +140,22 @@ whycodes -P openai -m gpt-4o generate "Refactor this module"
 
 ## 性能
 
-最近一次测量：Windows AMD64，2026-10-11（Ryzen 7 3800X）。Linux 2026-09-02
-仍是最近一次 PTY / PSS 快照 — 不要把 Windows 首帧与 Linux PTY 的约 12 ms
-相比。方法与机器见 [docs/benchmarks.md](docs/benchmarks.md)：
+2026-10-16 在同一台机器（Ryzen 7 3800X）上测量：Windows 11 原生运行，
+Linux 运行于 WSL2。方法、历史数据与注意事项见
+[docs/benchmarks.md](docs/benchmarks.md)：
 
-| 指标 | Windows 2026-10-11 | Linux 2026-09-02 |
+| 指标 | Windows | Linux（WSL2） |
 |---|---|---|
-| 1 个会话 PSS | —（仅 `/proc`） | **10.5 MB** |
-| 10 个会话 PSS | — | **32.0 MB**（每多一个约 2.4 MB） |
-| `--version` | **13.7 ms** | **1.4 ms** |
-| 首帧（harness，进程内） | **0.3 ms**（继承控制台） | **12 ms**（80×24 PTY） |
-| 空闲重绘（harness，3 s） | **0.0 /s** | **0.3 /s** |
+| `--version` | **12.9 ms** | **1.4 ms** |
+| 首帧（harness，进程内） | **0.25 ms** | **0.08 ms** |
+| 空闲重绘（3 s） | **0.0 /s** | **0.0 /s** |
+| 1 个空闲会话 PSS | —（仅 `/proc`） | **13.6 MB** |
+| 10 个空闲会话 PSS | — | **41.9 MB**（每多一个约 3.1 MB） |
+| 恢复 3000 条消息的会话 PSS | — | **34.7 MB** |
 
-TUI 仅在有变化时绘制。本次 Windows 3 秒 harness 空闲为 **0.0 次重绘/秒**
-（Linux 2026-09-02 为 0.3/s）；产品目标仍是 **0 次重绘/秒**，而不是帧率竞赛。
+TUI 仅在有变化时绘制，空闲会话不会重绘。恢复一个 3000 条消息的会话占用
+34.7 MB，十月的内存优化之前为 216 MB。首帧 harness 只计时一次启动画面绘制，
+而非完整主屏幕。
 
 工作区行覆盖率为 **98.7%**（Linux x86_64，2026-10-10）。CI 在低于 98.5%
 时失败，二十四个 crate 的生产代码行覆盖率保持 100% —— 见
