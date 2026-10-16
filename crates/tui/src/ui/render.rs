@@ -318,12 +318,30 @@ fn inset_centered(area: Rect, pad_x: u16, pad_y: u16) -> Rect {
 
 /// Home vertical stack: logo area grows, prompt fixed, no header chrome
 fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
+    // Same side pad as a session, so the prompt box does not shift sideways
+    // when the first message lands.
+    let side = layout::side_pad(area.width);
     let content = Rect {
-        x: area.x,
+        x: area.x.saturating_add(side),
         y: area.y,
-        width: area.width,
+        width: area.width.saturating_sub(side.saturating_mul(2)),
         height: area.height.saturating_sub(layout::BOTTOM_PAD),
     };
+    for x in [
+        area.x,
+        area.x.saturating_add(area.width.saturating_sub(side)),
+    ] {
+        super::layout::fill_blank(
+            frame,
+            Rect {
+                x,
+                y: area.y,
+                width: side,
+                height: area.height,
+            },
+            palette.bg,
+        );
+    }
     super::layout::fill_blank(
         frame,
         Rect {
