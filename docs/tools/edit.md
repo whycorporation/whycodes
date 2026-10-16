@@ -23,6 +23,8 @@ The model reads this with `read agent://tools/edit`.
 
 Make targeted edits. Prefer `from`/`to`/`insert_after` tags from `read`/`grep`.
 `old_string` is the fallback: exact match, then unique whitespace-tolerant match.
+A `.ipynb` is edited as `read` shows it. A changed code cell loses its outputs;
+a `# %% [code] cell:new` marker adds a cell, removing a block deletes one.
 
 ## Related
 
