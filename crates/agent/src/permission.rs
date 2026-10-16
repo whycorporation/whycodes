@@ -1,4 +1,4 @@
-//! Permission prompting for OpenCode-style allow/ask/deny.
+//! Permission prompting for allow/ask/deny rules.
 
 use std::future::Future;
 use std::pin::Pin;

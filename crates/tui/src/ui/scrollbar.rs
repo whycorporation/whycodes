@@ -1,6 +1,6 @@
 //! Shared solid-fill scrollbar for list popups and dropdowns.
 //!
-//! Grok-style: track = solid dark cells, thumb = solid mid-gray (█ with matching
+//! Track = solid dark cells, thumb = solid mid-gray (█ with matching
 //! bg so the bar fills the cell box — bare fg █ leaves line-gap stripes).
 
 use crate::theme::ThemePalette;

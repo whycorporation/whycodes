@@ -8,7 +8,7 @@ fn split_shortcut_separates_key_and_label() {
 }
 
 #[test]
-fn popup_rect_matches_grok_shortcuts_sizing() {
+fn popup_rect_matches_shortcuts_sizing() {
     // 80-col: 70% is 56, inside [44, 80].
     let r = popup_rect(Rect::new(0, 0, 80, 40), DialogSizing::popup());
     assert_eq!(r.width, 56);

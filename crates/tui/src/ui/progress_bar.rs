@@ -1,4 +1,4 @@
-//! Unicode progress bar at 1/8-cell resolution (Grok `progress_bar`).
+//! Unicode progress bar at 1/8-cell resolution.
 //!
 //! Full cells use `█`; partial fill uses LEFT fractional blocks
 //! `▏▎▍▌▋▊▉`; empty track uses `░` so the bar stays visible without a
@@ -37,7 +37,7 @@ pub fn progress_bar_string(width: u16, value: f64) -> String {
     s
 }
 
-/// Linear RGB blend for urgency gradients (Grok context bar breakpoints).
+/// Linear RGB blend for urgency gradients (context bar breakpoints).
 ///
 /// Named/ANSI colors fall back to approximate RGB so themes without truecolor
 /// still get a smooth-ish ramp.
@@ -51,7 +51,7 @@ pub fn blend_rgb(a: (u8, u8, u8), b: (u8, u8, u8), t: f32) -> (u8, u8, u8) {
 
 /// Map context fill percent (0–100+) to an RGB urgency color.
 ///
-/// Breakpoints (Grok-inspired): dim → accent → warning → error.
+/// Breakpoints: dim → accent → warning → error.
 pub fn context_urgency_rgb(
     pct: f64,
     dim: (u8, u8, u8),

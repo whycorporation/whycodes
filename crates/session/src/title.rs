@@ -1,6 +1,6 @@
 //! Session display titles — defaults, heuristics, and sanitization.
 //!
-//! Industry pattern (Claude Code / OpenCode): cheap placeholder at create time,
+//! Cheap placeholder at create time,
 //! then a short human-readable title once the conversation has content.
 //! WhyCodes goes further with an instant offline heuristic before any LLM call.
 
@@ -35,7 +35,7 @@ impl TitleSource {
 
 /// Default display name: project basename + two hex chars from the session id.
 ///
-/// Example: `whycodes-a3`. Matches Claude Code's `my-app-3f` style — scannable
+/// Example: `whycodes-a3`. Short and scannable
 /// in a list of live sessions without waiting for an LLM.
 pub fn default_title(project_path: &Path, session_id: &str) -> String {
     let base = project_basename(project_path);

@@ -1,6 +1,6 @@
 //! Incremental markdown for a growing assistant bubble.
 //!
-//! Grok Build's `StreamingMarkdownRenderer`: freeze output up to the last
+//! Freeze output up to the last
 //! [`whycodes_format::markdown::last_checkpoint`] and only re-parse the tail.
 //! A streamed reply is O(new bytes) per frame instead of O(whole message).
 //!

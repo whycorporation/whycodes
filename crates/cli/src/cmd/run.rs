@@ -597,7 +597,7 @@ pub(crate) async fn cmd_run(
         );
     }
     let resume_want = resolve_resume_want(cli);
-    // Grok parity: `--max-turns` is a headless cap. Interactive TUI/REPL
+    // `--max-turns` is a headless cap. Interactive TUI/REPL
     // runs until end-of-turn, cancel, or doom-loop.
     let max_turns = crate::ignore_max_turns_interactive(max_turns);
 
@@ -642,7 +642,7 @@ pub(crate) async fn cmd_run(
         info.permission = config.effective_permission(&info.permission);
         info
     };
-    // Wall clock for the Cline-style exit summary (process open → quit).
+    // Wall clock for the exit summary (process open → quit).
     let session_started = std::time::Instant::now();
 
     let mut agent_name = agent_name;
@@ -812,7 +812,7 @@ pub(crate) async fn cmd_run(
             continue;
         }
 
-        // OpenCode: !command runs bash and injects output into the conversation
+        // !command runs bash and injects output into the conversation
         if let Some(cmd) = input.strip_prefix('!') {
             let cmd = cmd.trim();
             if cmd.is_empty() {
@@ -831,7 +831,7 @@ pub(crate) async fn cmd_run(
 
         if input.starts_with('/') {
             let (cmd, rest) = split_slash_command(&input);
-            // Custom markdown / config commands (OpenCode `/commands`)
+            // Custom markdown / config commands (`/commands`)
             if let Some(name) = cmd.strip_prefix('/')
                 && let Some(custom) = config.commands.get(name)
             {
@@ -1403,7 +1403,7 @@ pub(crate) async fn cmd_run(
             }
         }
 
-        // Expand @file references (OpenCode parity)
+        // Expand @file references
         let expanded = expand_user_input(&input, &project_dir);
 
         if !ensure_api_key(&mut api_key, &provider, &config).await {
@@ -1480,7 +1480,7 @@ pub(crate) async fn cmd_run(
             }
         }
     }
-    // Final flush + Cline-style summary (same shape as the TUI exit path).
+    // Final flush + exit summary (same shape as the TUI exit path).
     if let Ok(db) = open_db() {
         let _ = session.save_to_db(&db);
     }

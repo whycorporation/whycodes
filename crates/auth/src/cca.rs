@@ -71,7 +71,7 @@ async fn post(suffix: &str, token: &str, body: &Value) -> Result<Value> {
     send(reqwest::Method::POST, suffix, token, Some(body)).await
 }
 
-/// GET an LRO status. Native Antigravity / oh-my-pi poll `:onboardUser`
+/// GET an LRO status. Native Antigravity clients poll `:onboardUser`
 /// operations with GET, not POST.
 async fn get(suffix: &str, token: &str) -> Result<Value> {
     send(reqwest::Method::GET, suffix, token, None).await

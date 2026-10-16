@@ -1,4 +1,4 @@
-//! Conversation checkpoint / rewind pair (oh-my-pi-style exploratory collapse).
+//! Conversation checkpoint / rewind pair (exploratory collapse).
 //!
 //! The tools themselves are markers. The agent loop records the boundary and
 //! later replaces exploratory turns with the rewind report.

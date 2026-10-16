@@ -1,4 +1,4 @@
-//! Right-aligned composable status bar (Grok `AgentStatusBar`).
+//! Right-aligned composable status bar.
 //!
 //! Collect items as styled lines, lay them out right-aligned with dim `│`
 //! separators, and return hit-test areas keyed by item id.
@@ -17,7 +17,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-/// Separator between status items (Grok).
+/// Separator between status items.
 pub const SEPARATOR: &str = "│";
 
 struct StatusEntry {

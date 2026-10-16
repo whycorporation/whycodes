@@ -152,7 +152,7 @@ pub trait Tool: Send + Sync {
 
     /// Whether this tool is allowed given a permission set.
     ///
-    /// Uses OpenCode-style resolution: `rules` (allow/ask/deny), then legacy
+    /// Resolution: `rules` (allow/ask/deny), then legacy
     /// allowed/denied lists and category flags. `Ask` still returns true so the
     /// tool appears in the schema; the agent loop prompts before execution.
     fn is_allowed(&self, permissions: &PermissionSet) -> bool {

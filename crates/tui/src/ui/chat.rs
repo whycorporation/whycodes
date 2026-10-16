@@ -44,7 +44,7 @@ pub fn session_line_count_mut(app: &mut TuiApp, width: u16) -> usize {
 
 /// Per-message start row (top-origin) and total display rows.
 ///
-/// Used for selection → viewport sync (Grok scrollback entry selection).
+/// Used for selection → viewport sync (scrollback entry selection).
 pub fn message_row_layout(app: &TuiApp, width: u16) -> (Vec<usize>, usize) {
     let palette = app.config.palette();
     let mut starts = Vec::with_capacity(app.messages.len());
@@ -145,10 +145,10 @@ fn session_bar_layout(
     (starts, total, content_width, needs_bar)
 }
 
-/// Last user prompt whose first row sits above the viewport (Grok sticky header).
+/// Last user prompt whose first row sits above the viewport (sticky header).
 fn last_scrolled_past_user(app: &TuiApp, starts: &[usize], view_start: usize) -> Option<usize> {
     // Binary search to the first message at/after the viewport, then walk
-    // backward (Grok `partition_point` on `virtual_y`).
+    // backward (`partition_point` on `virtual_y`).
     let above = starts.partition_point(|&s| s < view_start);
     (0..above)
         .rev()
@@ -182,7 +182,7 @@ fn drop_far_line_caches(app: &mut TuiApp, painted: std::ops::Range<usize>) {
 
 /// Message index range whose rows intersect `[view_start, view_end)`.
 ///
-/// Grok `compute_paint_window`: `starts` is a prefix-sum of heights, so
+/// `compute_paint_window`: `starts` is a prefix-sum of heights, so
 /// two `partition_point`s replace a linear scan of the whole transcript.
 pub fn visible_message_range(
     starts: &[usize],
@@ -599,7 +599,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         y = y.saturating_add(1);
     }
 
-    // Grok sticky_headers: pin the last user prompt scrolled past the top.
+    // Sticky headers: pin the last user prompt scrolled past the top.
     if pad == 0
         && let Some(idx) = last_scrolled_past_user(app, &starts, view_start)
     {
@@ -785,7 +785,7 @@ fn paint_chat_row(
             }
             let remaining = end - x;
             // Pin theme canvas: a span with no / Reset fg/bg flashes host-default
-            // white on every paint (Grok never writes Color::Reset on chrome).
+            // white on every paint (never write Color::Reset on chrome).
             let mut style = span.style;
             if style.bg.is_none() || style.bg == Some(Color::Reset) {
                 style = style.bg(row.bg);
@@ -877,7 +877,7 @@ fn refresh_live_markdown(app: &mut TuiApp, index: usize, width: u16) {
     app.messages[index].stream_md = stream;
 }
 
-/// Render message `index`, threading the Grok checkpoint cache on live
+/// Render message `index`, threading the checkpoint cache on live
 /// assistant bubbles so a growing reply does not re-parse frozen blocks.
 ///
 /// `include_live_md`: when false, skip the growing answer (caller paints
@@ -942,7 +942,7 @@ fn render_message(
             ));
         }
         ChatRole::Assistant => {
-            // Turn order (Grok-style, latest answer at the bottom):
+            // Turn order (latest answer at the bottom):
             //   thinking → tools → written answer
             // Live text accumulates in `msg.content` and used to be dumped
             // *before* the first tool, so the growing reply sat above the
@@ -1136,15 +1136,15 @@ fn render_message(
     lines
 }
 
-/// Grok accent rail: U+2503 HEAVY VERTICAL (same as `accent_bar()` in Grok pager).
+/// Accent rail: U+2503 HEAVY VERTICAL.
 const ACCENT_RAIL: &str = "┃";
 
-/// Render a thinking/reasoning block (Grok Build–style lifecycle).
+/// Render a thinking/reasoning block (lifecycle).
 ///
-/// Visual match to Grok pager thinking blocks:
+/// Visual model:
 /// - Header muted bold (`Thought` / `Thinking…`), detail in plain muted
 /// - Body: primary text dimmed (not purple/italic) — reads like quiet terminal
-/// - Left `┃` accent column on **every** row while the body is open (Grok paints
+/// - Left `┃` accent column on **every** row while the body is open (paints
 ///   a full-height accent column beside header + body; none when collapsed)
 /// - Running + collapsed → header + live tail (last N lines)
 /// - Finished + collapsed → single header line
@@ -1156,7 +1156,7 @@ fn thinking_lines(
     spin: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    // Grok default: muted bold label, muted detail — never purple italic.
+    // Default: muted bold label, muted detail — never purple italic.
     let label_style = Style::default()
         .fg(palette.dim)
         .add_modifier(Modifier::BOLD);
@@ -1164,7 +1164,7 @@ fn thinking_lines(
     // Explicit `palette.dim` — Modifier::DIM on Apple Terminal.app maps the
     // cell onto ANSI green (the build-agent colour) instead of muting RGB.
     let body_style = Style::default().fg(palette.dim);
-    // Grok: ┃ on the left of Thinking / Thought. Live = thinking-color
+    // ┃ on the left of Thinking / Thought. Live = thinking-color
     // vertical pulse; finished = dim static.
     let live_rail = t.is_running();
     let rail = AccentRail {
@@ -1185,7 +1185,7 @@ fn thinking_lines(
     // panes narrower than 10).
     let content_w = width.saturating_sub(2).max(1);
 
-    // Grok: live is `Thinking…` (U+2026) with the timer on the right (`1.4s`).
+    // Live is `Thinking…` (U+2026) with the timer on the right (`1.4s`).
     // Finished is `Thought for 1.4s` with no chevron on the right.
     let elapsed = t.format_elapsed();
     let header_spans: Vec<Span<'static>> = if t.is_running() {
@@ -1246,7 +1246,7 @@ fn thinking_lines(
     }
     let wrap_w = content_w;
     for line in body {
-        // Soft-wrap reasoning so long thoughts don't blow the pane (Grok).
+        // Soft-wrap reasoning so long thoughts don't blow the pane.
         for row in wrap_text(line, wrap_w) {
             let (a, b) = row.byte_range;
             if a >= b {
@@ -1271,7 +1271,7 @@ fn thinking_lines(
     lines
 }
 
-/// Grok accent column: status color, a 2-row hot band walking down while live.
+/// Accent column: status color, a 2-row hot band walking down while live.
 #[derive(Clone, Copy)]
 struct AccentRail {
     hot: Color,
@@ -1306,7 +1306,7 @@ struct ToolPaint<'a> {
     spin: usize,
 }
 
-/// One scrollback row with optional Grok-style left accent column.
+/// One scrollback row with optional left accent column.
 ///
 /// ```text
 /// ┃ content…     ← show_rail
@@ -1328,7 +1328,7 @@ fn meta_gutter() -> Span<'static> {
     Span::raw(" ".repeat(layout::ASSISTANT_PAD as usize))
 }
 
-/// Grok `scrollback.blocks.tool.bullet = "diamond"`.
+/// Tool bullet: diamond.
 const TOOL_BULLET: &str = "◆ ";
 /// Leads a collapsed run of tool calls ("◈ Read 3 files, Ran 2 commands").
 const GROUP_BULLET: &str = "◈ ";
@@ -1342,12 +1342,12 @@ fn turn_done_footer(msg: &crate::app::ChatMessage) -> String {
     }
 }
 
-/// Grok `prompt_arrow()`: U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK + space.
+/// Prompt arrow: U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK + space.
 /// Always 2 columns wide.
 const PROMPT_ARROW: &str = "\u{276F} ";
 const PROMPT_ARROW_WIDTH: u16 = 2;
 
-/// Compact sticky header: band pad + first ❯ line (Grok `min_lines = 2`).
+/// Compact sticky header: band pad + first ❯ line (`min_lines = 2`).
 fn sticky_user_lines(
     msg: &crate::app::ChatMessage,
     palette: &ThemePalette,
@@ -1379,12 +1379,12 @@ fn sticky_user_lines(
     ]
 }
 
-/// Grok pager `UserPromptBlock` collapsed cap (content rows, not vpad).
+/// User prompt block collapsed cap (content rows, not vpad).
 const USER_COLLAPSED_MAX_LINES: usize = 3;
-/// Grok collapsed ellipsis (`" …"` = space + U+2026).
+/// Collapsed ellipsis (`" …"` = space + U+2026).
 const USER_ELLIPSIS: &str = " \u{2026}";
 
-/// Grok-style user prompt block.
+/// User prompt block.
 ///
 /// ```text
 /// ┌──────────────── full-width elevated band ────────────────┐
@@ -1393,8 +1393,8 @@ const USER_ELLIPSIS: &str = " \u{2026}";
 /// └──────────────────────────────────────────────────────────┘
 /// ```
 ///
-/// Matches Grok pager `UserPromptBlock`:
-/// - prefix `❯ ` in user accent (Grok `accent_user`)
+/// Layout:
+/// - prefix `❯ ` in user accent (`accent_user`)
 /// - body primary fg on `bg_light` band (canvas + ~16)
 /// - vertical pad rows with the same band
 /// - long prompts fold to 3 lines + ` …` until expanded
@@ -1409,7 +1409,7 @@ fn user_prompt_lines(
     is_selected: bool,
     expanded: bool,
 ) -> Vec<Line<'static>> {
-    // Grok: elevated band = bg_light; selected steps up slightly.
+    // Elevated band = bg_light; selected steps up slightly.
     let band = palette.prompt_band(is_selected);
     let band_style = Style::default().bg(band);
     let prefix_style = Style::default().fg(palette.user_msg).bg(band);
@@ -1468,7 +1468,7 @@ fn user_prompt_lines(
         }
     } else {
         // Soft-wrap per logical line so explicit newlines stay as hard breaks
-        // (same shape as Grok wrap_prompt_lines).
+        // (same shape as wrap_prompt_lines).
         // First visual row is shorter so the clock fits on the right.
         let mut first_visual = image_labels.is_empty();
         for logical in text.split('\n') {
@@ -1516,7 +1516,7 @@ fn user_prompt_lines(
         }
     }
 
-    // Grok default: fold past 3 visual lines; `e`/`l` expands.
+    // Default: fold past 3 visual lines; `e`/`l` expands.
     if !expanded && body_lines.len() > USER_COLLAPSED_MAX_LINES {
         body_lines.truncate(USER_COLLAPSED_MAX_LINES);
         if let Some(last) = body_lines.last_mut() {
@@ -1525,14 +1525,14 @@ fn user_prompt_lines(
     }
 
     let mut lines = Vec::with_capacity(body_lines.len() + 2);
-    // vpad top / bottom (Grok PromptConfig.vpad = true)
+    // vpad top / bottom
     lines.push(band_pad_line(band_style));
     lines.extend(body_lines);
     lines.push(band_pad_line(band_style));
     lines
 }
 
-/// Highlight `/command` tokens the way Grok paints `accent_skill`.
+/// Highlight `/command` tokens in the skill accent (`accent_skill`).
 fn prompt_body_spans(text: &str, body: Style, skill: Style) -> Vec<Span<'static>> {
     if text.is_empty() {
         return vec![Span::styled(String::new(), body)];
@@ -1601,7 +1601,7 @@ fn truncate_home_title(title: &str, budget: usize) -> String {
     out
 }
 
-/// One empty elevated-band row (Grok prompt vertical pad).
+/// One empty elevated-band row (prompt vertical pad).
 fn band_pad_line(band_style: Style) -> Line<'static> {
     // A single space carries the bg so SparseLines can full-width fill the row.
     Line::from(Span::styled(" ".to_string(), band_style))
@@ -1825,7 +1825,7 @@ fn system_callout(content: &str, palette: &ThemePalette, width: u16) -> Vec<Line
     lines
 }
 
-/// How to paint a tool result body (Grok-like: diffs + syntax, not flat dim).
+/// How to paint a tool result body (diffs + syntax, not flat dim).
 #[derive(Debug, Clone)]
 enum ToolOutHint {
     /// Inspect content (and fall back to plain).
@@ -1834,7 +1834,7 @@ enum ToolOutHint {
     Diff,
     /// Syntax-highlight body with this language token (e.g. `"rust"`).
     Code(Option<String>),
-    /// Grep hits: path headers + line nos + match highlight (Grok style).
+    /// Grep hits: path headers + line nos + match highlight.
     Grep { pattern: String },
 }
 
@@ -1883,7 +1883,7 @@ fn diff_stat(content: &str) -> (usize, usize) {
     (add, del)
 }
 
-/// Grok-style display name for tools (`bash`/`shell` → `run`).
+/// Display name for tools (`bash`/`shell` → `run`).
 fn tool_display_name(name: &str) -> &str {
     match name {
         "bash" | "shell" | "run_terminal_command" => "run",
@@ -1897,7 +1897,7 @@ fn tool_display_name(name: &str) -> &str {
     }
 }
 
-/// Grok tool header verb: gerund while the call is open, label when done.
+/// Tool header verb: gerund while the call is open, label when done.
 fn tool_header_verb(name: &str, running: bool) -> String {
     match (tool_display_name(name), running) {
         ("read", true) => "Reading".into(),
@@ -2039,7 +2039,7 @@ fn verb_group_line(run: &[ToolRef<'_>], paint: ToolPaint<'_>) -> Line<'static> {
     ])
 }
 
-/// Quiet Grok-style tool chrome: `• Read path`. Expanded execute keeps a ┃.
+/// Quiet tool chrome: `• Read path`. Expanded execute keeps a ┃.
 ///
 /// Execute (`Run`) keeps a status-colored ┃ on the header (and body when
 /// open). The rail pulses down the column while the command is running.
@@ -2170,7 +2170,7 @@ fn tool_block(
 
     lines.push(Line::from(header));
 
-    // Grok muted_collapsed: header only until the user expands (`l`).
+    // Muted collapsed: header only until the user expands (`l`).
     if expanded && let Some(r) = result {
         if is_execute_tool(name) {
             lines.extend(tool_result_head_tail(r, is_error, palette, width, rail));
@@ -2221,7 +2221,7 @@ fn grep_file_count(content: &str) -> usize {
     seen.len()
 }
 
-/// Grok search chip: `(no matches)` / `(1 match)` / `(N matches in M files)`.
+/// Search chip: `(no matches)` / `(1 match)` / `(N matches in M files)`.
 fn grep_match_summary(result: Option<&str>) -> String {
     let Some(content) = result else {
         return String::new();
@@ -2267,7 +2267,7 @@ fn search_term(name: &str, input: &serde_json::Value) -> String {
 }
 
 /// Collapsed = header only; expanded (`l`) = body.
-/// Grok execute truncated mode: first 2 + last 3.
+/// Execute truncated mode: first 2 + last 3.
 const TOOL_RESULT_PREVIEW: usize = 12;
 const TOOL_RESULT_DIFF_PREVIEW: usize = 20;
 const TOOL_RESULT_EXPANDED: usize = 120;
@@ -2433,7 +2433,7 @@ fn hard_truncate_line(line: &str, max_cols: usize) -> String {
     )
 }
 
-/// Grok execute truncated body: first `head` lines, `…`, last `tail` lines.
+/// Execute truncated body: first `head` lines, `…`, last `tail` lines.
 fn tool_result_head_tail(
     content: &str,
     is_error: bool,
@@ -2549,7 +2549,7 @@ fn tool_result_diff(
     let total = content.lines().count();
     // Gutter "  " + "┃ " = 4 cols; body budget for hard-truncate.
     let text_w = width.saturating_sub(4).max(8) as usize;
-    // Strong green/red band (Grok): full line fg + visible wash bg.
+    // Strong green/red band: full line fg + visible wash bg.
     let add_bg = palette.diff_line_bg(palette.diff_add);
     let rem_bg = palette.diff_line_bg(palette.diff_remove);
 
@@ -2592,7 +2592,7 @@ fn tool_result_diff(
         };
 
         // Left meta pad must carry the wash so SparseLines full-row fill
-        // starts from a painted cell (Grok full-width green/red band).
+        // starts from a painted cell (full-width green/red band).
         let gutter = if line_bg.is_some() {
             Span::styled(
                 " ".repeat(layout::ASSISTANT_PAD as usize),
@@ -2607,7 +2607,7 @@ fn tool_result_diff(
             Span::styled("┃ ".to_string(), paint(rail_color, false)),
         ];
 
-        // Grok-style: dim/line-colored gutter + syntect body on add/remove.
+        // Dim/line-colored gutter + syntect body on add/remove.
         // Format: `  12|-body` or bare `+body`.
         let parts = parse_diff_line(line);
         if let Some(m) = parts.marker {
@@ -2736,7 +2736,7 @@ fn diff_line_kind(line: &str, is_error: bool) -> DiffPaint {
 /// Syntax-highlight tool output (read previews). Line-numbered `read` rows
 /// keep the gutter dim and highlight only the code after `|`.
 ///
-/// Grok layout:
+/// Layout:
 /// ```text
 /// read · path/to/file.rs
 /// ┃     1|fn main() {
@@ -2818,7 +2818,7 @@ fn tool_result_code(
                     let mut spans = vec![
                         meta_gutter(),
                         Span::styled("┃ ".to_string(), rail),
-                        // Grok: dim right-aligned line no + `|` separator.
+                        // Dim right-aligned line no + `|` separator.
                         Span::styled(left.clone(), Style::default().fg(palette.dim)),
                     ];
                     if let Some(row) = hl.get(code_idx) {
@@ -2889,7 +2889,7 @@ fn tool_result_code(
             }
         }
         None => {
-            // Still paint line-numbered read rows Grok-style even without a grammar.
+            // Still paint line-numbered read rows even without a grammar.
             if meta.iter().any(|(is_code, _, _)| *is_code) {
                 for (is_code, left, code) in &meta {
                     if *is_code {
@@ -2939,7 +2939,7 @@ fn tool_result_code(
     lines
 }
 
-/// Grok-style grep body: path headers, dim line nos, match highlight on hit text.
+/// Grep body: path headers, dim line nos, match highlight on hit text.
 ///
 /// ```text
 /// grep · pattern  3 matches
@@ -3020,7 +3020,7 @@ fn tool_result_grep(
         }
 
         if let Some(hit) = parse_grep_hit(t) {
-            // Path header when file changes (Grok groups by file).
+            // Path header when file changes (group by file).
             if last_path.as_deref() != Some(hit.path) {
                 if logical >= budget {
                     truncated = true;
@@ -3041,7 +3041,7 @@ fn tool_result_grep(
                 break;
             }
 
-            // Line number gutter: right-align in 5 cols like Grok read.
+            // Line number gutter: right-align in 5 cols like read.
             let no = format!("{:>5}", hit.lineno);
             let mark = if hit.is_match { '│' } else { '┆' };
             let style = if hit.is_match { body_style } else { ctx_style };
@@ -3213,7 +3213,7 @@ fn paint_grep_literal(content: &str, pattern: &str, base: Style, hit: Style) -> 
 }
 
 /// `read` tool lines look like `   12|contents` (6-wide line no + `|`).
-/// Also accepts Grok-style `   12→contents` and `   12│contents`.
+/// Also accepts `   12→contents` and `   12│contents`.
 fn split_read_line(line: &str) -> Option<(String, &str)> {
     for (sep, sep_len) in [('|', 1usize), ('│', '│'.len_utf8()), ('→', '→'.len_utf8())] {
         if let Some(pipe) = line.find(sep) {
@@ -3229,7 +3229,7 @@ fn split_read_line(line: &str) -> Option<(String, &str)> {
 
 fn tool_summary(name: &str, input: &serde_json::Value) -> String {
     let s = match name {
-        // Grok: `grep · pattern` (path is secondary when present).
+        // `grep · pattern` (path is secondary when present).
         "grep" | "search_code" | "rg" => {
             let pattern = input
                 .get("pattern")
@@ -3245,7 +3245,7 @@ fn tool_summary(name: &str, input: &serde_json::Value) -> String {
                 path.to_string()
             }
         }
-        // Grok: `read · path` (never a random other field).
+        // `read · path` (never a random other field).
         "read" | "read_file" | "write" | "edit" => input
             .get("path")
             .or_else(|| input.get("file_path"))

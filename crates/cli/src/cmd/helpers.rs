@@ -772,7 +772,7 @@ pub(crate) fn run_shell_capture(cmd: &str, cwd: &std::path::Path) -> String {
     }
 }
 
-/// `/init` — analyze project and write AGENTS.md (OpenCode parity).
+/// `/init` — analyze project and write AGENTS.md.
 /// Parse `--format` / `--output-format` CLI values.
 pub(crate) fn parse_output_format(s: &str) -> Result<OutputFormat, String> {
     s.parse()

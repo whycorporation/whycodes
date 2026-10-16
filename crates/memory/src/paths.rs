@@ -1,4 +1,4 @@
-//! On-disk layout for human-editable auto memory (Claude Code spirit).
+//! On-disk layout for human-editable auto memory.
 
 use std::path::{Path, PathBuf};
 

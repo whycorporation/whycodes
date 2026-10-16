@@ -1,4 +1,4 @@
-//! Sticky todo panel under the header (Grok Build-style).
+//! Sticky todo panel under the header.
 //!
 //! Header is always one row (`▸`/`▾ Todos` plus a right-aligned
 //! `done/total pct%` track). Click the header (or `t` in scrollback) to fold.
@@ -9,7 +9,7 @@
 //! place (wheel over the panel, ↑/↓ after focusing the list). There is no
 //! `+N more` overflow line.
 //!
-//! Glyphs and per-status colors follow Grok's `TodoPane`: hollow square,
+//! Glyphs and per-status colors: hollow square,
 //! play triangle, check mark, ballot X — icon color separate from text.
 
 use crate::app::TuiApp;
@@ -29,7 +29,7 @@ use whycodes_core::todo::{TodoItem, TodoStatus, all_terminal, terminal_count};
 /// Max item rows (not counting the header). Extra items scroll in place.
 pub const MAX_ITEMS: usize = 8;
 
-/// Compact track in the header (Grok context-bar cells).
+/// Compact track in the header (context-bar cells).
 const HEADER_BAR_CELLS: u16 = 8;
 
 /// True when the sticky panel should paint only the header row.
@@ -55,7 +55,7 @@ pub fn panel_height(app: &TuiApp, body_h: u16) -> u16 {
     want.min(max)
 }
 
-/// Grok `TodoPane` status glyph (not the ballot-box marks in `TodoStatus::mark`).
+/// Todo pane status glyph (not the ballot-box marks in `TodoStatus::mark`).
 pub fn status_glyph(status: TodoStatus) -> &'static str {
     match status {
         TodoStatus::Pending => "\u{25a1}",    // □
@@ -108,7 +108,7 @@ fn item_line_indented(
 ) -> Line<'static> {
     let glyph = status_glyph(item.status);
     // Chevron + space is 2 columns; items use the same indent so the glyph
-    // column lines up with the header label (Grok tasks-pane rule). Panel
+    // column lines up with the header label (tasks-pane rule). Panel
     // path adds `side` so the glyph sits on the shared body column.
     let indent = format!("{}  ", " ".repeat(side as usize));
     let prefix_cols = 2 + glyph.width() + 1;

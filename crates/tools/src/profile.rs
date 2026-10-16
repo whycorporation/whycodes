@@ -2,8 +2,7 @@
 //!
 //! Shipping every built-in tool on every request bloats the tools JSON prefix.
 //! `Core` keeps the hot coding loop (~12 names); `Full` is the complete set
-//! (github, web, lsp, mcp-style helpers). Matches jcode/Claude “curated tools”
-//! and Anthropic deferred-loading spirit.
+//! (github, web, lsp, mcp-style helpers).
 
 use serde::{Deserialize, Serialize};
 

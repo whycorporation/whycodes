@@ -1310,7 +1310,7 @@ impl Agent {
         }
     }
 
-    /// Execute the `task` tool by spawning a real subagent (OpenCode Task tool parity).
+    /// Execute the `task` tool by spawning a real subagent.
     pub(crate) async fn execute_task_tool(
         &self,
         call: &ToolCall,
@@ -1366,7 +1366,7 @@ impl Agent {
             }
         };
 
-        // Permission profile per OpenCode subagent type
+        // Permission profile per subagent type
         let worker =
             crate::routing::resolve_worker_model(provider_name, model, self.model_smol.as_deref());
         let (worker_provider, worker_model) = match &custom {
@@ -1422,7 +1422,7 @@ impl Agent {
                 ),
             ),
             (None, _) => {
-                // general: full tools except todo / nested swarm (OpenCode default + safety)
+                // general: full tools except todo / nested swarm (default + safety)
                 let mut perm = self.info.permission.clone();
                 let mut denied = perm.denied_tools.unwrap_or_default();
                 for t in ["todowrite", "todo", "todoread", "swarm"] {

@@ -40,7 +40,7 @@ pub fn home_dir() -> Option<PathBuf> {
 /// True for the null device: writing to it destroys nothing, whatever the
 /// redirect operator. `NUL` is the Windows spelling.
 ///
-/// Regression: jcode#738/#709 — `echo hi 2>/dev/null` was gated because the
+/// Regression: `echo hi 2>/dev/null` was gated because the
 /// redirect target lives under the protected `/dev` tree. Gating the most
 /// common stderr idiom in shell trains users to disable the gate.
 pub fn is_null_device(raw: &str) -> bool {

@@ -19,7 +19,7 @@ fn a_visible_toast_does_not_force_animation_cadence() {
     need.toasts_visible = true;
     assert!(
         !is_animating(&need),
-        "jcode: static chrome must not count as live animation"
+        "static chrome must not count as live animation"
     );
     assert_eq!(
         poll_interval(&need),

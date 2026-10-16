@@ -164,7 +164,7 @@ fn dialog_frame_too_small_area_returns_no_close_hit() {
 #[test]
 fn centered_rect_expands_on_phone_portrait() {
     // 50% of 40 cols is 20 — too narrow for a readable modal. Floor to 36.
-    // Callers now pass Grok's 90%, but the floor still applies to a 50% request.
+    // Callers now pass 90%, but the floor still applies to a 50% request.
     let r = Rect::new(0, 0, 40, 24);
     let modal = centered_rect(50, 30, r);
     assert!(
@@ -391,7 +391,7 @@ fn select_dialog_paints_items_and_marks_selection() {
     assert!(text.contains("gamma"), "{text}");
     // Detail rendered dimmed after label.
     assert!(text.contains("the second"), "{text}");
-    // Grok picker leaf mark on every row (selection is the wash, not ▸).
+    // Picker leaf mark on every row (selection is the wash, not ▸).
     let lines: Vec<&str> = text.lines().filter(|l| l.contains("beta")).collect();
     assert!(
         lines.iter().any(|l| l.contains('◆')),

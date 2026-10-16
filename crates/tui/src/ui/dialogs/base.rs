@@ -1,9 +1,9 @@
-// ── ui/dialogs/base.rs: Grok-style modal chrome ─────────────────────────
-// Visual model from Grok Build `ModalWindow` (`modal_window.rs`):
+// ── ui/dialogs/base.rs: modal chrome ────────────────────────────────────
+// Visual model:
 //   Clear · square dim border · bold "─ Title ─" · [✗] on top-right ·
 //   padded body · centered footer shortcuts (key bold, label dim).
 //
-// No full-screen scrim — Grok clears only the popup rect.
+// No full-screen scrim — clear only the popup rect.
 
 use crate::theme::ThemePalette;
 use ratatui::{
@@ -19,7 +19,7 @@ use unicode_width::UnicodeWidthStr;
 const H_PAD: u16 = 2;
 /// Vertical padding above content (below top border).
 const V_PAD: u16 = 1;
-/// Footer shortcut rows reserved (Grok Keyboard Shortcuts: 2).
+/// Footer shortcut rows reserved (Keyboard Shortcuts: 2).
 const FOOTER_LINES: u16 = 2;
 /// Prefer at least this many columns so titles/footers stay readable.
 /// Phone-portrait terminals (~40–60 cols) otherwise get a tiny percentage box.
@@ -27,18 +27,18 @@ const MIN_MODAL_WIDTH: u16 = 36;
 /// Prefer at least this many rows so body + footer survive short viewports
 /// (on-screen keyboard shrinking the PTY).
 const MIN_MODAL_HEIGHT: u16 = 10;
-/// Grok `ModalSizing.max_width` for the shortcuts / picker family.
+/// Max width for the shortcuts / picker family.
 const POPUP_MAX_WIDTH: u16 = 80;
-/// Grok `ModalSizing.min_width` for the shortcuts / picker family.
+/// Min width for the shortcuts / picker family.
 const POPUP_MIN_WIDTH: u16 = 44;
-/// Grok `ModalSizing.width_pct` (percent).
+/// Width (percent).
 const POPUP_WIDTH_PCT: u16 = 70;
-/// Grok shortcuts `v_margin` (rows dropped from top and bottom).
+/// Shortcuts `v_margin` (rows dropped from top and bottom).
 const POPUP_V_MARGIN: u16 = 4;
 /// Confirm/alert: same width, more outer margin so the box stays short.
 const COMPACT_V_MARGIN: u16 = 8;
 
-/// Grok compact chrome: drop inner pad when the PTY is a split/phone pane.
+/// Compact chrome: drop inner pad when the PTY is a split/phone pane.
 fn inner_h_pad(modal_w: u16) -> u16 {
     if modal_w < 48 { 1 } else { H_PAD }
 }
@@ -61,7 +61,7 @@ pub struct DialogChrome {
     pub inner_width: u16,
 }
 
-/// Grok Keyboard Shortcuts popup sizing (`shortcuts_help::modal_sizing`).
+/// Keyboard Shortcuts popup sizing.
 ///
 /// Width is `pct` of the outer area, then clamped to `[min, max]` and the
 /// terminal. Height is the outer height minus `2 * v_margin`.
@@ -126,11 +126,11 @@ pub fn close_button_rect(modal: Rect) -> Option<Rect> {
 pub enum DialogPlacement {
     /// Classic centered popup.
     Center,
-    /// Docked to the bottom edge (Grok ask_user_question style).
+    /// Docked to the bottom edge (ask_user_question style).
     Bottom,
 }
 
-/// Paint a Grok Keyboard Shortcuts-style centered modal and return the content rect.
+/// Paint a Keyboard Shortcuts-style centered modal and return the content rect.
 ///
 /// `shortcuts` are labels like `"Esc cancel"` / `"Enter select"` — the first
 /// whitespace-separated token is the key (bold), the rest is the hint (dim),
@@ -224,7 +224,7 @@ fn paint_dialog_chrome(
     // modal rect with themed spaces so every cell has an explicit bg/fg.
     crate::ui::layout::fill_blank(frame, dialog_area, palette.bg);
 
-    // Grok: border = gray_dim on bg_base; title bold primary on same fill.
+    // Border = gray_dim on bg_base; title bold primary on same fill.
     let border_style = Style::default().fg(palette.dim).bg(palette.bg);
     let title_style = Style::default()
         .fg(palette.fg)
@@ -238,7 +238,7 @@ fn paint_dialog_chrome(
         .border_style(border_style)
         .style(fill);
     if !t.is_empty() {
-        // Decorative ─ around the title blend with the border (Grok).
+        // Decorative ─ around the title blend with the border.
         block = block.title(Line::from(vec![
             Span::styled("─ ", border_style),
             Span::styled(t.to_string(), title_style),
@@ -294,7 +294,7 @@ fn paint_dialog_chrome(
     }
 }
 
-/// Grok `compute_modal_dims`: width = pct then `[min, max]` clamp; height
+/// Modal dims: width = pct then `[min, max]` clamp; height
 /// is the outer height minus `2 * v_margin`.
 pub fn popup_rect(r: Rect, sizing: DialogSizing) -> Rect {
     if r.width == 0 || r.height == 0 {
@@ -325,7 +325,7 @@ pub fn popup_rect(r: Rect, sizing: DialogSizing) -> Rect {
 
 /// Create a centered rectangle as a percentage of `r`.
 ///
-/// Grok Build (`agent_view/render.rs`): `max(percent of outer, min).min(outer)`.
+/// `max(percent of outer, min).min(outer)`.
 /// On a split/phone PTY the percentage is a floor, not a cap, so 50% of 40
 /// cols becomes 36 instead of a 20-col sliver.
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -343,7 +343,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 /// horizontally centered by `percent_x`.
 ///
 /// Used by the questionnaire panel so options sit above the prompt like
-/// Grok's `ask_user_question` UI.
+/// an `ask_user_question` UI.
 pub fn bottom_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let w = crate::tokens::layout::popup_dim(r.width, percent_x, MIN_MODAL_WIDTH);
     let h = crate::tokens::layout::popup_dim(r.height, percent_y, MIN_MODAL_HEIGHT.max(8));
@@ -365,7 +365,7 @@ fn paint_close_button(frame: &mut Frame, modal: Rect, palette: &ThemePalette, ho
     let cells = [" ", "[", "✗", "]", " "];
     debug_assert_eq!(cells.len() as u16, CLOSE_GLYPH_W);
     let buf = frame.buffer_mut();
-    // Grok: idle dim; hover brightens the mark (not error-red).
+    // Idle dim; hover brightens the mark (not error-red).
     let fg = if hovered { palette.fg } else { palette.dim };
     let style = Style::default()
         .fg(fg)
@@ -425,7 +425,7 @@ fn paint_footer_shortcuts(
     let sep_w = UnicodeWidthStr::width(sep);
     let avail = area.width as usize;
 
-    // Grok: greedy wrap, then bottom-align so a single row sits on the last line.
+    // Greedy wrap, then bottom-align so a single row sits on the last line.
     let mut rows: Vec<Vec<usize>> = vec![vec![]];
     let mut cur = 0usize;
     for (idx, label) in shortcuts.iter().enumerate() {
@@ -496,7 +496,7 @@ fn paint_footer_shortcuts(
     }
 }
 
-/// Full-width `─` hairline (Grok picker divider under the search bar).
+/// Full-width `─` hairline (picker divider under the search bar).
 pub fn paint_divider(frame: &mut Frame, x: u16, y: u16, width: u16, palette: &ThemePalette) {
     let style = Style::default().fg(palette.dim).bg(palette.bg);
     let buf = frame.buffer_mut();

@@ -3,7 +3,7 @@
 //! Terminal mouse selection copies every grid cell — including the spaces we
 //! use for backgrounds — so we own selection and push a cleaned string here.
 //!
-//! Selection shape is **linear** (Grok / native terminal semantics), not a
+//! Selection shape is **linear** (native terminal semantics), not a
 //! rectangle: first line from the anchor to the end, middle lines full width,
 //! last line from the start to the head. Per-line trailing pad is stripped,
 //! multi-line selections lose their common left indent (safe-area / SIDE_PAD /
@@ -303,7 +303,7 @@ impl ClipRect {
 
 /// Build clipboard text from a **linear** selection over a cell grid.
 ///
-/// This is the Grok-like path: multi-line drags do not pull in the empty
+/// This is the linear path: multi-line drags do not pull in the empty
 /// rectangle corners to the right of short lines, trailing pad is stripped,
 /// shared left indent (layout chrome) is dedented, and pad-only rows drop out.
 pub fn text_from_cells(cells: &CellGrid, x0: u16, y0: u16, x1: u16, y1: u16) -> String {

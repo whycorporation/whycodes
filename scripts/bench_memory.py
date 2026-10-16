@@ -8,8 +8,8 @@ Two things are measured, for different reasons:
 
   PSS       N concurrent idle TUI sessions held open together. Proportional
             Set Size from `/proc/<pid>/smaps_rollup` so shared pages are not
-            counted N times. This is the figure jcode and other harnesses
-            publish for "10 session" comparisons.
+            counted N times. This is the figure commonly published for
+            "10 session" comparisons.
 
 PSS needs Linux. On other platforms the multi-session section is skipped with
 a note; peak RSS still runs.

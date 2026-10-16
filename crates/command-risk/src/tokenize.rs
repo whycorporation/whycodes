@@ -65,7 +65,7 @@ impl Segment {
 /// Shell control-flow keywords are transparent when looking for the command a
 /// segment runs: in `then rm -rf ~`, the command is `rm`, not `then`.
 ///
-/// Regression: jcode#725 — `if`/`while`/`case` bodies bypassed the guardrail
+/// Regression: `if`/`while`/`case` bodies bypassed the guardrail
 /// because the keyword sat in the command slot.
 const SHELL_KEYWORDS: &[&str] = &[
     "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "case", "esac",
@@ -97,7 +97,7 @@ pub struct Tokenized {
 /// Bare parentheses act as separators too: `( rm -rf ~ )` runs `rm` in a
 /// subshell, and a `case` arm's `)` closes the pattern. Quoted or escaped
 /// parens never reach this table, and `$(…)` is consumed earlier.
-/// Regression: jcode#725 — subshell bodies bypassed the guardrail.
+/// Regression: subshell bodies bypassed the guardrail.
 const SEPARATORS: &[&str] = &[";", "&&", "||", "|", "&", "\n", "(", ")"];
 
 /// Redirection operators, kept as their own words so a target can follow.

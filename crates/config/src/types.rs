@@ -85,7 +85,7 @@ pub struct Config {
     #[serde(default)]
     pub schema_version: u32,
 
-    /// MCP server configurations (OpenCode-compatible)
+    /// MCP server configurations
     #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
 
@@ -93,7 +93,7 @@ pub struct Config {
     #[serde(default)]
     pub lsp: LspConfig,
 
-    /// Global tool permissions (OpenCode-style allow/ask/deny).
+    /// Global tool permissions (allow/ask/deny).
     /// Merged into each agent; agent-level `permission.rules` wins on conflict.
     #[serde(default)]
     pub permission: HashMap<String, PermissionAction>,
@@ -506,7 +506,7 @@ impl SecurityConfig {
     }
 }
 
-/// Custom slash command definition (OpenCode `/commands` parity)
+/// Custom slash command definition (`/commands`)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomCommandConfig {
     /// Prompt template (`$ARGUMENTS`, `$1`, `$2`, …)
@@ -733,7 +733,7 @@ impl Default for Config {
             top_p: None,
         };
 
-        // Plan: primary (Ctrl+T), file edits denied — OpenCode Plan / Cursor Plan
+        // Plan: primary (Ctrl+T), file edits denied
         let plan_agent = AgentInfo {
             name: "plan".to_string(),
             description: "Read-only planning agent — analyzes code and proposes changes but does not modify files.".to_string(),
@@ -773,7 +773,7 @@ impl Default for Config {
             top_p: None,
         };
 
-        // Ask: primary read-only Q&A — Cursor Ask mode (no implementation)
+        // Ask: primary read-only Q&A (no implementation)
         let ask_agent = AgentInfo {
             name: "ask".to_string(),
             description:
@@ -817,7 +817,7 @@ impl Default for Config {
             top_p: None,
         };
 
-        // Explore: subagent (OpenCode) — fast read-only codebase search
+        // Explore: subagent — fast read-only codebase search
         let explore_agent = AgentInfo {
             name: "explore".to_string(),
             description: "Fast read-only subagent for exploring codebases (find files, search keywords, answer questions).".to_string(),
@@ -855,7 +855,7 @@ impl Default for Config {
             top_p: None,
         };
 
-        // General: subagent with full tool access except todo (OpenCode)
+        // General: subagent with full tool access except todo
         let general_agent = AgentInfo {
             name: "general".to_string(),
             description: "General-purpose subagent for complex multi-step tasks. Full tools except todo. Use for parallel units of work.".to_string(),
@@ -879,7 +879,7 @@ impl Default for Config {
             top_p: None,
         };
 
-        // Scout: subagent for external docs / dependency research (OpenCode)
+        // Scout: subagent for external docs / dependency research
         let scout_agent = AgentInfo {
             name: "scout".to_string(),
             description: "Read-only subagent for external docs and dependency research.".to_string(),
@@ -1217,7 +1217,7 @@ pub(crate) fn default_agent() -> String {
     "build".to_string()
 }
 
-/// Settings for the interactive `question` tool (Grok-style questionnaire).
+/// Settings for the interactive `question` tool (questionnaire).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionToolConfig {
     /// When true, unanswered questionnaires fail after [`Self::timeout_secs`].

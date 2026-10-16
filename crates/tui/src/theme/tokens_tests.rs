@@ -60,8 +60,8 @@ fn layout_constants_leave_room_for_content() {
 }
 
 #[test]
-fn popup_dim_matches_grok_max_percent_then_clamp() {
-    // Grok: max(pct, min).min(outer). 90% of 40 is 36 — already at the floor.
+fn popup_dim_takes_max_percent_then_clamps() {
+    // max(pct, min).min(outer). 90% of 40 is 36 — already at the floor.
     assert_eq!(layout::popup_dim(40, 90, 36), 36);
     // 50% of 40 is 20, floored to 36 then clamped to 40.
     assert_eq!(layout::popup_dim(40, 50, 36), 36);

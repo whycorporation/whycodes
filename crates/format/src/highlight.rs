@@ -1,10 +1,10 @@
 //! Syntax highlighting via syntect (+ optional two-face).
 //!
-//! Stack mirrors Grok's markdown renderer:
+//! Stack:
 //! - **syntect** — TextMate grammars and themes (defaults pack unless
 //!   `extended-syntax` enables two-face / bat's ~250+ languages)
-//! - **Grok Night / Grok Day / Tokyo Night** — same `.tmTheme` files Grok
-//!   picks from the active TUI theme (`set_syntax_theme`)
+//! - **Grok Night / Grok Day / Tokyo Night** — `.tmTheme` files
+//!   picked from the active TUI theme (`set_syntax_theme`)
 //! - **Open-stream cache** — resumable `ParseState` / `HighlightState` so a
 //!   growing fenced block is highlighted O(new lines) per frame, not O(N²)
 //!
@@ -54,7 +54,7 @@ pub fn syntax_set() -> &'static SyntaxSet {
     })
 }
 
-/// Which Grok syntax theme paints fenced code.
+/// Which syntax theme paints fenced code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SyntaxTheme {
@@ -113,7 +113,7 @@ fn tokyo_night_theme() -> &'static Theme {
     THEME.get_or_init(|| load_embedded_theme(include_bytes!("../assets/tokyo-night.tmTheme")))
 }
 
-/// Active TextMate theme (Grok Night by default — same as Grok Build).
+/// Active TextMate theme (Grok Night by default).
 pub fn theme() -> &'static Theme {
     match syntax_theme() {
         SyntaxTheme::GrokNight => grok_night_theme(),
@@ -371,7 +371,7 @@ fn plain_lines(code: &str) -> Vec<Vec<CodeSpan>> {
 
 // ── Open-stream incremental highlighter ────────────────────────────────
 //
-// Same strategy as Grok's `OpenCodeHighlighter`: newline-terminated lines
+// Strategy: newline-terminated lines
 // permanently advance `ParseState` / `HighlightState`; the trailing partial
 // line (still streaming) is highlighted on clones so the next push can extend
 // it without replaying the whole block.

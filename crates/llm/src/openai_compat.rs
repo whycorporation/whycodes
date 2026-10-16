@@ -697,7 +697,7 @@ pub fn stream_usage_from_chunk(event: &Value) -> Option<whycodes_core::types::St
 /// - `tool_calls` → tool start/delta events
 ///
 /// Without this, reasoning streams are dropped and the TUI never paints
-/// "Thinking…" even though the model is thinking (Grok parity).
+/// "Thinking…" even though the model is thinking.
 pub fn stream_events_for_chat_delta(delta: &Value) -> Vec<whycodes_core::types::StreamEvent> {
     use whycodes_core::types::StreamEvent;
 
@@ -758,7 +758,7 @@ pub fn reasoning_text_from_delta(delta: &Value) -> Option<String> {
 }
 
 /// JSON Schema keywords that strict OpenAI-compatible endpoints reject
-/// (regression: jcode#687 `uniqueItems`, jcode#754 `propertyNames`). One bad
+/// (regression: `uniqueItems`, `propertyNames`). One bad
 /// tool fails the *whole* request there, so these are stripped recursively.
 const OPENAI_UNSUPPORTED_SCHEMA_KEYS: &[&str] = &[
     "uniqueItems",
@@ -771,7 +771,7 @@ const OPENAI_UNSUPPORTED_SCHEMA_KEYS: &[&str] = &[
 
 /// The full JSON type union, used when a schema omits `type` entirely: legal
 /// JSON Schema (accepts anything) but rejected by OpenAI's narrower subset
-/// (regression: jcode#713 — an MCP property with only a `description` 400'd
+/// (regression: an MCP property with only a `description` 400'd
 /// the entire tool catalog).
 const ANY_JSON_TYPE: [&str; 7] = [
     "string", "number", "integer", "boolean", "object", "array", "null",

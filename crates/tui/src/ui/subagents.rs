@@ -314,7 +314,7 @@ pub fn agent_lines(app: &TuiApp, palette: &ThemePalette) -> Vec<Line<'static>> {
     lines
 }
 
-/// Fullscreen framed child transcript (Grok subagent view).
+/// Fullscreen framed child transcript (subagent view).
 pub fn render_frame(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     let Some(id) = app.open_subagent.as_deref() else {
         return;

@@ -16,7 +16,7 @@ use ratatui::{
 use std::sync::OnceLock;
 use unicode_width::UnicodeWidthStr;
 
-/// Grok-style branch glyph (process-lifetime cache).
+/// Branch glyph (process-lifetime cache).
 fn branch_icon() -> &'static str {
     static ICON: OnceLock<&'static str> = OnceLock::new();
     ICON.get_or_init(|| {
@@ -266,7 +266,7 @@ fn render_location(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &Th
     }
 }
 
-/// Urgency color from fill percent (Grok context bar gradient).
+/// Urgency color from fill percent (context bar gradient).
 fn context_meter_color(pct: f64, palette: &ThemePalette) -> ratatui::style::Color {
     use crate::ui::progress_bar::{color_to_rgb, context_urgency_rgb};
     let (r, g, b) = context_urgency_rgb(

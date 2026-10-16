@@ -1,4 +1,4 @@
-//! Interactive questionnaire prompting (Grok-style `ask_user_question`).
+//! Interactive questionnaire prompting (`ask_user_question`).
 //!
 //! The agent intercepts the `question` tool and blocks until the UI (or stdin)
 //! returns structured answers. Mirrors [`crate::permission`] channel pattern.

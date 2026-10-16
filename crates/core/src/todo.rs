@@ -1,4 +1,4 @@
-//! Session todo list (Grok-style sticky TUI panel).
+//! Session todo list (sticky TUI panel).
 //!
 //! Tools write through [`TodoSink`]; the host maps that onto [`crate::todo`]
 //! events. Storage is session-scoped under `.whycodes/todos/<session_id>.json`.
@@ -159,7 +159,7 @@ pub fn apply_todo_update(
 
 /// Apply a `todowrite` / `todo` tool argument object.
 ///
-/// `merge` defaults to **true** (Grok Build). Returns `None` when `todos` is
+/// `merge` defaults to **true**. Returns `None` when `todos` is
 /// missing or not an array of items.
 pub fn apply_todowrite_args(
     existing: &[TodoItem],

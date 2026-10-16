@@ -17,7 +17,7 @@ pub struct WrappedRow {
 }
 
 /// Soft-wrap a flat span list to `width` display columns, preserving each
-/// run's style across row breaks (Grok prose in the transcript).
+/// run's style across row breaks (prose in the transcript).
 pub fn wrap_spans(spans: Vec<Span<'static>>, width: u16) -> Vec<Line<'static>> {
     if width == 0 {
         return vec![Line::from(spans)];

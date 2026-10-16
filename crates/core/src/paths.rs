@@ -3,8 +3,8 @@
 //! `WHYCODES_HOME` (if set and non-empty) is the instance root: config is
 //! `$WHYCODES_HOME/config.toml` and session/auth/memory/browser data live
 //! under `$WHYCODES_HOME`. Otherwise the default is `$HOME/.whycodes`
-//! (`%USERPROFILE%\.whycodes` on Windows) — the same short shape as Claude
-//! (`~/.claude`), Grok (`~/.grok`), and Codex (`~/.codex`).
+//! (`%USERPROFILE%\.whycodes` on Windows) — the usual short
+//! `~/.<tool>` shape.
 //!
 //! Pre-0.7 installs used `directories::ProjectDirs` (`com.whycorporation.whycodes`
 //! / XDG). [`legacy_instance_roots`] lists those paths so config load can

@@ -409,7 +409,7 @@ fn command_needs_full_worker_pool(cli: &Cli) -> bool {
 }
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
-    // Grok-style logging: always-on JSONL under data_dir/logs/, optional file,
+    // Logging: always-on JSONL under data_dir/logs/, optional file,
     // panic → data_dir/crash/. TUI keeps stderr quiet so the alternate screen
     // is not corrupted (use --debug or WHYCODES_LOG_FILE to capture human logs).
     // First-frame harness (`WHYCODES_BENCH`) skips disk logging so AppData
@@ -520,7 +520,7 @@ pub(crate) fn is_tui_invoke(cli: &Cli) -> bool {
         )
 }
 
-/// Grok parity: `--max-turns` is a headless cap. Interactive TUI/REPL
+/// `--max-turns` is a headless cap. Interactive TUI/REPL
 /// ignores the flag (warning on stderr) so a long coding turn is not
 /// killed at 25 LLM steps.
 pub(crate) fn ignore_max_turns_interactive(max_turns: Option<usize>) -> Option<usize> {

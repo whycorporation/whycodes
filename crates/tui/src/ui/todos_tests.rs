@@ -193,7 +193,7 @@ fn user_expand_survives_completed_refresh() {
 }
 
 #[test]
-fn glyphs_match_grok_todo_pane() {
+fn glyphs_match_todo_pane_spec() {
     assert_eq!(status_glyph(TodoStatus::Pending), "□");
     assert_eq!(status_glyph(TodoStatus::InProgress), "▶");
     assert_eq!(status_glyph(TodoStatus::Completed), "✓");

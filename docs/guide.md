@@ -88,7 +88,7 @@ dropped from the daemon's memory; the next request for it loads it again.
 The prompt is positional: `whycodes generate "<prompt>"`, not `whycodes -p`.
 `generate` (and `run --format json|stream-json`) accept `-t, --max-turns <N>` as
 an optional cap with **no default**. Interactive TUI / `whycodes run` ignores
-`--max-turns` (Grok parity): the agent runs until it finishes, you cancel, or
+`--max-turns`: the agent runs until it finishes, you cancel, or
 the doom-loop guard trips.
 
 ```bash

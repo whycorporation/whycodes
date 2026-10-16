@@ -12,7 +12,7 @@ const DEFAULT_MAX_ENTRIES: usize = 200;
 const HARD_MAX_ENTRIES: usize = 2000;
 const DEFAULT_MAX_DEPTH: usize = 3;
 
-/// List files and directories — OpenCode `list` tool equivalent.
+/// List files and directories (`list` tool).
 pub struct ListTool;
 
 impl Default for ListTool {

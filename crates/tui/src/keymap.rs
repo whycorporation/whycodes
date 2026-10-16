@@ -77,7 +77,7 @@ pub enum Action {
     ToggleToolResult,
     /// Fold / unfold the sticky todo panel (`t` in scrollback).
     ToggleTodosPanel,
-    /// Cycle primary agents (Ctrl+T; Tab is focus toggle — Grok)
+    /// Cycle primary agents (Ctrl+T; Tab is focus toggle)
     SwitchAgent,
     /// Tab: Prompt ↔ Todos (when overflowing) ↔ Scrollback
     ToggleFocus,
@@ -430,14 +430,14 @@ impl Keymap {
                     (true, KeyCode::Char('m')) => return Some(Action::OpenModelDialog),
                     (true, KeyCode::Char('a')) => return Some(Action::ToggleAutoScroll),
                     (true, KeyCode::Char('l')) => return Some(Action::ClearSession),
-                    // Grok: Tab toggles focus; Ctrl+T cycles agent (was bare Tab)
+                    // Tab toggles focus; Ctrl+T cycles agent (was bare Tab)
                     (false, KeyCode::Tab) => return Some(Action::ToggleFocus),
                     (true, KeyCode::Char('t')) => return Some(Action::SwitchAgent),
                     // Ctrl+Space arrives as Char(' ') on most terminals, Null on a few.
                     (true, KeyCode::Char(' ')) | (true, KeyCode::Null) => {
                         return Some(Action::FileComplete);
                     }
-                    // Page scroll works from either focus (Grok: PgUp/Dn from prompt)
+                    // Page scroll works from either focus (PgUp/Dn from prompt)
                     (false, KeyCode::PageUp) => return Some(Action::ScrollPageUp),
                     (false, KeyCode::PageDown) => return Some(Action::ScrollPageDown),
                     (false, KeyCode::Home)
@@ -496,7 +496,7 @@ impl Keymap {
                         (false, false, KeyCode::Enter) => Some(Action::FocusPrompt),
                         (false, false, KeyCode::Char(' ')) => Some(Action::FocusPrompt),
                         // Do not bind printable `i`: unbracketed paste and
-                        // Grok-style "any letter returns to the prompt"
+                        // "any letter returns to the prompt"
                         // would swallow every ASCII i (Turkish `iyi` → `y`).
                         // Tab / Space / Enter / Esc / Backspace still return.
                         (false, false, KeyCode::Up) | (false, false, KeyCode::Char('k')) => {

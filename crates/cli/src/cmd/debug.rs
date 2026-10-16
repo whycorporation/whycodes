@@ -129,7 +129,7 @@ pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
         debug_config_line(&p.display().to_string(), p.exists())
     );
 
-    // Data directory + log paths (Grok-style). `data_dir` is the same.
+    // Data directory + log paths. `data_dir` is the same.
     let p = Config::data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     println!(
         "{}",

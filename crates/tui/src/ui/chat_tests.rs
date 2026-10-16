@@ -427,7 +427,7 @@ fn tool_block_grep_header_shows_match_chip() {
     assert!(header.contains("\"foo\""), "quoted pattern, got {header}");
     assert!(
         header.contains("(2 matches in 2 files)"),
-        "Grok match summary, got {header}"
+        "match summary, got {header}"
     );
     assert!(header.contains("foo"), "got {header}");
 }
@@ -486,11 +486,7 @@ fn collapsed_tool_is_header_only() {
             spin: 0,
         },
     );
-    assert_eq!(
-        lines.len(),
-        1,
-        "Grok collapsed tool is a one-liner: {lines:?}"
-    );
+    assert_eq!(lines.len(), 1, "collapsed tool is a one-liner: {lines:?}");
     let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(header.contains('◆'), "{header}");
     assert!(
@@ -529,7 +525,7 @@ fn collapsed_tools_group_into_one_verb_line() {
     let joined = texts.join("\n");
     assert!(
         joined.contains("◈ Searched 3 patterns, Listed 1 dir, Read 1 file"),
-        "Grok verb-group line, got {texts:?}"
+        "verb-group line, got {texts:?}"
     );
 }
 
@@ -752,7 +748,7 @@ fn failed_execute_rail_is_error_red() {
 
 #[test]
 fn sparse_lines_full_width_diff_band() {
-    // Grok paints the whole row green/red — not only the text width.
+    // Paint the whole row green/red — not only the text width.
     let area = Rect::new(0, 0, 20, 1);
     let mut buf = Buffer::empty(area);
     let add_bg = Color::Rgb(20, 80, 40);
@@ -1049,7 +1045,7 @@ fn live_thinking_puts_elapsed_on_the_right() {
     let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(
         header.contains("Thinking…"),
-        "Grok live header is Thinking… (U+2026), got {header:?}"
+        "live header is Thinking… (U+2026), got {header:?}"
     );
     assert!(
         !header.contains("Thinking..."),
@@ -1112,7 +1108,7 @@ fn long_first_prompt_still_keeps_the_clock() {
     use crate::theme::ThemeName;
     let palette = ThemeName::DefaultDark.palette();
     let prompt = "please look at the first message bubble in chat history \
-and tell me if the clock should be on the right side of it like grok does \
+and tell me if the clock should be on the right side of it \
 with a short 12-hour stamp";
     let lines = super::user_prompt_lines(prompt, &[], Some("2:32 PM"), &palette, 72, false, false);
     let first = lines
@@ -1182,7 +1178,7 @@ fn long_user_prompt_collapses_to_three_lines() {
     let folded = super::user_prompt_lines(prompt, &[], None, &palette, 40, false, false);
     let texts: Vec<String> = folded.iter().map(line_text).collect();
     let content: Vec<&String> = texts.iter().filter(|t| !t.trim().is_empty()).collect();
-    assert_eq!(content.len(), 3, "Grok folds to 3 content rows: {texts:?}");
+    assert_eq!(content.len(), 3, "folds to 3 content rows: {texts:?}");
     assert!(
         content.last().is_some_and(|t| t.contains('\u{2026}')),
         "collapsed last row carries …, got {texts:?}"
@@ -1223,7 +1219,7 @@ fn slash_command_token_uses_accent() {
     assert_eq!(
         token.style.fg,
         Some(palette.accent),
-        "Grok paints /command in the skill accent"
+        "/command paints in the skill accent"
     );
     let rest = row
         .spans
@@ -3442,13 +3438,13 @@ fn buffer_text(buf: &Buffer) -> String {
 }
 
 #[test]
-fn grok_chat_flow_headers_paint_thinking_search_edit_read_run() {
+fn chat_flow_headers_paint_thinking_search_edit_read_run() {
     use crate::app::{AgentState, ChatBlock, ThinkingBlock};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     let mut app = TuiApp::new(TuiAppConfig::default());
-    app.add_message(ChatRole::User, "match grok chrome");
+    app.add_message(ChatRole::User, "match the chrome");
     app.add_message(ChatRole::Assistant, "done.");
     app.add_tool_call("g1".into(), "grep".into(), json!({"pattern": "foo"}));
     app.add_tool_result(
@@ -3536,7 +3532,7 @@ fn grok_chat_flow_headers_paint_thinking_search_edit_read_run() {
         painted.contains("Thinking…")
             || painted.contains("Thought for")
             || painted.contains("Search"),
-        "TestBackend mixed transcript must paint Grok chrome, got {painted}"
+        "TestBackend mixed transcript must paint the chrome, got {painted}"
     );
 }
 
@@ -3666,7 +3662,7 @@ fn consecutive_busy_frames_do_not_shift_finished_cells() {
         .push(ChatBlock::Thinking(ThinkingBlock::new(
             "live-one\nlive-two\nlive-three",
         )));
-    // Search headers (new Grok chrome) must also sit under the flicker guard.
+    // Search headers (new chrome) must also sit under the flicker guard.
     app.add_tool_call("g1".into(), "websearch".into(), json!({"query": "rust"}));
     app.add_tool_result("g1", "hits", false);
     app.add_tool_call("g2".into(), "grep".into(), json!({"pattern": "foo"}));

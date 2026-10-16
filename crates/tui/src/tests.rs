@@ -240,7 +240,7 @@ fn test_all_themes_produce_palette() {
 }
 
 #[test]
-fn syntax_theme_follows_grok_mapping() {
+fn syntax_theme_follows_ui_theme_mapping() {
     use whycodes_format::highlight::SyntaxTheme;
     assert_eq!(
         ThemeName::DefaultDark.syntax_theme(),
@@ -484,7 +484,7 @@ fn test_format_context_usage_and_percent() {
 
     assert_eq!(format_context_usage(1_200, 200_000), "1.2k / 200k");
     assert_eq!(format_context_usage(12_400, 128_000), "12.4k / 128k");
-    // Grok fmt_pct5: fixed 5 chars.
+    // fmt_pct5: fixed 5 chars.
     assert_eq!(fmt_pct5(0.0), "0.00%");
     assert_eq!(fmt_pct5(1.0), "1.00%");
     assert_eq!(fmt_pct5(42.0), "42.0%");
@@ -492,7 +492,7 @@ fn test_format_context_usage_and_percent() {
     assert_eq!(format_context_percent(1_200, 200_000), "0.60%");
     assert_eq!(format_context_percent(200_000, 200_000), "MAX %");
 
-    // Hover width matches default (no layout shift) — Grok invariant.
+    // Hover width matches default (no layout shift).
     for (used, max) in [(1_200u64, 200_000u64), (0, 9), (84_000, 200_000)] {
         let idle = format_context_usage(used, max);
         let hover = format_context_hover(used, max);
@@ -519,7 +519,7 @@ fn test_format_context_usage_and_percent() {
     assert_eq!(context_tokens_from_usage(&u), 1500);
 }
 
-/// Sticky hover (Grok HitArea): enter/leave flips flag + dirty; paint must
+/// Sticky hover (HitArea): enter/leave flips flag + dirty; paint must
 /// read the sticky flag, not recompute after clearing context_hit.
 #[test]
 fn context_meter_hover_marks_dirty_on_enter_leave() {
@@ -774,7 +774,7 @@ fn test_toggle_selected_thinking() {
     app.append_thinking("line1\nline2");
     app.finish_open_thinking();
     app.selected_msg = Some(0);
-    // Seed a layout cache so expand must clear it (Grok expand reliability).
+    // Seed a layout cache so expand must clear it (expand reliability).
     app.messages[0].layout_cache = Some((80, false, 3));
     assert!(matches!(
         &app.messages[0].blocks[0],
@@ -1873,7 +1873,7 @@ fn second_slash_while_draft_is_slash_does_not_become_double() {
     assert!(app.slash_suggest.active);
 }
 
-// ── Grok focus model (Prompt vs Scrollback) ─────────────────────────
+// ── Focus model (Prompt vs Scrollback) ──────────────────────────────
 
 #[test]
 fn default_focus_is_prompt() {
@@ -2029,11 +2029,11 @@ fn jump_user_turn_finds_previous_user_message() {
 fn scroll_rows_uses_display_height_not_message_count() {
     let mut app = TuiApp::new(test_config());
     // A long wrapped user message is many rows but one message.
-    // Expand so Grok's 3-line collapse does not hide the wrap height.
+    // Expand so the 3-line collapse does not hide the wrap height.
     let long = "word ".repeat(80);
     app.add_message(ChatRole::User, long);
     app.messages[0].results_expanded = true;
-    // User bubbles fold to 3 lines unless expanded (Grok UserPromptBlock).
+    // User bubbles fold to 3 lines unless expanded.
     if let Some(msg) = app.messages.last_mut() {
         msg.results_expanded = true;
     }

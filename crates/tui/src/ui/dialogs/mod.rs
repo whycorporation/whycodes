@@ -1,6 +1,6 @@
 // ── ui/dialogs/mod.rs: Dialog rendering system ────────────────────────
 // Renders modal overlays: provider, model, help, confirm, alert.
-// Chrome is Grok-style (ModalWindow) — see `base::dialog_frame`.
+// Chrome is a modal window — see `base::dialog_frame`.
 
 mod alert;
 mod base;
@@ -365,7 +365,7 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     }
 }
 
-/// Session picker subtitle — Grok `/resume` row: relative clock + message count.
+/// Session picker subtitle — `/resume` row: relative clock + message count.
 fn session_list_detail(s: &crate::app::SessionEntry) -> String {
     let msgs = format!("{} messages", s.messages);
     match s.updated_at {

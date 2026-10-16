@@ -1,4 +1,4 @@
-//! Grok-style logging: always-on JSONL, optional file log, crash reports.
+//! Logging: always-on JSONL, optional file log, crash reports.
 //!
 //! Layout under [`Config::data_dir`]:
 //! ```text
@@ -82,7 +82,7 @@ impl LogDirs {
 
 // ── JSONL event ────────────────────────────────────────────────────────────
 
-/// One line of `logs/unified.jsonl` (Grok-compatible shape).
+/// One line of `logs/unified.jsonl`.
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEvent {
     pub ts: String,

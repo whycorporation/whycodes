@@ -24,14 +24,14 @@ ACP (`whycodes acp`, editor ↔ agent over stdio) shipped.
 
 - 1000 fps render loop — idle dirty-draw stays the policy.
 - Self-dev binary reload — point the agent at this repo if you want that.
-- jcode memory graph / ambient daemon.
+- Memory graph / ambient daemon.
 - Plugin marketplace.
 
 ## Standing decisions
 
 These are still in force.
 
-- The goal is not “OpenCode parity” (nor jcode clone).
+- The goal is not feature parity with any other tool.
 - Safety before features: shell risk classification and the OS sandbox stay
   on by default.
 - Default `bash_risk_threshold` is `destructive`, not `caution`.

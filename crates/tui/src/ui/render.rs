@@ -27,7 +27,7 @@ use super::toast;
 use super::todos;
 
 pub fn render(frame: &mut Frame, app: &mut TuiApp) {
-    // jcode: a panic inside a widget must not tear down the alt-screen.
+    // A panic inside a widget must not tear down the alt-screen.
     // Recover with a fallback frame and keep the loop alive.
     if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         render_inner(frame, app);
@@ -118,7 +118,7 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     }
 }
 
-/// Reverse-video a **linear** selection (Grok / native terminal shape).
+/// Reverse-video a **linear** selection (native terminal shape).
 ///
 /// Only content cells are painted — trailing pad on short lines is left alone
 /// so the highlight matches what `clipboard::text_from_cells` will copy.
@@ -470,7 +470,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         .constraints([
             Constraint::Min(3),                   // scroll messages
             Constraint::Length(layout::CHAT_GAP), // safezone above stop / prompt
-            Constraint::Length(turn_h),           // Grok turn status (busy only)
+            Constraint::Length(turn_h),           // turn status (busy only)
             Constraint::Length(prompt_h),         // boxed prompt (╭ text ╰ meta) + hint
         ])
         .split(inset);
@@ -498,7 +498,7 @@ fn turn_status_height(app: &mut TuiApp) -> u16 {
     }
 }
 
-/// Busy strip (Grok turn_status): spinner + activity · detail …… 1m20s ⇣12k [stop]
+/// Busy strip (turn status): spinner + activity · detail …… 1m20s ⇣12k [stop]
 ///
 /// `[stop]` is mouse-clickable (sticky hit → cancel). Esc still cancels from the
 /// header shortcuts / key handler.

@@ -1,7 +1,7 @@
 //! Minimal MCP **server** (stdio JSON-RPC) exporting whycodes tools (A5).
 //!
 //! Implements `initialize`, `notifications/initialized`, `tools/list`, `tools/call`.
-//! Designed for local hosts (Cursor / Claude Desktop / other agents).
+//! Designed for local hosts (IDEs, desktop assistants, other agents).
 
 use std::io::{BufRead, Write};
 use std::sync::Arc;

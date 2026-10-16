@@ -508,7 +508,7 @@ impl Agent {
                 }
             }
 
-            // Shell-scoped permission rules (Claude Code `Bash(git *)` spirit).
+            // Shell-scoped permission rules (`Bash(git *)` form).
             match self.info.permission.action_for_shell(command) {
                 Some(shell_act) => match shell_act {
                     PermissionAction::Deny => {

@@ -1,6 +1,6 @@
 //! Busy-indicator frames shared by the header, turn strip, and tasks.
 //!
-//! Grok Build uses 1-column braille (`⠋⠙⠹⠸⠼⠴⠦⠧`) at ~7.5 fps. Those
+//! Uses 1-column braille (`⠋⠙⠹⠸⠼⠴⠦⠧`) at ~7.5 fps. Those
 //! code points are missing from CP437, so legacy Windows ConHost falls
 //! back to ASCII `| / - \`. Both sets stay one cell so a frame tick
 //! cannot shift the label or timer that follows.
@@ -8,13 +8,13 @@
 use ratatui::style::{Color, Style};
 use std::sync::OnceLock;
 
-/// Grok `braille_spinner_frames` fancy set (U+280B … U+2827).
+/// Braille spinner frames (U+280B … U+2827).
 pub const BRAILLE_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
 /// Legacy ConHost 1-column fallback.
 pub const ASCII_FRAMES: &[&str] = &["|", "/", "-", "\\"];
 
-/// Glyph dwell. Grok shows each frame ~133 ms (~7.5 fps). A wall-clock
+/// Glyph dwell: ~133 ms per frame (~7.5 fps). A wall-clock
 /// interval, not a count of loop passes: those speed up with typing and
 /// with a shorter `REDRAW_ANIMATE`.
 pub const TICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(120);
@@ -134,7 +134,7 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     #[test]
-    fn braille_frames_match_grok_order_and_are_one_column() {
+    fn braille_frames_keep_order_and_are_one_column() {
         assert_eq!(BRAILLE_FRAMES, &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"]);
         assert_eq!(BRAILLE_FRAMES[0], "\u{280b}");
         assert_eq!(BRAILLE_FRAMES[1], "\u{2819}");

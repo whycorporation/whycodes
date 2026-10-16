@@ -1,6 +1,6 @@
 //! Packed terminal cell grid for selection → clipboard.
 //!
-//! Grok-style binary layout: one UTF-8 buffer + a `u32` offset table
+//! Binary layout: one UTF-8 buffer + a `u32` offset table
 //! instead of `width × height` heap `String`s (a 200×60 frame used to
 //! allocate ~12k strings every drag frame).
 

@@ -427,7 +427,7 @@ pub fn resolve_and_load_session(
 /// heuristic is shown only when it did not, and labelled as an estimate — the
 /// two are not the same measurement and presenting them identically would
 /// suggest they are.
-/// Context window breakdown (`/context` — Claude Code spirit).
+/// Context window breakdown (`/context`).
 pub(super) fn context_report(
     session: &Session,
     app: &TuiApp,
@@ -551,7 +551,7 @@ fn append_git_status(
     }
 }
 
-/// Git status + short diff for the project (Claude Code `/diff` spirit).
+/// Git status + short diff for the project (`/diff`).
 pub(super) fn project_diff_report(project_dir: &std::path::Path) -> String {
     let mut out = String::from("Diff\n");
     let status = std::process::Command::new("git")
@@ -600,7 +600,7 @@ pub(super) fn project_slop_report(
     }
 }
 
-/// Session + last-turn token usage (Claude Code `/cost` spirit).
+/// Session + last-turn token usage (`/cost`).
 pub(super) fn cost_report(session: &Session, app: &TuiApp, credential: Option<&str>) -> String {
     let mut lines = vec!["Cost / usage".to_string()];
     let u = &session.usage;
@@ -669,7 +669,7 @@ fn cost_line(cost: &whycodes_session::SessionCost) -> String {
     }
 }
 
-/// Claude Code–style environment check: keys, sandbox, git, tools, jobs.
+/// Environment check: keys, sandbox, git, tools, jobs.
 /// This process's resident anonymous memory and how much of it the allocator
 /// holds without using (given back on the next trim).
 pub(super) fn memory_label(rss_anon: Option<u64>, retained: Option<u64>) -> String {

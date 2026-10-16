@@ -308,7 +308,7 @@ impl AnthropicProvider {
 
         crate::thinking::ThinkingConfig::apply_anthropic(&mut body, request.thinking.as_ref());
 
-        // OpenCode-parity: last tool + system + latest user message.
+        // Breakpoints: last tool + system + latest user message.
         if request.use_prompt_cache {
             crate::cache::apply_anthropic_cache_policy(
                 &mut body,

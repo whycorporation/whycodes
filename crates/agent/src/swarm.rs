@@ -1,7 +1,7 @@
 //! Swarm coordination helpers: report formatting and task parsing.
 //!
 //! Execution lives on [`crate::agent::Agent::execute_swarm_tool`]; this module
-//! holds pure helpers and size bounds (jcode-style TLDR for long reports).
+//! holds pure helpers and size bounds (TLDR for long reports).
 
 /// Soft cap for a single worker body in the aggregated swarm report.
 pub const MAX_SWARM_COMPLETION_REPORT_CHARS: usize = 12_000;
