@@ -154,7 +154,7 @@ fn truncate_pick_hint_and_cursor_helpers() {
     assert!(truncate_to_width("hello", 0).is_empty());
     assert_eq!(truncate_to_width("hello", 3), "hel");
     let _ = pick_hint();
-    assert_eq!(HINTS.len(), 9);
+    assert_eq!(HINTS.len(), 6);
     for hint in HINTS {
         assert!(!hint.is_empty(), "rotating home hints must be non-empty");
     }

@@ -81,7 +81,11 @@ fn home_shell_renders_prompt_and_records_chat_viewport() {
         "home shows product version: {text:?}"
     );
     assert!(a.chat_viewport_rows > 0);
-    assert_eq!(a.chat_content_width, buffer.area().width.saturating_sub(2));
+    let side = layout::side_pad(buffer.area().width);
+    assert_eq!(
+        a.chat_content_width,
+        buffer.area().width.saturating_sub(2 + 2 * side)
+    );
 }
 
 #[test]
@@ -883,4 +887,21 @@ fn turn_status_puts_the_turn_time_on_the_right() {
         render_turn_status(f, f.area(), &mut a, &palette);
     });
     assert!(text.contains("12s ⇣1k [stop]"), "{text}");
+}
+
+#[test]
+fn the_prompt_box_starts_in_the_same_column_on_home_and_in_a_session() {
+    fn box_left(app: &mut TuiApp) -> u16 {
+        let (buf, _) = paint(100, 30, |f| render(f, app));
+        (0..30u16)
+            .rev()
+            .find_map(|y| (0..100u16).find(|&x| buf[(x, y)].symbol() == "╭"))
+            .expect("prompt ╭")
+    }
+    let mut home = app();
+    let mut session = app();
+    session
+        .messages
+        .push(chat_message_with_thinking(ThinkingBlock::new("hi")));
+    assert_eq!(box_left(&mut home), box_left(&mut session));
 }
