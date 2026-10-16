@@ -588,6 +588,19 @@ The system prompt lists custom agents by name and description. An unknown
 | Memory | `memory` (`write` / `list` / `search` / `delete` / `learn` / `code_search` / `index`) |
 | Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search`, `plugin_*` |
 
+Jupyter notebooks (`.ipynb`) are edited as text. `read` shows each cell as a
+marker line (`# %% [code] cell:N` or `# %% [markdown] cell:N`) followed by
+its source, with a code cell's outputs summarized in one `# out:` line (never
+dumped); line numbers and content tags refer to this view. `edit` changes that
+view and writes it back as notebook JSON: an unchanged cell keeps its id,
+metadata and outputs exactly, a changed code cell loses its outputs and
+execution count, a marker without a number (`# %% [code]` or `cell:new`) adds
+a cell, and removing a block deletes one. `write` with marker text does the
+same; `write` with raw JSON writes it as given. `nbformat`, notebook metadata
+and Jupyter's 1-space formatting are kept, and an edit that damages the
+markers (a repeated `cell:N`, an unknown cell type) is refused without
+writing. `grep` and `apply_patch` still see the raw JSON.
+
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
 
