@@ -1,0 +1,285 @@
+{
+  "_comment": "Recorded ceilings for in-memory caches and retained buffers. Checked by scripts/check_memory_budget.py; see docs/budgets.md#memory. Raising a value is a reviewed change: say why in the commit message.",
+  "bounds": [
+    {
+      "file": "crates/llm/src/response_cache.rs",
+      "const": "MAX_ENTRIES",
+      "value": 48,
+      "kind": "cache",
+      "what": "process-wide text-only LLM response cache, entries"
+    },
+    {
+      "file": "crates/tools/src/executor.rs",
+      "const": "DEFS_CACHE_MAX_ENTRIES",
+      "value": 16,
+      "kind": "cache",
+      "what": "memoized tool-definition sets per (permissions, profile, extra)"
+    },
+    {
+      "file": "crates/format/src/highlight.rs",
+      "const": "CACHE_ENTRIES",
+      "value": 64,
+      "kind": "cache",
+      "what": "closed-block syntax highlight LRU, entries"
+    },
+    {
+      "file": "crates/format/src/mermaid.rs",
+      "const": "CACHE_ENTRIES",
+      "value": 32,
+      "kind": "cache",
+      "what": "rendered mermaid diagrams, entries"
+    },
+    {
+      "file": "crates/tui/src/ui/chat.rs",
+      "const": "LINE_CACHE_MARGIN",
+      "value": 24,
+      "kind": "cache",
+      "what": "messages kept with painted-line caches either side of the viewport"
+    },
+    {
+      "file": "crates/tui/src/frecency.rs",
+      "const": "MAX_ENTRIES",
+      "value": 1000,
+      "kind": "cache",
+      "what": "@-picker frecency map, files"
+    },
+    {
+      "file": "crates/tui/src/app.rs",
+      "const": "INPUT_HISTORY_MAX",
+      "value": 1000,
+      "kind": "buffer",
+      "what": "prompt input history, entries"
+    },
+    {
+      "file": "crates/tui/src/app.rs",
+      "const": "THINKING_MAX_CHARS",
+      "value": 98304,
+      "kind": "buffer",
+      "what": "reasoning text kept per message, bytes"
+    },
+    {
+      "file": "crates/tui/src/app.rs",
+      "const": "TOOL_VIEW_MAX_CHARS",
+      "value": 524288,
+      "kind": "buffer",
+      "what": "tool output kept for the TUI view, chars"
+    },
+    {
+      "file": "crates/tui/src/run/mod.rs",
+      "const": "MAX_LIVE_SESSIONS",
+      "value": 8,
+      "kind": "count",
+      "what": "concurrent live sessions in one TUI"
+    },
+    {
+      "file": "crates/tui/src/run/mod.rs",
+      "const": "CONSOLE_WRITE_BUFFER",
+      "value": 262144,
+      "kind": "buffer",
+      "what": "terminal write buffer, bytes"
+    },
+    {
+      "file": "crates/tui/src/images.rs",
+      "const": "MAX_IMAGE_BYTES",
+      "value": 20971520,
+      "kind": "buffer",
+      "what": "one pasted/attached image, bytes"
+    },
+    {
+      "file": "crates/tui/src/images.rs",
+      "const": "MAX_ATTACHMENTS",
+      "value": 10,
+      "kind": "count",
+      "what": "images attached to one prompt"
+    },
+    {
+      "file": "crates/tui/src/heap.rs",
+      "const": "CLIENT_RETENTION_TRIM_BYTES",
+      "value": 16777216,
+      "kind": "allocator",
+      "what": "heap retention before the TUI client trims, bytes"
+    },
+    {
+      "file": "crates/server/src/heap.rs",
+      "const": "RETENTION_TRIM_BYTES",
+      "value": 67108864,
+      "kind": "allocator",
+      "what": "heap retention before the server trims, bytes"
+    },
+    {
+      "file": "crates/core/src/process_memory.rs",
+      "const": "DEFAULT_ARENA_MAX",
+      "value": 4,
+      "kind": "allocator",
+      "what": "glibc malloc arenas"
+    },
+    {
+      "file": "crates/agent/src/background.rs",
+      "const": "DEFAULT_MAX_BACKGROUND_JOBS",
+      "value": 8,
+      "kind": "count",
+      "what": "background jobs alive at once"
+    },
+    {
+      "file": "crates/agent/src/background.rs",
+      "const": "MAX_JOB_OUTPUT_BYTES",
+      "value": 65536,
+      "kind": "buffer",
+      "what": "in-memory output tail per background job, bytes"
+    },
+    {
+      "file": "crates/agent/src/background.rs",
+      "const": "RETAIN_FINISHED",
+      "value": 16,
+      "kind": "count",
+      "what": "finished background jobs kept for inspection"
+    },
+    {
+      "file": "crates/agent/src/swarm.rs",
+      "const": "SWARM_HARD_MAX_AGENTS",
+      "value": 8,
+      "kind": "count",
+      "what": "concurrent swarm subagents"
+    },
+    {
+      "file": "crates/agent/src/context_files.rs",
+      "const": "MAX_CONTEXT_BYTES",
+      "value": 80000,
+      "kind": "transcript",
+      "what": "project context files in the system prompt, bytes"
+    },
+    {
+      "file": "crates/agent/src/context_files.rs",
+      "const": "MAX_CONTEXT_FILES",
+      "value": 24,
+      "kind": "transcript",
+      "what": "project context files loaded"
+    },
+    {
+      "file": "crates/agent/src/context_files.rs",
+      "const": "MAX_NESTED_BYTES",
+      "value": 20000,
+      "kind": "transcript",
+      "what": "nested context file, bytes"
+    },
+    {
+      "file": "crates/session/src/session.rs",
+      "const": "TOOL_RESULT_MAX_CHARS",
+      "value": 32768,
+      "kind": "transcript",
+      "what": "one tool result kept in the session, chars"
+    },
+    {
+      "file": "crates/session/src/session.rs",
+      "const": "FULL_TRANSCRIPT_MAX_CHARS",
+      "value": 48000,
+      "kind": "transcript",
+      "what": "transcript handed to compaction, chars"
+    },
+    {
+      "file": "crates/session/src/session.rs",
+      "const": "DROPPED_TRANSCRIPT_MAX_CHARS",
+      "value": 12000,
+      "kind": "transcript",
+      "what": "dropped-span transcript for compaction, chars"
+    },
+    {
+      "file": "crates/tools/src/file/internal.rs",
+      "const": "PROC_TAIL_CHARS",
+      "value": 16000,
+      "kind": "buffer",
+      "what": "subprocess output tail, chars"
+    },
+    {
+      "file": "crates/tools/src/file/paths.rs",
+      "const": "MAX_FULL_READ_BYTES",
+      "value": 8388608,
+      "kind": "buffer",
+      "what": "file read into memory whole, bytes"
+    },
+    {
+      "file": "crates/tools/src/file/paths.rs",
+      "const": "MAX_GREP_FILE_BYTES",
+      "value": 2097152,
+      "kind": "buffer",
+      "what": "file read into memory by grep, bytes"
+    },
+    {
+      "file": "crates/tools/src/agent_tools/panel.rs",
+      "const": "MAX_PREVIEW_BYTES",
+      "value": 65536,
+      "kind": "buffer",
+      "what": "panel preview, bytes"
+    },
+    {
+      "file": "crates/index/src/lib.rs",
+      "const": "DEFAULT_MAX_ENTRIES",
+      "value": 200000,
+      "kind": "index",
+      "what": "workspace file index, paths"
+    },
+    {
+      "file": "crates/index/src/content.rs",
+      "const": "MAX_INDEX_BYTES",
+      "value": 1048576,
+      "kind": "index",
+      "what": "largest file content-indexed, bytes"
+    },
+    {
+      "file": "crates/memory/src/service.rs",
+      "const": "FTS_CANDIDATES",
+      "value": 256,
+      "kind": "buffer",
+      "what": "memory search candidates loaded per query"
+    },
+    {
+      "file": "crates/storage/src/db.rs",
+      "const": "FTS_SCAN_LIMIT",
+      "value": 50000,
+      "kind": "buffer",
+      "what": "rows scanned per full-text query"
+    },
+    {
+      "file": "crates/llm/src/model_catalog.rs",
+      "const": "MAX_BODY",
+      "value": 8388608,
+      "kind": "buffer",
+      "what": "model catalog response body, bytes"
+    },
+    {
+      "file": "crates/llm/src/preconnect.rs",
+      "const": "DRAIN_CAP_BYTES",
+      "value": 65536,
+      "kind": "buffer",
+      "what": "preconnect reply drained, bytes"
+    },
+    {
+      "file": "crates/plugin/src/hooks.rs",
+      "const": "OUTPUT_ENV_MAX",
+      "value": 8192,
+      "kind": "buffer",
+      "what": "hook output passed through env, bytes"
+    },
+    {
+      "file": "crates/cli/src/cmd/helpers.rs",
+      "const": "AT_FILE_MAX_CHARS",
+      "value": 24000,
+      "kind": "transcript",
+      "what": "@file inlined into a prompt (plain REPL), chars"
+    },
+    {
+      "file": "crates/tui/src/run/slash.rs",
+      "const": "AT_FILE_MAX_CHARS",
+      "value": 24000,
+      "kind": "transcript",
+      "what": "@file inlined into a prompt (TUI), chars"
+    },
+    {
+      "file": "crates/cli/src/cmd/acp/map.rs",
+      "const": "MAX_TOOL_OUTPUT",
+      "value": 20000,
+      "kind": "buffer",
+      "what": "tool output forwarded over ACP, chars"
+    }
+  ]
+}
