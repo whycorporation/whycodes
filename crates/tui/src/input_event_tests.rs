@@ -346,6 +346,26 @@ fn history_up_down_walk_the_prompt_stack() {
 }
 
 #[test]
+fn ctrl_c_clears_a_draft_before_asking_to_quit() {
+    let mut a = app();
+    a.input_buffer = "half typed".into();
+    a.input_cursor = a.input_buffer.len();
+    assert!(handle_event(&mut a, ctrl('c')));
+    assert!(a.input_buffer.is_empty(), "first Ctrl+C clears the draft");
+    assert_eq!(a.mode, AppMode::Normal, "no quit dialog yet");
+    assert!(handle_event(&mut a, ctrl('c')));
+    assert!(matches!(
+        a.dialogs.active(),
+        Some(DialogKind::Confirm {
+            on_confirm: ConfirmAction::Quit,
+            ..
+        })
+    ));
+    assert!(!handle_event(&mut a, ctrl('c')), "third Ctrl+C quits");
+    assert!(!a.running);
+}
+
+#[test]
 fn quit_help_command_and_escape_modes() {
     let mut a = app();
     assert!(handle_event(&mut a, ctrl('c')));
