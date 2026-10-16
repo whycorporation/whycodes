@@ -73,6 +73,8 @@ CONTENT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "GitHub fine-grained PAT"),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "Slack token"),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "AWS access key id"),
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"), "Google API key"),
+    (re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{32,}\b"), "API key (sk- prefix)"),
 ]
 
 MAX_SCAN_BYTES = 1_000_000
