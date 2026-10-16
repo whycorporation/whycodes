@@ -778,7 +778,18 @@ fn test_config_dispatch_roundtrips_supported_values_and_reports_errors() {
 
         let get = run_home(home.path(), &["config", "get", key]);
         assert_ok(&["config", "get", key], &get);
-        assert_eq!(String::from_utf8_lossy(&get.stdout).trim(), value);
+        assert_eq!(
+            String::from_utf8_lossy(&get.stdout).trim(),
+            format!("{value}  (from: global)")
+        );
+
+        let json = run_home(home.path(), &["config", "get", key, "--json"]);
+        assert_ok(&["config", "get", key, "--json"], &json);
+        let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(
+            parsed,
+            serde_json::json!({ "key": key, "value": value, "overriddenBy": "global" })
+        );
     }
 
     let show = run_home(home.path(), &["config", "show"]);

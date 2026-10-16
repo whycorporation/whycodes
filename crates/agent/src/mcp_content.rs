@@ -134,6 +134,75 @@ async fn read_resource(servers: &[McpServerHandle], args: &Value) -> Result<Stri
         .join("\n\n"))
 }
 
+/// `read mcp://…`: `mcp://` lists the connected servers, `mcp://<server>`
+/// that server's resources, `mcp://<server>/<uri>` one resource (the same
+/// read as `mcp_read_resource`).
+pub(crate) async fn read_mcp_url(
+    servers: &[McpServerHandle],
+    rest: &str,
+) -> Result<String, String> {
+    let rest = rest.trim().trim_start_matches('/');
+    if rest.is_empty() {
+        return Ok(list_servers(servers).await);
+    }
+    let (name, uri) = rest.split_once('/').unwrap_or((rest, ""));
+    let Some(server) = servers.iter().find(|s| s.name == name) else {
+        let connected = names(servers);
+        return Err(format!(
+            "unknown MCP server '{name}' (connected: {connected})"
+        ));
+    };
+    if uri.is_empty() {
+        return list_server_resources(server).await;
+    }
+    let text = read_resource(servers, &json!({"server": name, "uri": uri})).await?;
+    Ok(format!("# mcp://{name}/{uri}\n\n{text}"))
+}
+
+async fn list_servers(servers: &[McpServerHandle]) -> String {
+    if servers.is_empty() {
+        return "No MCP servers connected. Add one under [mcp_servers] in config.".to_string();
+    }
+    let mut out = String::from("MCP servers (read `mcp://<server>` for its resources):\n");
+    for server in servers {
+        let client = server.client.lock().await;
+        let resources = if client.supports_resources() {
+            "resources"
+        } else {
+            "no resources"
+        };
+        out.push_str(&format!(
+            "- {} ({}, {resources})\n",
+            server.name,
+            client.transport_name()
+        ));
+    }
+    out
+}
+
+async fn list_server_resources(server: &McpServerHandle) -> Result<String, String> {
+    let mut client = server.client.lock().await;
+    if !client.supports_resources() {
+        return Err(format!("MCP server '{}' offers no resources.", server.name));
+    }
+    let resources = client
+        .list_resources()
+        .await
+        .map_err(|e| format!("[{}] error: {e}", server.name))?;
+    if resources.is_empty() {
+        return Ok(format!("No resources on MCP server '{}'.", server.name));
+    }
+    let mut out = format!(
+        "Resources on '{}' (read with `read mcp://{}/<uri>`):\n",
+        server.name, server.name
+    );
+    for r in resources {
+        let desc = r.description.map(|d| format!(" — {d}")).unwrap_or_default();
+        out.push_str(&format!("- {} <{}>{desc}\n", r.name, r.uri));
+    }
+    Ok(out)
+}
+
 fn names(servers: &[McpServerHandle]) -> String {
     servers
         .iter()

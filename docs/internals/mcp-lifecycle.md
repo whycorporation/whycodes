@@ -129,6 +129,13 @@ after all servers are up. If at least one connected server advertised the
   back verbatim, a blob is summarised as
   `[binary <mime> at <uri>, N base64 chars]`.
 
+`read mcp://<server>/<uri>` is the same read through the `read` tool:
+`dispatch_tool` answers it in-process (`execute_mcp_read` →
+`read_mcp_url`) because the clients live on the agent, not in the tool
+executor. `mcp://<server>` lists that server's resources (an error when it
+advertises none) and `mcp://` the connected servers, whether or not the
+resource tools were registered.
+
 Prompts are not registered as tools. In the TUI, `/mcp__<server>__<prompt>
 args` reaches `render_mcp_prompt`: it calls `prompts/list` on that server
 every time, fills arguments positionally (the last declared argument takes

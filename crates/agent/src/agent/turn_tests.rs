@@ -313,6 +313,51 @@ async fn harmony_leak_in_tool_args_does_not_execute() {
 }
 
 #[tokio::test]
+async fn file_tool_results_feed_the_session_edit_stats() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "one\ntwo\n").unwrap();
+    let agent = batched([
+        vec![
+            ScriptedStep::ToolCall {
+                id: "w1".into(),
+                name: "write".into(),
+                input: json!({"path": "fresh.txt", "content": "a\nb\nc"}),
+            },
+            ScriptedStep::ToolCall {
+                id: "e1".into(),
+                name: "edit".into(),
+                input: json!({
+                    "path": "note.txt",
+                    "old_string": "two",
+                    "new_string": "deux"
+                }),
+            },
+            ScriptedStep::ToolCall {
+                id: "e2".into(),
+                name: "edit".into(),
+                input: json!({
+                    "path": "missing.txt",
+                    "old_string": "x",
+                    "new_string": "y"
+                }),
+            },
+        ],
+        vec![ScriptedStep::Text("edited".into())],
+    ]);
+    let mut session = session_at(dir.path(), "write fresh.txt and edit note.txt");
+    let out = agent
+        .run_turn(&mut session, "script", "gpt-5", "k", Some(8))
+        .await
+        .expect("turn");
+    assert!(out.contains("edited"), "{out}");
+    // write: +3 new lines; edit: one line replaced; the failed edit counts
+    // nothing (it is an error result, not a lost trailer).
+    assert_eq!(session.edit_stats.added, 4, "{:?}", session.edit_stats);
+    assert_eq!(session.edit_stats.removed, 1, "{:?}", session.edit_stats);
+    assert!(session.edit_stats.approximate);
+}
+
+#[tokio::test]
 async fn harmony_leak_in_thinking_retries() {
     let leak = "analysis to=functions.edit code leftover";
     let agent = batched([

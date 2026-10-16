@@ -2,6 +2,7 @@
 use super::helpers::*;
 use crate::args::*;
 use colored::*;
+use serde::Serialize;
 use whycodes_config::Config;
 
 /// `Config::data_dir` only wraps `paths::data_dir()` and does not fail today.
@@ -16,7 +17,7 @@ pub(crate) fn auth_data_dir() -> std::path::PathBuf {
     auth_data_dir_from(Config::data_dir())
 }
 
-pub(crate) async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
+pub(crate) async fn cmd_auth(project_dir: &std::path::Path, cmd: &AuthCmd) -> anyhow::Result<()> {
     let data_dir = auth_data_dir();
     let store = whycodes_auth::TokenStore::new(&data_dir);
     match cmd {
@@ -38,6 +39,7 @@ pub(crate) async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
                     provider,
                     whycodes_auth::ProviderAuth {
                         method: "oauth".into(),
+                        validated_at: None,
                         token: whycodes_auth::OAuthToken {
                             access_token: "test-access".into(),
                             refresh_token: None,
@@ -61,7 +63,17 @@ pub(crate) async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
                 println!("{}", logout_missing_line(provider));
             }
         }
-        AuthCmd::Status => {
+        AuthCmd::Status { json: true } => {
+            let config = Config::load_layered(project_dir)?;
+            let entries = auth_status_entries(
+                &config,
+                &store.list()?,
+                |k| std::env::var(k).ok(),
+                chrono::Utc::now(),
+            );
+            println!("{}", serde_json::to_string_pretty(&entries)?);
+        }
+        AuthCmd::Status { json: false } => {
             let entries = store.list()?;
             if entries.is_empty() {
                 println!("{}", auth_status_empty_line(&oauth_provider_list()));
@@ -227,6 +239,117 @@ pub(crate) fn imported_count_line(imported: usize) -> String {
         "\n{} {imported} credential(s) ready — `whycodes auth status` lists them.",
         "✓".green()
     )
+}
+
+/// One row of `auth status --json`: what the CLI would use for the
+/// provider and, for a stored login, how fresh it is. Never token material.
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AuthStatusEntry {
+    pub provider: String,
+    /// `api_key` | `oauth` | `none`
+    pub auth_kind: &'static str,
+    /// `env:<VAR>` | `config` | `oauth_store` | `none` — the first hit in
+    /// the CLI's own precedence (env var → config `api_key` → OAuth store).
+    pub credential_source: String,
+    /// OAuth only: when the access token (or derived API token) expires.
+    pub expiry: Option<String>,
+    /// OAuth only: when the login was last obtained or renewed.
+    pub validated_at: Option<String>,
+    /// OAuth only: not renewed for over a week (`whycodes_auth::token::STALE_AFTER`).
+    pub stale: bool,
+}
+
+/// Every provider the config names or the store holds, in name order.
+pub(crate) fn auth_status_entries(
+    config: &Config,
+    stored: &[(String, whycodes_auth::ProviderAuth)],
+    env: impl Fn(&str) -> Option<String>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<AuthStatusEntry> {
+    let names: std::collections::BTreeSet<&str> = config
+        .providers
+        .keys()
+        .map(String::as_str)
+        .chain(stored.iter().map(|(name, _)| name.as_str()))
+        .collect();
+    names
+        .into_iter()
+        .map(|provider| {
+            if let Some(source) = api_key_source(provider, config, &env) {
+                return AuthStatusEntry {
+                    provider: provider.to_string(),
+                    auth_kind: "api_key",
+                    credential_source: source,
+                    expiry: None,
+                    validated_at: None,
+                    stale: false,
+                };
+            }
+            match stored.iter().find(|(name, _)| name == provider) {
+                Some((_, auth)) => AuthStatusEntry {
+                    provider: provider.to_string(),
+                    auth_kind: "oauth",
+                    credential_source: "oauth_store".into(),
+                    expiry: oauth_expiry(auth),
+                    validated_at: auth.validated_at.map(|t| t.to_rfc3339()),
+                    stale: auth.is_stale_at(now),
+                },
+                None => AuthStatusEntry {
+                    provider: provider.to_string(),
+                    auth_kind: "none",
+                    credential_source: "none".into(),
+                    expiry: None,
+                    validated_at: None,
+                    stale: false,
+                },
+            }
+        })
+        .collect()
+}
+
+/// The env var or config key an explicit API key would come from, in the
+/// order `credential_candidates` tries them: the provider's default env
+/// var, named credential lanes, config `api_key`, then `OPENAI_API_KEY`
+/// for `openai`.
+fn api_key_source(
+    provider: &str,
+    config: &Config,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let set = |var: &str| env(var).is_some_and(|v| !v.is_empty());
+    let default_var = provider_env_var(provider);
+    if set(&default_var) {
+        return Some(format!("env:{default_var}"));
+    }
+    if let Some(pc) = config.get_provider(provider) {
+        let ci = whycodes_core::types::process_is_ci_from(env);
+        for name in pc.credentials.names_for_lane(ci) {
+            let var = pc.credentials.env_var_for(&name, provider);
+            if set(&var) {
+                return Some(format!("env:{var}"));
+            }
+        }
+        if pc.api_key.as_deref().is_some_and(|k| !k.is_empty()) {
+            return Some("config".into());
+        }
+    }
+    if provider == "openai" && set("OPENAI_API_KEY") {
+        return Some("env:OPENAI_API_KEY".into());
+    }
+    None
+}
+
+/// RFC 3339 expiry of the credential the API actually receives: a derived
+/// token's own expiry when the provider issues one, else the access token's.
+fn oauth_expiry(auth: &whycodes_auth::ProviderAuth) -> Option<String> {
+    auth.token
+        .extra
+        .get("derived_expires_at")
+        .or_else(|| auth.token.extra.get("copilot_expires_at"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| auth.token.expires_at.map(|t| t.to_rfc3339()))
 }
 
 /// Human expiry label for `auth status` / `debug` — never token material.
