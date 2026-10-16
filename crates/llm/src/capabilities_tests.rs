@@ -244,3 +244,34 @@ fn heuristics_cover_models_missing_from_the_catalog() {
         8
     );
 }
+
+#[test]
+fn native_compaction_only_for_listed_anthropic_models() {
+    for model in [
+        "claude-opus-5-5",
+        "claude-sonnet-5-5-20261001",
+        "claude-haiku-5-5",
+        "claude-opus-4-6",
+        "claude-mythos-preview",
+        "Claude-Fable-5-1",
+    ] {
+        assert!(
+            detect_capabilities("anthropic", model).compaction,
+            "{model}"
+        );
+    }
+    for model in [
+        "claude-opus-5-1",
+        "claude-opus-5-5-preview",
+        "claude-opus-5-5-2026",
+        "claude-3-5-sonnet",
+        "claude-opus-4-5",
+    ] {
+        assert!(
+            !detect_capabilities("anthropic", model).compaction,
+            "{model}"
+        );
+    }
+    assert!(!detect_capabilities("openrouter", "claude-opus-5-5").compaction);
+    assert!(!ModelCapabilities::default().compaction);
+}

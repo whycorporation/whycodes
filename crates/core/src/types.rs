@@ -67,7 +67,11 @@ fn ignore_glob() {}
 fn first_text_block(blocks: &[ContentBlock]) -> Option<&str> {
     for block in blocks {
         match block {
-            ContentBlock::Text { text } => return Some(text.as_str()),
+            // A provider summary reads as its text for providers that
+            // render a message from its first text (Gemini, Ollama).
+            ContentBlock::Text { text: t } | ContentBlock::Compaction { content: t, .. } => {
+                return Some(t.as_str());
+            }
             ContentBlock::Image { .. }
             | ContentBlock::ToolUse { .. }
             | ContentBlock::ToolResult { .. }
@@ -111,11 +115,44 @@ pub enum ContentBlock {
     RedactedThinking {
         data: String,
     },
+    /// A provider-written summary that stands in for the messages before it
+    /// (Anthropic on-demand compaction). `raw` is the block exactly as the
+    /// provider returned it (`type`, `content`, `signature`, …) and is sent
+    /// back unchanged: the provider rejects an altered or extended block.
+    /// `content` is the readable summary, used to render the transcript and
+    /// as plain text for every provider that cannot replay `raw`.
+    #[serde(rename = "compaction")]
+    Compaction {
+        content: String,
+        raw: serde_json::Value,
+    },
 }
+
+/// Heading for a [`ContentBlock::Compaction`] sent as plain text.
+pub const COMPACTION_TEXT_PREFIX: &str = "[Earlier conversation summary]
+";
 
 impl ContentBlock {
     pub fn is_thinking(&self) -> bool {
         matches!(self, Self::Thinking { .. } | Self::RedactedThinking { .. })
+    }
+
+    /// A provider compaction block from the raw JSON the provider returned.
+    /// `None` unless it is a `compaction` object with a string `content`.
+    pub fn compaction_from_raw(raw: serde_json::Value) -> Option<Self> {
+        if raw.get("type").and_then(|v| v.as_str()) != Some("compaction") {
+            return None;
+        }
+        let content = raw.get("content")?.as_str()?.to_string();
+        Some(Self::Compaction { content, raw })
+    }
+
+    /// The text a provider without native compaction receives in place of
+    /// a [`ContentBlock::Compaction`].
+    pub fn compaction_text(content: &str) -> String {
+        let mut text = String::from(COMPACTION_TEXT_PREFIX);
+        text.push_str(content);
+        text
     }
 }
 
@@ -1151,6 +1188,41 @@ pub struct SessionInfo {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compaction_block_parses_renders_and_round_trips() {
+        let raw = serde_json::json!({
+            "type": "compaction",
+            "content": "summary text",
+            "signature": "EuYB"
+        });
+        let block = ContentBlock::compaction_from_raw(raw.clone()).unwrap();
+        assert!(
+            matches!(&block, ContentBlock::Compaction { content, raw: r } if content == "summary text" && *r == raw)
+        );
+        assert!(!block.is_thinking());
+        assert!(
+            ContentBlock::compaction_from_raw(serde_json::json!({"type": "text", "content": "x"}))
+                .is_none()
+        );
+        assert!(
+            ContentBlock::compaction_from_raw(serde_json::json!({"type": "compaction"})).is_none()
+        );
+        assert_eq!(
+            ContentBlock::compaction_text("s"),
+            "[Earlier conversation summary]\ns"
+        );
+
+        // Stored as message JSON and read back with `raw` intact.
+        let content = MessageContent::Blocks(vec![block]);
+        assert_eq!(content.as_text(), Some("summary text"));
+        let stored = serde_json::to_string(&content).unwrap();
+        let back: MessageContent = serde_json::from_str(&stored).unwrap();
+        assert!(matches!(
+            &back,
+            MessageContent::Blocks(b) if matches!(&b[..], [ContentBlock::Compaction { raw: r, .. }] if *r == raw)
+        ));
+    }
+
     use super::*;
     use std::collections::HashMap;
 

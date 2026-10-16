@@ -166,6 +166,21 @@ trailing thinking blocks (`strip_trailing_thinking`); non-assistant text and
 tool results are `escape_replay`-ed; `System` and `Tool` roles become
 `user`.
 
+On-demand compaction (beta `compact-2026-09-04`): `compact` sends
+`compaction_body` — the turn's body with `stream: false`, without
+`stop_sequences` / `tool_choice` / `context_management`, plus
+`"compaction": {"type": "summarize", "instructions"?}` — and returns the
+`compaction` block (`ContentBlock::Compaction { content, raw }`, `raw` exactly
+as returned) with `stop_reason: "compaction"`. A history whose first message
+opens with that block is sent with `raw` verbatim and the beta header when
+`detect_capabilities("anthropic", model).compaction` holds; on any other model
+the message goes out as a `user` text block `[Earlier conversation
+summary]\n<content>`. Other providers send the same text (OpenAI-compatible,
+Code Assist, Codex) or the summary as the message text (Gemini, Ollama).
+OpenAI's compaction exists only on the Responses API (`/v1/responses/compact`),
+which whycodes does not use for api.openai.com; Gemini has none. Both keep the
+local full-replace.
+
 #### Stream behavior
 `AnthropicSse` parses `data:` lines; `events_for_data` maps
 `message_start` (input tokens, plus a separate `CacheUsage` event when
@@ -181,16 +196,23 @@ tool results are `escape_replay`-ed; `System` and `Tool` roles become
 `authed_post`: a key starting with `sk-ant-oat` is sent as
 `Authorization: Bearer` with `anthropic-beta: oauth-2025-04-20`; any other
 key goes in `x-api-key`; an empty key sends neither (local proxies).
+Request betas (the compaction beta) join the OAuth flag in one
+comma-separated `anthropic-beta` header.
 `anthropic-version: 2023-06-01`. OAuth tokens get the one-shot 401 refresh
 via `send_with_refresh_retry`. Usage maps `input_tokens`, `output_tokens`
-and both cache counters.
+and both cache counters; when `usage.iterations` is present (the compaction
+beta reports the summarization call there, with top-level tokens at 0) input
+and output are summed over it.
 
 #### Catalog and model handling
 No live catalogue (no `/v1/models` unless a `base_url` is configured).
 `known_capabilities` marks `claude-sonnet-4` / `claude-opus-4` /
 `claude-haiku-4` (200k, caching, thinking except haiku), `claude-3-7`,
 `claude-3-5`, and the `claude-3-*` trio; heuristics give any `claude` model
-200k. `caching` is true only for provider `anthropic`.
+200k. `caching` is true only for provider `anthropic`. `compaction` is true
+only for provider `anthropic` and the 14 model ids the on-demand compaction
+page lists (`ANTHROPIC_COMPACTION_MODELS`), bare or with a `-YYYYMMDD`
+suffix.
 
 ### antigravity
 

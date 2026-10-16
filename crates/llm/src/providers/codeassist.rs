@@ -459,6 +459,12 @@ fn build_inner_request(request: &LlmRequest) -> Value {
                                 parts.push(obj([("text", jstr(data)), ("thought", jbool(true))]));
                             }
                         }
+                        ContentBlock::Compaction { content, .. } => {
+                            parts.push(obj([(
+                                "text",
+                                jstr(ContentBlock::compaction_text(content)),
+                            )]));
+                        }
                     }
                 }
             }
