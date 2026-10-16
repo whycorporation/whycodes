@@ -103,7 +103,7 @@ user already approved this call with the command or path in hand, so later
    `timeout_secs` returns `pre_tool hook blocked `tool`: …` as an error
    result. Other failures are logged only.
 8. **Dispatch** — `dispatch_tool`:
-   - `task`, `swarm`, `bg`, `schedule`, `tool_search`, `worktree` run
+   - `task`, `swarm`, `bg`, `schedule`, `wait`, `tool_search`, `worktree` run
      in-process (`crates/agent/src/agent/dispatch.rs`);
    - `bash` / `shell` with `background: true` → `BackgroundRegistry::start_shell`;
    - `bash` / `shell` with `[tools.bash] auto_background` (default on) →

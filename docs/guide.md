@@ -572,7 +572,7 @@ The system prompt lists custom agents by name and description. An unknown
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
 | GitHub | `github_issue`, `github_pr` (token: env, `gh auth login`, or stored git credentials — not SSH-only remotes) |
 | Web | `webfetch`, `websearch`, `browser` |
-| Workflow | `task`, `swarm`, `swarm_msg`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel`, `checkpoint`, `rewind` |
+| Workflow | `task`, `swarm`, `swarm_msg`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `wait` (block until a background job finishes, a `/tell` message is pending, or `timeout_secs` elapses; default 60, max 300), `schedule`, `panel`, `checkpoint`, `rewind` |
 | Memory | `memory` (`write` / `list` / `search` / `delete` / `learn` / `code_search` / `index`) |
 | Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search`, `plugin_*` |
 

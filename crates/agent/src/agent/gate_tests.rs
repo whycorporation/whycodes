@@ -1355,3 +1355,75 @@ async fn intent_refuse_does_not_prompt() {
     );
     assert_eq!(asks.asks.load(Ordering::SeqCst), 0, "{result:?}");
 }
+
+#[cfg(windows)]
+fn gate_hang_cmd() -> &'static str {
+    "ping -n 4 127.0.0.1 >NUL"
+}
+
+#[cfg(not(windows))]
+fn gate_hang_cmd() -> &'static str {
+    "sleep 3"
+}
+
+#[tokio::test]
+async fn wait_tool_runs_through_the_gate_and_cancel_interrupts_it() {
+    let a = Agent::new(info("build"));
+    let (session, ctx) = session_ctx(&a);
+    let idle = a
+        .execute_tool_calls(
+            &[tc("wait", json!({"timeout_secs": 5}))],
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            &None,
+            &None,
+            None,
+            &mut Vec::new(),
+        )
+        .await
+        .expect("wait");
+    assert_eq!(idle.len(), 1);
+    assert!(!idle[0].is_error);
+    assert!(idle[0].content.contains("Nothing to wait for"), "{idle:?}");
+
+    a.background
+        .start_shell(
+            gate_hang_cmd(),
+            std::env::temp_dir(),
+            whycodes_core::SandboxSettings::off(),
+            Some("hang".into()),
+        )
+        .expect("start");
+    let cancel = crate::events::new_cancel_flag();
+    let a = Arc::new(a);
+    let handle = {
+        let a = Arc::clone(&a);
+        let cancel = cancel.clone();
+        let session = session.clone();
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            a.execute_tool_calls(
+                &[tc("wait", json!({"timeout_secs": 60}))],
+                &session,
+                &ctx,
+                "script",
+                "m",
+                "k",
+                &None,
+                &Some(cancel),
+                None,
+                &mut Vec::new(),
+            )
+            .await
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert!(!handle.is_finished(), "wait must block while the job runs");
+    crate::events::request_cancel(&cancel);
+    let err = handle.await.expect("join");
+    assert!(err.is_err(), "{err:?}");
+    a.background.kill_all();
+}
