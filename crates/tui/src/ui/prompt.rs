@@ -729,10 +729,7 @@ fn truncate_to_width(s: &str, max_w: usize) -> String {
 }
 
 const HINTS: &[&str] = &[
-    "/ for commands",
     "drop or paste image paths into the prompt",
-    "tab toggles scrollback focus",
-    "ctrl+t cycles agent",
     "esc cancels · double-esc clears",
     "j/k select messages in scrollback",
     "y copies the selected message",
