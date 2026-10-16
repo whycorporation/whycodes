@@ -1088,6 +1088,13 @@ session.
 (1) / **33.0 MB** (10) / **~2.4 MB** per added session. See the process-level
 table above.
 
+From 2026-09-11 to 2026-10-16 this harness measured the wrong thing: it set
+`WHYCODES_BENCH`, which since #85 makes `run` paint the first-frame splash
+and stop, so the sampled process was the splash, not a TUI. No number on this
+page came from that window (the Linux rows stop at 2026-09-02). The harness now launches the real TUI
+and waits 5 s by default, because the TUI paints first and loads the rest
+(session store, memory, plugins, index) over the next few seconds.
+
 Method: N live interactive processes, PSS
 from `smaps_rollup`, not RSS. These are idle sessions (prompt drawn, no
 agent turn), so they are a lower bound on a working multi-session desk — a
@@ -1097,7 +1104,7 @@ Reproduce:
 
 ```bash
 cargo build --release -p whycodes-cli
-python scripts/bench_memory.py --skip-cli --sessions 1 10 --runs 3 --settle 2
+python scripts/bench_memory.py --skip-cli --sessions 1 10 --runs 3
 ```
 
 ## Resumed long session (2026-10-15)
