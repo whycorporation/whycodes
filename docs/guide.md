@@ -859,7 +859,10 @@ border — click it (or `/effort`) to pick. `ultrathink` in a prompt still
 raises that turn to `high`.
 
 Context-window errors are classified separately from 429s: the same request is
-not retried; whycodes compacts once and retries the step. Before every step,
+not retried; whycodes compacts once and retries the step. From 85% of the
+compaction threshold on, the summary of everything before your latest prompt
+is prepared in the background, so the compaction at the threshold applies it
+instead of waiting for a model call. Before every step,
 old tool outputs longer than 2,048 characters are saved whole under
 `.whycodes/scratch/artifacts/<tool_call_id>.txt` and the transcript keeps
 their first 400 characters plus a `read` pointer, so the model can look the

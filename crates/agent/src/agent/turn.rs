@@ -232,9 +232,18 @@ impl Agent {
             if self.compaction_threshold > 0 && !compact_paused {
                 let before = session.token_count_cached();
                 if before > self.compaction_threshold {
-                    let outcome = self
-                        .compact_session(session, provider_name, model, &api_key, None)
-                        .await;
+                    let outcome = match self.take_speculative_summary(session).await {
+                        Some(summary) => {
+                            tracing::info!(
+                                "compacting with the summary prepared before the threshold"
+                            );
+                            self.compact_with_summary(session, &summary).await
+                        }
+                        None => {
+                            self.compact_session(session, provider_name, model, &api_key, None)
+                                .await
+                        }
+                    };
                     if outcome.reduced() || outcome.dropped_messages() {
                         emit(
                             &events,
@@ -274,6 +283,16 @@ impl Agent {
                             "autocompact circuit breaker tripped"
                         );
                     }
+                } else if before.saturating_mul(100)
+                    >= self
+                        .compaction_threshold
+                        .saturating_mul(super::compact::SPECULATIVE_LEAD_PERCENT)
+                    && self.maybe_spawn_speculative_summary(session, provider_name, model, &api_key)
+                {
+                    tracing::debug!(
+                        tokens = before,
+                        "preparing a compaction summary ahead of the threshold"
+                    );
                 }
             }
 

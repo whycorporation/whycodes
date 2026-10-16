@@ -1348,6 +1348,24 @@ impl Session {
         messages_transcript(&self.messages, cap)
     }
 
+    /// Where [`Self::apply_full_replace`] would cut now: the index of the
+    /// last real user turn, or `None` when there is none.
+    pub fn compaction_prefix_end(&self) -> Option<usize> {
+        self.last_real_user_index()
+    }
+
+    /// The messages a full-replace compaction would summarize (everything
+    /// before the last real user turn), rendered like
+    /// [`Self::transcript_for_full_summary`], with the index that bounds
+    /// them. `None` when nothing precedes that turn.
+    pub fn prefix_transcript_for_summary(&self) -> Option<(usize, String)> {
+        let end = self.last_real_user_index().filter(|&end| end > 0)?;
+        Some((
+            end,
+            messages_transcript(&self.messages[..end], FULL_TRANSCRIPT_MAX_CHARS),
+        ))
+    }
+
     /// Index of the last real user turn (skips compact-summary carriers).
     fn last_real_user_index(&self) -> Option<usize> {
         self.messages.iter().enumerate().rev().find_map(|(i, m)| {
@@ -3880,5 +3898,29 @@ mod tests {
         }]);
         assert_eq!(small.spill_old_tool_results(&mut store), 0);
         assert_eq!(stored_now().len(), 5, "nothing old enough to store");
+    }
+
+    #[test]
+    fn prefix_transcript_covers_everything_before_the_last_user_turn() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        assert!(session.prefix_transcript_for_summary().is_none());
+        assert!(session.compaction_prefix_end().is_none());
+        session.add_user_message("first ask");
+        assert!(
+            session.prefix_transcript_for_summary().is_none(),
+            "nothing before it"
+        );
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "first answer".into(),
+        }]);
+        session.add_user_message("second ask");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "working".into(),
+        }]);
+        let (end, transcript) = session.prefix_transcript_for_summary().unwrap();
+        assert_eq!(end, 2);
+        assert_eq!(session.compaction_prefix_end(), Some(2));
+        assert!(transcript.contains("first ask") && transcript.contains("first answer"));
+        assert!(!transcript.contains("second ask"), "{transcript}");
     }
 }

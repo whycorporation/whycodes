@@ -482,3 +482,69 @@ async fn old_tool_outputs_are_spilled_to_scratch_before_the_step() {
         "recent results stay inline"
     );
 }
+
+/// Near the threshold a summary is prepared in the background; when a tool
+/// result pushes the session over it, that summary is applied without a
+/// second model call.
+#[tokio::test]
+async fn compaction_at_the_threshold_uses_the_summary_prepared_before_it() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("big.txt"), "l".repeat(4_000)).unwrap();
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(ScriptedProvider::repeating(
+        "script",
+        vec![
+            ScriptedStep::Text("<summary>prepared ahead</summary>".into()),
+            ScriptedStep::ToolCall {
+                id: "r".into(),
+                name: "read".into(),
+                input: serde_json::json!({"path": "big.txt"}),
+            },
+        ],
+    )));
+    let mut agent = Agent::new(info()).with_provider_registry(registry);
+    agent.compaction_llm = true;
+    // The prefix below is ~360 tokens (chars/4): inside the 85% band of this
+    // threshold, and the 4,000-char read result pushes the next step over it.
+    agent.compaction_threshold = 400;
+    let mut session = Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message(&"x".repeat(1_400));
+    session.add_assistant_message(vec![ContentBlock::Text {
+        text: "noted".into(),
+    }]);
+    session.add_user_message("now read big.txt");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let _ = agent
+        .run_turn_with_events(
+            &mut session,
+            crate::events::TurnOpts {
+                provider_name: "script",
+                model: MODEL,
+                api_key: "k",
+                max_turns: Some(2),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await;
+    let carrier: String = session
+        .messages
+        .iter()
+        .filter_map(|m| m.content.as_text())
+        .collect();
+    assert!(carrier.contains("prepared ahead"), "{carrier}");
+    assert!(
+        crate::agent::recover_lock(&agent.speculative_summary).is_none(),
+        "the prepared summary was consumed at the threshold"
+    );
+    let mut status = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let crate::events::TurnEvent::Status(s) = ev {
+            status.push(s);
+        }
+    }
+    assert!(
+        status.iter().any(|s| s.starts_with("Compacted context")),
+        "{status:?}"
+    );
+}

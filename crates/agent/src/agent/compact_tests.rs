@@ -160,18 +160,21 @@ async fn compact_skips_llm_when_key_empty() {
 #[tokio::test]
 async fn llm_compact_summary_empty_transcript_is_none() {
     let agent = Agent::new(info());
-    assert!(
-        agent
-            .llm_compact_summary("   ", "script", "m", "k", None)
+    for transcript in ["   ", ""] {
+        assert!(
+            summarize_with_model(
+                &agent.provider_registry,
+                None,
+                transcript,
+                "script",
+                "m",
+                "k",
+                None
+            )
             .await
             .is_none()
-    );
-    assert!(
-        agent
-            .llm_compact_summary("", "script", "m", "k", None)
-            .await
-            .is_none()
-    );
+        );
+    }
 }
 
 struct NonTextCompleteProvider;
@@ -227,4 +230,102 @@ async fn llm_compact_non_text_complete_falls_back_local() {
         )
         .await;
     assert!(!session.messages.is_empty());
+}
+
+fn prepared_registry() -> whycodes_llm::ProviderRegistry {
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        vec![whycodes_llm::ScriptedStep::Text(
+            "<summary>prepared earlier</summary>".into(),
+        )],
+    )));
+    registry
+}
+
+#[tokio::test]
+async fn speculative_summary_is_prepared_once_and_used_while_the_prefix_holds() {
+    let mut agent = Agent::new(info()).with_provider_registry(prepared_registry());
+    agent.compaction_llm = true;
+    let mut session = fat_session();
+
+    assert!(agent.maybe_spawn_speculative_summary(&session, "script", "spec-happy", "k"));
+    assert!(
+        !agent.maybe_spawn_speculative_summary(&session, "script", "spec-happy", "k"),
+        "the same prefix is not summarized twice"
+    );
+    let summary = agent.take_speculative_summary(&session).await.unwrap();
+    assert!(summary.contains("prepared earlier"), "{summary}");
+    assert!(
+        agent.take_speculative_summary(&session).await.is_none(),
+        "consumed"
+    );
+
+    let outcome = agent.compact_with_summary(&mut session, &summary).await;
+    assert!(outcome.dropped_messages() || outcome.reduced());
+    let last = session.messages.last().unwrap().content.as_text().unwrap();
+    assert!(last.contains("prepared earlier"), "{last}");
+
+    // An empty session compacts to nothing without a model call.
+    let mut empty = Session::new(std::path::PathBuf::from("/work/proj"), "test".into());
+    let outcome = agent.compact_with_summary(&mut empty, "unused").await;
+    assert_eq!(outcome.messages_after, 0);
+}
+
+#[tokio::test]
+async fn speculative_summary_is_dropped_when_stale_or_unavailable() {
+    let mut agent = Agent::new(info()).with_provider_registry(prepared_registry());
+    agent.compaction_llm = true;
+
+    // Local-only compaction, no key, or no prefix: nothing is started.
+    let session = fat_session();
+    assert!(!agent.maybe_spawn_speculative_summary(&session, "script", "spec-nokey", ""));
+    let mut local = Agent::new(info()).with_provider_registry(prepared_registry());
+    local.compaction_llm = false;
+    assert!(!local.maybe_spawn_speculative_summary(&session, "script", "spec-local", "k"));
+    let mut bare = Session::new(std::path::PathBuf::from("/work/proj"), "test".into());
+    bare.add_user_message("only one ask");
+    assert!(!agent.maybe_spawn_speculative_summary(&bare, "script", "spec-bare", "k"));
+    assert!(
+        agent.take_speculative_summary(&bare).await.is_none(),
+        "nothing prepared"
+    );
+
+    // The prefix moved (a new user turn): the job is stale and aborted.
+    let mut session = fat_session();
+    assert!(agent.maybe_spawn_speculative_summary(&session, "script", "spec-stale", "k"));
+    session.add_user_message("another ask");
+    assert!(agent.take_speculative_summary(&session).await.is_none());
+
+    // A new prefix replaces an older job instead of keeping both.
+    assert!(agent.maybe_spawn_speculative_summary(&session, "script", "spec-replace-1", "k"));
+    session.add_user_message("yet another ask");
+    assert!(agent.maybe_spawn_speculative_summary(&session, "script", "spec-replace-2", "k"));
+
+    // Another session's job is never used.
+    let other = fat_session();
+    assert!(agent.take_speculative_summary(&other).await.is_none());
+
+    // A job that produced no text (provider error) yields nothing.
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        vec![whycodes_llm::ScriptedStep::Error("summary failed".into())],
+    )));
+    let mut failing = Agent::new(info()).with_provider_registry(registry);
+    failing.compaction_llm = true;
+    let session = fat_session();
+    assert!(failing.maybe_spawn_speculative_summary(&session, "script", "spec-fails-unique", "k"));
+    assert!(failing.take_speculative_summary(&session).await.is_none());
+
+    // An unknown provider: the job runs and finds nothing to call.
+    assert!(failing.maybe_spawn_speculative_summary(&session, "nope", "spec-no-provider", "k"));
+    assert!(failing.take_speculative_summary(&session).await.is_none());
+
+    // A job cancelled from outside (shutdown) is reported as nothing prepared.
+    assert!(failing.maybe_spawn_speculative_summary(&session, "nope", "spec-cancelled", "k"));
+    if let Some(job) = super::super::recover_lock(&failing.speculative_summary).as_ref() {
+        job.handle.abort();
+    }
+    assert!(failing.take_speculative_summary(&session).await.is_none());
 }

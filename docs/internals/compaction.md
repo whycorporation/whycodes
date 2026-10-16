@@ -65,7 +65,21 @@ if compaction_threshold > 0 && !compact_paused && before > compaction_threshold:
 ```
 
 `turn.rs:222-268`. The breaker is a local of `run_turn_steps`, so it resets
-on the next user turn. `CompactOutcome::still_over` is
+on the next user turn.
+
+**Speculative summary.** When the step is under the threshold but at or
+above `SPECULATIVE_LEAD_PERCENT` (85%) of it and compaction uses the model,
+`maybe_spawn_speculative_summary` (`compact.rs`) starts a background task
+that summarizes the *prefix* — the messages before the last real user turn,
+`Session::prefix_transcript_for_summary` — with the same prompt and
+transport as a normal pass. One job per (session, prefix) is kept in
+`Agent::speculative_summary`; a newer prefix replaces an older job. When the
+threshold trips, `take_speculative_summary` uses the job if its prefix is
+still the session's (`compaction_prefix_end`), awaiting it when it has not
+finished; otherwise the job is aborted and the normal pass runs. The
+prepared summary goes through `compact_with_summary`: the same cheap passes
+and `pre_compact` hooks, then `apply_full_replace`, with no model call at
+the threshold. `CompactOutcome::still_over` is
 `tokens_after > threshold` (`session.rs:64-66`). A successful pass emits
 `TurnEvent::Status("Compacted context (a → b msgs, ~x → ~y tok)…")`
 (`turn.rs:229-238`); only a status line, not a transcript rebuild (see §8).
@@ -182,10 +196,6 @@ Stated as absences, not plans:
 
 - No provider-native compaction or server-side context management is
   requested; the only provider-facing mechanism is prompt caching.
-- No speculative summary before the threshold (no background summarization of
-  a prefix while the session is still under `compaction_threshold`).
-- No spilling of tool results to on-disk artifacts with a pointer left in the
-  transcript; large bodies are cut in place and the agent must re-run the tool.
 - No incremental/rolling summary: each pass re-summarizes the whole (capped)
   transcript, relying on the prompt to carry an earlier carrier forward.
 - No token counting against the provider's tokenizer; thresholds use chars/4.
