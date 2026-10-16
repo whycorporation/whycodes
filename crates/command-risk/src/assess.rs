@@ -107,6 +107,20 @@ pub fn assess_with_home(command: &str, working_dir: &Path, home: Option<&Path>) 
         ));
     }
 
+    // A command substitution runs its body before the outer command sees a
+    // single argument: `echo $(rm -rf ~)` is the inner command, not an echo.
+    // Each body is assessed on its own (recursively), and the worst wins.
+    for body in tokenize::substitution_bodies(command) {
+        let inner = assess_with_home(&body, working_dir, home);
+        if inner.level > worst.level {
+            let why = inner.reason.unwrap_or_default();
+            worst = Assessment::at(
+                inner.level,
+                format!("command substitution runs `{}`: {why}", body.trim()),
+            );
+        }
+    }
+
     // Process substitution / Zsh equals-expansion always runs nested commands
     // whose side effects we cannot see as plain argv. Prompt (not refuse) so
     // legitimate `diff <(…)` workflows remain approvable.
@@ -1029,5 +1043,26 @@ mod tests {
         assert_eq!(level("echo x &> notes.txt"), RiskLevel::Caution);
         assert_eq!(level("echo x 1> notes.txt"), RiskLevel::Caution);
         assert_eq!(level("echo x >"), RiskLevel::Safe);
+    }
+
+    #[test]
+    fn substitution_bodies_are_assessed_as_commands() {
+        // The body, not the outer `echo`, decides.
+        assert_eq!(level("echo $(rm -rf ~)"), RiskLevel::Catastrophic);
+        assert!(reason("echo $(rm -rf ~)").contains("command substitution runs `rm -rf ~`"));
+        assert_eq!(level("echo `rm -rf /tmp/x`"), RiskLevel::Destructive);
+        assert_eq!(
+            level("echo $(echo $(rm -rf ~))"),
+            RiskLevel::Catastrophic,
+            "nested"
+        );
+        // Read-only bodies stay where the outer command puts them.
+        assert_eq!(level("echo $(ls)"), RiskLevel::Safe);
+        assert_eq!(level("echo $(git rev-parse HEAD)"), RiskLevel::Safe);
+        // A body that is not worse than the outer command changes nothing.
+        assert_eq!(level("rm -rf /tmp/y $(ls)"), RiskLevel::Destructive);
+        // The reason names the body and carries the inner verdict's reason.
+        let r = reason("echo $(rm -rf target)");
+        assert!(r.contains("rm -rf target"), "{r}");
     }
 }
