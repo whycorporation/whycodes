@@ -877,7 +877,7 @@
     },
     "profile": "core",
     "aliasOf": null,
-    "guide": "Read a text file with line numbers. Prefer project-relative paths.\n\nInternal URLs (a bare scheme lists what it can read):\n- `skill://<name>` — a skill body.\n- `agent://<id>` — a finished task/swarm artifact; `agent://tools/<name>` this guide set.\n- `proc://<job-id>` — the stored log of a background shell job\n(`.whycodes/scratch/<id>.log`); `bg` lists live jobs.\n- `rule://<name>` — a project rule file (`.whycodes/rules/*.md`, `.cursor/rules/*.mdc`,\n`.clinerules/*.md`, `.github/instructions/*.md`).\n- `pr://<number>` / `pr://<number>/diff` — a pull request of the `origin` GitHub\nremote (metadata and body, or the diff); `pr://` lists the open ones (first page).\n- `issue://<number>` — an issue of the same remote; `issue://` lists the open ones.\nGitHub reads use the same token discovery and network allowlist as `github_pr`.\n- `mcp://<server>/<uri>` — an MCP resource; `mcp://<server>` lists that server's\nresources, `mcp://` the connected servers."
+    "guide": "Read a text file with line numbers. Prefer project-relative paths.\n\nInternal URLs (a bare scheme lists what it can read):\n- `skill://<name>` — a skill body.\n- `agent://<id>` — a finished task/swarm artifact; `agent://<id>/<json-pointer>` one\nvalue of its structured result (e.g. `agent://task-1/findings/0/path`);\n`agent://tools/<name>` this guide set.\n- `proc://<job-id>` — the stored log of a background shell job\n(`.whycodes/scratch/<id>.log`); `bg` lists live jobs.\n- `rule://<name>` — a project rule file (`.whycodes/rules/*.md`, `.cursor/rules/*.mdc`,\n`.clinerules/*.md`, `.github/instructions/*.md`).\n- `pr://<number>` / `pr://<number>/diff` — a pull request of the `origin` GitHub\nremote (metadata and body, or the diff); `pr://` lists the open ones (first page).\n- `issue://<number>` — an issue of the same remote; `issue://` lists the open ones.\nGitHub reads use the same token discovery and network allowlist as `github_pr`.\n- `mcp://<server>/<uri>` — an MCP resource; `mcp://<server>` lists that server's\nresources, `mcp://` the connected servers."
   },
   {
     "name": "repomap",
@@ -1103,6 +1103,10 @@
         "max_turns": {
           "description": "Maximum conversation turns for the subagent (default: 15)",
           "type": "integer"
+        },
+        "output_schema": {
+          "description": "JSON Schema (object) for a typed result. The subagent ends with a matching ```json block (plus a required `what_i_did_not_check` string array); it is validated, retried once if invalid, returned after the summary and readable as `read agent://<id>/<json-pointer>`. Overrides a custom agent's `output`.",
+          "type": "object"
         },
         "subagent_type": {
           "description": "general (default), explore, scout, or a name from the system prompt's `# Custom agents` list",

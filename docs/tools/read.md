@@ -21,7 +21,9 @@ Read a text file with line numbers. Prefer project-relative paths.
 
 Internal URLs (a bare scheme lists what it can read):
 - `skill://<name>` — a skill body.
-- `agent://<id>` — a finished task/swarm artifact; `agent://tools/<name>` this guide set.
+- `agent://<id>` — a finished task/swarm artifact; `agent://<id>/<json-pointer>` one
+value of its structured result (e.g. `agent://task-1/findings/0/path`);
+`agent://tools/<name>` this guide set.
 - `proc://<job-id>` — the stored log of a background shell job
 (`.whycodes/scratch/<id>.log`); `bg` lists live jobs.
 - `rule://<name>` — a project rule file (`.whycodes/rules/*.md`, `.cursor/rules/*.mdc`,

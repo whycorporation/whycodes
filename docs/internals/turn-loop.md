@@ -315,7 +315,17 @@ speculative reads, stream rules, the doom-loop guard, auto-compact and the
 overflow / rate-limit / fallback handling, the cancel flag, or any of the
 `execute_with_permission` gates. The worker's output is returned as the tool
 result, persisted under `.whycodes/agents/<id>.md`, and its usage is folded
-into the parent at the end of the batch. `Agent::spawn_subagent` /
+into the parent at the end of the batch.
+
+With an output schema (`task` `output_schema`, or a custom agent's `output`),
+`SubagentRunner::run` appends the `# Structured result` instruction to the
+worker's system prompt and, after `run_turn_inner` returns, checks the last
+` ```json ` block (`crates/agent/src/structured_output.rs`). A failure adds
+one user message with the errors and runs `run_turn_inner` once more with
+`max_turns = 1`; its usage is added to the worker's. The outcome is
+`SubagentResult::structured` (`value` or `errors`); a valid value is written to
+`.whycodes/agents/<id>.json` and appended compactly to the tool result. The
+run itself stays `success` either way. `Agent::spawn_subagent` /
 `spawn_parallel` (`crates/agent/src/agent/spawn.rs`) expose the same runner to
 hosts.
 
