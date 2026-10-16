@@ -1994,14 +1994,26 @@ mod upgrade_helpers {
         let url = serve_http(200, "blob").await;
         let client = reqwest::Client::new();
         assert_eq!(
-            download_bytes(&client, &url, "x.bin").await.unwrap(),
+            download_bytes(
+                &client,
+                &url,
+                "x.bin",
+                &crate::upgrade_progress::Progress::silent()
+            )
+            .await
+            .unwrap(),
             b"blob"
         );
         let url = serve_http(404, "no").await;
-        let err = download_bytes(&client, &url, "x.bin")
-            .await
-            .unwrap_err()
-            .to_string();
+        let err = download_bytes(
+            &client,
+            &url,
+            "x.bin",
+            &crate::upgrade_progress::Progress::silent(),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("404"), "{err}");
     }
 
@@ -4990,9 +5002,14 @@ async fn download_asset_via_env_url_and_token() {
         std::env::set_var("GITHUB_TOKEN", "ghs_x");
     }
     let client = reqwest::Client::new();
-    let bytes = crate::upgrade::download_bytes(&client, &url, "x.bin")
-        .await
-        .unwrap();
+    let bytes = crate::upgrade::download_bytes(
+        &client,
+        &url,
+        "x.bin",
+        &crate::upgrade_progress::Progress::silent(),
+    )
+    .await
+    .unwrap();
     assert_eq!(bytes, b"asset-bytes");
     let resp = crate::upgrade::get(&client, &url).await;
     let _ = resp;

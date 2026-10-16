@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use crate::upgrade_progress::Progress;
+
 const REPO: &str = "whycorporation/whycodes";
 const USER_AGENT: &str = concat!("whycodes/", env!("CARGO_PKG_VERSION"));
 
@@ -173,11 +175,12 @@ async fn download_asset(
     client: &reqwest::Client,
     release: &serde_json::Value,
     name: &str,
+    progress: &Progress,
 ) -> Result<Vec<u8>> {
     if let Ok(url) = std::env::var("WHYCODES_UPGRADE_ASSET_URL")
         && !url.is_empty()
     {
-        return download_bytes(client, &url, name).await;
+        return download_bytes(client, &url, name, progress).await;
     }
     // Prefer the public `browser_download_url` (tests / GitHub CDN) when present.
     if let Some(url) = release["assets"].as_array().and_then(|assets| {
@@ -189,20 +192,22 @@ async fn download_asset(
                 .map(str::to_string)
         })
     }) {
-        return download_bytes(client, &url, name).await;
+        return download_bytes(client, &url, name, progress).await;
     }
     let id = find_asset_id(release, name)?;
-    download_bytes(client, &release_asset_url(id), name).await
+    download_bytes(client, &release_asset_url(id), name, progress).await
 }
 
 pub(crate) fn release_asset_url(id: u64) -> String {
     format!("https://api.github.com/repos/{REPO}/releases/assets/{id}")
 }
 
+/// Download `url`, reporting the size and each chunk to `progress`.
 pub(crate) async fn download_bytes(
     client: &reqwest::Client,
     url: &str,
     name: &str,
+    progress: &Progress,
 ) -> Result<Vec<u8>> {
     let mut req = client
         .get(url)
@@ -220,11 +225,18 @@ pub(crate) async fn download_bytes(
         let hint = asset_download_hint(status.as_u16(), github_token().is_some());
         bail!("asset {name} returned {status}{hint}");
     }
-    Ok(response
-        .bytes()
+    progress.set_total(response.content_length());
+    let mut response = response;
+    let mut out = Vec::with_capacity(response.content_length().unwrap_or(0) as usize);
+    while let Some(chunk) = response
+        .chunk()
         .await
         .with_context(|| format!("reading asset {name}"))?
-        .to_vec())
+    {
+        progress.advance(chunk.len() as u64);
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
 }
 
 /// Ask GitHub for the latest release (metadata + asset list).
@@ -363,32 +375,49 @@ pub(crate) fn path_looks_like_homebrew(path: &str) -> bool {
 }
 
 /// Run the upgrade. Returns the new version when one was installed.
+///
+/// Shows progress on stderr while it works and clears it before returning,
+/// so the caller's result line starts on a clean row.
 pub async fn run() -> Result<Option<String>> {
+    let progress = Progress::stderr();
+    let result = run_with(&progress).await;
+    progress.finish();
+    result
+}
+
+async fn run_with(progress: &Progress) -> Result<Option<String>> {
     let target = current_binary()?;
     if let Some(hint) = package_manager_upgrade_hint(&target) {
         bail!("{hint}");
     }
 
     let current = env!("CARGO_PKG_VERSION");
+    // No overall timeout: a slow link must be able to finish a ~10 MB
+    // download. A stalled connection still fails on the read timeout.
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
-        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .read_timeout(std::time::Duration::from_secs(30))
         .build()
         .context("building HTTP client")?;
 
+    progress.stage("Checking for a newer release");
     let body = latest_release_json(&client).await?;
     let version = release_version(&body)?;
     if !is_newer(&version, current) {
         return Ok(None);
     }
     let archive_name = target_archive()?.to_string();
-    let archive = download_asset(&client, &body, &archive_name).await?;
-    let sums_bytes = download_asset(&client, &body, "SHA256SUMS").await?;
+    progress.stage(&format!("Downloading v{version}"));
+    let archive = download_asset(&client, &body, &archive_name, progress).await?;
+    progress.stage("Verifying checksum");
+    let sums_bytes = download_asset(&client, &body, "SHA256SUMS", &Progress::silent()).await?;
     let sums = String::from_utf8(sums_bytes).context("SHA256SUMS is not valid UTF-8")?;
 
     match decide_upgrade(current, &version, &sums, &archive_name, &archive)? {
         UpgradeDecision::UpToDate => Ok(None),
         UpgradeDecision::Install(binary) => {
+            progress.stage("Installing");
             replace_binary(&target, &binary)?;
             Ok(Some(version))
         }

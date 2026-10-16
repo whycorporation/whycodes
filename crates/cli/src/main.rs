@@ -1,5 +1,6 @@
 #[cfg(feature = "self-update")]
 mod upgrade;
+mod upgrade_progress;
 
 use clap::Parser;
 use std::path::PathBuf;
