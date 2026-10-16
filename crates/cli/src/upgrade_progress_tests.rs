@@ -87,3 +87,36 @@ fn silent_and_stderr_progress_do_not_panic() {
     assert!(progress.ticker.is_none() || progress.animate);
     progress.finish();
 }
+
+struct Broken;
+
+impl Write for Broken {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("closed"))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn output_that_fails_turns_progress_off() {
+    let plain = Progress::to(Box::new(Broken), false);
+    plain.stage("one");
+    plain.stage("two");
+    assert!(plain.shared.as_ref().unwrap().stop.load(Ordering::Relaxed));
+    plain.finish();
+
+    let animated = Progress::to(Box::new(Broken), true);
+    animated.stage("Downloading");
+    std::thread::sleep(TICK * 3);
+    assert!(
+        animated
+            .shared
+            .as_ref()
+            .unwrap()
+            .stop
+            .load(Ordering::Relaxed)
+    );
+    animated.finish();
+}

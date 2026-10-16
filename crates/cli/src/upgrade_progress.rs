@@ -85,9 +85,8 @@ impl Progress {
         *lock(&shared.stage) = label.to_string();
         shared.done.store(0, Ordering::Relaxed);
         shared.total.store(NO_TOTAL, Ordering::Relaxed);
-        if !self.animate {
-            let mut out = lock(&shared.out);
-            let _ = writeln!(out, "  {label}…");
+        if !self.animate && !shared.stop.load(Ordering::Relaxed) {
+            emit(shared, &format!("  {label}…\n"));
         }
     }
 
@@ -117,10 +116,10 @@ impl Progress {
         };
         shared.stop.store(true, Ordering::Relaxed);
         if let Some(ticker) = self.ticker.take() {
-            let _ = ticker.join();
-            let mut out = lock(&shared.out);
-            let _ = write!(out, "\r\x1b[2K");
-            let _ = out.flush();
+            if ticker.join().is_err() {
+                tracing::debug!("upgrade progress thread panicked");
+            }
+            emit(shared, "\r\x1b[2K");
         }
     }
 }
@@ -147,9 +146,17 @@ fn draw(shared: &Shared, frame: usize) {
         shared.done.load(Ordering::Relaxed),
         (total != NO_TOTAL).then_some(total),
     );
+    emit(shared, &format!("\r\x1b[2K{line}"));
+}
+
+/// Write and flush. Output that stops being accepted (stderr closed) turns
+/// the progress off; the upgrade itself carries on.
+fn emit(shared: &Shared, text: &str) {
     let mut out = lock(&shared.out);
-    let _ = write!(out, "\r\x1b[2K{line}");
-    let _ = out.flush();
+    if let Err(e) = out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+        shared.stop.store(true, Ordering::Relaxed);
+        tracing::debug!(error = %e, "upgrade progress output failed; hiding it");
+    }
 }
 
 /// One frame: `⠹ Downloading v0.6.11  4.2 / 9.8 MB  43%`.
