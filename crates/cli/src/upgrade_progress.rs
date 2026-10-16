@@ -4,9 +4,12 @@
 //! shell sat blank until a one-line result appeared. On a terminal this draws
 //! one line, redrawn ~12 times a second with a spinner, the stage and the
 //! bytes so far. Elsewhere (CI logs, pipes) each stage is printed once.
+//!
+//! The line is rewritten with `\r` and space padding only, no escape
+//! sequences, so a Windows console without VT processing shows it cleanly.
 
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -23,6 +26,9 @@ struct Shared {
     done: AtomicU64,
     total: AtomicU64,
     stop: AtomicBool,
+    /// Characters on the progress line now, so the next frame (or the
+    /// final clear) can blank what a shorter text would leave behind.
+    drawn: AtomicUsize,
     out: Mutex<Sink>,
 }
 
@@ -57,6 +63,7 @@ impl Progress {
             done: AtomicU64::new(0),
             total: AtomicU64::new(NO_TOTAL),
             stop: AtomicBool::new(false),
+            drawn: AtomicUsize::new(0),
             out: Mutex::new(out),
         });
         let ticker = animate.then(|| {
@@ -119,7 +126,10 @@ impl Progress {
             if ticker.join().is_err() {
                 tracing::debug!("upgrade progress thread panicked");
             }
-            emit(shared, "\r\x1b[2K");
+            let drawn = shared.drawn.swap(0, Ordering::Relaxed);
+            if drawn > 0 {
+                emit(shared, &format!("\r{}\r", " ".repeat(drawn)));
+            }
         }
     }
 }
@@ -146,7 +156,12 @@ fn draw(shared: &Shared, frame: usize) {
         shared.done.load(Ordering::Relaxed),
         (total != NO_TOTAL).then_some(total),
     );
-    emit(shared, &format!("\r\x1b[2K{line}"));
+    let width = line.chars().count();
+    let pad = shared
+        .drawn
+        .swap(width, Ordering::Relaxed)
+        .saturating_sub(width);
+    emit(shared, &format!("\r{line}{}", " ".repeat(pad)));
 }
 
 /// Write and flush. Output that stops being accepted (stderr closed) turns

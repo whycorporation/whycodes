@@ -56,11 +56,40 @@ fn animated_progress_redraws_one_line_and_clears_it() {
         "{text:?}"
     );
     assert!(text.contains('\r'), "redraws in place: {text:?}");
+    let last = "⠋ Downloading v9.9.9  1.0 MB / 2.0 MB  50%".chars().count();
     assert!(
-        text.ends_with("\r\x1b[2K"),
-        "line cleared at the end: {text:?}"
+        text.ends_with(&format!("\r{}\r", " ".repeat(last))),
+        "line blanked at the end: {text:?}"
     );
     assert!(!text.contains('\n'), "never scrolls: {text:?}");
+    assert!(!text.contains('\x1b'), "no escape sequences: {text:?}");
+}
+
+#[test]
+fn a_shorter_frame_blanks_the_rest_of_the_longer_one() {
+    let buf = Buf::default();
+    let progress = Progress::to(Box::new(buf.clone()), true);
+    progress.stage("Downloading v9.9.9");
+    progress.set_total(Some(10));
+    progress.advance(5);
+    std::thread::sleep(TICK * 2);
+    progress.stage("Installing");
+    std::thread::sleep(TICK * 2);
+    progress.finish();
+    let text = buf.text();
+    let long = "⠋ Downloading v9.9.9  0.0 MB / 0.0 MB  50%".chars().count();
+    let short = "⠋ Installing".chars().count();
+    assert!(
+        text.contains(&format!("Installing{}", " ".repeat(long - short))),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn finishing_before_any_stage_writes_nothing() {
+    let buf = Buf::default();
+    Progress::to(Box::new(buf.clone()), true).finish();
+    assert!(buf.text().is_empty());
 }
 
 #[test]
