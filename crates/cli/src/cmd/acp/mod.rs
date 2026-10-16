@@ -435,6 +435,7 @@ impl Factory for CliFactory<'_> {
         if cli.no_memory {
             config.memory.enabled = false;
         }
+        crate::cmd::run::apply_approval_mode_flag(cli, &mut config);
         config.load_command_files(cwd);
         let provider = resolve_provider(cli, &config);
         let model = resolve_model(cli, &config);

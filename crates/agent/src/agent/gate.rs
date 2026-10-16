@@ -12,6 +12,7 @@ use whycodes_plugin::hooks::{
 use whycodes_session::session::Session;
 
 use crate::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled, wait_until_cancelled};
+use crate::permission::PermissionReply;
 use crate::question::{QuestionPrompter, run_question_tool, should_prompt_questions};
 use crate::tool_policy::*;
 use whycodes_tools::question::parse_questions;
@@ -59,6 +60,7 @@ fn tool_error_is_retryable(name: &str, result: &ToolResult) -> bool {
             !(c.contains("permission denied")
                 || c.contains("user denied")
                 || c.contains("denied:headless")
+                || c.contains("denied: user replied")
                 || c.contains("refused")
                 || c.contains("doom loop")
                 || c.contains("cannot be approved")
@@ -395,16 +397,29 @@ impl Agent {
         None
     }
 
-    async fn ask_permission(&self, tc: &ToolCall, working_dir: &str, detail: &str) -> bool {
+    async fn ask_permission(
+        &self,
+        tc: &ToolCall,
+        working_dir: &str,
+        detail: &str,
+    ) -> PermissionReply {
         if self.approval_skips_ask(tc, working_dir) {
-            return true;
+            return PermissionReply::Allow;
         }
-        self.permission_prompter.ask(&tc.name, detail).await
+        self.permission_prompter.ask_reply(&tc.name, detail).await
     }
 
-    fn denied_permission_result(&self, tc: &ToolCall, extra: &str) -> ToolResult {
+    fn denied_permission_result(
+        &self,
+        tc: &ToolCall,
+        reply: PermissionReply,
+        extra: &str,
+    ) -> ToolResult {
         let stamp = if self.fail_closed_ask {
             "denied:headless"
+        } else if reply == PermissionReply::Replied {
+            // The user's message is the next thing the model reads.
+            "denied: user replied"
         } else {
             "User denied permission"
         };
@@ -554,11 +569,11 @@ impl Agent {
                 Decision::Confirm { reason } => {
                     // Structured for the TUI permission dialog (see format_permission_detail).
                     let detail = format_shell_risk_detail(command, &reason);
-                    if !self
+                    let reply = self
                         .ask_permission(tc, &tool_ctx.working_dir, &detail)
-                        .await
-                    {
-                        return self.denied_permission_result(tc, "");
+                        .await;
+                    if !reply.allowed() {
+                        return self.denied_permission_result(tc, reply, "");
                     }
                     risk_confirmed = true;
                 }
@@ -587,11 +602,11 @@ impl Agent {
                         if apply_shell_ask(risk_confirmed) {
                             let detail =
                                 format!("Shell rule requires confirmation\n\nCommand:\n{command}");
-                            if !self
+                            let reply = self
                                 .ask_permission(tc, &tool_ctx.working_dir, &detail)
-                                .await
-                            {
-                                return self.denied_permission_result(tc, "");
+                                .await;
+                            if !reply.allowed() {
+                                return self.denied_permission_result(tc, reply, "");
                             }
                             risk_confirmed = true;
                         }
@@ -623,10 +638,11 @@ impl Agent {
                 };
             }
             IntentGate::Confirm(body) => {
-                if !risk_confirmed && !self.ask_permission(tc, &tool_ctx.working_dir, &body).await {
-                    return self.denied_permission_result(tc, "(intent gate).");
-                }
                 if !risk_confirmed {
+                    let reply = self.ask_permission(tc, &tool_ctx.working_dir, &body).await;
+                    if !reply.allowed() {
+                        return self.denied_permission_result(tc, reply, "(intent gate).");
+                    }
                     risk_confirmed = true;
                 }
             }
@@ -657,11 +673,11 @@ impl Agent {
                     "Path rule requires confirmation\n\nTool: {}\nPath: {path}",
                     tc.name
                 );
-                if !self
+                let reply = self
                     .ask_permission(tc, &tool_ctx.working_dir, &detail)
-                    .await
-                {
-                    return self.denied_permission_result(tc, "");
+                    .await;
+                if !reply.allowed() {
+                    return self.denied_permission_result(tc, reply, "");
                 }
                 risk_confirmed = true;
             }
@@ -685,11 +701,11 @@ impl Agent {
                     continue_confirmed();
                 } else {
                     let detail = permission_detail_for(tc, &tool_ctx.working_dir);
-                    let allowed = self
+                    let reply = self
                         .ask_permission(tc, &tool_ctx.working_dir, &detail)
                         .await;
-                    if !allowed {
-                        return self.denied_permission_result(tc, "");
+                    if !reply.allowed() {
+                        return self.denied_permission_result(tc, reply, "");
                     }
                 }
             }

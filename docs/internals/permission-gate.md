@@ -1,6 +1,6 @@
 # Permission gate
 
-> Status: Implemented · Updated: 2026-10-16
+> Status: Implemented · Updated: 2026-10-17
 
 This page lists, in execution order, every check a tool call passes between
 the model asking for it and the tool running: permission rules, shell risk
@@ -217,15 +217,19 @@ Prompters (`PermissionPrompter`, `crates/agent/src/permission.rs`):
 
 | Prompter | Used by | Behaviour |
 |---|---|---|
-| `ChannelPermissionPrompter` | TUI (`crates/tui/src/run/mod.rs`) | Sends a `PermissionRequest { tool_name, detail, reply }`; the TUI queues requests in a `VecDeque` and renders `render_permission_dialog` (`crates/tui/src/ui/dialogs/confirm.rs`): `Tool`, `Command` / `Details`, `Risk`, keys `y`/`a` allow, `n`/`d`/Esc deny. A dropped channel denies. |
+| `ChannelPermissionPrompter` | TUI (`crates/tui/src/run/mod.rs`) | Sends a `PermissionRequest { tool_name, detail, reply }` (`reply` is a `PermissionReply`: `Allow`, `Deny`, `Replied`); the TUI queues requests in a `VecDeque` and renders `render_permission_dialog` (`crates/tui/src/ui/dialogs/confirm.rs`): `Tool`, `Command` / `Details`, `Risk`, keys `y`/`a` allow, `n`/`d`/Esc deny, Tab focuses the prompt box (`TuiApp::permission_reply_focus`; Tab / Esc return). With the prompt box focused, keys and pastes go through the normal prompt handler; Enter with a draft (`reply_instead_of_permission`) answers every queued request `Replied`, closes the dialog, and queues the draft, which `steer_or_reclaim` pushes into the turn's `SteerInbox`. A dropped channel denies. |
 | `StdinPrompter` | plain REPL and text-format headless runs, via `default_prompter` | Prints `Permission required for tool …` and `Allow? [y/N]` on stderr, reads one line from stdin; `y`, `yes`, `a`, `allow` approve; EOF or read error denies. |
 | `AutoApprovePrompter` / `AutoDenyPrompter` | `default_prompter` on `WHYCODES_AUTO_APPROVE` / `WHYCODES_AUTO_DENY` (`1`, `true`, `yes`) or `CI` set; structured headless runs | Constant answer. |
 | `ServePrompter` | daemon (`crates/server/src/perm.rs`) | Emits `TurnEvent::PermissionAsk { request_id, tool_name, detail }` (surfaced to SDK clients as `PermissionRequest`), waits up to 300 s for the reply; timeout, missing run scope, or a closed channel deny. A session-level "always allow" and an `auto_approve` scope short-circuit to allow. |
 
 `Agent::new` installs `default_prompter()`; hosts replace it with
-`with_permission_prompter`. The denied result reads `User denied permission
-for tool '…'`, or `denied:headless for tool '…'` when `fail_closed_ask` is
-set; both are `is_error: true` and are excluded from auto-mode retry.
+`with_permission_prompter`. The gate calls `PermissionPrompter::ask_reply`;
+its default maps `ask`'s yes/no, and only the channel prompter returns
+`Replied`. The denied result reads `User denied permission for tool '…'`,
+`denied: user replied for tool '…'` for `Replied` (the user's message
+follows as a steering message at the next step, after the results), or
+`denied:headless for tool '…'` when `fail_closed_ask` is set; all are
+`is_error: true` and are excluded from auto-mode retry.
 
 ### Headless runs
 
@@ -259,7 +263,7 @@ custom agents: `CustomAgent::permission`).
 | `[security] sandbox_network` | config; env `WHYCODES_SANDBOX_NETWORK` | `--unshare-net` when false |
 | `[security] sandbox_fallback` | config; env `WHYCODES_SANDBOX_FALLBACK` | `allow` (default) / `deny` when `bwrap` is missing or not Linux |
 | `[security] network_allowlist`, `network_denylist` | config; env `WHYCODES_NETWORK_ALLOWLIST`, `WHYCODES_NETWORK_DENYLIST` | HTTP tool host policy (step 9) |
-| `[general] approval_mode` | config; env `WHYCODES_APPROVAL_MODE`; TUI `/mode [auto\|important\|manual]` | Ask overlay; default `auto` |
+| `[general] approval_mode` | config; env `WHYCODES_APPROVAL_MODE`; CLI `--approval-mode` (wins over both, not saved); TUI `/mode [auto\|important\|manual]` | Ask overlay; default `auto`. No effect on asks in `json` / `stream-json` runs (`fail_closed_ask` or auto-approve decides) |
 | `[session] headless_ask` | config; env `WHYCODES_HEADLESS_ASK`; CLI `--approve-tools` (forces allow) | `json` / `stream-json` ask policy; `deny` is the default |
 | `[session] intent_guidance` | config | `auto` / `off` / `always` for step 4 |
 | `WHYCODES_AUTO_APPROVE`, `WHYCODES_AUTO_DENY`, `CI` | env, read by `default_prompter` | Only where the default prompter is in use (plain REPL, text-format headless) |

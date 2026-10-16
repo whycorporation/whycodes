@@ -1427,7 +1427,7 @@ fn force_stop_keeps_agent_on_remote_outcome() {
     assert!(!rt.agent_busy);
     assert!(cancel_at.is_none());
     assert_eq!(qrx.blocking_recv().unwrap(), Err(QuestionError::Cancelled));
-    assert_eq!(prx.blocking_recv().ok(), Some(false));
+    assert_eq!(prx.blocking_recv().ok(), Some(PermissionReply::Deny));
     assert!(
         app.messages
             .iter()
@@ -2017,6 +2017,7 @@ fn run_options_and_turn_outcome_exist() {
         provider_from_cli: true,
         model_from_cli: true,
         agent_from_cli: true,
+        approval_mode_from_cli: None,
         update_rx: None,
         inject: Default::default(),
     };
@@ -3657,7 +3658,12 @@ async fn drain_background_queues_prompter_asks() {
     assert!(!rt.pending_question_queue.is_empty());
     assert!(rt.unread);
     // Unblock the waiters so the test can finish.
-    let _ = rt.pending_perm_queue.pop_front().unwrap().reply.send(false);
+    let _ = rt
+        .pending_perm_queue
+        .pop_front()
+        .unwrap()
+        .reply
+        .send(PermissionReply::Deny);
     let _ = rt
         .pending_question_queue
         .pop_front()
@@ -3694,7 +3700,7 @@ async fn drain_prompter_queues_opens_permission_then_question() {
         app.dialogs.active()
     );
     if let Some(req) = rt.pending_perm_queue.pop_front() {
-        let _ = req.reply.send(false);
+        let _ = req.reply.send(PermissionReply::Deny);
     }
     app.dialogs.clear();
     app.mode = AppMode::Normal;
@@ -4282,7 +4288,7 @@ fn close_session_slot_busy_last_and_parked() {
     close_session_slot(&mut app, &mut rt, &mut runtimes, &mut mru, 0);
     assert_eq!(runtimes.len(), 1);
     assert_eq!(mru, vec![0], "higher parked index must shift down");
-    assert_eq!(prx.blocking_recv().ok(), Some(false));
+    assert_eq!(prx.blocking_recv().ok(), Some(PermissionReply::Deny));
     assert!(matches!(
         qrx.blocking_recv().unwrap(),
         Err(QuestionError::Cancelled)
@@ -4390,7 +4396,7 @@ fn reply_permission_allow_deny_and_queue() {
     });
     app.ask_permission("bash", "one");
     reply_permission(&mut app, &mut q, false);
-    assert!(rx1.blocking_recv().ok() == Some(false));
+    assert!(rx1.blocking_recv().ok() == Some(PermissionReply::Deny));
     assert!(matches!(
         app.dialogs.active(),
         Some(DialogKind::Permission { .. })
@@ -4437,7 +4443,7 @@ fn apply_permission_overlay_event_allow_and_non_key() {
         &mut rt,
         &press(KeyCode::Char('y'))
     ));
-    assert_eq!(rx.blocking_recv().ok(), Some(true));
+    assert_eq!(rx.blocking_recv().ok(), Some(PermissionReply::Allow));
 }
 
 #[test]
@@ -4553,7 +4559,7 @@ fn warn_suggestion_catalog_and_shutdown() {
             reply: tx,
         });
     shutdown_runtime_queues(&mut rt);
-    assert!(rx.blocking_recv().ok() == Some(false));
+    assert!(rx.blocking_recv().ok() == Some(PermissionReply::Deny));
     assert!(rt.pending_perm_queue.is_empty());
     assert!(rt.turn_join.is_none());
 }
@@ -5087,6 +5093,7 @@ fn boot_opts(dir: &std::path::Path, key: &str) -> TuiRunOptions {
         provider_from_cli: true,
         model_from_cli: true,
         agent_from_cli: true,
+        approval_mode_from_cli: None,
         update_rx: None,
         inject: Default::default(),
     }
@@ -5855,6 +5862,7 @@ async fn run_returns_quit_when_test_tui_env_set() {
         provider_from_cli: true,
         model_from_cli: true,
         agent_from_cli: true,
+        approval_mode_from_cli: None,
         update_rx: None,
         inject: Default::default(),
     };
@@ -5888,6 +5896,7 @@ async fn run_returns_upgrade_when_test_tui_env_upgrade() {
         provider_from_cli: true,
         model_from_cli: true,
         agent_from_cli: true,
+        approval_mode_from_cli: None,
         update_rx: None,
         inject: Default::default(),
     };
@@ -11393,4 +11402,151 @@ fn apply_local_discovery_hides_servers_already_configured() {
         .map(|s| s.provider.as_str())
         .collect();
     assert_eq!(ids, vec!["vllm", "llamacpp"]);
+}
+
+#[test]
+fn typed_reply_over_permission_denies_all_and_steers() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let (tx1, rx1) = tokio::sync::oneshot::channel();
+    let (tx2, rx2) = tokio::sync::oneshot::channel();
+    let (tx3, rx3) = tokio::sync::oneshot::channel();
+    for (name, tx) in [("bash", tx1), ("edit", tx2), ("write", tx3)] {
+        rt.pending_perm_queue
+            .push_back(whycodes_agent::PermissionRequest {
+                tool_name: name.into(),
+                detail: "x".into(),
+                reply: tx,
+            });
+    }
+    drop(rx3);
+    app.ask_permission("bash", "x");
+
+    // Tab moves to the prompt box; letters then type instead of answering.
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Tab)
+    ));
+    assert!(app.permission_reply_focused());
+    // An empty draft is not a reply.
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Enter)
+    ));
+    assert_eq!(rt.pending_perm_queue.len(), 3);
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Char('n'))
+    ));
+    let mut release = crossterm::event::KeyEvent::from(KeyCode::Char('n'));
+    release.kind = KeyEventKind::Release;
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Key(release)
+    ));
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Paste("o, use rg".into())
+    ));
+    assert_eq!(app.input_buffer, "no, use rg");
+    assert_eq!(rt.pending_perm_queue.len(), 3, "typing answers nothing");
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Permission { .. })
+    ));
+    assert_eq!(app.key_context, KeymapContext::Dialog);
+    assert!(!apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Resize(80, 24)
+    ));
+
+    // Esc goes back to the y/n keys without answering; Tab returns.
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Esc)
+    ));
+    assert!(!app.permission_reply_focused());
+    assert_eq!(rt.pending_perm_queue.len(), 3);
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Tab)
+    ));
+
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Enter)
+    ));
+    assert_eq!(rx1.blocking_recv().ok(), Some(PermissionReply::Replied));
+    assert_eq!(rx2.blocking_recv().ok(), Some(PermissionReply::Replied));
+    assert!(rt.pending_perm_queue.is_empty());
+    assert!(!app.dialogs.is_open());
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(!app.permission_reply_focus);
+    assert!(
+        app.status_message.contains("Denied 3"),
+        "{}",
+        app.status_message
+    );
+
+    // The run loop hands the reply to the running turn.
+    rt.agent_busy = true;
+    steer_or_reclaim(&mut app, &mut rt, std::path::Path::new("."));
+    let steered = rt.steer.drain(&rt.steer_session);
+    assert_eq!(steered.len(), 1);
+    assert_eq!(
+        whycodes_agent::steer::content_text(&steered[0]),
+        "no, use rg"
+    );
+}
+
+#[test]
+fn a_new_permission_prompt_opens_on_its_yes_no_keys() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.ask_permission("bash", "x");
+    app.permission_reply_focus = true;
+    app.dialogs.pop();
+    app.ask_permission("edit", "y");
+    assert!(!app.permission_reply_focused());
+}
+
+#[test]
+fn deferred_config_keeps_the_cli_approval_mode() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".whycodes")).unwrap();
+    std::fs::write(
+        dir.path().join(".whycodes/config.toml"),
+        "[general]\napproval_mode = \"manual\"\n",
+    )
+    .unwrap();
+    let mut opts = boot_opts(dir.path(), "k");
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut config = Config::default();
+    let (mut provider, mut model) = (opts.provider.clone(), opts.model.clone());
+    apply_deferred_config(&mut opts, &mut app, &mut config, &mut provider, &mut model);
+    assert_eq!(
+        app.approval_mode,
+        ApprovalMode::Manual,
+        "config wins without the flag"
+    );
+
+    opts.approval_mode_from_cli = Some(ApprovalMode::Important);
+    apply_deferred_config(&mut opts, &mut app, &mut config, &mut provider, &mut model);
+    assert_eq!(app.approval_mode, ApprovalMode::Important);
+    assert_eq!(config.general.approval_mode, Some(ApprovalMode::Important));
+    // `/mode` opens on the flag's value.
+    crate::input::open_mode_dialog(&mut app);
+    assert_eq!(
+        ApprovalMode::ALL[app.approval_picker_selected],
+        ApprovalMode::Important
+    );
 }
