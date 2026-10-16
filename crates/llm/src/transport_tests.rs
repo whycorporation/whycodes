@@ -70,6 +70,7 @@ async fn complete_and_stream_via_scripted_provider() {
 async fn complete_times_out_when_scripted_hang_exceeds_budget() {
     use crate::scripted::{ScriptedProvider, ScriptedStep};
     let transport = LlmTransport {
+        redactor: None,
         retry: crate::retry::RetryPolicy {
             max_retries: 0,
             ..crate::retry::RetryPolicy::test_fast()
@@ -181,6 +182,7 @@ async fn complete_cache_hit_and_no_timeout() {
     let req = req();
     ResponseCache::global().store(&req, "complete-cache", "from-cache");
     let transport = LlmTransport {
+        redactor: None,
         retry: crate::retry::RetryPolicy {
             max_retries: 0,
             ..crate::retry::RetryPolicy::test_fast()
@@ -290,4 +292,100 @@ async fn stream_and_complete_retry_then_succeed() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("400"), "{err}");
+}
+
+/// Records the system prompt of every request, then answers like a script.
+struct CapturingProvider {
+    inner: crate::scripted::ScriptedProvider,
+    seen: std::sync::Mutex<Vec<String>>,
+}
+
+impl crate::provider::LlmProvider for CapturingProvider {
+    fn name(&self) -> &str {
+        "capturing"
+    }
+    fn default_base_url(&self) -> &str {
+        self.inner.default_base_url()
+    }
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> crate::provider::ProviderResponseFuture<'a> {
+        if let Ok(mut seen) = self.seen.lock() {
+            seen.push(request.system.clone());
+        }
+        self.inner.complete(request, api_key, model)
+    }
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> crate::provider::ProviderStreamFuture<'a> {
+        if let Ok(mut seen) = self.seen.lock() {
+            seen.push(request.system.clone());
+        }
+        self.inner.stream(request, api_key, model)
+    }
+}
+
+#[tokio::test]
+async fn transport_redacts_outgoing_requests_with_an_explicit_redactor() {
+    use crate::scripted::{ScriptedProvider, ScriptedStep};
+    use tokio_stream::StreamExt;
+
+    let redactor = std::sync::Arc::new(crate::secrets::Redactor::with_key([3u8; 32]));
+    redactor.register("hunter2-hunter2");
+    let provider = CapturingProvider {
+        inner: ScriptedProvider::repeating("capturing", vec![ScriptedStep::Text("ok".into())]),
+        seen: std::sync::Mutex::new(Vec::new()),
+    };
+    let mut request = req();
+    request.system = "the key is hunter2-hunter2".into();
+    let transport = LlmTransport::default().with_redactor(Some(std::sync::Arc::clone(&redactor)));
+
+    transport
+        .complete_uncached(&provider, &request, "k", "redact-complete-uncached")
+        .await
+        .unwrap();
+    transport
+        .complete(&provider, &request, "k", "redact-complete-unique-model")
+        .await
+        .unwrap();
+    let mut events = transport
+        .stream(&provider, &request, "k", "redact-stream")
+        .await
+        .unwrap();
+    while events.next().await.is_some() {}
+    let turn = transport
+        .stream_turn(
+            StreamTarget {
+                provider: &provider,
+                api_key: "k",
+                model: "redact-stream-turn",
+            },
+            &request,
+            StreamTurnOpts {
+                cache: false,
+                race: None,
+                race_after: Duration::from_millis(50),
+            },
+        )
+        .await
+        .unwrap();
+    let mut events = turn.events;
+    while events.next().await.is_some() {}
+
+    let seen = provider.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 4, "{seen:?}");
+    for system in &seen {
+        assert!(!system.contains("hunter2"), "{system}");
+        assert!(system.contains("$$SECRET:"), "{system}");
+    }
+    // Without a redactor (and none installed in this binary) the request is untouched.
+    let plain = LlmTransport::default();
+    assert_eq!(plain.outgoing(&request).system, request.system);
+    assert!(transport.outgoing(&request).system.contains("$$SECRET:"));
 }

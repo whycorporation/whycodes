@@ -189,6 +189,17 @@ instructions go to tool results; recall rides on the user message instead of
 the system prompt (`service.rs:689-694` quotes the measured cost of the
 alternative).
 
+### Secret placeholders
+
+With `[security] redact_secrets` (default on) `LlmTransport::outgoing`
+(`crates/llm/src/transport.rs`) rewrites every request before it leaves:
+registered secrets and known token shapes become `$$SECRET:<hex>$$`
+(`crates/llm/src/secrets.rs`). The placeholder is an HMAC of the value under
+a per-install key, so it is the same on every step and every session and
+the cached prefix is unaffected. The stored session keeps the real values;
+only the outgoing copy changes, and a changed message slice is rebuilt
+(`redact_request` returns the original `Arc` when nothing matched).
+
 ## Configuration and overrides
 
 | knob | where | effect |

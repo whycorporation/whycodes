@@ -83,6 +83,8 @@ pub struct SubagentRunner {
     /// Parent `[security] bash_risk_threshold`; workers cannot prompt, so a
     /// command the parent would confirm is allowed only in `auto` mode.
     risk_threshold: RiskThreshold,
+    /// Redacts outgoing requests and restores placeholders in tool input.
+    secrets: Option<Arc<whycodes_llm::Redactor>>,
 }
 
 impl SubagentRunner {
@@ -115,7 +117,14 @@ impl SubagentRunner {
             approval_mode: ApprovalMode::Auto,
             hooks: Vec::new(),
             risk_threshold: RiskThreshold::default(),
+            secrets: whycodes_llm::secrets::installed(),
         }
+    }
+
+    /// Use `redactor` instead of the process default.
+    pub fn with_redactor(mut self, redactor: Option<Arc<whycodes_llm::Redactor>>) -> Self {
+        self.secrets = redactor;
+        self
     }
 
     /// Inherit the parent's shell risk threshold.
@@ -398,6 +407,7 @@ impl SubagentRunner {
             let mut step_usage = whycodes_core::types::Usage::default();
 
             let mut event_stream = whycodes_llm::default_transport()
+                .with_redactor(self.secrets.clone())
                 .stream(provider, &request, api_key, model)
                 .await?;
 
@@ -554,6 +564,8 @@ impl SubagentRunner {
         }
         let transformed = self.transform_tool_call(tc, tool_ctx).await;
         let tc = transformed.as_ref().unwrap_or(tc);
+        let restored = self.restore_tool_call(tc);
+        let tc = restored.as_ref().unwrap_or(tc);
         if let Some(reason) = self.headless_gate(tc, permission, &tool_ctx.working_dir) {
             tracing::warn!(tool = %tc.name, reason, "subagent tool call refused");
             return whycodes_core::types::ToolResult {
@@ -593,6 +605,24 @@ impl SubagentRunner {
         let feedback = run_post_hooks(&self.hooks, &post_ctx).await;
         append_feedback(&mut result.content, feedback);
         result
+    }
+
+    /// Secret placeholders become the real values before the headless gate,
+    /// as in the parent.
+    fn restore_tool_call(
+        &self,
+        tc: &whycodes_core::types::ToolCall,
+    ) -> Option<whycodes_core::types::ToolCall> {
+        let redactor = self.secrets.as_ref()?;
+        let mut arguments = tc.arguments.clone();
+        if !redactor.restore_json(&mut arguments) {
+            return None;
+        }
+        Some(whycodes_core::types::ToolCall {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            arguments,
+        })
     }
 
     /// `pre_tool_transform` hooks rewrite the arguments before the headless

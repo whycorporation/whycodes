@@ -1093,6 +1093,36 @@ to `cmd.exe`. Set `WHYCODES_SHELL` to an explicit interpreter
 for Windows is recommended so the Unix-style commands models emit keep
 working; it is not required to install or run the TUI.
 
+### Secret redaction
+
+Credential-looking values never leave the machine in a request. Before a
+request goes to a provider, WhyCodes replaces them with placeholders
+(`$$SECRET:<16 hex>$$`); when the model uses a placeholder inside a tool
+argument (a `bash` command, a `write` body, an `edit`), the real value is
+put back before the tool runs. The model can therefore route a secret it
+never saw, and a transcript pasted into a bug report shows placeholders.
+
+What is redacted:
+
+- values of environment variables whose names contain `KEY`, `SECRET`,
+  `TOKEN`, `PASSWORD`, `PASSWD` or `CREDENTIAL` (at least 8 characters, one
+  token, not a path);
+- known token shapes (`sk-…`, GitHub `ghp_…` / `github_pat_…`, Slack
+  `xox…`, AWS `AKIA…`, Google `AIza…`, PEM private keys);
+- the password in `scheme://user:password@host` URLs;
+- `Bearer <token>` and `api_key=…` / `token: …` / `password=…` shapes in
+  tool output.
+
+Placeholders are keyed with a per-install secret (`secret-salt` in the data
+directory), so the same value gets the same placeholder across sessions and
+the prompt-cache prefix stays stable. Thinking blocks are left alone (their
+signature covers the text). Turn it off with:
+
+```toml
+[security]
+redact_secrets = false     # or WHYCODES_REDACT_SECRETS=0
+```
+
 ### Network allowlist (HTTP tools)
 
 Applies to `webfetch`, `websearch` / `mcp_websearch`, `github_issue` and

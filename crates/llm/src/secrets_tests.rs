@@ -314,3 +314,19 @@ fn poisoned_state_still_answers() {
     assert_eq!(r.len(), 0);
     assert!(placeholder(&r.register("after-poison-secret")));
 }
+
+#[test]
+fn process_default_installs_once() {
+    // This binary never installs a redactor elsewhere, so the first call wins
+    // here. Installing one with no registered secrets keeps the other tests'
+    // fixtures untouched (token shapes only).
+    let first = Arc::new(Redactor::with_key([5u8; 32]));
+    let was_empty = installed().is_none();
+    let set = install(Arc::clone(&first));
+    assert_eq!(set, was_empty);
+    assert!(installed().is_some());
+    assert!(
+        !install(Arc::new(Redactor::with_key([6u8; 32]))),
+        "second install is a no-op"
+    );
+}

@@ -2948,3 +2948,32 @@ fn hook_event_names_round_trip_through_toml() {
         assert_eq!(cfg.hooks[0].event, event, "{name}");
     }
 }
+
+#[test]
+fn redact_secrets_defaults_on_and_only_an_explicit_off_wins() {
+    let base = Config::default();
+    assert!(base.security.redact_secrets);
+    let parsed: Config = toml::from_str("[security]\nredact_secrets = false\n").unwrap();
+    assert!(!parsed.security.redact_secrets);
+    let merged = base.merge_with(&parsed);
+    assert!(!merged.security.redact_secrets, "an explicit false wins");
+    let again = merged.merge_with(&Config::default());
+    assert!(
+        !again.security.redact_secrets,
+        "a default overlay does not turn it back on"
+    );
+
+    let _guard = lock_env();
+    let prev = std::env::var_os("WHYCODES_REDACT_SECRETS");
+    unsafe { std::env::set_var("WHYCODES_REDACT_SECRETS", "off") };
+    let mut cfg = Config::default();
+    cfg.apply_env_overrides();
+    assert!(!cfg.security.redact_secrets);
+    unsafe { std::env::set_var("WHYCODES_REDACT_SECRETS", "1") };
+    cfg.apply_env_overrides();
+    assert!(cfg.security.redact_secrets);
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_REDACT_SECRETS", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_REDACT_SECRETS") },
+    }
+}

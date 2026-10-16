@@ -111,6 +111,7 @@ fn req() -> LlmRequest {
 
 fn transport() -> LlmTransport {
     LlmTransport {
+        redactor: None,
         retry: RetryPolicy {
             max_retries: 0,
             initial_backoff: Duration::from_millis(1),

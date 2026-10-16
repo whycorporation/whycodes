@@ -105,6 +105,7 @@ pub(super) async fn run_goal_check(
 /// Overloads and dropped connections retry; a dead provider pauses the goal.
 fn goal_transport() -> whycodes_llm::LlmTransport {
     whycodes_llm::LlmTransport {
+        redactor: None,
         complete_timeout: Some(std::time::Duration::from_secs(60)),
         retry: whycodes_llm::RetryPolicy {
             max_retries: 3,
