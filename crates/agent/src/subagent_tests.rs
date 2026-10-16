@@ -736,3 +736,238 @@ async fn reads_messages_told_to_it_and_reports_late_ones() {
     assert!(note.contains("after this subagent finished"), "{note}");
     assert!(note.contains("- too late"), "{note}");
 }
+
+// ---------------------------------------------------------------------------
+// Headless gate: workers get the parent's blast-radius checks without a prompter.
+// ---------------------------------------------------------------------------
+
+fn gate_runner(dir: &std::path::Path, mode: ApprovalMode) -> SubagentRunner {
+    SubagentRunner::new(
+        Arc::new(ProviderRegistry::default()),
+        Arc::new(ToolExecutor::new()),
+        make_info(),
+        dir.to_path_buf(),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    )
+    .with_approval_mode(mode)
+}
+
+fn gate_perms(rules: &[(&str, PermissionAction)]) -> PermissionSet {
+    let mut p = PermissionSet {
+        allow_shell: true,
+        allow_file_writes: true,
+        ..Default::default()
+    };
+    for (k, a) in rules {
+        p.rules.insert((*k).to_string(), *a);
+    }
+    p
+}
+
+fn call(name: &str, args: serde_json::Value) -> whycodes_core::types::ToolCall {
+    whycodes_core::types::ToolCall {
+        id: format!("{name}-1"),
+        name: name.into(),
+        arguments: args,
+    }
+}
+
+#[tokio::test]
+async fn headless_gate_refuses_catastrophic_shell_in_every_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::new(dir.path().display().to_string());
+    let perms = gate_perms(&[]);
+    for mode in ApprovalMode::ALL {
+        let runner = gate_runner(dir.path(), mode);
+        for tool in ["bash", "shell"] {
+            let result = runner
+                .execute_tool_call(
+                    &call(tool, serde_json::json!({"command": "rm -rf /"})),
+                    &ctx,
+                    &perms,
+                )
+                .await;
+            assert!(result.is_error, "{mode:?} {tool}");
+            assert!(
+                result.content.contains("catastrophic"),
+                "{}",
+                result.content
+            );
+        }
+        // `schedule` carries a delayed shell payload.
+        let scheduled = runner
+            .execute_tool_call(
+                &call(
+                    "schedule",
+                    serde_json::json!({"after_secs": 1, "command": " mkfs /dev/sda1 "}),
+                ),
+                &ctx,
+                &perms,
+            )
+            .await;
+        assert!(scheduled.is_error);
+        assert!(
+            scheduled.content.contains("catastrophic"),
+            "{}",
+            scheduled.content
+        );
+    }
+    // An empty scheduled command is not a shell payload.
+    let runner = gate_runner(dir.path(), ApprovalMode::Manual);
+    let empty = runner
+        .execute_tool_call(
+            &call(
+                "schedule",
+                serde_json::json!({"after_secs": 1, "command": ""}),
+            ),
+            &ctx,
+            &perms,
+        )
+        .await;
+    assert!(!empty.content.contains("Refused"), "{}", empty.content);
+}
+
+#[tokio::test]
+async fn headless_gate_confirm_passes_only_in_auto() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::new(dir.path().display().to_string());
+    let perms = gate_perms(&[]);
+    let destructive = serde_json::json!({"command": "git push --force"});
+
+    let manual = gate_runner(dir.path(), ApprovalMode::Manual)
+        .execute_tool_call(&call("bash", destructive.clone()), &ctx, &perms)
+        .await;
+    assert!(manual.is_error);
+    assert!(
+        manual.content.contains("cannot prompt"),
+        "{}",
+        manual.content
+    );
+    assert!(manual.content.contains("`manual`"), "{}", manual.content);
+    assert!(manual.content.contains("shell risk"), "{}", manual.content);
+
+    let auto = gate_runner(dir.path(), ApprovalMode::Auto)
+        .execute_tool_call(&call("bash", destructive.clone()), &ctx, &perms)
+        .await;
+    assert!(!auto.content.contains("cannot prompt"), "{}", auto.content);
+
+    // The parent's threshold is inherited: `off` never confirms.
+    let off = gate_runner(dir.path(), ApprovalMode::Manual)
+        .with_risk_threshold(RiskThreshold::Off)
+        .execute_tool_call(&call("bash", destructive), &ctx, &perms)
+        .await;
+    assert!(!off.content.contains("cannot prompt"), "{}", off.content);
+}
+
+#[tokio::test]
+async fn headless_gate_applies_shell_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::new(dir.path().display().to_string());
+    let status = || call("bash", serde_json::json!({"command": "echo hi"}));
+
+    let denied = gate_runner(dir.path(), ApprovalMode::Auto)
+        .execute_tool_call(
+            &status(),
+            &ctx,
+            &gate_perms(&[("bash(echo *)", PermissionAction::Deny)]),
+        )
+        .await;
+    assert!(denied.is_error);
+    assert!(
+        denied.content.contains("by rule matching `echo hi`"),
+        "{}",
+        denied.content
+    );
+
+    let ask_manual = gate_runner(dir.path(), ApprovalMode::Important)
+        .execute_tool_call(
+            &status(),
+            &ctx,
+            &gate_perms(&[("bash(echo *)", PermissionAction::Ask)]),
+        )
+        .await;
+    assert!(ask_manual.is_error);
+    assert!(
+        ask_manual
+            .content
+            .contains("shell rule requires confirmation"),
+        "{}",
+        ask_manual.content
+    );
+
+    let ask_auto = gate_runner(dir.path(), ApprovalMode::Auto)
+        .execute_tool_call(
+            &status(),
+            &ctx,
+            &gate_perms(&[("bash(echo *)", PermissionAction::Ask)]),
+        )
+        .await;
+    assert!(!ask_auto.is_error, "{}", ask_auto.content);
+    assert!(ask_auto.content.contains("hi"), "{}", ask_auto.content);
+
+    let allowed = gate_runner(dir.path(), ApprovalMode::Manual)
+        .execute_tool_call(
+            &status(),
+            &ctx,
+            &gate_perms(&[("bash(echo *)", PermissionAction::Allow)]),
+        )
+        .await;
+    assert!(!allowed.is_error, "{}", allowed.content);
+}
+
+#[tokio::test]
+async fn headless_gate_applies_path_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("secrets")).unwrap();
+    std::fs::write(dir.path().join("secrets/k.txt"), "key").unwrap();
+    let ctx = ToolContext::new(dir.path().display().to_string());
+    let read = || call("read", serde_json::json!({"path": "secrets/k.txt"}));
+
+    let denied = gate_runner(dir.path(), ApprovalMode::Auto)
+        .execute_tool_call(
+            &read(),
+            &ctx,
+            &gate_perms(&[("read(secrets/**)", PermissionAction::Deny)]),
+        )
+        .await;
+    assert!(denied.is_error);
+    assert!(
+        denied.content.contains("by path rule"),
+        "{}",
+        denied.content
+    );
+
+    let ask_manual = gate_runner(dir.path(), ApprovalMode::Manual)
+        .execute_tool_call(
+            &read(),
+            &ctx,
+            &gate_perms(&[("read(secrets/**)", PermissionAction::Ask)]),
+        )
+        .await;
+    assert!(ask_manual.is_error);
+    assert!(
+        ask_manual.content.contains("path rule on `secrets/k.txt`"),
+        "{}",
+        ask_manual.content
+    );
+
+    let ask_auto = gate_runner(dir.path(), ApprovalMode::Auto)
+        .execute_tool_call(
+            &read(),
+            &ctx,
+            &gate_perms(&[("read(secrets/**)", PermissionAction::Ask)]),
+        )
+        .await;
+    assert!(!ask_auto.is_error, "{}", ask_auto.content);
+    assert!(ask_auto.content.contains("key"), "{}", ask_auto.content);
+
+    let allowed = gate_runner(dir.path(), ApprovalMode::Manual)
+        .execute_tool_call(
+            &read(),
+            &ctx,
+            &gate_perms(&[("read(secrets/**)", PermissionAction::Allow)]),
+        )
+        .await;
+    assert!(!allowed.is_error, "{}", allowed.content);
+}

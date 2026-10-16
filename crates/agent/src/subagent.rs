@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use whycodes_command_risk::{Decision, RiskThreshold, assess, decide};
 use whycodes_config::{HookConfig, HookEvent};
 use whycodes_core::SandboxSettings;
 use whycodes_core::network::NetworkPolicy;
 use whycodes_core::tool::ToolContext;
-use whycodes_core::types::{AgentInfo, ApprovalMode, PermissionSet};
+use whycodes_core::types::{AgentInfo, ApprovalMode, PermissionAction, PermissionSet};
 use whycodes_llm::provider::ProviderRegistry;
 use whycodes_memory::MemorySettings;
 use whycodes_plugin::hooks::{
@@ -20,6 +21,7 @@ use crate::question::{
 };
 
 use super::agent::DEFAULT_SYSTEM_PROMPT;
+use crate::tool_policy::{SHELL_TOOLS, file_tool_path};
 
 /// Parameters for spawning a subagent
 #[derive(Debug, Clone)]
@@ -77,6 +79,9 @@ pub struct SubagentRunner {
     approval_mode: ApprovalMode,
     /// Parent config hooks: tool hooks run here too, plus `subagent_stop`.
     hooks: Vec<HookConfig>,
+    /// Parent `[security] bash_risk_threshold`; workers cannot prompt, so a
+    /// command the parent would confirm is allowed only in `auto` mode.
+    risk_threshold: RiskThreshold,
 }
 
 impl SubagentRunner {
@@ -108,7 +113,14 @@ impl SubagentRunner {
             question_prompter: default_question_prompter(),
             approval_mode: ApprovalMode::Auto,
             hooks: Vec::new(),
+            risk_threshold: RiskThreshold::default(),
         }
+    }
+
+    /// Inherit the parent's shell risk threshold.
+    pub fn with_risk_threshold(mut self, threshold: RiskThreshold) -> Self {
+        self.risk_threshold = threshold;
+        self
     }
 
     /// Inherit the parent's config hooks.
@@ -539,6 +551,14 @@ impl SubagentRunner {
             };
             return run_question_tool(prompter, &tc.arguments, &tc.id).await;
         }
+        if let Some(reason) = self.headless_gate(tc, permission, &tool_ctx.working_dir) {
+            tracing::warn!(tool = %tc.name, reason, "subagent tool call refused");
+            return whycodes_core::types::ToolResult {
+                tool_call_id: tc.id.clone(),
+                content: reason,
+                is_error: true,
+            };
+        }
         if self.hooks.is_empty() {
             return self.tool_executor.execute(tc, tool_ctx, permission).await;
         }
@@ -570,6 +590,101 @@ impl SubagentRunner {
         let feedback = run_post_hooks(&self.hooks, &post_ctx).await;
         append_feedback(&mut result.content, feedback);
         result
+    }
+
+    /// The parent's blast-radius gates, without a prompter: catastrophic shell
+    /// commands are refused, shell and path `deny` rules apply, and anything the
+    /// parent would have asked about (risk `Confirm`, shell/path `ask`) passes
+    /// only in `auto` approval mode. Tool-name `ask` and the intent gate stay
+    /// with the parent. Returns the refusal text.
+    fn headless_gate(
+        &self,
+        tc: &whycodes_core::types::ToolCall,
+        permission: &PermissionSet,
+        working_dir: &str,
+    ) -> Option<String> {
+        let scheduled = match tc.name.as_str() {
+            "schedule" => tc
+                .arguments
+                .get("command")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|c| !c.is_empty()),
+            _ => None,
+        };
+        if SHELL_TOOLS.contains(&tc.name.as_str()) || scheduled.is_some() {
+            let command = match scheduled {
+                Some(command) => command,
+                None => tc
+                    .arguments
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+            };
+            let assessment = assess(command, std::path::Path::new(working_dir));
+            match decide(&assessment, self.risk_threshold) {
+                Decision::Allow => {}
+                Decision::Refuse { reason } => {
+                    return Some(format!(
+                        "Refused: {reason}.
+                         This command is classified catastrophic and cannot be approved,                          not even by the parent agent."
+                    ));
+                }
+                Decision::Confirm { reason } => {
+                    if let Some(refusal) =
+                        self.needs_confirmation(&format!("shell risk ({reason})"))
+                    {
+                        return Some(refusal);
+                    }
+                }
+            }
+            match permission.action_for_shell(command) {
+                Some(PermissionAction::Deny) => {
+                    return Some(format!(
+                        "Permission denied for shell command by rule matching `{command}`."
+                    ));
+                }
+                Some(PermissionAction::Ask) => {
+                    if let Some(refusal) =
+                        self.needs_confirmation("a shell rule requires confirmation")
+                    {
+                        return Some(refusal);
+                    }
+                }
+                Some(PermissionAction::Allow) | None => {}
+            }
+        }
+        if let Some(path) = file_tool_path(tc) {
+            match permission.action_for_path(&tc.name, &path) {
+                Some(PermissionAction::Deny) => {
+                    return Some(format!(
+                        "Permission denied for `{}` on `{path}` by path rule.",
+                        tc.name
+                    ));
+                }
+                Some(PermissionAction::Ask) => {
+                    if let Some(refusal) = self.needs_confirmation(&format!(
+                        "a path rule on `{path}` requires confirmation"
+                    )) {
+                        return Some(refusal);
+                    }
+                }
+                Some(PermissionAction::Allow) | None => {}
+            }
+        }
+        None
+    }
+
+    /// `Some(refusal)` when the parent would prompt and this worker cannot;
+    /// `None` when `auto` mode would have allowed it.
+    fn needs_confirmation(&self, what: &str) -> Option<String> {
+        match self.approval_mode {
+            ApprovalMode::Auto => None,
+            mode => Some(format!(
+                "Denied: {what}. A subagent cannot prompt for confirmation                  (approval mode `{}`); run it from the parent session instead.",
+                mode.as_str()
+            )),
+        }
     }
 }
 

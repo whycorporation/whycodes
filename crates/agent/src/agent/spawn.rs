@@ -43,6 +43,7 @@ impl Agent {
         .with_panel(self.panel_sink())
         .with_question_prompter(Arc::clone(&self.question_prompter))
         .with_approval_mode(self.approval_mode)
+        .with_risk_threshold(self.risk_threshold)
         .with_hooks(self.hooks.clone());
 
         let result = runner.run(task, provider_name, model, api_key).await;
@@ -84,6 +85,7 @@ impl Agent {
             .with_panel(self.panel_sink())
             .with_question_prompter(Arc::clone(&self.question_prompter))
             .with_approval_mode(self.approval_mode)
+            .with_risk_threshold(self.risk_threshold)
             .with_hooks(self.hooks.clone()),
         );
 
