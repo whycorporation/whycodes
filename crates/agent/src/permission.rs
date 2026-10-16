@@ -167,12 +167,18 @@ pub fn default_prompter() -> Arc<dyn PermissionPrompter> {
 }
 
 fn atty_stderr() -> bool {
-    // Avoid extra dep: heuristic via isatty isn't available on pure std;
-    // treat missing TERM or CI as non-interactive.
-    if std::env::var_os("CI").is_some() {
-        return false;
-    }
-    true
+    use std::io::IsTerminal;
+    interactive_stdin(
+        std::env::var_os("CI").is_some(),
+        std::io::stdin().is_terminal(),
+    )
+}
+
+/// A `[y/N]` prompt only makes sense when a person can answer it: not under
+/// `CI`, and not when stdin is a pipe or a file (an empty pipe would deny,
+/// but a piped `y` would approve anything).
+fn interactive_stdin(ci: bool, stdin_is_terminal: bool) -> bool {
+    !ci && stdin_is_terminal
 }
 
 fn permission_from_read(result: std::io::Result<usize>, line: &str) -> bool {

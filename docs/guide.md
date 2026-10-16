@@ -938,7 +938,7 @@ when the edit would not apply, the prompt lists the arguments instead.
 |---|---|
 | `WHYCODES_AUTO_APPROVE=1` | auto-allow |
 | `WHYCODES_AUTO_DENY=1` | auto-deny |
-| stdin is not a terminal (`--plain`) | auto-deny |
+| stdin is not a terminal or `CI` is set (`--plain`) | auto-deny |
 | `--format json` / `stream-json` | deny (`denied:headless`) unless `--approve-tools` or `session.headless_ask = "allow"` |
 
 ### Shell command risk
@@ -963,6 +963,12 @@ The threshold is the lowest level that prompts. Default is `destructive`:
 
 `catastrophic` is refused outright and **cannot be approved** — not by a
 prompt, not by `bash = "allow"`, not by `bash_risk_threshold = "off"`.
+
+`task` and `swarm` workers apply the same refusal and the same shell and
+path `deny` rules. A worker cannot prompt, so a command the parent would
+ask about (a `destructive` command, or a shell / path `ask` rule) runs only
+in `auto` approval mode; in `important` or `manual` the worker gets a
+refusal that names the mode and the parent session has to run it.
 
 A still-running `bash` that is not catastrophic is auto-detached after 20s
 (default) and returns `job_id` + last lines. Completions arrive once on a
