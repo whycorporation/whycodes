@@ -276,7 +276,7 @@ custom agents: `CustomAgent::permission`).
   — tool-name rules, shell-risk `Confirm`, intent `Confirm`, path-rule `Ask`
   — is allowed without a prompt in the TUI and plain REPL. Only `Deny`, the
   catastrophic refusal, hook blocks and in-tool checks remain. The guide's
-  Permissions section describes the `manual` behaviour.
+  Permissions section now leads with that default.
 - `task` / `swarm` workers run a headless copy of the blast-radius gates
   (`SubagentRunner::headless_gate`): catastrophic commands are refused,
   shell and path `deny` rules apply, and a risk `Confirm` or a shell/path
@@ -284,8 +284,9 @@ custom agents: `CustomAgent::permission`).
   mode). Tool-name `ask` rules and the intent gate are still not applied to
   workers; `general` workers inherit the parent's `bash` permission.
 - `WHYCODES_AUTO_APPROVE` / `WHYCODES_AUTO_DENY` are read only by
-  `default_prompter`. The TUI, the daemon and structured headless runs install
-  their own prompter, so the variables have no effect there.
+  `default_prompter` (the plain REPL). The TUI, the daemon and structured
+  headless runs install their own prompter, so the variables have no effect
+  there; the guide states this scope.
 - The plain prompter is interactive only when `CI` is unset **and** stdin is
   a terminal (`std::io::IsTerminal`); a piped or redirected stdin auto-denies
   instead of reading a `y` from the pipe.

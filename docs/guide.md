@@ -928,18 +928,36 @@ webfetch = "allow"
 "mymcp_*" = "deny"
 ```
 
-`allow` runs immediately, `deny` blocks. `ask` prompts — a y/n dialog in
-the TUI, a stdin prompt in `--plain` — unless overridden. An `edit` or
-`write` prompt shows the change it would make (the diff for an edit, the new
-content and line counts for a write), computed without touching the file;
-when the edit would not apply, the prompt lists the arguments instead.
+`allow` runs immediately, `deny` blocks. `ask` means "prompt if the
+approval mode says so": a y/n dialog in the TUI, a stdin prompt in `--plain`.
+An `edit` or `write` prompt shows the change it would make (the diff for an
+edit, the new content and line counts for a write), computed without
+touching the file; when the edit would not apply, the prompt lists the
+arguments instead.
+
+**Approval mode** (`[general] approval_mode`, `WHYCODES_APPROVAL_MODE`, or
+`/mode` in the TUI) decides which `ask` actually prompts. The default is
+`auto`: an `ask` is allowed without a prompt, routine `question` calls are
+auto-answered while todos or background jobs are open, and only `deny`
+rules, catastrophic shell commands and the sandbox still stop a call.
+`important` prompts on questions and on high-risk tools (`browser`, a shell
+command at or above the risk threshold, a file write outside the project).
+`manual` prompts on every `ask`. The prompt box shows the current mode on
+its bottom border.
+
+When a prompt would be shown, the surface decides how it is answered:
 
 | Condition | Result for `ask` |
 |---|---|
-| `WHYCODES_AUTO_APPROVE=1` | auto-allow |
-| `WHYCODES_AUTO_DENY=1` | auto-deny |
+| `WHYCODES_AUTO_APPROVE=1` (`--plain` only) | auto-allow |
+| `WHYCODES_AUTO_DENY=1` (`--plain` only) | auto-deny |
 | stdin is not a terminal or `CI` is set (`--plain`) | auto-deny |
 | `--format json` / `stream-json` | deny (`denied:headless`) unless `--approve-tools` or `session.headless_ask = "allow"` |
+| Attached to `whycodes serve` | the daemon's policy (tools are auto-approved there) |
+
+The two environment variables are read by the plain-REPL prompter only; the
+TUI, the daemon and structured output install their own prompters and
+ignore them.
 
 ### Shell command risk
 
