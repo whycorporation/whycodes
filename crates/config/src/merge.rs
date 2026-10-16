@@ -315,6 +315,9 @@ impl Config {
         if !other.security.sandbox_network {
             self.security.sandbox_network = false;
         }
+        if !other.security.redact_secrets {
+            self.security.redact_secrets = false;
+        }
         if other.security.sandbox_fallback != default_sandbox_fallback() {
             self.security.sandbox_fallback = other.security.sandbox_fallback.clone();
         }

@@ -326,7 +326,7 @@ impl Agent {
             // Only the HTTP open is retried — mid-stream drops stay single-shot.
             // Race the open against cancel so a hung gateway cannot ignore Esc.
             // Bind transport so `stream()`'s future is not tied to a temporary.
-            let transport = whycodes_llm::default_transport();
+            let transport = whycodes_llm::default_transport().with_redactor(self.secrets.clone());
             let race_ids = self.race_partner(provider_name, model);
             let race_provider = race_ids
                 .as_ref()

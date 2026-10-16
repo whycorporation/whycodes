@@ -23,9 +23,13 @@ async-stream.workspace = true
 tokio-stream = "0.1"
 rustc-hash.workspace = true
 chrono.workspace = true
+regex.workspace = true
+sha2 = "0.11"
+uuid.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -132,6 +132,7 @@ impl Agent {
             use_prompt_cache: false,
         };
         let transport = whycodes_llm::LlmTransport {
+            redactor: self.secrets.clone(),
             complete_timeout: Some(std::time::Duration::from_secs(60)),
             retry: whycodes_llm::RetryPolicy {
                 max_retries: 2,
