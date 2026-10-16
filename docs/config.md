@@ -68,13 +68,6 @@ Command-line flags sit above all five layers for the keys they touch:
 anything) skips the full-screen TUI. `--approve-tools` forces
 `session.headless_ask = "allow"` for a structured run.
 
-Four keys exist in the types and are read at runtime but are **not copied
-by the layer merge** in this version (`merge_with` never assigns them), so a
-value written in either `config.toml` is dropped by the layered load:
-`pricing`, `session.fallback_models`, `tui.prompt_suggestions` and
-`lsp.edit_diagnostics_ms`. They are documented below as the code defines
-them; see the last section.
-
 ## Top-level keys
 
 | Key | Default | Env override | Meaning |
@@ -460,10 +453,6 @@ worth knowing:
   omits `[agents.permission]`, which the `AgentInfo` type requires
   (`allow_file_writes`, `allow_network`, `allow_shell` have no serde
   default). As written, that entry does not deserialize.
-- Four keys are defined and read at runtime but `Config::merge_with`
-  never copies them, so `load_layered` drops any value from either
-  `config.toml`: `pricing`, `session.fallback_models`,
-  `tui.prompt_suggestions`, `lsp.edit_diagnostics_ms`.
 - Keys that parse and merge but have no runtime consumer in this version
   (documented above with that note): `tools.enable_*` (all eight),
   `tools.disabled_tools`, `tools.custom_tools`, `session.store_path`,

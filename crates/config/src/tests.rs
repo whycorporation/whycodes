@@ -2888,3 +2888,42 @@ fn format_after_write_parses_and_a_layer_can_turn_it_off() {
     let off = cfg.tools.clone();
     assert!(!off.merge_with(&ToolsConfig::default()).format.enabled);
 }
+
+#[test]
+fn merge_with_carries_fallback_models_prompt_suggestions_edit_diagnostics_and_pricing() {
+    let base = Config::default();
+    let mut overlay = Config::default();
+    overlay.session.fallback_models = vec!["openai/gpt-4o".into(), "groq/llama".into()];
+    overlay.tui.prompt_suggestions = "on".into();
+    overlay.lsp.edit_diagnostics_ms = Some(250);
+    overlay.pricing.insert(
+        "openai/gpt-4o".into(),
+        crate::PriceConfig {
+            input: 2.5,
+            output: 10.0,
+            cache_read: Some(1.25),
+            cache_write: None,
+        },
+    );
+    let merged = base.merge_with(&overlay);
+    assert_eq!(
+        merged.session.fallback_models,
+        overlay.session.fallback_models
+    );
+    assert_eq!(merged.tui.prompt_suggestions, "on");
+    assert_eq!(merged.lsp.edit_diagnostics_ms, Some(250));
+    assert_eq!(
+        merged.pricing.get("openai/gpt-4o"),
+        overlay.pricing.get("openai/gpt-4o")
+    );
+
+    // A lower layer's values survive an overlay that leaves them at the default.
+    let again = merged.merge_with(&Config::default());
+    assert_eq!(
+        again.session.fallback_models,
+        overlay.session.fallback_models
+    );
+    assert_eq!(again.tui.prompt_suggestions, "on");
+    assert_eq!(again.lsp.edit_diagnostics_ms, Some(250));
+    assert_eq!(again.pricing.len(), 1);
+}
