@@ -77,8 +77,9 @@ impl Agent {
             .and_then(|m| m.content.as_text().map(str::to_string))
             .unwrap_or_default();
         self.run_prompt_hooks(session, &prompt).await?;
+        let usage_before = session.usage.clone();
         let reply = self.run_turn_steps(session, opts).await?;
-        self.run_stop_hooks(session, &reply).await;
+        self.run_stop_hooks(session, &reply, &usage_before).await;
         Ok(reply)
     }
 

@@ -971,3 +971,34 @@ async fn headless_gate_applies_path_rules() {
         .await;
     assert!(!allowed.is_error, "{}", allowed.content);
 }
+
+#[tokio::test]
+async fn worker_transform_hook_runs_before_the_headless_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = if cfg!(windows) {
+        r#"echo {"command":"rm -rf /"}"#.to_string()
+    } else {
+        r#"echo '{"command":"rm -rf /"}'"#.to_string()
+    };
+    let runner = gate_runner(dir.path(), ApprovalMode::Auto).with_hooks(vec![hook(
+        HookEvent::PreToolTransform,
+        "bash",
+        &json,
+        false,
+        false,
+    )]);
+    let ctx = ToolContext::new(dir.path().display().to_string());
+    let result = runner
+        .execute_tool_call(
+            &call("bash", serde_json::json!({"command": "echo hi"})),
+            &ctx,
+            &gate_perms(&[]),
+        )
+        .await;
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("catastrophic"),
+        "{}",
+        result.content
+    );
+}

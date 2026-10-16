@@ -7,6 +7,7 @@ use whycodes_core::tool::ToolContext;
 use whycodes_core::types::{ApprovalMode, PermissionAction, ToolCall, ToolResult};
 use whycodes_plugin::hooks::{
     HookContext, PreHookDecision, append_feedback, matching_hooks, run_post_hooks, run_pre_hooks,
+    run_transform_hooks,
 };
 use whycodes_session::session::Session;
 
@@ -287,9 +288,40 @@ impl Agent {
 
     /// A `read` hook must see the call, so the early read is not used.
     fn read_has_hooks(&self) -> bool {
-        [HookEvent::PreTool, HookEvent::PostTool]
-            .into_iter()
-            .any(|event| !matching_hooks(&self.hooks, event, "read").is_empty())
+        [
+            HookEvent::PreToolTransform,
+            HookEvent::PreTool,
+            HookEvent::PostTool,
+        ]
+        .into_iter()
+        .any(|event| !matching_hooks(&self.hooks, event, "read").is_empty())
+    }
+
+    /// `pre_tool_transform` hooks rewrite the arguments before any gate
+    /// sees them, so the risk and permission checks judge what will run.
+    async fn transform_tool_call(
+        &self,
+        tc: &ToolCall,
+        session: &Session,
+        tool_ctx: &ToolContext,
+    ) -> Option<ToolCall> {
+        if self.hooks.is_empty() {
+            return None;
+        }
+        let ctx = HookContext::pre(
+            tc.name.clone(),
+            tc.id.clone(),
+            tc.arguments.to_string(),
+            Some(session.id.clone()),
+            tool_ctx.working_dir.clone(),
+        );
+        let arguments = run_transform_hooks(&self.hooks, &ctx).await?;
+        tracing::info!(tool = %tc.name, "pre_tool_transform rewrote the tool input");
+        Some(ToolCall {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            arguments,
+        })
     }
 
     /// Whether this permission `ask` is high-risk under `important` mode.
@@ -433,6 +465,9 @@ impl Agent {
         turn_intent: Option<&crate::intent::IntentAssessment>,
         events: Option<&EventSink>,
     ) -> ToolResult {
+        let transformed = self.transform_tool_call(tc, session, tool_ctx).await;
+        let tc = transformed.as_ref().unwrap_or(tc);
+
         // Questionnaire: UI-backed channel (TUI) or stdin/auto — never race in
         // parallel with other tools (SERIAL_TOOLS). Skip permission map; asking
         // the user *is* the interaction.

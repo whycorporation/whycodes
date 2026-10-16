@@ -38,12 +38,33 @@ impl Agent {
         Ok(())
     }
 
-    /// `stop` after a turn produced its reply. Never blocks.
-    pub(super) async fn run_stop_hooks(&self, session: &Session, reply: &str) {
+    /// `stop` after a turn produced its reply. Never blocks. `before` is the
+    /// session usage when the turn started, so the hook also gets this
+    /// turn's token counts next to the session totals.
+    pub(super) async fn run_stop_hooks(
+        &self,
+        session: &Session,
+        reply: &str,
+        before: &whycodes_core::types::Usage,
+    ) {
         if self.hooks.is_empty() {
             return;
         }
-        let ctx = lifecycle_ctx(HookEvent::Stop, "", session).with_env("WHYCODES_RESPONSE", reply);
+        let total = &session.usage;
+        let turn_in = total.input_tokens.saturating_sub(before.input_tokens);
+        let turn_out = total.output_tokens.saturating_sub(before.output_tokens);
+        let ctx = lifecycle_ctx(HookEvent::Stop, "", session)
+            .with_env("WHYCODES_RESPONSE", reply)
+            .with_env("WHYCODES_TURN_INPUT_TOKENS", &turn_in.to_string())
+            .with_env("WHYCODES_TURN_OUTPUT_TOKENS", &turn_out.to_string())
+            .with_env(
+                "WHYCODES_SESSION_INPUT_TOKENS",
+                &total.input_tokens.to_string(),
+            )
+            .with_env(
+                "WHYCODES_SESSION_OUTPUT_TOKENS",
+                &total.output_tokens.to_string(),
+            );
         run_hooks(&self.hooks, &ctx).await;
     }
 

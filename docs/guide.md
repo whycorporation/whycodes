@@ -1133,12 +1133,35 @@ feedback = true             # stdout is appended to the tool result
 ```
 
 Environment: `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`, `WHYCODES_TOOL_ID`,
-`WHYCODES_TOOL_INPUT` (JSON), `WHYCODES_SESSION_ID`, `WHYCODES_WORKING_DIR`.
-Post-tool also sets `WHYCODES_TOOL_IS_ERROR` (`0`/`1`) and
-`WHYCODES_TOOL_OUTPUT` (truncated). Hooks run after the risk gate and
-permission prompt, before execution. `task` and `swarm` subagents run the same
-tool hooks. With a `read` hook configured, reads are no longer started early
-while the model is still streaming, so the hook sees every read.
+`WHYCODES_TOOL_INPUT` (JSON), `WHYCODES_SESSION_ID`, `WHYCODES_WORKING_DIR`,
+and `WHYCODES_HOOK_TOUCHED_PATHS` (the paths named by the input: `path`,
+`file_path`, `old_path`, `new_path`, `paths`, `files`; one per line; unset
+when the call names none). Post-tool also sets `WHYCODES_TOOL_IS_ERROR`
+(`0`/`1`) and `WHYCODES_TOOL_OUTPUT` (truncated). Hooks run after the risk
+gate and permission prompt, before execution. `task` and `swarm` subagents run
+the same tool hooks. With a `read` hook configured, reads are no longer
+started early while the model is still streaming, so the hook sees every read.
+
+Every hook runs with `WHYCODES_HOOKS_DISABLED=1` in its environment, so a hook
+that calls `whycodes` itself gets a child that skips its own hooks instead of
+recursing. Set the variable yourself to run a session without hooks.
+
+A `pre_tool_transform` hook rewrites the call before any gate sees it:
+
+```toml
+[[hooks]]
+event = "pre_tool_transform"
+match = "bash"
+command = "python rewrite_command.py"   # reads WHYCODES_TOOL_INPUT, prints JSON
+```
+
+When the hook exits 0 and prints a JSON object, that object replaces the tool
+input; several matching hooks chain in order, each seeing the previous
+output. A non-zero exit, empty output or non-object output keeps the input
+(fail open, logged). The risk classification, shell and path rules, the
+permission prompt and the `pre_tool` hooks then judge the rewritten call, so
+a transform cannot smuggle a command past the gates. `task` / `swarm` workers
+apply the same transforms.
 
 Lifecycle events use the same `[[hooks]]` table:
 
@@ -1146,7 +1169,7 @@ Lifecycle events use the same `[[hooks]]` table:
 |---|---|---|---|---|
 | `session_start` | Before the first turn of a session in this process (new or resumed) | — | no | added to the turn |
 | `user_prompt_submit` | Before each user turn | `WHYCODES_PROMPT` | yes | added to the turn |
-| `stop` | After a turn produced its reply | `WHYCODES_RESPONSE` | no | — |
+| `stop` | After a turn produced its reply | `WHYCODES_RESPONSE`, `WHYCODES_TURN_INPUT_TOKENS`, `WHYCODES_TURN_OUTPUT_TOKENS`, `WHYCODES_SESSION_INPUT_TOKENS`, `WHYCODES_SESSION_OUTPUT_TOKENS` | no | — |
 | `pre_compact` | Before the transcript is compacted (auto, overflow, `/compact`) | — | no | — |
 | `subagent_stop` | After a `task` / `swarm` worker finishes; `match` filters the agent type | `WHYCODES_SUBAGENT_TYPE`, `_GOAL`, `_SUCCESS`, `_OUTPUT` | no | — |
 
