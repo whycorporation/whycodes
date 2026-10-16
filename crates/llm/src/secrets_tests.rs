@@ -47,7 +47,11 @@ fn env_registration_filters_names_and_values() {
         ("SHORT_TOKEN", "abc"),
         ("TOKEN_WITH_TRIM", "  padded-secret  "),
     ];
-    let n = r.register_env(vars.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+    let n = r.register_env(
+        vars.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    );
     assert_eq!(n, 6, "{:?}", r);
     assert!(r.redact_text("use sk-live-0123456789 now").is_some());
     assert!(r.redact_text("/usr/bin:/bin").is_none());
