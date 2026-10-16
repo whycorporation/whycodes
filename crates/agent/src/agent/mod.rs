@@ -95,8 +95,8 @@ pub struct Agent {
     model_smol: Option<String>,
     /// Model used while the `plan` agent is active.
     model_plan: Option<String>,
-    /// Compiled stream-interrupt rules (name, regex, hint).
-    stream_rules: Vec<(String, regex::Regex, String)>,
+    /// Compiled stream-interrupt rules.
+    stream_rules: Vec<crate::stream_rules::StreamRule>,
     /// Parallel multi-agent swarm (config-driven).
     swarm_enabled: bool,
     swarm_max_agents: usize,
@@ -248,39 +248,6 @@ pub(crate) fn persist_agent_artifact(project: &std::path::Path, id: &str, body: 
     if let Err(e) = std::fs::write(&path, body) {
         tracing::debug!(error = %e, path = %path.display(), "agent artifact write");
     }
-}
-
-fn compile_stream_rules(
-    rules: &[whycodes_config::StreamRuleConfig],
-) -> Vec<(String, regex::Regex, String)> {
-    let mut out = Vec::new();
-    for rule in rules {
-        let name = rule.name.trim();
-        let pattern = rule.pattern.trim();
-        let hint = rule.hint.trim();
-        if name.is_empty() || pattern.is_empty() || hint.is_empty() {
-            continue;
-        }
-        match regex::Regex::new(pattern) {
-            Ok(re) => out.push((name.to_string(), re, hint.to_string())),
-            Err(e) => {
-                tracing::warn!(name, pattern, error = %e, "invalid stream rule regex");
-            }
-        }
-    }
-    out
-}
-
-pub(crate) fn first_stream_rule_hit<'a>(
-    rules: &'a [(String, regex::Regex, String)],
-    text: &str,
-) -> Option<(&'a str, &'a str)> {
-    for (name, re, hint) in rules {
-        if re.is_match(text) {
-            return Some((name.as_str(), hint.as_str()));
-        }
-    }
-    None
 }
 
 fn append_skills_catalog(system_prompt: &str, project_path: &std::path::Path) -> String {
@@ -673,7 +640,7 @@ impl Agent {
         self.approval_mode = config.general.approval_mode.unwrap_or_default();
         self.model_smol = config.session.model_smol.clone();
         self.model_plan = config.session.model_plan.clone();
-        self.stream_rules = compile_stream_rules(&config.session.stream_rules);
+        self.stream_rules = crate::stream_rules::compile(&config.session.stream_rules);
         self.swarm_enabled = config.swarm.enabled;
         self.swarm_max_agents = config
             .swarm

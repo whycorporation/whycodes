@@ -734,6 +734,7 @@ async fn stream_rule_interrupts_draft() {
             name: "no-secret".into(),
             pattern: "FORBIDDENWORD".into(),
             hint: "do not leak secrets".into(),
+            ..Default::default()
         });
     let mut registry = ProviderRegistry::new();
     registry.register(Box::new(ScriptedProvider::new([ScriptedStep::Text(
@@ -2730,4 +2731,192 @@ async fn retried_first_step_keeps_suffix_and_does_not_count_toward_max_turns() {
         !status.iter().any(|s| s.contains("LLM request (step 2)")),
         "a retry must not be announced as step 2: {status:?}"
     );
+}
+
+fn ruled(
+    rules: Vec<whycodes_config::StreamRuleConfig>,
+    batches: impl IntoIterator<Item = Vec<ScriptedStep>>,
+) -> Agent {
+    let mut cfg = whycodes_config::Config::default();
+    cfg.session.stream_rules = rules;
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(ScriptedProvider::batched("script", batches)));
+    Agent::new(info("build"))
+        .with_config(&cfg)
+        .with_provider_registry(registry)
+}
+
+fn rule(
+    name: &str,
+    pattern: &str,
+    scope: &[whycodes_config::StreamRuleScope],
+) -> whycodes_config::StreamRuleConfig {
+    whycodes_config::StreamRuleConfig {
+        name: name.into(),
+        pattern: pattern.into(),
+        hint: format!("hint for {name}"),
+        scope: scope.to_vec(),
+        ..Default::default()
+    }
+}
+
+async fn run_ruled(agent: &Agent, session: &mut Session) -> (String, Vec<String>) {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = agent
+        .run_turn_with_events(session, opts(Some(tx)))
+        .await
+        .unwrap_or_else(|e| e.to_string());
+    (out, drain_status(&mut rx))
+}
+
+fn hint_messages(session: &Session) -> usize {
+    session
+        .messages
+        .iter()
+        .filter(|m| {
+            m.content
+                .as_text()
+                .is_some_and(|t| t.starts_with("<whycodes_rule name="))
+        })
+        .count()
+}
+
+#[tokio::test]
+async fn stream_rule_once_fires_a_single_time_per_session() {
+    let agent = ruled(
+        vec![rule("no-bad", "BAD", &[])],
+        [
+            vec![ScriptedStep::Text("BAD draft".into())],
+            vec![ScriptedStep::Text("BAD again".into())],
+            vec![ScriptedStep::Text("BAD next turn".into())],
+        ],
+    );
+    let mut session = session_user("please summarize crates/agent carefully");
+    let (out, status) = run_ruled(&agent, &mut session).await;
+    assert!(out.contains("BAD again"), "{out}");
+    let hits = status.iter().filter(|s| s.contains("no-bad")).count();
+    assert_eq!(hits, 1, "{status:?}");
+    assert_eq!(session.stream_rules.last_fired("no-bad"), Some(1));
+    session.add_user_message("and once more please");
+    let (out, _) = run_ruled(&agent, &mut session).await;
+    assert!(out.contains("BAD next turn"), "{out}");
+    assert_eq!(hint_messages(&session), 1);
+    assert_eq!(session.stream_rules.turn, 2);
+}
+
+#[tokio::test]
+async fn stream_rule_always_fires_on_every_draft() {
+    let mut r = rule("no-bad", "BAD", &[]);
+    r.repeat = whycodes_config::StreamRuleRepeat::Always;
+    let agent = ruled(
+        vec![r],
+        [
+            vec![ScriptedStep::Text("BAD draft".into())],
+            vec![ScriptedStep::Text("BAD again".into())],
+            vec![ScriptedStep::Text("clean".into())],
+        ],
+    );
+    let mut session = session_user("please summarize crates/agent carefully");
+    let (out, _) = run_ruled(&agent, &mut session).await;
+    assert!(out.contains("clean"), "{out}");
+    assert_eq!(hint_messages(&session), 2);
+}
+
+#[tokio::test]
+async fn stream_rule_watches_thinking() {
+    use whycodes_config::StreamRuleScope::Thinking;
+    let agent = ruled(
+        vec![rule("think", "SHORTCUT", &[Thinking])],
+        [
+            vec![
+                ScriptedStep::Thinking("take a ".into()),
+                ScriptedStep::Thinking(String::new()),
+                ScriptedStep::Thinking("SHORTCUT".into()),
+                ScriptedStep::Text("never".into()),
+            ],
+            vec![ScriptedStep::Text("SHORTCUT is fine in text".into())],
+        ],
+    );
+    let mut session = session_user("please summarize crates/agent carefully");
+    let (out, status) = run_ruled(&agent, &mut session).await;
+    assert!(out.contains("fine in text"), "{out}");
+    assert!(!out.contains("never"), "{out}");
+    assert!(status.iter().any(|s| s.contains("think")), "{status:?}");
+}
+
+#[tokio::test]
+async fn stream_rule_watches_thinking_deltas() {
+    use whycodes_config::StreamRuleScope::Thinking;
+    let agent = ruled(
+        vec![rule("think", "SHORT CUT", &[Thinking])],
+        [
+            vec![
+                ScriptedStep::ThinkingDelta("SHORT ".into()),
+                ScriptedStep::ThinkingDelta("CUT".into()),
+            ],
+            vec![ScriptedStep::Text("ok".into())],
+        ],
+    );
+    let mut session = session_user("please summarize crates/agent carefully");
+    let (out, _) = run_ruled(&agent, &mut session).await;
+    assert!(out.contains("ok"), "{out}");
+    assert_eq!(hint_messages(&session), 1);
+}
+
+#[tokio::test]
+async fn stream_rule_watches_tool_args_of_named_tools() {
+    use whycodes_config::StreamRuleScope::ToolArgs;
+    let mut r = rule("no-rm", "rm -rf", &[ToolArgs]);
+    r.tools = vec!["bash".into()];
+    let agent = ruled(
+        vec![r],
+        [
+            vec![ScriptedStep::ToolCall {
+                id: "c1".into(),
+                name: "bash".into(),
+                input: json!({"command": "rm -rf /"}),
+            }],
+            vec![ScriptedStep::Text("done safely".into())],
+        ],
+    );
+    let mut session = session_user("please summarize crates/agent carefully");
+    let (out, status) = run_ruled(&agent, &mut session).await;
+    assert!(out.contains("done safely"), "{out}");
+    assert!(status.iter().any(|s| s.contains("no-rm")), "{status:?}");
+    assert!(!session.messages.iter().any(|m| m.role == Role::Tool));
+}
+
+#[tokio::test]
+async fn stream_rule_watches_streamed_tool_arg_deltas() {
+    use whycodes_config::StreamRuleScope::ToolArgs;
+    let agent = ruled(
+        vec![rule("no-rm", "rm -rf", &[ToolArgs])],
+        [
+            vec![
+                // No open call yet: nothing to check.
+                ScriptedStep::ToolUseDelta {
+                    id: "zz".into(),
+                    input_json_delta: "{".into(),
+                },
+                ScriptedStep::ToolCall {
+                    id: "c1".into(),
+                    name: "edit".into(),
+                    input: serde_json::Value::Null,
+                },
+                ScriptedStep::ToolUseDelta {
+                    id: "c1".into(),
+                    input_json_delta: "{\"cmd\": \"rm ".into(),
+                },
+                ScriptedStep::ToolUseDelta {
+                    id: "c1".into(),
+                    input_json_delta: "-rf x\"}".into(),
+                },
+            ],
+            vec![ScriptedStep::Text("no tool".into())],
+        ],
+    );
+    let mut session = session_user("please summarize crates/agent carefully");
+    let (out, _) = run_ruled(&agent, &mut session).await;
+    assert!(out.contains("no tool"), "{out}");
+    assert_eq!(hint_messages(&session), 1);
 }
