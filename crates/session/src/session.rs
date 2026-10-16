@@ -592,6 +592,10 @@ pub struct Session {
     /// resumed session starts from zero.
     #[serde(default)]
     pub cost: SessionCost,
+    /// Lines added / removed by this session's `write` / `edit` /
+    /// `apply_patch` results (`/info`). Rebuilt from the transcript on load.
+    #[serde(default)]
+    pub edit_stats: crate::EditStats,
     /// Incremental char/4 estimate (system + per-message). Not persisted.
     #[serde(skip)]
     token_cache: SessionTokenCache,
@@ -728,6 +732,7 @@ impl Session {
             updated_at: now,
             usage: Default::default(),
             cost: SessionCost::default(),
+            edit_stats: Default::default(),
             token_cache,
             checkpoint: None,
             last_rewind_report: None,
@@ -861,6 +866,23 @@ impl Session {
     pub fn add_usage(&mut self, usage: &whycodes_core::types::Usage) {
         self.usage.add(usage);
         self.touch();
+    }
+
+    /// Fold the line counts of file-mutating tool results into
+    /// [`Self::edit_stats`]; each result is matched to its call by id.
+    pub fn record_edit_results(
+        &mut self,
+        calls: &[whycodes_core::types::ToolCall],
+        results: &[whycodes_core::types::ToolResult],
+    ) {
+        for result in results {
+            if result.is_error {
+                continue;
+            }
+            if let Some(call) = calls.iter().find(|c| c.id == result.tool_call_id) {
+                self.edit_stats.record(&call.name, &result.content);
+            }
+        }
     }
 
     /// Add a user message
@@ -1622,6 +1644,7 @@ impl Session {
         let project_path = std::path::PathBuf::from(row.project_path);
         let title_source = crate::title::infer_source_from_title(&row.title, &project_path);
         let token_cache = SessionTokenCache::from_parts("", &messages);
+        let edit_stats = crate::EditStats::from_messages(&messages);
         Ok(Some(Self {
             id: row.id,
             title: row.title,
@@ -1634,6 +1657,7 @@ impl Session {
             usage: row.usage,
             // Not stored yet: a resumed session's estimate starts at zero.
             cost: SessionCost::default(),
+            edit_stats,
             token_cache,
             checkpoint: None,
             last_rewind_report: None,
@@ -1714,6 +1738,69 @@ mod persist_tests {
             session.messages[0].created_at
         );
         assert_eq!(db.message_count(&session.id).unwrap(), 2);
+    }
+
+    #[test]
+    fn edit_stats_follow_tool_results_and_survive_reload() {
+        let db = whycodes_storage::db::Database::open_in_memory().unwrap();
+        let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+        session.add_user_message("patch it");
+        let calls = vec![
+            whycodes_core::types::ToolCall {
+                id: "c1".into(),
+                name: "apply_patch".into(),
+                arguments: serde_json::json!({}),
+            },
+            whycodes_core::types::ToolCall {
+                id: "c2".into(),
+                name: "write".into(),
+                arguments: serde_json::json!({}),
+            },
+        ];
+        session.add_assistant_message(
+            calls
+                .iter()
+                .map(|c| ContentBlock::ToolUse {
+                    id: c.id.clone(),
+                    name: c.name.clone(),
+                    input: c.arguments.clone(),
+                })
+                .collect(),
+        );
+        let results = vec![
+            whycodes_core::types::ToolResult {
+                tool_call_id: "c1".into(),
+                content: "Patch applied to `a` (1 hunk).\n[+3 -1]".into(),
+                is_error: false,
+            },
+            // A failed write counts nothing.
+            whycodes_core::types::ToolResult {
+                tool_call_id: "c2".into(),
+                content: "Error writing file 'b': denied".into(),
+                is_error: true,
+            },
+            // Unknown call id (no matching tool call): ignored.
+            whycodes_core::types::ToolResult {
+                tool_call_id: "zz".into(),
+                content: "[+9 -9]".into(),
+                is_error: false,
+            },
+        ];
+        session.record_edit_results(&calls, &results);
+        session.add_tool_results(results);
+        assert_eq!(session.edit_stats.added, 3);
+        assert_eq!(session.edit_stats.removed, 1);
+        assert!(!session.edit_stats.approximate);
+
+        session.save_to_db(&db).unwrap();
+        let loaded = Session::load_from_db(&db, &session.id)
+            .unwrap()
+            .expect("session row");
+        // Rebuilt from the transcript: the failed write has no trailer, so
+        // the reloaded total is flagged approximate.
+        assert_eq!(loaded.edit_stats.added, 3);
+        assert_eq!(loaded.edit_stats.removed, 1);
+        assert!(loaded.edit_stats.approximate);
     }
 
     #[test]

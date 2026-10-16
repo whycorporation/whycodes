@@ -1086,6 +1086,7 @@ async fn stored_extra_project_id_is_cached_without_prior_cache() {
             provider,
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "ya29.x".into(),
                     refresh_token: None,

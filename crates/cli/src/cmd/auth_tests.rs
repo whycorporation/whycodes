@@ -10,6 +10,7 @@ fn expiry_label_none_is_none() {
     };
     let auth = whycodes_auth::ProviderAuth {
         method: "oauth".into(),
+        validated_at: None,
         token: tok,
     };
     assert!(!auth_expiry_label(&auth).is_empty());
@@ -24,6 +25,7 @@ fn expiry_label_derived_and_expired_and_future() {
     );
     let derived = whycodes_auth::ProviderAuth {
         method: "oauth".into(),
+        validated_at: None,
         token: whycodes_auth::OAuthToken {
             access_token: "t".into(),
             refresh_token: None,
@@ -40,6 +42,7 @@ fn expiry_label_derived_and_expired_and_future() {
     );
     let legacy = whycodes_auth::ProviderAuth {
         method: "oauth".into(),
+        validated_at: None,
         token: whycodes_auth::OAuthToken {
             access_token: "t".into(),
             refresh_token: None,
@@ -51,6 +54,7 @@ fn expiry_label_derived_and_expired_and_future() {
 
     let expired = whycodes_auth::ProviderAuth {
         method: "oauth".into(),
+        validated_at: None,
         token: whycodes_auth::OAuthToken {
             access_token: "t".into(),
             refresh_token: None,
@@ -62,6 +66,7 @@ fn expiry_label_derived_and_expired_and_future() {
 
     let future = whycodes_auth::ProviderAuth {
         method: "oauth".into(),
+        validated_at: None,
         token: whycodes_auth::OAuthToken {
             access_token: "t".into(),
             refresh_token: None,
@@ -118,4 +123,126 @@ fn auth_data_dir_falls_back_to_dot() {
         auth_data_dir_from(Err(whycodes_core::Error::Config("no home".into()))),
         std::path::PathBuf::from(".")
     );
+}
+
+fn stored(
+    provider: &str,
+    validated_days_ago: Option<i64>,
+) -> (String, whycodes_auth::ProviderAuth) {
+    let now = chrono::Utc::now();
+    (
+        provider.to_string(),
+        whycodes_auth::ProviderAuth {
+            method: "oauth".into(),
+            validated_at: validated_days_ago.map(|d| now - chrono::Duration::days(d)),
+            token: whycodes_auth::OAuthToken {
+                access_token: "secret-access".into(),
+                refresh_token: Some("secret-refresh".into()),
+                expires_at: Some(now + chrono::Duration::hours(1)),
+                extra: Default::default(),
+            },
+        },
+    )
+}
+
+fn provider_config(name: &str, api_key: Option<&str>) -> whycodes_core::types::ProviderConfig {
+    whycodes_core::types::ProviderConfig {
+        name: name.into(),
+        api_key: api_key.map(str::to_string),
+        api_base: None,
+        base_url: None,
+        headers: None,
+        models: vec![],
+        tool_arguments: None,
+        extra: Default::default(),
+        credentials: Default::default(),
+    }
+}
+
+#[test]
+fn status_entries_follow_the_credential_precedence() {
+    let now = chrono::Utc::now();
+    let mut config = Config::default();
+    config.providers.clear();
+    config.providers.insert(
+        "anthropic".into(),
+        provider_config("anthropic", Some("cfg-key")),
+    );
+    config
+        .providers
+        .insert("openai".into(), provider_config("openai", None));
+    config
+        .providers
+        .insert("xai".into(), provider_config("xai", Some("")));
+    let mut lanes = provider_config("google", None);
+    lanes
+        .credentials
+        .env
+        .insert("ci".into(), "GOOGLE_CI_KEY".into());
+    config.providers.insert("google".into(), lanes);
+    let stored = vec![
+        stored("anthropic", Some(1)),
+        stored("github-copilot", Some(9)),
+    ];
+    let env = |k: &str| match k {
+        "XAI_API_KEY" => Some("env-key".to_string()),
+        "GOOGLE_CI_KEY" => Some("lane-key".to_string()),
+        "OPENAI_API_KEY" => Some("".to_string()),
+        _ => None,
+    };
+
+    let entries = auth_status_entries(&config, &stored, env, now);
+    let by_name: std::collections::HashMap<&str, &AuthStatusEntry> =
+        entries.iter().map(|e| (e.provider.as_str(), e)).collect();
+    assert_eq!(entries.len(), 5, "{entries:?}");
+    // Config api_key beats the stored login.
+    let anthropic = by_name["anthropic"];
+    assert_eq!(anthropic.auth_kind, "api_key");
+    assert_eq!(anthropic.credential_source, "config");
+    assert_eq!(anthropic.expiry, None);
+    assert!(!anthropic.stale);
+    // Default env var.
+    assert_eq!(by_name["xai"].credential_source, "env:XAI_API_KEY");
+    // Named credential lane env var.
+    assert_eq!(by_name["google"].credential_source, "env:GOOGLE_CI_KEY");
+    // Empty OPENAI_API_KEY and no config key: nothing.
+    assert_eq!(by_name["openai"].auth_kind, "none");
+    assert_eq!(by_name["openai"].credential_source, "none");
+    // Store only, not renewed for over a week.
+    let copilot = by_name["github-copilot"];
+    assert_eq!(copilot.auth_kind, "oauth");
+    assert_eq!(copilot.credential_source, "oauth_store");
+    assert!(copilot.expiry.is_some());
+    assert!(copilot.validated_at.is_some());
+    assert!(copilot.stale);
+
+    let json = serde_json::to_string(&entries).unwrap();
+    assert!(json.contains("\"authKind\""), "{json}");
+    assert!(json.contains("\"credentialSource\""), "{json}");
+    assert!(!json.contains("secret-"), "{json}");
+    assert!(!json.contains("cfg-key"), "{json}");
+
+    // openai: a non-empty OPENAI_API_KEY is its fallback env var.
+    let entries = auth_status_entries(
+        &config,
+        &[],
+        |k| (k == "OPENAI_API_KEY").then(|| "env-key".to_string()),
+        now,
+    );
+    let openai = entries.iter().find(|e| e.provider == "openai").unwrap();
+    assert_eq!(openai.credential_source, "env:OPENAI_API_KEY");
+    assert_eq!(openai.auth_kind, "api_key");
+}
+
+#[test]
+fn oauth_expiry_prefers_the_derived_token() {
+    let (_, mut auth) = stored("github-copilot", None);
+    assert!(oauth_expiry(&auth).is_some());
+    auth.token
+        .extra
+        .insert("derived_expires_at".into(), "2099-01-01T00:00:00Z".into());
+    assert_eq!(oauth_expiry(&auth).as_deref(), Some("2099-01-01T00:00:00Z"));
+    auth.token.extra.clear();
+    auth.token.expires_at = None;
+    assert_eq!(oauth_expiry(&auth), None);
 }
