@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::path::Path;
 
 use crate::file::paths::display_path;
 use crate::tool::{Tool, ToolContext};
@@ -117,7 +118,17 @@ impl WriteTool {
             };
         }
 
-        match crate::file::atomic::write_atomic(std::path::Path::new(&full_path), &content) {
+        let bytes = match crate::file::notebook::convert_write(Path::new(&full_path), &content) {
+            Ok(bytes) => bytes,
+            Err(msg) => {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: msg,
+                    is_error: true,
+                };
+            }
+        };
+        match crate::file::atomic::write_atomic(Path::new(&full_path), &bytes) {
             Ok(_) => ToolResult {
                 tool_call_id: String::new(),
                 // +lines preview so the TUI can paint add colours

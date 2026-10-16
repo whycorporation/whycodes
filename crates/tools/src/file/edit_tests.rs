@@ -662,3 +662,38 @@ fn folded_match_also_tolerates_whitespace() {
         Locate::None
     ));
 }
+
+const NOTEBOOK: &str = "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"execution_count\": 1,\n   \"metadata\": {},\n   \"outputs\": [\n    {\n     \"output_type\": \"stream\"\n    }\n   ],\n   \"source\": [\n    \"x = 1\"\n   ]\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 4\n}\n";
+
+#[tokio::test]
+async fn execute_edits_a_notebook_through_its_rendering() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("n.ipynb");
+    std::fs::write(&path, NOTEBOOK).unwrap();
+    let args = json!({"path": "n.ipynb", "old_string": "x = 1", "new_string": "x = 2"});
+    let preview = preview_edit(&args, &dir.path().to_string_lossy()).unwrap();
+    assert!(preview.contains("x = 2"), "{preview}");
+    let result = EditTool::new().execute(args, &ctx(dir.path())).await;
+    assert!(!result.is_error, "{}", result.content);
+    let expected = NOTEBOOK
+        .replace("\"execution_count\": 1", "\"execution_count\": null")
+        .replace(
+            "[\n    {\n     \"output_type\": \"stream\"\n    }\n   ]",
+            "[]",
+        )
+        .replace("x = 1", "x = 2");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+}
+
+#[tokio::test]
+async fn execute_refuses_a_notebook_edit_that_damages_markers() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("n.ipynb");
+    std::fs::write(&path, NOTEBOOK).unwrap();
+    let args = json!({"path": "n.ipynb", "old_string": "cell:1", "new_string": "cell:7"});
+    assert!(preview_edit(&args, &dir.path().to_string_lossy()).is_none());
+    let result = EditTool::new().execute(args, &ctx(dir.path())).await;
+    assert!(result.is_error);
+    assert!(result.content.contains("`cell:7`"), "{}", result.content);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), NOTEBOOK);
+}
