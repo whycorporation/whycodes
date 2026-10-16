@@ -205,7 +205,8 @@ fn escape(segment: &str) -> String {
 }
 
 fn pretty(value: &Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+    // `{:#}` is serde_json's pretty form and cannot fail for a `Value`.
+    format!("{value:#}")
 }
 
 /// What a worker's structured result came to.
