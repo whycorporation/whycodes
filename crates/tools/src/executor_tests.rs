@@ -737,3 +737,28 @@ async fn execute_stamps_the_call_id_on_the_tool_result() {
         assert_eq!(res.tool_call_id, call.id);
     }
 }
+
+#[tokio::test]
+async fn set_websearch_reaches_the_registered_tool() {
+    let ex = ToolExecutor::new();
+    ex.set_websearch(crate::search::WebSearchSettings {
+        engine: Some("nowhere".into()),
+        ..Default::default()
+    });
+    let call = ToolCall {
+        id: "s1".into(),
+        name: "websearch".into(),
+        arguments: json!({ "query": "q" }),
+    };
+    let perms = PermissionSet {
+        allow_network: true,
+        ..PermissionSet::default()
+    };
+    let res = ex.execute(&call, &ToolContext::new("/"), &perms).await;
+    assert!(res.is_error, "{}", res.content);
+    assert!(
+        res.content.contains("unknown websearch engine `nowhere`"),
+        "{}",
+        res.content
+    );
+}

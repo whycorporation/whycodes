@@ -485,6 +485,11 @@ impl Config {
         if let Ok(val) = std::env::var("WHYCODES_NETWORK_DENYLIST") {
             self.security.network_denylist = network::parse_domain_list(&val);
         }
+        if let Ok(val) = std::env::var("WHYCODES_WEBSEARCH_ENGINE")
+            && !val.trim().is_empty()
+        {
+            self.websearch.engine = Some(val.trim().to_ascii_lowercase());
+        }
     }
 
     fn apply_feature_env(&mut self) {

@@ -19,7 +19,7 @@ pub use types::{
     MagicKeywordsConfig, McpServerConfig, McpTransportKind, MemoryConfig, NotifyConfig,
     NotifyEvent, PriceConfig, QuestionToolConfig, RuntimeLspServer, SecurityConfig, SessionConfig,
     SlopConfig, StreamRuleConfig, SwarmConfig, SystemPromptOverlays, ToolsConfig, TuiConfig,
-    is_discord_webhook_url,
+    WebSearchConfig, WebSearchCustomConfig, is_discord_webhook_url,
 };
 
 #[cfg(test)]

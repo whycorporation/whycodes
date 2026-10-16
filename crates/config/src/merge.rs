@@ -452,6 +452,7 @@ impl Config {
         }
 
         self.notify = self.notify.merge_with(&other.notify);
+        self.websearch = self.websearch.merge_with(&other.websearch);
 
         for (k, v) in &other.system_prompt_overlays.providers {
             self.system_prompt_overlays

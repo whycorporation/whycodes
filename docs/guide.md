@@ -1157,6 +1157,37 @@ apply inside the sandboxed shell. If you set an allowlist and still want
 search, include the provider hosts (`serpapi.com` and/or
 `html.duckduckgo.com`).
 
+### Web search engine
+
+`websearch` uses SerpAPI when `SERPAPI_API_KEY` is set and DuckDuckGo HTML
+otherwise. To use your own JSON search API, set the engine to `custom` and
+map its response with JSON Pointers:
+
+```toml
+[websearch]
+engine = "custom"            # serpapi | duckduckgo | custom (or WHYCODES_WEBSEARCH_ENGINE)
+fallback = ["duckduckgo"]    # tried in order when the primary fails
+[websearch.custom]
+endpoint = "https://search.example.com/api"
+method = "GET"               # POST sends the parameters as a JSON body
+query_param = "q"
+count_param = "n"            # optional
+params = { lang = "en" }
+headers = { Accept = "application/json" }
+header_env = { "X-Api-Key" = "SEARCH_API_KEY" }   # value read from the environment
+results_pointer = "/results"
+title_pointer = "/title"
+url_pointer = "/url"
+snippet_pointer = "/snippet"
+```
+
+The network allowlist applies to `endpoint`; with an allowlist set, add the
+endpoint's host. Redirects are not followed and each request times out after
+20 seconds. Errors name the endpoint without its query string and never
+quote the response body. `header_env` sends the named variable's value, so
+only set it in a config you trust: a project's `.whycodes/config.toml` can
+set it too. All keys: [config reference](config.md#websearch-websearchcustom).
+
 ### Hooks
 
 ```toml
