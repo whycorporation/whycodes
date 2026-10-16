@@ -213,6 +213,7 @@ fn slash_printer_helpers_cover_repl_status_lines() {
     assert!(remembered_line("abcdefghij", "note").contains("note"));
     assert!(repl_memory_status(true, 2, "/tmp/m.md").contains("entries=2"));
     assert!(nothing_to_undo_line().contains("Nothing to undo"));
+    assert!(nothing_older_to_undo_line(50).contains("Nothing older to undo (undo_depth = 50)"));
     assert!(nothing_to_redo_line().contains("Nothing to redo"));
     assert!(init_wrote_line("AGENTS.md").contains("AGENTS.md"));
     assert!(init_failed_line("boom").contains("boom"));
