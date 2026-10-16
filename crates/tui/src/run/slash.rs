@@ -740,6 +740,17 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 doctor_report(ctx.session, ctx.app, ctx.config, ctx.agent, ctx.project_dir),
             );
         }
+        "/terminal-setup" => handle_terminal_setup_slash(
+            ctx.app,
+            &crate::terminal_setup::TerminalEnv::detect(ctx.app.keyboard_enhanced),
+            whycodes_import::discover::home_dir().as_deref(),
+        ),
+        "/keys" => {
+            let env = crate::terminal_setup::TerminalEnv::detect(ctx.app.keyboard_enhanced);
+            let report =
+                crate::key_audit::keys_report(&ctx.app.keymap, &ctx.app.config.key_bindings, &env);
+            ctx.app.add_message(ChatRole::System, report);
+        }
         "/diff" => {
             ctx.app
                 .add_message(ChatRole::System, project_diff_report(ctx.project_dir));
@@ -816,6 +827,61 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             );
         }
     }
+}
+
+/// `/terminal-setup`: print the report; inside tmux with settings missing,
+/// ask before touching `~/.tmux.conf`.
+pub(super) fn handle_terminal_setup_slash(
+    app: &mut TuiApp,
+    env: &crate::terminal_setup::TerminalEnv,
+    home: Option<&std::path::Path>,
+) {
+    use crate::terminal_setup::{read_tmux_configs, report, tmux_conf_path, tmux_missing};
+    let conf = home.map(tmux_conf_path);
+    let tmux_text = match home {
+        Some(h) if env.tmux => Some(read_tmux_configs(h)),
+        _ => None,
+    };
+    app.add_message(
+        ChatRole::System,
+        report(env, tmux_text.as_deref(), conf.as_deref()),
+    );
+    let (Some(text), Some(conf)) = (tmux_text, conf) else {
+        return;
+    };
+    let missing = tmux_missing(&text);
+    if missing.is_empty() {
+        return;
+    }
+    let lines: Vec<&str> = missing.iter().map(|s| s.line).collect();
+    app.confirm(
+        "Terminal setup",
+        format!(
+            "Append to {}?\n\n{}\n\nA copy goes to {}.bak first.",
+            conf.display(),
+            lines.join("\n"),
+            conf.display()
+        ),
+        ConfirmAction::TerminalSetup,
+    );
+}
+
+/// Run loop half of `/terminal-setup`, after the user said yes.
+pub(super) fn apply_terminal_setup(app: &mut TuiApp, home: Option<&std::path::Path>) {
+    let Some(home) = home else {
+        app.status_message = "No home directory; ~/.tmux.conf left alone".into();
+        return;
+    };
+    let conf = crate::terminal_setup::tmux_conf_path(home);
+    let result = crate::terminal_setup::apply_tmux_setup(&conf);
+    let kind = if result.is_ok() {
+        crate::toast::ToastKind::Success
+    } else {
+        crate::toast::ToastKind::Warning
+    };
+    let message = crate::terminal_setup::apply_message(&conf, &result);
+    app.toasts.push(kind, message.clone());
+    app.add_message(ChatRole::System, message);
 }
 
 pub(super) fn format_bg_jobs(running: usize, jobs: &[whycodes_agent::JobSnapshot]) -> String {

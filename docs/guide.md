@@ -39,7 +39,7 @@ Commands:
   connect   Attach a TUI to a running serve daemon
   web       Open web UI (not yet implemented; use serve + browser)
   mcp       MCP server management
-  provider  Provider management (add, list, remove, default)
+  provider  Provider management (add, list, remove, default, discover)
   model     Model management
   agent     Agent configuration
   plugins   List shell plugins (plugins.toml + plugin.json)
@@ -281,9 +281,39 @@ Keys: `ctrl` / `alt` / `shift` joined with `+` or `-`, then a character or
 `pageup`, `pagedown`, `up` / `down` / `left` / `right`, `f1`–`f24`. A plain
 character (no Ctrl/Alt) only applies outside the prompt, so typing is never
 captured. Dialogs (approvals, pickers) keep their fixed keys, and the session
-keys handled before the keymap (`Ctrl+O`, `Ctrl+N`, `Ctrl+Tab`,
+keys handled before the keymap (`Ctrl+O`, `Ctrl+N`, `Ctrl+T` when idle, `Ctrl+Tab`,
 `Ctrl+PgUp/PgDn`) cannot be rebound. Unknown keys or actions are logged and
 skipped.
+
+`/keys` lists every active binding (custom ones marked `*`) and flags
+conflicts: two config keys that spell the same chord (`ctrl+k` and `ctrl-k`),
+chords a terminal only sends with the kitty keyboard protocol when the
+startup probe did not find it (`shift+enter`, `ctrl+enter`, `ctrl+tab`,
+`ctrl+m`, `ctrl+.`, `ctrl+shift+<letter>`), chords the OS or terminal keeps
+(`cmd+…` / `super+…`, Windows Terminal `ctrl+shift+t/w/n/p`, the tmux prefix
+`ctrl+b` inside tmux), and the session keys above. When a configured
+binding conflicts, the status line says so once at startup; it says it
+again only when the set of conflicts changes (a hash is kept in
+`key-conflicts.hash` in the data directory).
+
+`/terminal-setup` reports whether the kitty keyboard protocol is on, whether
+the TUI runs inside tmux, and which of these `~/.tmux.conf` lines are
+missing:
+
+```
+set -s extended-keys on
+set -as terminal-features 'xterm*:extkeys'
+set -g allow-passthrough on
+set -g focus-events on
+```
+
+It appends the missing ones only after you answer `y` in the dialog, copies
+the file to `~/.tmux.conf.bak` first, and says "already configured" on a
+second run. A line that already sets one of these options, to any value,
+counts as configured. Reload with `tmux source-file ~/.tmux.conf`. In
+WezTerm without the protocol it prints `config.enable_kitty_keyboard = true`
+for you to add to `~/.wezterm.lua`; it never edits that file. On Windows the
+console reports every modifier, so these chords work without the protocol.
 
 Actions: `quit`, `force_quit`, `escape`, `submit`, `scroll_up`, `scroll_down`,
 `page_up`, `page_down`, `scroll_to_top`, `scroll_to_bottom`,
@@ -346,6 +376,8 @@ Both TUI and `--plain`:
 | `/tools` | List tools for the current agent |
 | `/info` `/details` | Session details: model, context, token usage, and lines added/removed by this session's `write`/`edit`/`apply_patch` results (approximate: block counts, not a minimal diff) |
 | `/doctor` | Environment / config diagnostics |
+| `/terminal-setup` | TUI: what this terminal delivers (kitty keyboard protocol, tmux, its config) and, inside tmux, an offer to add the missing settings to `~/.tmux.conf` |
+| `/keys` | TUI: active key bindings (defaults and `[tui.key_bindings]`) and the ones that cannot work in this terminal |
 
 When a step reads far less from the provider's prompt cache than the step
 before (the cache TTL ran out, the prompt prefix changed, or the model
@@ -588,6 +620,19 @@ The system prompt lists custom agents by name and description. An unknown
 | Memory | `memory` (`write` / `list` / `search` / `delete` / `learn` / `code_search` / `index`) |
 | Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search`, `plugin_*` |
 
+Jupyter notebooks (`.ipynb`) are edited as text. `read` shows each cell as a
+marker line (`# %% [code] cell:N` or `# %% [markdown] cell:N`) followed by
+its source, with a code cell's outputs summarized in one `# out:` line (never
+dumped); line numbers and content tags refer to this view. `edit` changes that
+view and writes it back as notebook JSON: an unchanged cell keeps its id,
+metadata and outputs exactly, a changed code cell loses its outputs and
+execution count, a marker without a number (`# %% [code]` or `cell:new`) adds
+a cell, and removing a block deletes one. `write` with marker text does the
+same; `write` with raw JSON writes it as given. `nbformat`, notebook metadata
+and Jupyter's 1-space formatting are kept, and an edit that damages the
+markers (a repeated `cell:N`, an unknown cell type) is refused without
+writing. `grep` and `apply_patch` still see the raw JSON.
+
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
 
@@ -750,6 +795,32 @@ Provider-specific behaviour: [providers.md](providers.md).
 The TUI asks for an OpenRouter API key (paste into the modal, or skip —
 `/connect` and Ctrl+P stay available). `WHYCODES_HOME` relocates the whole
 instance. `whycodes debug` / `whycodes config path` print the resolved path.
+
+**Local model servers.** A server on your own machine needs no key and no
+hand-written config. `whycodes provider discover` probes `127.0.0.1` for
+LM Studio (`:1234`), vLLM (`:8000`) and llama.cpp server (`:8080`) — one `GET /v1/models` each, 250 ms budget — and lists the
+servers that answered with their model ids (`--json` for a machine-readable
+list, `--save` to write them to `config.toml`). In the TUI the same probe
+runs when you open the provider dialog (Ctrl+P); found servers appear as
+rows after the configured providers, and selecting one saves it and
+switches to its first model. Either way the result is a provider named
+`lmstudio`, `vllm` or `llamacpp` with `api_base` set and no key:
+
+```toml
+[providers.lmstudio]
+name = "lmstudio"
+api_base = "http://127.0.0.1:1234/v1"
+models = ["qwen2.5-coder-7b-instruct"]
+```
+
+Use it with `whycodes -P lmstudio -m <model>` or `/models lmstudio/<model>`.
+Saving never overwrites a provider you configured yourself: a block that
+already points at the server is left as is (and the dialog lists it only
+once, as that provider), a block with no `api_base` / `base_url` only gets
+`api_base` filled in, and a block pointing somewhere else is skipped with
+"already configured with a different api_base; skipped".
+Probing never runs at startup, and a server that is not running is silent
+(debug log only). Ollama is not probed: use its own `ollama` provider.
 
 **0.6.5 moved the instance root.** 0.6.4 and earlier kept config and data
 in the platform directory (`directories::ProjectDirs`):
