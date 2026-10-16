@@ -902,6 +902,7 @@ impl Agent {
         let steer = self.steer.clone();
         let question_prompter = Arc::clone(&self.question_prompter);
         let approval_mode = self.approval_mode;
+        let risk_threshold = self.risk_threshold;
         let hooks = self.hooks.clone();
         let overlays = self.system_prompt_overlays.clone();
 
@@ -1134,6 +1135,7 @@ impl Agent {
                         .with_identity(worker_id.clone(), label.clone())
                         .with_question_prompter(question_prompter)
                         .with_approval_mode(approval_mode)
+                        .with_risk_threshold(risk_threshold)
                         .with_hooks(hooks);
                 if !use_worktrees {
                     runner =
@@ -1467,6 +1469,7 @@ impl Agent {
         .with_panel(self.panel_sink())
         .with_question_prompter(Arc::clone(&self.question_prompter))
         .with_approval_mode(self.approval_mode)
+        .with_risk_threshold(self.risk_threshold)
         .with_hooks(self.hooks.clone())
         .with_steer(self.steer.clone(), format!("task-{}", call.id));
 

@@ -276,19 +276,20 @@ custom agents: `CustomAgent::permission`).
   — tool-name rules, shell-risk `Confirm`, intent `Confirm`, path-rule `Ask`
   — is allowed without a prompt in the TUI and plain REPL. Only `Deny`, the
   catastrophic refusal, hook blocks and in-tool checks remain. The guide's
-  Permissions section describes the `manual` behaviour.
-- `task` / `swarm` workers run no shell risk assessment, no shell or path
-  rules, no intent gate and no ask prompt (`SubagentRunner::execute_tool_call`).
-  A catastrophic command issued by a worker reaches the shell tool; only the
-  OS sandbox (if active) limits it. `general` workers inherit the parent's
-  `bash` permission.
+  Permissions section now leads with that default.
+- `task` / `swarm` workers run a headless copy of the blast-radius gates
+  (`SubagentRunner::headless_gate`): catastrophic commands are refused,
+  shell and path `deny` rules apply, and a risk `Confirm` or a shell/path
+  `ask` passes only in `auto` approval mode (other modes refuse, naming the
+  mode). Tool-name `ask` rules and the intent gate are still not applied to
+  workers; `general` workers inherit the parent's `bash` permission.
 - `WHYCODES_AUTO_APPROVE` / `WHYCODES_AUTO_DENY` are read only by
-  `default_prompter`. The TUI, the daemon and structured headless runs install
-  their own prompter, so the variables have no effect there.
-- "stdin is not a terminal → auto-deny" is implemented as `CI` set
-  (`atty_stderr` checks only that variable). With piped stdin the prompt is
-  still printed and the answer is read from the pipe; an empty pipe denies,
-  a pipe containing `y` approves.
+  `default_prompter` (the plain REPL). The TUI, the daemon and structured
+  headless runs install their own prompter, so the variables have no effect
+  there; the guide states this scope.
+- The plain prompter is interactive only when `CI` is unset **and** stdin is
+  a terminal (`std::io::IsTerminal`); a piped or redirected stdin auto-denies
+  instead of reading a `y` from the pipe.
 - A speculative `read` that matches the final call bypasses steps 1–7 and 10
   (only hooks are honoured by disabling speculation). Path rules such as
   `read(secrets/**) = deny` are therefore not enforced on that path.

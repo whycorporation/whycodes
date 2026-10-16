@@ -68,8 +68,8 @@ async fn default_prompter_respects_env() {
     }
 }
 
-#[test]
-fn stdin_prompter_constructs_and_atty_true_without_ci() {
+#[tokio::test]
+async fn stdin_prompter_constructs_and_interactive_needs_a_terminal() {
     let _ = StdinPrompter::default();
     let _ = StdinPrompter::default().with_notify(crate::notify::handle_from_config(
         &whycodes_config::NotifyConfig::default(),
@@ -80,8 +80,18 @@ fn stdin_prompter_constructs_and_atty_true_without_ci() {
     unsafe { std::env::remove_var("CI") };
     unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") };
     unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") };
-    assert!(atty_stderr());
+    // Under `cargo test` stdin is a pipe, so the plain prompter is never
+    // interactive here; the pure predicate carries both halves.
+    assert!(interactive_stdin(false, true));
+    assert!(!interactive_stdin(true, true));
+    assert!(!interactive_stdin(false, false));
+    assert!(!atty_stderr(), "test stdin is not a terminal");
     let _ = default_prompter();
+    // An interactive stdin yields the real prompter; the auto variants answer.
+    let _stdin = prompter_for(false, false, true);
+    assert!(!prompter_for(false, false, false).ask("bash", "x").await);
+    assert!(!prompter_for(false, true, true).ask("bash", "x").await);
+    assert!(prompter_for(true, true, false).ask("bash", "x").await);
     if let Some(v) = prev_ci {
         unsafe { std::env::set_var("CI", v) };
     } else {

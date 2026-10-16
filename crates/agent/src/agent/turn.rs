@@ -160,6 +160,10 @@ impl Agent {
                 ))
             })?;
 
+        // Completed LLM steps. A step that is retried before its stream finished
+        // (overflow, credential rotation, fallback, stream rule, harmony leak)
+        // is not counted, so `max_turns` and the first-step suffixes see the
+        // retry as the same step.
         let mut turn_count = 0;
         let mut final_text = String::new();
         // Latency: wall clock for the whole user turn (all LLM steps + tools).
@@ -197,9 +201,8 @@ impl Agent {
                 return Err(whycodes_core::Error::Agent("Cancelled".into()));
             }
 
-            turn_count += 1;
             let max = max_turns.unwrap_or(0);
-            if max_turns.is_some() && turn_count > max {
+            if max_turns.is_some() && turn_count >= max {
                 return Err(whycodes_core::Error::Agent(format!(
                     "Exceeded maximum turns ({max})"
                 )));
@@ -269,7 +272,7 @@ impl Agent {
 
             emit(
                 &events,
-                TurnEvent::Status(format!("LLM request (step {turn_count})…")),
+                TurnEvent::Status(format!("LLM request (step {})…", turn_count + 1)),
             );
 
             let mut request = session.build_request(tools, None, self.info.temperature, Some(true));
@@ -288,7 +291,7 @@ impl Agent {
 
             // First LLM step: ephemeral intent posture (not stored in session;
             // keeps system prompt cache-stable). Notice is already on Intent event.
-            if turn_count == 1
+            if turn_count == 0
                 && crate::intent::should_inject(self.intent_guidance, &turn_intent)
                 && let Some(suffix) = crate::intent::posture_suffix(&turn_intent, &self.info.name)
             {
@@ -302,7 +305,7 @@ impl Agent {
                     "intent posture injected into request"
                 );
             }
-            if turn_count == 1 && magic.any() {
+            if turn_count == 0 && magic.any() {
                 let notice = magic.notice();
                 append_request_user_suffix(&mut request, &notice);
                 tracing::debug!(
@@ -692,6 +695,9 @@ impl Agent {
                     emit(&events, TurnEvent::Status(note));
                 }
             }
+
+            // The stream finished: this step counts.
+            turn_count += 1;
 
             let mut blocks: Vec<ContentBlock> = thinking_acc.into_blocks();
 

@@ -2578,3 +2578,111 @@ fn step_texts_are_a_blank_line_apart() {
     append_step_text(&mut text, "\nThird.");
     assert_eq!(text, "\n\nFirst step.\n\nSecond step.\n\nThird.");
 }
+
+/// Overflows mid-stream on the first open, then records the last user
+/// message of every later request.
+struct OverflowThenCaptureProvider {
+    calls: std::sync::atomic::AtomicU32,
+    last_user: std::sync::Arc<std::sync::Mutex<String>>,
+}
+
+impl whycodes_llm::LlmProvider for OverflowThenCaptureProvider {
+    fn name(&self) -> &str {
+        "overflow-capture"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::llm("context_length_exceeded")) })
+    }
+    fn stream<'a>(
+        &'a self,
+        request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(mut last) = self.last_user.lock() {
+            *last = format!("{:?}", request.messages.last());
+        }
+        Box::pin(async move {
+            if n == 0 {
+                Ok(Box::pin(async_stream::stream! {
+                    yield Ok(whycodes_core::types::StreamEvent::TextDelta {
+                        text: "partial overflow".into(),
+                    });
+                    yield Err(whycodes_core::Error::llm_kind(
+                        whycodes_core::ErrorKind::ContextOverflow,
+                        "context_length_exceeded",
+                    ));
+                })
+                    as whycodes_llm::provider::ProviderEventStream)
+            } else {
+                Ok(Box::pin(async_stream::stream! {
+                    yield Ok(whycodes_core::types::StreamEvent::TextDelta {
+                        text: "done after retry".into(),
+                    });
+                })
+                    as whycodes_llm::provider::ProviderEventStream)
+            }
+        })
+    }
+}
+
+/// A step retried before its stream finished is the same step: it keeps the
+/// first-step keyword notice and does not consume `max_turns`.
+#[tokio::test]
+async fn retried_first_step_keeps_suffix_and_does_not_count_toward_max_turns() {
+    let last_user = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(OverflowThenCaptureProvider {
+        calls: std::sync::atomic::AtomicU32::new(0),
+        last_user: std::sync::Arc::clone(&last_user),
+    }));
+    let mut agent = Agent::new(info("build")).with_provider_registry(registry);
+    agent.compaction_llm = false;
+    agent.compaction_threshold = 8;
+    let mut session = Session::new(std::path::PathBuf::from("/work/proj"), "test".into());
+    session.add_user_message("ultrathink please keep summarizing the huge dump");
+    for i in 0..8 {
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: format!("step {i} {}", "x".repeat(80)),
+        }]);
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "overflow-capture",
+                model: "overflow-capture-unique",
+                api_key: "k",
+                max_turns: Some(1),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await
+        .expect("the retry is the same step, so max_turns = 1 is not exceeded");
+    assert!(out.contains("done after retry"), "{out}");
+    let captured = last_user.lock().map(|s| s.clone()).unwrap_or_default();
+    assert!(
+        captured.contains("whycodes_keyword"),
+        "retried first step must still carry the keyword notice: {captured}"
+    );
+    let status = drain_status(&mut rx);
+    assert!(
+        status.iter().any(|s| s.contains("LLM request (step 1)")),
+        "{status:?}"
+    );
+    assert!(
+        !status.iter().any(|s| s.contains("LLM request (step 2)")),
+        "a retry must not be announced as step 2: {status:?}"
+    );
+}
