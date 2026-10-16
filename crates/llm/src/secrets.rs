@@ -111,8 +111,7 @@ impl Redactor {
         key[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
         key[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
         std::fs::create_dir_all(dir)?;
-        std::fs::write(&path, hex(&key))?;
-        restrict_permissions(&path)?;
+        std::fs::write(&path, hex(&key)).and_then(|()| restrict_permissions(&path))?;
         Ok(key)
     }
 
@@ -202,8 +201,12 @@ impl Redactor {
         let mut out = String::new();
         let mut last = 0;
         let mut changed = false;
-        for caps in pattern.captures_iter(text) {
-            let hit = caps.get(1).or_else(|| caps.get(0))?;
+        // The last present group is the secret: group 1 when the pattern
+        // names one, else the whole match (group 0 always exists).
+        for hit in pattern
+            .captures_iter(text)
+            .filter_map(|caps| caps.iter().flatten().last())
+        {
             let secret = hit.as_str();
             // Never redact (part of) a placeholder: the `KEY=value` shape
             // would otherwise match the `SECRET:<hex>` inside one.

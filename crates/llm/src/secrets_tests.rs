@@ -168,6 +168,11 @@ fn request_round_trips_through_redact_and_restore() {
                     content: "env: API_KEY=anotherlongsecret42".into(),
                     is_error: Some(false),
                 },
+                ContentBlock::ToolResult {
+                    tool_use_id: "t2".into(),
+                    content: "clean output".into(),
+                    is_error: None,
+                },
                 ContentBlock::Image {
                     source: ImageSource::Base64 {
                         media_type: "image/png".into(),
@@ -213,7 +218,12 @@ fn request_round_trips_through_redact_and_restore() {
     assert!(redacted.use_prompt_cache, "other fields are kept");
     // The image block (base64 payload) and the clean message are untouched.
     match &redacted.messages[2].content {
-        MessageContent::Blocks(blocks) => assert!(matches!(&blocks[1], ContentBlock::Image { .. })),
+        MessageContent::Blocks(blocks) => {
+            assert!(
+                matches!(&blocks[1], ContentBlock::ToolResult { content, .. } if content == "clean output")
+            );
+            assert!(matches!(&blocks[2], ContentBlock::Image { .. }));
+        }
         _ => panic!("blocks"),
     }
     assert_eq!(redacted.messages[3].content.as_text(), Some("no secrets"));
@@ -292,6 +302,10 @@ fn key_file_round_trips_and_replaces_garbage() {
     let blocked = dir.path().join("file");
     std::fs::write(&blocked, "x").unwrap();
     assert!(Redactor::load_or_create_key(&blocked).is_err());
+    // A directory where the key file should be: the write fails.
+    let in_the_way = dir.path().join("dir-as-key");
+    std::fs::create_dir_all(in_the_way.join(KEY_FILE)).unwrap();
+    assert!(Redactor::load_or_create_key(&in_the_way).is_err());
 
     let env = Redactor::from_env(first);
     let _ = env.len();

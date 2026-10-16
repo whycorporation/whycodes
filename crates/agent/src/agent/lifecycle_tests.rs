@@ -386,11 +386,19 @@ async fn secret_placeholders_are_restored_before_the_tool_runs() {
     registry.register(Box::new(ScriptedProvider::batched(
         "script",
         [
-            vec![ScriptedStep::ToolCall {
-                id: "w1".into(),
-                name: "write".into(),
-                input: serde_json::json!({"path": "config.env", "content": format!("KEY={placeholder}\n")}),
-            }],
+            vec![
+                ScriptedStep::ToolCall {
+                    id: "w1".into(),
+                    name: "write".into(),
+                    input: serde_json::json!({"path": "config.env", "content": format!("KEY={placeholder}\n")}),
+                },
+                // No placeholder: the call passes through untouched.
+                ScriptedStep::ToolCall {
+                    id: "w2".into(),
+                    name: "write".into(),
+                    input: serde_json::json!({"path": "plain.txt", "content": "plain"}),
+                },
+            ],
             vec![ScriptedStep::Text("written".into())],
         ],
     )));
@@ -405,6 +413,10 @@ async fn secret_placeholders_are_restored_before_the_tool_runs() {
         .unwrap();
     let written = std::fs::read_to_string(dir.path().join("config.env")).unwrap();
     assert_eq!(written, "KEY=real-api-key-value-123\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("plain.txt")).unwrap(),
+        "plain"
+    );
 
     // No redactor: the placeholder is written literally.
     let dir2 = tempfile::tempdir().unwrap();
