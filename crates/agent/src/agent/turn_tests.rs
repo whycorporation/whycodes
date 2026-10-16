@@ -2783,8 +2783,10 @@ fn hint_messages(session: &Session) -> usize {
 
 #[tokio::test]
 async fn stream_rule_once_fires_a_single_time_per_session() {
+    let mut r = rule("no-bad", "BAD", &[]);
+    r.repeat = whycodes_config::StreamRuleRepeat::Once;
     let agent = ruled(
-        vec![rule("no-bad", "BAD", &[])],
+        vec![r],
         [
             vec![ScriptedStep::Text("BAD draft".into())],
             vec![ScriptedStep::Text("BAD again".into())],
@@ -2805,11 +2807,9 @@ async fn stream_rule_once_fires_a_single_time_per_session() {
 }
 
 #[tokio::test]
-async fn stream_rule_always_fires_on_every_draft() {
-    let mut r = rule("no-bad", "BAD", &[]);
-    r.repeat = whycodes_config::StreamRuleRepeat::Always;
+async fn stream_rule_default_fires_on_every_draft() {
     let agent = ruled(
-        vec![r],
+        vec![rule("no-bad", "BAD", &[])],
         [
             vec![ScriptedStep::Text("BAD draft".into())],
             vec![ScriptedStep::Text("BAD again".into())],

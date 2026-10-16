@@ -164,7 +164,7 @@ table rule of the same name (see the guide's *Stream rules*).
 | `hint` | `""` | — | Text injected after the abort. |
 | `scope` | `["text"]` | — | Any of `text` (reply text), `thinking` (thinking text), `tool_args` (each tool call's JSON arguments as they stream). |
 | `tools` | `[]` | — | `tool_args` only: tool names to watch. Empty = every tool. |
-| `repeat` | `"once"` | — | `"once"` per session, `"always"`, or `{ after_turns = N }` (again after N user turns). |
+| `repeat` | `"always"` | — | `"always"` (every matching draft), `"once"` per session, or `{ after_turns = N }` (again after N user turns). |
 
 A rule missing `name`, `pattern` or `hint`, or with an invalid regex, is
 skipped. `whycodes rules list` shows each rule and whether it is active.

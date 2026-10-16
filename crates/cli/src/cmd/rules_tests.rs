@@ -25,10 +25,10 @@ fn list_marks_source_scope_and_inactive_rules() {
     let rules = [rule("table", "TODO"), rule("broken", "("), file.clone()];
     let out = list_report(&rules, &[file]);
     assert!(
-        out.contains("table  [config]  scope=text  repeat=once\n"),
+        out.contains("table  [config]  scope=text  repeat=always\n"),
         "{out}"
     );
-    assert!(out.contains("broken  [config]  scope=text  repeat=once  (inactive"));
+    assert!(out.contains("broken  [config]  scope=text  repeat=always  (inactive"));
     assert!(out.contains("from-file  [file]  scope=thinking,tool_args  repeat=after_turns=2\n"));
     assert!(out.contains("  tools: bash, edit\n"));
     assert!(out.contains("  pattern: TODO\n"));
@@ -50,7 +50,7 @@ fn test_report_per_channel() {
     let rules = [rule("text-rm", "rm"), tool_rule, think];
     assert_eq!(
         test_report(&rules, "rm -rf /", &[], None),
-        "text: text-rm  (repeat once)\n  hint text-rm\n"
+        "text: text-rm  (repeat always)\n  hint text-rm\n"
     );
     let all = [
         StreamRuleScope::Text,

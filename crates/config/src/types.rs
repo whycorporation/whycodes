@@ -1472,8 +1472,8 @@ pub struct StreamRuleConfig {
     /// `tool_args` scope only: tool names the rule watches. Empty = every tool.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<String>,
-    /// How often the rule may fire. Default `once` per session.
-    #[serde(default, skip_serializing_if = "StreamRuleRepeat::is_once")]
+    /// How often the rule may fire. Default `always` (every matching draft).
+    #[serde(default, skip_serializing_if = "StreamRuleRepeat::is_always")]
     pub repeat: StreamRuleRepeat,
 }
 
@@ -1524,17 +1524,17 @@ impl StreamRuleScope {
 #[serde(rename_all = "snake_case")]
 pub enum StreamRuleRepeat {
     /// Fire at most once per session.
-    #[default]
     Once,
     /// Fire on every match.
+    #[default]
     Always,
     /// Fire again once N user turns have passed since the last hit.
     AfterTurns(u32),
 }
 
 impl StreamRuleRepeat {
-    pub fn is_once(&self) -> bool {
-        *self == Self::Once
+    pub fn is_always(&self) -> bool {
+        *self == Self::Always
     }
 
     /// `once`, `always`, `after_turns = N`, `{ after_turns: N }`, or a bare `N`.

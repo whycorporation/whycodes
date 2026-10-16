@@ -73,15 +73,15 @@ fn channels_and_tool_filter() {
 #[test]
 fn repeat_policy_gates_hits() {
     let rules = compile(&[
-        cfg("once", "x"),
+        StreamRuleConfig {
+            repeat: StreamRuleRepeat::Once,
+            ..cfg("once", "x")
+        },
         StreamRuleConfig {
             repeat: StreamRuleRepeat::AfterTurns(2),
             ..cfg("later", "x")
         },
-        StreamRuleConfig {
-            repeat: StreamRuleRepeat::Always,
-            ..cfg("always", "x")
-        },
+        cfg("always", "x"),
     ]);
     let mut ledger = StreamRuleLedger::default();
     ledger.begin_turn();

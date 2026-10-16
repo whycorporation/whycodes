@@ -48,7 +48,7 @@ repeat: sometimes
         vec![StreamRuleScope::Text, StreamRuleScope::Thinking]
     );
     assert_eq!(rule.tools, vec!["bash"]);
-    assert_eq!(rule.repeat, StreamRuleRepeat::Once);
+    assert_eq!(rule.repeat, StreamRuleRepeat::Always);
     assert_eq!(rule.hint, "");
 }
 
@@ -175,12 +175,12 @@ fn toml_forms_and_old_configs_round_trip() {
     }
     let old = "[[rule]]\nname = \"a\"\npattern = \"x\"\nhint = \"h\"\n";
     let w: Wrap = toml::from_str(old).unwrap();
-    assert_eq!(w.rule[0].repeat, StreamRuleRepeat::Once);
+    assert_eq!(w.rule[0].repeat, StreamRuleRepeat::Always);
     assert!(w.rule[0].scope.is_empty());
     assert_eq!(toml::to_string(&w).unwrap(), old);
-    let new = "[[rule]]\nname = \"a\"\npattern = \"x\"\nhint = \"h\"\nscope = [\"thinking\", \"tool_args\"]\ntools = [\"bash\"]\nrepeat = \"always\"\n\n[[rule]]\nname = \"b\"\npattern = \"y\"\nhint = \"h\"\n\n[rule.repeat]\nafter_turns = 2\n";
+    let new = "[[rule]]\nname = \"a\"\npattern = \"x\"\nhint = \"h\"\nscope = [\"thinking\", \"tool_args\"]\ntools = [\"bash\"]\nrepeat = \"once\"\n\n[[rule]]\nname = \"b\"\npattern = \"y\"\nhint = \"h\"\n\n[rule.repeat]\nafter_turns = 2\n";
     let w: Wrap = toml::from_str(new).unwrap();
-    assert_eq!(w.rule[0].repeat, StreamRuleRepeat::Always);
+    assert_eq!(w.rule[0].repeat, StreamRuleRepeat::Once);
     assert_eq!(
         w.rule[0].scope,
         vec![StreamRuleScope::Thinking, StreamRuleScope::ToolArgs]

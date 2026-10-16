@@ -915,16 +915,17 @@ pattern = 'rm\s+-rf'
 hint = "Never delete directory trees; move them aside instead."
 scope = ["tool_args"]        # text (default) | thinking | tool_args
 tools = ["bash"]             # tool_args only; empty = every tool
-repeat = "always"            # once (default) | always | { after_turns = 3 }
+repeat = "once"              # always (default) | once | { after_turns = 3 }
 ```
 
 - `scope` picks what is matched: `text` is the reply text so far, `thinking`
   the step's thinking so far, `tool_args` each tool call's JSON arguments as
   they stream (so a `tool_args` hit stops the call before it runs).
-- `repeat` limits how often a rule fires. `once` (the default) fires at most
-  once per session; `always` fires on every match; `{ after_turns = N }` fires
-  again once N user turns have passed since its last hit. Fired rules are kept
-  on the session but not in the database, so a resumed session starts fresh.
+- `repeat` limits how often a rule fires. `always` (the default) fires on
+  every matching draft; `once` fires at most once per session;
+  `{ after_turns = N }` fires again once N user turns have passed since its
+  last hit. Fired rules are kept on the session but not in the database, so a
+  resumed session starts fresh.
 
 A rule can also live in its own file, `.whycodes/rules/<name>.md`, with the
 pattern in YAML frontmatter and the hint as the body:

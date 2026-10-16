@@ -190,8 +190,9 @@ emits `Status("Stream rule `name` interrupted the draft")`, records the hit on
 appends a user message `<whycodes_rule name=…>hint…</whycodes_rule>`, discards
 the draft (it is never added to the session; a `tool_args` hit means the call
 never runs) and restarts the step. `run_turn_steps` calls
-`StreamRuleLedger::begin_turn` once per user turn; `repeat = "once"` blocks a
-rule after its first hit, `{ after_turns = N }` until N turns have passed.
+`StreamRuleLedger::begin_turn` once per user turn; the default
+`repeat = "always"` never blocks, `"once"` blocks a rule after its first hit,
+`{ after_turns = N }` until N turns have passed.
 
 Cancel during streaming: speculative reads aborted, the thinking blocks and
 partial text are appended as an assistant message, `TurnEvent::Cancelled`,
