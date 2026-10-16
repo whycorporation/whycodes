@@ -966,6 +966,7 @@ mod tests {
         let hooks = vec![
             transform("write", &json_echo(r#"{"path":"b.txt"}"#)),
             transform("write", "exit 1"),
+            transform("write", "exit 0"),
             transform("write", "echo not-json"),
             transform("write", "   "),
             transform("write", &json_echo(r#"[1,2]"#)),
@@ -974,7 +975,7 @@ mod tests {
         ];
         assert_eq!(
             matching_hooks(&hooks, HookEvent::PreToolTransform, "write").len(),
-            6,
+            7,
             "`match` applies to transform hooks"
         );
         let out = run_transform_hooks(&hooks, &ctx).await.expect("rewritten");
