@@ -242,7 +242,8 @@ recent sessions under it.
 | `Ctrl+B` | Toggle sidebar (Files / Diag / MCP / Todos / View) |
 | click / `t` | Fold the sticky todo panel (header chevron; finished items stay visible when expanded) |
 | `[` / `]` | Cycle sidebar tabs (scrollback focus) |
-| `Ctrl+C` / `Ctrl+Q` | Clear draft or quit |
+| `Ctrl+C` | Clear the draft; cancel a running turn; otherwise ask to quit (again to confirm) |
+| `Ctrl+Q` | Quit without asking |
 
 A message sent while a turn is running steers it: the agent reads it before
 its next request, after the current tool calls finish. If the turn ends
