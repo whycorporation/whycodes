@@ -10,6 +10,17 @@ repository.workspace = true
 default = []
 onnx = ["whycodes-memory/onnx"]
 bundled-sqlite = ["whycodes-memory/bundled-sqlite"]
+# `ast_grep` / `ast_edit` structural search and rewrite. Off by default:
+# the tree-sitter grammars (Rust, Python, Go, JavaScript, TypeScript, TSX)
+# add ~5.2 MB to the release binary and ~50 s of C compilation cold.
+ast-tools = [
+    "dep:ast-grep-core",
+    "dep:tree-sitter-rust",
+    "dep:tree-sitter-python",
+    "dep:tree-sitter-go",
+    "dep:tree-sitter-javascript",
+    "dep:tree-sitter-typescript",
+]
 
 [dependencies]
 whycodes-core = { path = "../core" }
@@ -36,6 +47,12 @@ reqwest.workspace = true
 futures.workspace = true
 base64.workspace = true
 rustc-hash.workspace = true
+ast-grep-core = { version = "0.51", optional = true }
+tree-sitter-rust = { version = "0.24", optional = true }
+tree-sitter-python = { version = "0.25", optional = true }
+tree-sitter-go = { version = "0.25", optional = true }
+tree-sitter-javascript = { version = "0.25", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

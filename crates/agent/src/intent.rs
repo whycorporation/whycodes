@@ -362,6 +362,7 @@ const MUTATING_TOOLS: &[&str] = &[
     "write",
     "edit",
     "apply_patch",
+    "ast_edit",
     "git_commit",
     "bash",
     "shell",

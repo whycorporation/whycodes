@@ -81,7 +81,7 @@ user already approved this call with the command or path in hand, so later
 4. **Intent authorization** — `intent::authorize_tool`
    (`crates/agent/src/intent.rs`). Skipped when `session.intent_guidance =
    off` or the tool is not in `MUTATING_TOOLS` (`write`, `edit`,
-   `apply_patch`, `git_commit`, `bash`, `shell`, `code_mode`,
+   `apply_patch`, `ast_edit`, `git_commit`, `bash`, `shell`, `code_mode`,
    `external_directory`), or the shell command is read-only by heuristic
    (`is_read_only_shell`). Then:
    - agents `ask`, `plan`, `explore`, `scout` → `Refuse (intent)`;
@@ -91,7 +91,7 @@ user already approved this call with the command or path in hand, so later
      `risk_confirmed`;
    - otherwise allow.
 5. **Path-scoped rules** — for `read`, `write`, `edit`, `glob`, `list`,
-   `repomap`, `apply_patch`, `grep` with a `path` argument
+   `repomap`, `apply_patch`, `grep`, `ast_grep`, `ast_edit` with a `path` argument
    (`file_tool_path`), `PermissionSet::action_for_path` matches rules such as
    `edit(src/**)` or `write(**/*.md)` (longest glob wins; `write(...)` rules
    also cover `edit` / `apply_patch`; an `Allow` on an absolute or `..` path
@@ -103,7 +103,7 @@ user already approved this call with the command or path in hand, so later
       several globs match the last one iterated wins;
    3. `denied_tools` list → `Deny`;
    4. `allowed_tools` set and name absent → `Deny`;
-   5. category flags: `write` / `edit` / `apply_patch` / todo tools need
+   5. category flags: `write` / `edit` / `apply_patch` / `ast_edit` / todo tools need
       `allow_file_writes`; `shell` / `bash` need `allow_shell`; `webfetch` /
       `websearch` / `mcp_websearch` need `allow_network`;
    6. `browser` is always `Ask`; everything else `Allow`.
@@ -154,7 +154,7 @@ user already approved this call with the command or path in hand, so later
      bash syntax either way. `Agent::tool_context` also forces
      `sandbox.network = false` when the agent's `permission.allow_network`
      is false.
-   - File writers (`write`, `edit`, `apply_patch`) call
+   - File writers (`write`, `edit`, `apply_patch`, `ast_edit`) call
      `ctx.check_file_write(path)`: with a `FileClaimRegistry` present
      (parallel TUI sessions via `with_session_claims`, or same-checkout swarm
      workers) the path is claimed for `agent_id`; a claim held by another

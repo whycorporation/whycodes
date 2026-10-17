@@ -383,6 +383,21 @@ fn deferred_catalog_lists_non_core_tools() {
     assert!(cat.iter().all(|(n, _)| n != "webfetch"));
 }
 
+#[cfg(feature = "ast-tools")]
+#[test]
+fn ast_tools_are_registered_and_deferred() {
+    let ex = ToolExecutor::new();
+    let perms = PermissionSet {
+        allow_file_writes: true,
+        ..PermissionSet::default()
+    };
+    let cat = ex.deferred_catalog(&perms);
+    for name in ["ast_grep", "ast_edit"] {
+        assert!(ex.get(name).is_some(), "{name}");
+        assert!(cat.iter().any(|(n, _)| n == name), "{name}");
+    }
+}
+
 #[test]
 fn is_allowed_used_for_definition_filtering() {
     // A tool whose is_allowed is false disappears even with default perms.

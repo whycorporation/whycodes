@@ -2171,6 +2171,8 @@ mod types_tests {
         assert_eq!(p.action_for("grep"), PermissionAction::Deny);
         p.allowed_tools = None;
         assert_eq!(p.action_for("write"), PermissionAction::Deny);
+        assert_eq!(p.action_for("ast_edit"), PermissionAction::Deny);
+        assert_eq!(p.action_for("ast_grep"), PermissionAction::Allow);
         assert_eq!(p.action_for("bash"), PermissionAction::Deny);
         assert_eq!(p.action_for("webfetch"), PermissionAction::Deny);
 

@@ -126,7 +126,7 @@ pub(crate) fn file_tool_path(tc: &ToolCall) -> Option<String> {
     let key = match tc.name.as_str() {
         "read" | "write" | "edit" | "glob" | "list" | "repomap" => "path",
         "apply_patch" => "path", // may also use multi-file; path optional
-        "grep" => "path",
+        "grep" | "ast_grep" | "ast_edit" => "path",
         _ => return None,
     };
     #[allow(clippy::question_mark)]
@@ -144,6 +144,7 @@ pub(crate) const SERIAL_TOOLS: &[&str] = &[
     "write",
     "edit",
     "apply_patch",
+    "ast_edit",
     "git_commit",
     "todowrite",
     "todo",

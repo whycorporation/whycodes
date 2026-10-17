@@ -730,7 +730,7 @@ The system prompt lists custom agents by name and description. An unknown
 | Category | Tools |
 |---|---|
 | Files | `read` (files and the internal URLs below: `skill://`, `agent://`, `proc://`, `rule://`, `pr://`, `issue://`, `mcp://`), `write`, `edit`, `apply_patch` |
-| Search | `grep`, `glob`, `list`, `repomap` |
+| Search | `grep`, `glob`, `list`, `repomap`; `ast_grep`, `ast_edit` in builds with `--features ast-tools` |
 | Execution | `bash` (alias `shell`; auto-background after 20s unless `[tools.bash] auto_background = false`) |
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
 | GitHub | `github_issue`, `github_pr` (token: env, `gh auth login`, or stored git credentials — not SSH-only remotes) |
@@ -754,6 +754,23 @@ writing. `grep` and `apply_patch` still see the raw JSON.
 
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
+
+**Structural search and rewrite** (`ast_grep`, `ast_edit`) match syntax
+trees instead of text, for Rust, Python, Go, JavaScript, TypeScript and TSX
+(language from the file extension, or `language`). The pattern is code with
+metavariables: `$NAME` is one node, `$$$NAME` (or `$$$`) any number, `$_` one
+node without capturing, and a name used twice must match the same code, so
+`$A == $A` finds self-comparisons. `ast_grep` prints hits like `grep`
+(`path:line tag:text`, so `edit` can target them) with the captured
+metavariables under each. `ast_edit` replaces every match with `rewrite`
+(`$NAME` inserts the capture); it is a dry run by default that returns the
+unified diff, and `dry_run: false` writes each file atomically and runs the
+project formatter (below). Both are deferred (`tool_search`). `ast_edit` is a
+file mutator: permission key `ast_edit`, denied wherever file writes are,
+never run in parallel. The tree-sitter grammars add about 5.2 MB to the
+binary, so the tools are only in builds with the `ast-tools` feature
+(`cargo build --release -p whycodes-cli --features ast-tools`, also part of
+`--features full`); release archives do not include them.
 
 **Internal URLs.** `read` resolves a few `scheme://` paths so the model has
 one interface for things that are not files; a bare scheme lists what it can

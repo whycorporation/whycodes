@@ -1,4 +1,10 @@
 pub mod apply_patch;
+#[cfg(feature = "ast-tools")]
+pub mod ast;
+#[cfg(feature = "ast-tools")]
+pub mod ast_edit;
+#[cfg(feature = "ast-tools")]
+pub mod ast_grep;
 pub(crate) mod atomic;
 pub mod edit;
 pub mod external_directory;
