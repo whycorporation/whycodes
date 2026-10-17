@@ -27,10 +27,19 @@ async fn writes_relative_path_and_creates_parents() {
         .await;
     assert!(!out.is_error, "{}", out.content);
     assert!(out.content.contains("Wrote"), "{}", out.content);
+    assert!(out.content.ends_with("[+2 -0]"), "{}", out.content);
     assert_eq!(
         std::fs::read_to_string(dir.path().join("nested/a.txt")).expect("read"),
         "hello\nworld"
     );
+    // Overwrite: the old file's lines count as removed.
+    let out = WriteTool::new()
+        .execute(
+            json!({ "path": "nested/a.txt", "content": "one" }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(out.content.ends_with("[+1 -2]"), "{}", out.content);
 }
 
 #[tokio::test]
@@ -198,4 +207,46 @@ fn preview_write_says_create_overwrite_or_no_change() {
         preview_write(&serde_json::json!({"content": "x"}), &wd),
         None
     );
+}
+
+#[tokio::test]
+async fn notebook_marker_text_becomes_notebook_json() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rendering = "# %% [code] cell:1\nx = 1\n";
+    let out = WriteTool::new()
+        .execute(
+            json!({ "path": "n.ipynb", "content": rendering }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    let raw = std::fs::read_to_string(dir.path().join("n.ipynb")).expect("read");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    assert_eq!(value["cells"][0]["source"], json!(["x = 1"]));
+    // Raw JSON is written as given.
+    let out = WriteTool::new()
+        .execute(
+            json!({ "path": "n.ipynb", "content": "{\"cells\": []}" }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("n.ipynb")).expect("read"),
+        "{\"cells\": []}"
+    );
+}
+
+#[tokio::test]
+async fn damaged_notebook_markers_are_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = WriteTool::new()
+        .execute(
+            json!({ "path": "n.ipynb", "content": "# %% [python]\nx\n" }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(out.is_error);
+    assert!(out.content.contains("unknown cell type"), "{}", out.content);
+    assert!(!dir.path().join("n.ipynb").exists());
 }

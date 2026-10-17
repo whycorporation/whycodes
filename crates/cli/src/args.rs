@@ -210,7 +210,7 @@ pub enum Commands {
         cmd: McpCmd,
     },
 
-    /// Provider management (add, list, remove, default)
+    /// Provider management (add, list, remove, default, discover)
     Provider {
         #[command(subcommand)]
         cmd: ProviderCmd,
@@ -398,6 +398,15 @@ pub enum ProviderCmd {
         /// Provider name to set as default
         name: String,
     },
+    /// Find local model servers on 127.0.0.1 (LM Studio, vLLM, llama.cpp server)
+    Discover {
+        /// Machine-readable list (provider, label, api_base, models)
+        #[arg(long)]
+        json: bool,
+        /// Write each found server as `[providers.<name>]` (api_base, no key)
+        #[arg(long)]
+        save: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -419,7 +428,12 @@ pub enum AuthCmd {
         provider: String,
     },
     /// Show which providers have stored OAuth credentials (never prints tokens)
-    Status,
+    Status {
+        /// Machine-readable: one object per provider (`provider`, `authKind`,
+        /// `credentialSource`, `expiry`, `validatedAt`, `stale`); never secrets
+        #[arg(long)]
+        json: bool,
+    },
     /// Find credentials of other CLIs (Claude Code, Codex, Gemini, Copilot, Grok Build)
     /// and import them after explicit per-path approval
     Import,
@@ -468,10 +482,13 @@ pub enum PluginsCmd {
 pub enum ConfigCmd {
     /// Show current configuration
     Show,
-    /// Get a specific configuration value
+    /// Get a specific configuration value and which layer set it
     Get {
         /// Configuration key (dot-separated, e.g. "default_agent")
         key: String,
+        /// Machine-readable: `{ "key", "value", "overriddenBy" }`
+        #[arg(long)]
+        json: bool,
     },
     /// Set a configuration value
     Set {

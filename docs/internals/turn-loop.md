@@ -418,6 +418,21 @@ written back to the parent session.
 - Persistence is host-driven and best-effort; there is no mid-turn save.
 - `Usage` is emitted per step; the variant's doc comment says "per turn".
 
+## Edit statistics
+
+`write`, `edit` and `apply_patch` end a successful result with a
+`[+N -M]` trailer (`whycodes_core::edit_trailer`). After each batch the
+loop calls `Session::record_edit_results`, which pairs results with their
+calls by id and folds the trailers of those three tools into
+`Session::edit_stats` (`whycodes_session::EditStats`). `/info` shows the
+sum. `apply_patch` counts hunk lines exactly; `edit` counts the whole
+replaced block and an overwriting `write` the whole old file, so the total
+is flagged `approximate` once either contributed, and also when a counted
+result lost its trailer (truncated, spilled, or the call never got a
+result). The counts are not stored in the database: `load_from_db`
+rebuilds them from the transcript, which is why a failed edit in history
+makes a resumed session's figure approximate.
+
 ## Related
 
 - [Permission gate](permission-gate.md) — the gates inside `execute_with_permission`.

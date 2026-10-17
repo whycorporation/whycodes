@@ -80,7 +80,7 @@ fn short_commands_are_debug_config_session() {
         session: None,
     }))));
     assert!(!is_short_command(&cli(Some(Commands::Auth {
-        cmd: crate::AuthCmd::Status,
+        cmd: crate::AuthCmd::Status { json: false },
     }))));
     #[cfg(feature = "server")]
     assert!(!is_short_command(&cli(Some(Commands::Serve {

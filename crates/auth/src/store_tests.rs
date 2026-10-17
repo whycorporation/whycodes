@@ -4,6 +4,7 @@ use crate::token::OAuthToken;
 fn token() -> ProviderAuth {
     ProviderAuth {
         method: "oauth".to_string(),
+        validated_at: None,
         token: OAuthToken {
             access_token: "acc".to_string(),
             refresh_token: Some("ref".to_string()),

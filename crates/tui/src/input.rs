@@ -2185,7 +2185,8 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
     match active {
         DialogKind::Provider if app.provider_dialog.mode == ProviderDialogMode::AddCustom => {}
         DialogKind::Provider => {
-            let len = app.provider_dialog.providers.len() + 1;
+            let len =
+                app.provider_dialog.providers.len() + app.provider_dialog.local_servers.len() + 1;
             if len > 0 {
                 app.provider_dialog.selected = idx.min(len - 1);
             }
@@ -2533,6 +2534,9 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
             ConfirmAction::ImportSettings => {
                 app.pending_import = true;
             }
+            ConfirmAction::TerminalSetup => {
+                app.pending_terminal_setup = true;
+            }
         },
         DialogKind::Import => {
             if app.import_picker.any_checked() {
@@ -2620,6 +2624,11 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
             // cancel the questionnaire instead of answering it).
             return;
         }
+        DialogKind::Provider => {
+            if let Some(server) = selected_local_server(app) {
+                app.pending_local_server = Some(server);
+            }
+        }
         DialogKind::OpenRouterKey => {
             let key = app.openrouter_key_input.trim().to_string();
             if key.is_empty() {
@@ -2699,11 +2708,28 @@ fn open_provider_dialog(app: &mut TuiApp) {
             }
         }
     }
+    // Local servers (LM Studio, vLLM, llama.cpp) are probed by the
+    // run loop now that the user asked; results land in `local_servers`.
+    app.provider_dialog.local_servers.clear();
+    app.provider_dialog.discovering = true;
+    app.pending_local_discovery = true;
     app.provider_dialog.mode = crate::app::ProviderDialogMode::Select;
     app.provider_dialog.selected = 0;
     app.mode = AppMode::Dialog;
     app.key_context = KeymapContext::Dialog;
     app.dialogs.push(DialogKind::Provider);
+}
+
+/// Discovered server under the provider-dialog cursor, if the cursor is on one.
+pub(crate) fn selected_local_server(app: &TuiApp) -> Option<whycodes_llm::LocalServer> {
+    let pd = &app.provider_dialog;
+    if pd.mode != crate::app::ProviderDialogMode::Select {
+        return None;
+    }
+    pd.selected
+        .checked_sub(pd.providers.len())
+        .and_then(|i| pd.local_servers.get(i))
+        .cloned()
 }
 
 /// Open `dialog`, putting the app into dialog mode.
@@ -2788,7 +2814,7 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
         DialogKind::Provider => {
             app.provider_dialog.selected = move_selection(
                 app.provider_dialog.selected,
-                app.provider_dialog.providers.len(),
+                app.provider_dialog.providers.len() + app.provider_dialog.local_servers.len(),
                 delta,
             );
         }
