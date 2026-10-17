@@ -1253,7 +1253,8 @@ fn worker_log_helpers_label_calls_and_keep_the_tail() {
     );
     assert_eq!(log, "→ glob *.rs\n  ✗ no matches\n");
 
-    let mut long = "é".repeat(MAX_WORKER_LOG);
+    // One ASCII byte puts the cut inside a two-byte `é`.
+    let mut long = "é".repeat(MAX_WORKER_LOG) + "a";
     cap_log(&mut long);
     assert!(long.starts_with('…'), "older bytes dropped");
     assert!(long.len() <= MAX_WORKER_LOG + '…'.len_utf8());
