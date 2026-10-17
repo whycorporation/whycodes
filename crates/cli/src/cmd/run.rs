@@ -458,6 +458,14 @@ pub(crate) fn git_status_failed_line(stderr: &str) -> String {
     format!("{} git status: {stderr}", "✗".red())
 }
 
+/// `--approval-mode` wins over `[general] approval_mode` and
+/// `WHYCODES_APPROVAL_MODE` for this process only (nothing is saved).
+pub(crate) fn apply_approval_mode_flag(cli: &Cli, config: &mut Config) {
+    if let Some(mode) = cli.approval_mode {
+        config.general.approval_mode = Some(mode);
+    }
+}
+
 /// Reload layered config after a first-run import wrote `config.toml`.
 /// A broken project file keeps the config already in hand and warns.
 pub(crate) fn reload_config_after_import(
@@ -566,6 +574,7 @@ pub(crate) fn cmd_run_fast_tui(project_dir: PathBuf) -> anyhow::Result<()> {
                 provider_from_cli: false,
                 model_from_cli: false,
                 agent_from_cli: false,
+                approval_mode_from_cli: None,
                 update_rx,
                 inject: Default::default(),
             })
@@ -632,6 +641,7 @@ pub(crate) async fn cmd_run(
         if cli.no_memory {
             config.memory.enabled = false;
         }
+        apply_approval_mode_flag(cli, &mut config);
         provider = resolve_provider(cli, &config);
         model = resolve_model(cli, &config);
         agent_name = resolve_agent(cli, &config);
@@ -642,6 +652,7 @@ pub(crate) async fn cmd_run(
         if cli.no_memory {
             config.memory.enabled = false;
         }
+        apply_approval_mode_flag(cli, &mut config);
         provider = resolve_provider(cli, &config);
         model = resolve_model(cli, &config);
         agent_name = resolve_agent(cli, &config);
@@ -655,6 +666,7 @@ pub(crate) async fn cmd_run(
             reload_config_after_import(&mut config, &project_dir_early, cli.no_memory, |dir| {
                 Config::load_layered(dir).map_err(|e| anyhow::anyhow!("{e}"))
             });
+            apply_approval_mode_flag(cli, &mut config);
         }
         Ok(false) => {}
         Err(e) => {
@@ -704,6 +716,7 @@ pub(crate) async fn cmd_run(
             provider_from_cli: cli.provider.is_some(),
             model_from_cli: cli.model.is_some(),
             agent_from_cli: cli.agent_flag.is_some(),
+            approval_mode_from_cli: cli.approval_mode,
             update_rx,
             inject: Default::default(),
         })
@@ -1693,6 +1706,7 @@ async fn generate_prompts(
     if cli.no_memory {
         config.memory.enabled = false;
     }
+    apply_approval_mode_flag(cli, &mut config);
     // One-shot runs keep the local memory pass but skip the extra model call
     // that extracts facts: it would add a paid request and seconds per run.
     config.memory.retain_llm = false;

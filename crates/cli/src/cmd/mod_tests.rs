@@ -12,6 +12,7 @@ async fn dispatch_web_stub() {
         fork_session: false,
         debug: false,
         no_auto_update: true,
+        approval_mode: None,
         no_memory: true,
     };
     super::dispatch_command(&crate::Commands::Web, &cli)
@@ -38,6 +39,7 @@ async fn dispatch_slop_json_non_git() {
         fork_session: false,
         debug: false,
         no_auto_update: true,
+        approval_mode: None,
         no_memory: true,
     };
     let result = super::dispatch_command(cli.command.as_ref().unwrap(), &cli).await;

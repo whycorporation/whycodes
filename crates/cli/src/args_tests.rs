@@ -67,3 +67,25 @@ fn unique_typo_suggestion_is_kept() {
         "unique close match should still be suggested:\n{clean}"
     );
 }
+
+#[test]
+fn approval_mode_flag_takes_presets_and_aliases_anywhere() {
+    use whycodes_core::types::ApprovalMode;
+    let cli = Cli::try_parse_from(["whycodes", "--approval-mode", "manual"]).unwrap();
+    assert_eq!(cli.approval_mode, Some(ApprovalMode::Manual));
+    // Global: after a subcommand, and the aliases `/mode` accepts.
+    let cli = Cli::try_parse_from(["whycodes", "run", "--approval-mode", "dontask"]).unwrap();
+    assert_eq!(cli.approval_mode, Some(ApprovalMode::Auto));
+    let cli = Cli::try_parse_from(["whycodes", "generate", "x", "--approval-mode=ask"]).unwrap();
+    assert_eq!(cli.approval_mode, Some(ApprovalMode::Important));
+    assert_eq!(
+        Cli::try_parse_from(["whycodes"]).unwrap().approval_mode,
+        None
+    );
+    let err = Cli::try_parse_from(["whycodes", "--approval-mode", "yolo"]).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("unknown approval mode `yolo` (expected auto, important or manual)"),
+        "{err}"
+    );
+}

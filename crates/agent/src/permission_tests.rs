@@ -7,7 +7,7 @@ async fn channel_prompter_forwards_reply() {
     let req = rx.recv().await.expect("permission request");
     assert_eq!(req.tool_name, "bash");
     assert_eq!(req.detail, "echo hi");
-    req.reply.send(true).unwrap();
+    req.reply.send(PermissionReply::Allow).unwrap();
     assert!(ask.await.unwrap());
 }
 
@@ -212,6 +212,30 @@ async fn channel_prompter_with_notify_asks() {
     let ask = tokio::spawn(async move { prompter.ask("bash", "rm -rf /tmp/x").await });
     let req = rx.recv().await.expect("request");
     assert_eq!(req.tool_name, "bash");
-    req.reply.send(true).unwrap();
+    req.reply.send(PermissionReply::Allow).unwrap();
     assert!(ask.await.unwrap());
+}
+
+#[tokio::test]
+async fn channel_prompter_reports_a_typed_reply() {
+    let (prompter, mut rx) = ChannelPermissionPrompter::new();
+    let ask = tokio::spawn(async move { prompter.ask_reply("bash", "x").await });
+    let req = rx.recv().await.expect("request");
+    req.reply.send(PermissionReply::Replied).unwrap();
+    assert_eq!(ask.await.unwrap(), PermissionReply::Replied);
+}
+
+#[tokio::test]
+async fn yes_no_prompters_map_to_allow_and_deny() {
+    assert_eq!(
+        AutoApprovePrompter.ask_reply("bash", "x").await,
+        PermissionReply::Allow
+    );
+    assert_eq!(
+        AutoDenyPrompter.ask_reply("bash", "x").await,
+        PermissionReply::Deny
+    );
+    assert!(PermissionReply::Allow.allowed());
+    assert!(!PermissionReply::Replied.allowed());
+    assert_eq!(PermissionReply::from(false), PermissionReply::Deny);
 }

@@ -328,6 +328,7 @@ fn permission_dialog_shows_tool_command_and_risk() {
             f,
             "bash",
             "Command:\nrm -rf /tmp/x\n\nRisk: destructive delete",
+            false,
             &palette,
             None,
         );
@@ -340,10 +341,31 @@ fn permission_dialog_shows_tool_command_and_risk() {
 }
 
 #[test]
+fn permission_dialog_names_the_reply_key_and_reply_mode() {
+    let palette = ThemeName::DefaultDark.palette();
+    let (_buf, text) = paint(90, 30, |f| {
+        render_permission_dialog(f, "bash", "Command:\nls", false, &palette, None);
+    });
+    assert!(text.contains("Tab reply"), "{text}");
+    let (_buf, text) = paint(90, 30, |f| {
+        render_permission_dialog(f, "bash", "Command:\nls", true, &palette, None);
+    });
+    assert!(text.contains("Enter denies this and sends it."), "{text}");
+    assert!(text.contains("Tab / Esc back"), "{text}");
+}
+
+#[test]
 fn permission_dialog_without_risk_and_key_value_detail() {
     let palette = ThemeName::DefaultDark.palette();
     let (_buf, text) = paint(90, 30, |f| {
-        render_permission_dialog(f, "read", "path: src/main.rs\noffset: 10", &palette, None);
+        render_permission_dialog(
+            f,
+            "read",
+            "path: src/main.rs\noffset: 10",
+            false,
+            &palette,
+            None,
+        );
     });
     assert!(text.contains("read"), "{text}");
     assert!(text.contains("path: src/main.rs"), "{text}");
@@ -359,7 +381,7 @@ fn permission_dialog_truncates_overflowing_body() {
     let body: String = (0..40).map(|i| format!("echo line {i}\n")).collect();
     let detail = format!("Command:\n{body}\nRisk: x");
     let (_buf, text) = paint(80, 12, |f| {
-        render_permission_dialog(f, "bash", &detail, &palette, None);
+        render_permission_dialog(f, "bash", &detail, false, &palette, None);
     });
     assert!(text.contains("truncated"), "{text}");
 }
@@ -959,7 +981,7 @@ fn permission_dialog_paints_a_pending_diff() {
     let palette = ThemeName::DefaultDark.palette();
     let detail = "Edit a.rs\n\n   2|-let x = 1;\n   2|+let x = 2;";
     let (buf, text) = paint(90, 30, |f| {
-        render_permission_dialog(f, "edit", detail, &palette, None);
+        render_permission_dialog(f, "edit", detail, false, &palette, None);
     });
     assert!(text.contains("2|+let x = 2;"), "{text}");
     let fg_of = |needle: &str| {
@@ -979,7 +1001,7 @@ fn permission_dialog_paints_a_pending_diff() {
 
     // A plain key: value detail with a `- item` line stays uncoloured.
     let (buf, _) = paint(90, 30, |f| {
-        render_permission_dialog(f, "todo", "items:\n- first", &palette, None);
+        render_permission_dialog(f, "todo", "items:\n- first", false, &palette, None);
     });
     let area = buf.area;
     let dash = (area.y..area.y + area.height).find_map(|y| {

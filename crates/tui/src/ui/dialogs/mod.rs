@@ -82,7 +82,9 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
             app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         }
         crate::app::DialogKind::Permission { tool_name, detail } => {
-            let chrome = render_permission_dialog(frame, &tool_name, &detail, palette, mouse);
+            let reply = app.permission_reply_focused();
+            let chrome =
+                render_permission_dialog(frame, &tool_name, &detail, reply, palette, mouse);
             app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         }
         crate::app::DialogKind::Question(state) => {

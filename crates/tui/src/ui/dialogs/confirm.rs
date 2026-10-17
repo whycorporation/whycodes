@@ -66,13 +66,19 @@ pub fn render_permission_dialog(
     frame: &mut Frame,
     tool_name: &str,
     detail: &str,
+    reply_focus: bool,
     palette: &ThemePalette,
     mouse_pos: Option<(u16, u16)>,
 ) -> DialogChrome {
+    let keys: &[&str] = if reply_focus {
+        &["Enter deny + send reply", "Tab / Esc back"]
+    } else {
+        &["y/a allow", "n/d deny", "Tab reply", "Esc / [✗]"]
+    };
     let chrome = super::base::dialog_frame_sized(
         frame,
         "Permission required",
-        &["y/a allow", "n/d deny", "Esc / [✗]"],
+        keys,
         palette,
         super::base::DialogSizing::popup(),
         mouse_pos,
@@ -168,8 +174,13 @@ pub fn render_permission_dialog(
         lines.push(Line::from(""));
     }
 
+    let question = if reply_focus {
+        "Type a message below; Enter denies this and sends it."
+    } else {
+        "Allow this tool to run?"
+    };
     lines.push(Line::from(Span::styled(
-        "Allow this tool to run?",
+        question,
         Style::default().fg(palette.dim),
     )));
 

@@ -10,17 +10,48 @@ use crate::notify::{NotifyHandle, spawn_need_input_wait};
 /// Boxed, sendable future returned by [`PermissionPrompter::ask`].
 pub type PermissionAskFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
 
+/// Boxed, sendable future returned by [`PermissionPrompter::ask_reply`].
+pub type PermissionReplyFuture<'a> = Pin<Box<dyn Future<Output = PermissionReply> + Send + 'a>>;
+
+/// The answer to one permission ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionReply {
+    Allow,
+    Deny,
+    /// Denied because the user typed a message instead of answering. The
+    /// message reaches the model as a steering message after the results.
+    Replied,
+}
+
+impl PermissionReply {
+    pub fn allowed(self) -> bool {
+        self == Self::Allow
+    }
+}
+
+impl From<bool> for PermissionReply {
+    fn from(allow: bool) -> Self {
+        if allow { Self::Allow } else { Self::Deny }
+    }
+}
+
 /// Asked before running a tool when permission action is `Ask`.
 pub trait PermissionPrompter: Send + Sync {
     /// Return `true` to allow the tool call, `false` to deny.
     fn ask<'a>(&'a self, tool_name: &'a str, detail: &'a str) -> PermissionAskFuture<'a>;
+
+    /// [`ask`](Self::ask) with the reason for a denial. Prompters that only
+    /// answer yes or no keep this default.
+    fn ask_reply<'a>(&'a self, tool_name: &'a str, detail: &'a str) -> PermissionReplyFuture<'a> {
+        Box::pin(async move { PermissionReply::from(self.ask(tool_name, detail).await) })
+    }
 }
 
 /// A pending permission request for the TUI (or other UI) to fulfill.
 pub struct PermissionRequest {
     pub tool_name: String,
     pub detail: String,
-    pub reply: oneshot::Sender<bool>,
+    pub reply: oneshot::Sender<PermissionReply>,
 }
 
 /// Channel-based prompter: blocks the agent until the UI replies.
@@ -43,6 +74,10 @@ impl ChannelPermissionPrompter {
 
 impl PermissionPrompter for ChannelPermissionPrompter {
     fn ask<'a>(&'a self, tool_name: &'a str, detail: &'a str) -> PermissionAskFuture<'a> {
+        Box::pin(async move { self.ask_reply(tool_name, detail).await.allowed() })
+    }
+
+    fn ask_reply<'a>(&'a self, tool_name: &'a str, detail: &'a str) -> PermissionReplyFuture<'a> {
         Box::pin(async move {
             if let Some(cfg) = self.notify.as_deref() {
                 spawn_need_input_wait(cfg, &format!("Permission · `{tool_name}`"), detail);
@@ -57,9 +92,9 @@ impl PermissionPrompter for ChannelPermissionPrompter {
                 })
                 .is_err()
             {
-                return false;
+                return PermissionReply::Deny;
             }
-            reply_rx.await.unwrap_or(false)
+            reply_rx.await.unwrap_or(PermissionReply::Deny)
         })
     }
 }

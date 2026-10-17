@@ -26,8 +26,8 @@ use whycodes_agent::agent::Agent;
 use whycodes_agent::permission::ChannelPermissionPrompter;
 use whycodes_agent::steer::SteerMode;
 use whycodes_agent::{
-    CancelFlag, ChannelQuestionPrompter, QuestionError, QuestionPrompter, QuestionRequest,
-    TurnEvent, TurnOpts, new_cancel_flag, request_cancel,
+    CancelFlag, ChannelQuestionPrompter, PermissionReply, QuestionError, QuestionPrompter,
+    QuestionRequest, TurnEvent, TurnOpts, new_cancel_flag, request_cancel,
 };
 use whycodes_config::Config;
 use whycodes_core::types::{AgentMode, ApprovalMode};
@@ -308,6 +308,9 @@ pub struct TuiRunOptions {
     pub model_from_cli: bool,
     /// CLI `-a` was set; deferred config must not overwrite `agent_name`.
     pub agent_from_cli: bool,
+    /// CLI `--approval-mode`: wins over the deferred config's
+    /// `[general] approval_mode` (and its env overlay) for this run.
+    pub approval_mode_from_cli: Option<ApprovalMode>,
     /// Background GitHub latest-release check. `None` skips the home popup.
     pub update_rx: Option<tokio::sync::mpsc::UnboundedReceiver<UpdateOffer>>,
     /// Event-loop I/O injection. Production callers leave this default (real TTY).
@@ -538,6 +541,9 @@ fn apply_deferred_config(
         .or_else(|_| Config::load_or_create())
         .unwrap_or_default();
     loaded.general.project_path = Some(opts.project_dir.clone());
+    if let Some(mode) = opts.approval_mode_from_cli {
+        loaded.general.approval_mode = Some(mode);
+    }
     if !opts.provider_from_cli
         && let Some(id) = loaded
             .default_model
@@ -2491,10 +2497,14 @@ fn permission_overlay_reply(code: KeyCode) -> Option<bool> {
     }
 }
 
-/// Permission overlay Y/N/A/D/Enter/Esc. Returns true when the event is consumed.
+/// Permission overlay Y/N/A/D/Enter/Esc, and Tab to type a reply instead.
+/// Returns true when the event is consumed.
 fn apply_permission_overlay_event(app: &mut TuiApp, rt: &mut SessionRuntime, ev: &Event) -> bool {
     if !matches!(app.dialogs.active(), Some(DialogKind::Permission { .. })) {
         return false;
+    }
+    if app.permission_reply_focus {
+        return apply_permission_reply_event(app, rt, ev);
     }
     let Event::Key(key) = ev else {
         return false;
@@ -2502,11 +2512,81 @@ fn apply_permission_overlay_event(app: &mut TuiApp, rt: &mut SessionRuntime, ev:
     if key.kind != KeyEventKind::Press {
         return false;
     }
+    if key.code == KeyCode::Tab {
+        app.permission_reply_focus = true;
+        app.focus_prompt();
+        app.mark_dirty();
+        return true;
+    }
     let Some(allow) = permission_overlay_reply(key.code) else {
         return false;
     };
     reply_permission(app, &mut rt.pending_perm_queue, allow);
     true
+}
+
+/// Prompt box focused over the permission prompt. Keys and pastes edit the
+/// draft; Tab / Esc go back to the y/n keys; a plain Enter denies the
+/// pending asks and sends the draft to the running turn. Mouse and resize
+/// events keep their usual path.
+fn apply_permission_reply_event(app: &mut TuiApp, rt: &mut SessionRuntime, ev: &Event) -> bool {
+    match ev {
+        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+            KeyCode::Tab | KeyCode::Esc => {
+                app.permission_reply_focus = false;
+                app.mark_dirty();
+            }
+            KeyCode::Enter if key.modifiers.is_empty() => reply_instead_of_permission(app, rt),
+            _ => type_into_prompt(app, ev),
+        },
+        Event::Key(_) | Event::Paste(_) => type_into_prompt(app, ev),
+        _ => return false,
+    }
+    true
+}
+
+/// Run one event through the normal prompt handler while the permission
+/// prompt stays open, then hand the keys back to the dialog stack.
+fn type_into_prompt(app: &mut TuiApp, ev: &Event) {
+    app.mode = AppMode::Normal;
+    app.key_context = KeymapContext::Normal;
+    let keep_running = input::handle_event(app, ev.clone());
+    app.running &= keep_running;
+    if app.dialogs.is_open() {
+        app.mode = AppMode::Dialog;
+        app.key_context = KeymapContext::Dialog;
+    }
+}
+
+/// Deny every pending ask with "user replied" and queue the draft; the run
+/// loop hands it to the turn, which reads it after the denied results.
+/// An empty draft or a slash command is not a reply.
+fn reply_instead_of_permission(app: &mut TuiApp, rt: &mut SessionRuntime) {
+    let queued = app.pending_turns.len();
+    app.submit_input();
+    if app.pending_turns.len() == queued {
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            "Type a message to send, or Tab back to allow / deny",
+        );
+        app.mark_dirty();
+        return;
+    }
+    let denied = rt.pending_perm_queue.len();
+    while let Some(req) = rt.pending_perm_queue.pop_front() {
+        if req.reply.send(PermissionReply::Replied).is_err() {
+            tracing::debug!(tool = %req.tool_name, "permission waiter already gone");
+        }
+    }
+    app.permission_reply_focus = false;
+    app.dialogs.pop();
+    if !app.dialogs.is_open() {
+        app.mode = AppMode::Normal;
+        app.key_context = KeymapContext::Normal;
+    }
+    app.current_agent_state = AgentState::Generating;
+    app.status_message = format!("Denied {denied} tool call(s) — your message goes to the turn");
+    app.mark_dirty();
 }
 
 /// Question overlay keys (Press and Repeat). Returns true when consumed.
@@ -3039,7 +3119,7 @@ fn begin_cancel(
     }
     while let Some(req) = pending_perm_queue.pop_front() {
         // Deny — tool layer treats false as "user refused".
-        let _ = req.reply.send(false);
+        let _ = req.reply.send(PermissionReply::Deny);
     }
     if cancel_requested_at.is_none() {
         *cancel_requested_at = Some(Instant::now());
@@ -3071,7 +3151,7 @@ fn force_stop_turn(
         let _ = req.reply.send(Err(QuestionError::Cancelled));
     }
     while let Some(req) = rt.pending_perm_queue.pop_front() {
-        let _ = req.reply.send(false);
+        let _ = req.reply.send(PermissionReply::Deny);
     }
 
     if let Some(h) = rt.turn_join.take() {
@@ -3961,7 +4041,7 @@ fn close_session_slot(
     } else if close_idx < runtimes.len() {
         let mut bg = runtimes.remove(close_idx);
         while let Some(req) = bg.pending_perm_queue.pop_front() {
-            let _ = req.reply.send(false);
+            let _ = req.reply.send(PermissionReply::Deny);
         }
         while let Some(req) = bg.pending_question_queue.pop_front() {
             let _ = req.reply.send(Err(QuestionError::Cancelled));
@@ -4062,7 +4142,7 @@ fn reply_permission(
     allow: bool,
 ) {
     if let Some(req) = queue.pop_front() {
-        let _ = req.reply.send(allow);
+        let _ = req.reply.send(allow.into());
     }
     app.dialogs.pop();
     app.mode = AppMode::Normal;
@@ -4496,7 +4576,7 @@ async fn apply_auth_flow_event(
 
 fn shutdown_runtime_queues(rt: &mut SessionRuntime) {
     while let Some(req) = rt.pending_perm_queue.pop_front() {
-        let _ = req.reply.send(false);
+        let _ = req.reply.send(PermissionReply::Deny);
     }
     while let Some(req) = rt.pending_question_queue.pop_front() {
         let _ = req.reply.send(Err(QuestionError::Cancelled));

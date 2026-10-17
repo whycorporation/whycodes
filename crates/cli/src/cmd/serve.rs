@@ -84,6 +84,7 @@ pub(crate) async fn cmd_connect(
         provider_from_cli: true,
         model_from_cli: true,
         agent_from_cli: true,
+        approval_mode_from_cli: None,
         update_rx: None,
         inject: Default::default(),
     })

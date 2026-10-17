@@ -1439,7 +1439,121 @@ async fn read_mcp_url_is_dispatched_in_process() {
     );
 }
 
-/// A serial tool that sends an urgent message the first time it runs.
+struct ReplyPrompter;
+
+impl PermissionPrompter for ReplyPrompter {
+    fn ask<'a>(
+        &'a self,
+        _tool_name: &'a str,
+        _detail: &'a str,
+    ) -> crate::permission::PermissionAskFuture<'a> {
+        Box::pin(async move { false })
+    }
+
+    fn ask_reply<'a>(
+        &'a self,
+        _tool_name: &'a str,
+        _detail: &'a str,
+    ) -> crate::permission::PermissionReplyFuture<'a> {
+        Box::pin(async move { crate::permission::PermissionReply::Replied })
+    }
+}
+
+#[tokio::test]
+async fn typed_reply_denies_with_its_own_stamp_and_is_not_retried() {
+    let mut a = Agent::new(info("build")).with_permission_prompter(Arc::new(ReplyPrompter));
+    a.set_approval_mode(ApprovalMode::Manual);
+    assert!(!ReplyPrompter.ask("bash", "x").await);
+    let (session, ctx) = session_ctx(&a);
+    let result = a
+        .execute_with_permission(
+            &tc("bash", json!({"command": "rm -rf /tmp/scratch"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(result.is_error);
+    assert_eq!(result.content, "denied: user replied for tool 'bash'.");
+    assert!(!tool_error_is_retryable("bash", &result));
+}
+
+#[cfg(windows)]
+fn gate_hang_cmd() -> &'static str {
+    "ping -n 4 127.0.0.1 >NUL"
+}
+
+#[cfg(not(windows))]
+fn gate_hang_cmd() -> &'static str {
+    "sleep 3"
+}
+
+#[tokio::test]
+async fn wait_tool_runs_through_the_gate_and_cancel_interrupts_it() {
+    let a = Agent::new(info("build"));
+    let (session, ctx) = session_ctx(&a);
+    let idle = a
+        .execute_tool_calls(
+            &[tc("wait", json!({"timeout_secs": 5}))],
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            &None,
+            &None,
+            None,
+            &mut Vec::new(),
+        )
+        .await
+        .expect("wait");
+    assert_eq!(idle.len(), 1);
+    assert!(!idle[0].is_error);
+    assert!(idle[0].content.contains("Nothing to wait for"), "{idle:?}");
+
+    a.background
+        .start_shell(
+            gate_hang_cmd(),
+            std::env::temp_dir(),
+            whycodes_core::SandboxSettings::off(),
+            Some("hang".into()),
+        )
+        .expect("start");
+    let cancel = crate::events::new_cancel_flag();
+    let a = Arc::new(a);
+    let handle = {
+        let a = Arc::clone(&a);
+        let cancel = cancel.clone();
+        let session = session.clone();
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            a.execute_tool_calls(
+                &[tc("wait", json!({"timeout_secs": 60}))],
+                &session,
+                &ctx,
+                "script",
+                "m",
+                "k",
+                &None,
+                &Some(cancel),
+                None,
+                &mut Vec::new(),
+            )
+            .await
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert!(!handle.is_finished(), "wait must block while the job runs");
+    crate::events::request_cancel(&cancel);
+    let err = handle.await.expect("join");
+    assert!(err.is_err(), "{err:?}");
+    a.background.kill_all();
+}
+
 struct UrgentOnRun {
     inbox: crate::steer::SteerInbox,
     session_id: String,
@@ -1533,76 +1647,4 @@ async fn urgent_message_skips_the_rest_of_a_sequential_batch() {
     }
     assert_eq!(ended, ["c1", "c2", "c3"]);
     assert!(inbox.has_urgent(&session.id), "the turn loop delivers it");
-}
-
-#[cfg(windows)]
-fn gate_hang_cmd() -> &'static str {
-    "ping -n 4 127.0.0.1 >NUL"
-}
-
-#[cfg(not(windows))]
-fn gate_hang_cmd() -> &'static str {
-    "sleep 3"
-}
-
-#[tokio::test]
-async fn wait_tool_runs_through_the_gate_and_cancel_interrupts_it() {
-    let a = Agent::new(info("build"));
-    let (session, ctx) = session_ctx(&a);
-    let idle = a
-        .execute_tool_calls(
-            &[tc("wait", json!({"timeout_secs": 5}))],
-            &session,
-            &ctx,
-            "script",
-            "m",
-            "k",
-            &None,
-            &None,
-            None,
-            &mut Vec::new(),
-        )
-        .await
-        .expect("wait");
-    assert_eq!(idle.len(), 1);
-    assert!(!idle[0].is_error);
-    assert!(idle[0].content.contains("Nothing to wait for"), "{idle:?}");
-
-    a.background
-        .start_shell(
-            gate_hang_cmd(),
-            std::env::temp_dir(),
-            whycodes_core::SandboxSettings::off(),
-            Some("hang".into()),
-        )
-        .expect("start");
-    let cancel = crate::events::new_cancel_flag();
-    let a = Arc::new(a);
-    let handle = {
-        let a = Arc::clone(&a);
-        let cancel = cancel.clone();
-        let session = session.clone();
-        let ctx = ctx.clone();
-        tokio::spawn(async move {
-            a.execute_tool_calls(
-                &[tc("wait", json!({"timeout_secs": 60}))],
-                &session,
-                &ctx,
-                "script",
-                "m",
-                "k",
-                &None,
-                &Some(cancel),
-                None,
-                &mut Vec::new(),
-            )
-            .await
-        })
-    };
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-    assert!(!handle.is_finished(), "wait must block while the job runs");
-    crate::events::request_cancel(&cancel);
-    let err = handle.await.expect("join");
-    assert!(err.is_err(), "{err:?}");
-    a.background.kill_all();
 }
