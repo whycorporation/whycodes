@@ -165,9 +165,18 @@ production call site uses them (only `session.rs` tests).
 ### 8. Transcript views vs stored session
 
 - **Stored session**: `SessionRuntime::persist` → `Session::save_to_db` does
-  a full replace of the `messages` rows (`crates/session/src/session.rs:1461-1483`,
-  `crates/storage/src/db.rs:287-294`). After any compaction the database holds
+  a full replace of the `messages` rows (`crates/session/src/session.rs:1592-1632`,
+  `Database::replace_transcript` in `crates/storage/src/db.rs`). After any compaction the database holds
   only the compacted list.
+- **Branches** (`/branch`, `/tree`): `Session::messages` is the active path
+  and the only list compaction, spill, prune/shake and undo touch. Other paths
+  live in `Session::branches` as full root-to-leaf copies, saved in the
+  `session_branches` / `branch_messages` tables in the same transaction as
+  `messages` (`Database::replace_transcript`), so a compaction never rewrites
+  them. The tree matches turns by a fingerprint that ignores tool-result
+  bodies, so a spilled or pruned tool output still joins its branch; a path
+  whose prefix was compacted into a summary shows as its own line from the
+  root.
 - **TUI after `/compact`**: `apply_compact_view` reloads the chat from the
   session (`load_messages_from_session`), so scrollback becomes the compacted
   view; carriers are painted as a system card via

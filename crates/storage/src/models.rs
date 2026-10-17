@@ -44,6 +44,14 @@ pub struct MessageRow {
     pub created_at: String,
 }
 
+/// A stored conversation branch: its optional name and every message (the
+/// stored message JSON) from the root to its leaf, in order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchRow {
+    pub name: Option<String>,
+    pub messages: Vec<String>,
+}
+
 /// A row from the state key-value table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateRow {

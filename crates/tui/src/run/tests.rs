@@ -11445,6 +11445,105 @@ fn apply_local_discovery_hides_servers_already_configured() {
     assert_eq!(ids, vec!["vllm", "llamacpp"]);
 }
 
+#[tokio::test]
+async fn branch_and_tree_slash_open_the_picker_on_the_active_leaf() {
+    let mut h = SlashHarness::new();
+    h.run("/tree").await;
+    assert_eq!(h.app.status_message, "No turns yet");
+    h.run("/branch").await;
+    assert!(h.app.status_message.contains("nothing to branch"));
+
+    h.session.add_user_message("one");
+    h.run("/branch keep").await;
+    assert!(
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Branch marked · keep"))
+    );
+    h.session.add_user_message("two");
+    h.run("/tree").await;
+    assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Tree)));
+    assert_eq!(h.app.tree_rows.len(), 2);
+    assert_eq!(h.app.tree_selected, 1);
+    assert!(h.app.tree_rows[1].active_leaf);
+}
+
+#[test]
+fn apply_tree_target_refuses_while_busy_then_switches() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.session.add_user_message("one");
+    rt.session.add_user_message("two");
+    let rows = rt.session.tree_rows();
+    let (one, two) = (rows[0].target, rows[1].target);
+
+    rt.agent_busy = true;
+    apply_tree_target(&mut app, &mut rt, one);
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Can't switch branches"))
+    );
+    assert_eq!(rt.session.messages.len(), 2);
+
+    rt.agent_busy = false;
+    apply_tree_target(&mut app, &mut rt, two);
+    assert_eq!(app.status_message, "Already on that turn");
+
+    apply_tree_target(&mut app, &mut rt, one);
+    assert_eq!(rt.session.messages.len(), 1);
+    assert_eq!(rt.session.branches.len(), 1);
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message == "Switched branch")
+    );
+
+    // A target from a tree that has since changed is refused.
+    rt.session.branches.clear();
+    apply_tree_target(&mut app, &mut rt, two);
+    assert!(
+        app.status_message.starts_with("/tree:"),
+        "{}",
+        app.status_message
+    );
+    assert_eq!(rt.session.messages.len(), 1);
+}
+
+#[tokio::test]
+async fn run_headless_tree_picker_selection_reaches_the_loop() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_llm = std::env::var_os("WHYCODES_TEST_LLM");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_TEST_LLM", "scripted-ok");
+    }
+    let mut events = Vec::new();
+    events.extend(type_line("first turn"));
+    events.extend(type_line("/tree"));
+    events.push(press(KeyCode::Enter));
+    events.extend(type_line(":q"));
+    set_headless_events(Some(events.into()));
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_llm {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_LLM", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
+}
+
 #[test]
 fn saves_from_the_tui_write_only_the_change_to_the_global_file() {
     let (_lock, home) = isolate_home_fresh();

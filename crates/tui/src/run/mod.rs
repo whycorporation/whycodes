@@ -30,8 +30,8 @@ use whycodes_agent::{
 };
 use whycodes_config::Config;
 use whycodes_core::types::{AgentMode, ApprovalMode};
-use whycodes_session::SessionHistory;
 use whycodes_session::session::Session;
+use whycodes_session::{SessionHistory, TreeTarget};
 
 use crate::app::{
     AgentState, AppMode, ChatRole, ConfirmAction, DialogKind, FocusPane, TuiApp, UpdateOffer,
@@ -1955,6 +1955,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             if let Some(name) = app.pending_agent.take() {
                 apply_pending_agent(&mut app, &mut rt, &config, &project_dir, &name).await;
             }
+            if let Some(target) = app.pending_tree_target.take() {
+                apply_tree_target(&mut app, &mut rt, target);
+            }
 
             if app.pending_local_discovery {
                 app.pending_local_discovery = false;
@@ -2882,6 +2885,31 @@ fn defer_or_spawn_catalog(
     }
     *catalog_fetch_pending = false;
     spawn_model_context_fetch(config, provider, model, api_key, catalog_tx);
+}
+
+/// `/tree` selection: refuse while a turn is in flight, otherwise make the
+/// chosen turn the active leaf. Undo history belongs to the old path, so it
+/// starts over.
+fn apply_tree_target(app: &mut TuiApp, rt: &mut SessionRuntime, target: TreeTarget) {
+    if rt.agent_busy {
+        app.toasts.push(
+            crate::toast::ToastKind::Warning,
+            "Can't switch branches while a turn is running",
+        );
+        return;
+    }
+    match rt.session.switch_branch(target) {
+        Ok(true) => {
+            rt.history = SessionHistory::new();
+            app.load_messages_from_session(&rt.session);
+            app.sync_context_estimate(&rt.session);
+            persist_session_best_effort(&rt.session, "branch_switch");
+            app.toasts
+                .push(crate::toast::ToastKind::Success, "Switched branch");
+        }
+        Ok(false) => app.status_message = "Already on that turn".into(),
+        Err(e) => app.status_message = format!("/tree: {e}"),
+    }
 }
 
 /// Agent picker selection: refuse while a turn is in flight, otherwise switch.

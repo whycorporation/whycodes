@@ -84,6 +84,8 @@ pub enum DialogKind {
     ApprovalMode,
     /// Checkbox picker: which MCP / permission / hook rows to copy.
     Import,
+    /// `/tree`: the conversation's user turns as a tree; Enter switches.
+    Tree,
     /// First-launch OpenRouter API-key paste box.
     OpenRouterKey,
 }
@@ -1568,6 +1570,12 @@ pub struct TuiApp {
     pub(crate) approval_mode: ApprovalMode,
     /// Agent switch from the picker dialog (prompt footer click / `/agent`).
     pub(crate) pending_agent: Option<String>,
+    /// `/tree` rows (built from the session when the picker opens).
+    pub(crate) tree_rows: Vec<whycodes_session::TreeRow>,
+    /// Cursor in the `/tree` picker.
+    pub(crate) tree_selected: usize,
+    /// `/tree` choice waiting for the run loop (refused while a turn runs).
+    pub(crate) pending_tree_target: Option<whycodes_session::TreeTarget>,
     /// Cursor in the agent picker (list is `primary_agents`).
     pub(crate) agent_picker_selected: usize,
     /// `/login` picker result: provider id awaiting an OAuth flow spawn.
@@ -2029,6 +2037,14 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Resume the most recent session",
     },
     SlashCommand {
+        name: "/branch",
+        hint: "[name] Mark this point of the conversation as a branch",
+    },
+    SlashCommand {
+        name: "/tree",
+        hint: "Conversation tree: pick a turn to continue from",
+    },
+    SlashCommand {
         name: "/fork",
         hint: "[title] Continue in a copy; the original session stays as is",
     },
@@ -2352,6 +2368,9 @@ impl TuiApp {
             approval_picker_selected: 0,
             approval_mode: ApprovalMode::Auto,
             pending_agent: None,
+            tree_rows: Vec::new(),
+            tree_selected: 0,
+            pending_tree_target: None,
             agent_picker_selected: 0,
             pending_login_provider: None,
             pending_session_id: None,

@@ -578,7 +578,12 @@ pub struct Session {
     /// How `title` was chosen. Gates auto-title so manual renames stick.
     #[serde(default)]
     pub title_source: crate::title::TitleSource,
+    /// The active path: the transcript shown and sent to the model.
     pub messages: Vec<Message>,
+    /// Every other stored path of this conversation (`/branch`, `/tree`).
+    /// Compaction, spill and undo work on `messages` only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub branches: Vec<crate::tree::Branch>,
     pub system_prompt: String,
     pub project_path: PathBuf,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -726,6 +731,7 @@ impl Session {
             title,
             title_source: crate::title::TitleSource::Default,
             messages: Vec::new(),
+            branches: Vec::new(),
             system_prompt,
             project_path,
             created_at: now,
@@ -1593,7 +1599,8 @@ impl Session {
             &self.usage,
         )?;
 
-        // Full replace in one transaction (honest counts; no half-written rows).
+        // Full replace in one transaction (honest counts; no half-written
+        // rows): the active path and every stored branch commit together.
         let mut rows = Vec::with_capacity(self.messages.len());
         for msg in &self.messages {
             let msg_json = serde_json::to_string(msg)?;
@@ -1611,7 +1618,15 @@ impl Session {
                 created,
             ));
         }
-        db.replace_messages(&self.id, &rows)?;
+        let mut branches = Vec::with_capacity(self.branches.len());
+        for b in &self.branches {
+            let mut msgs = Vec::with_capacity(b.messages.len());
+            for msg in &b.messages {
+                msgs.push(serde_json::to_string(msg)?);
+            }
+            branches.push((b.name.clone(), msgs));
+        }
+        db.replace_transcript(&self.id, &rows, &branches)?;
 
         Ok(())
     }
@@ -1640,6 +1655,18 @@ impl Session {
                 Ok::<_, crate::error::SessionError>(msg)
             })
             .collect::<Result<_>>()?;
+        // A session saved before branches existed has none: one linear path.
+        let mut branches = Vec::new();
+        for b in db.get_branches(id)? {
+            let mut msgs = Vec::with_capacity(b.messages.len());
+            for json in &b.messages {
+                msgs.push(serde_json::from_str(json)?);
+            }
+            branches.push(crate::tree::Branch {
+                name: b.name,
+                messages: msgs,
+            });
+        }
 
         let project_path = std::path::PathBuf::from(row.project_path);
         let title_source = crate::title::infer_source_from_title(&row.title, &project_path);
@@ -1650,6 +1677,7 @@ impl Session {
             title: row.title,
             title_source,
             messages,
+            branches,
             system_prompt: String::new(), // system_prompt is not yet persisted
             project_path,
             created_at,
