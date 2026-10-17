@@ -552,3 +552,49 @@ async fn outline_tags_resolve_with_edit() {
     assert!(text.contains("pub fn renamed_42(&self) -> u32 {"));
     assert!(!text.contains("pub fn method_42("));
 }
+
+#[tokio::test]
+async fn execute_renders_a_notebook_as_cells() {
+    let dir = TempDir::new().unwrap();
+    write(
+        &dir,
+        "n.ipynb",
+        r##"{"cells": [{"cell_type": "markdown", "source": ["# T\n", "x"]}, {"cell_type": "code", "source": ["y = 1"], "outputs": [{"output_type": "stream"}]}]}"##,
+    );
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let tool = ReadTool::new();
+    let read = |args| tool.execute(args, &ctx);
+    let result = read(serde_json::json!({"path": "n.ipynb"})).await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("(notebook: cells as text"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains("# lines 1–7 of 7"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains("|# %% [code] cell:2"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains("|# out: 1 output (stream)"),
+        "{}",
+        result.content
+    );
+    let result = read(serde_json::json!({"path": "n.ipynb", "offset": 2, "limit": 2})).await;
+    assert!(
+        result.content.contains("# lines 2–3 of 7"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Re-call with offset=4"),
+        "{}",
+        result.content
+    );
+}

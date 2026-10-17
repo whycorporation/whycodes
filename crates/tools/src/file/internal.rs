@@ -168,13 +168,21 @@ fn tool_guide(name: &str) -> Option<&'static str> {
              - `issue://<number>` — an issue of the same remote; `issue://` lists the open ones.\n\
              GitHub reads use the same token discovery and network allowlist as `github_pr`.\n\
              - `mcp://<server>/<uri>` — an MCP resource; `mcp://<server>` lists that server's\n\
-             resources, `mcp://` the connected servers."
+             resources, `mcp://` the connected servers.\n\n\
+             A `.ipynb` reads as its cells: `# %% [code] cell:N` before each source,\n\
+             outputs summarized in one `# out:` line. `edit` / `write` take that text."
         }
         "edit" => {
             "Make targeted edits. Prefer `from`/`to`/`insert_after` tags from `read`/`grep`.\n\
-             `old_string` is the fallback: exact match, then unique whitespace-tolerant match."
+             `old_string` is the fallback: exact match, then unique whitespace-tolerant match.\n\
+             A `.ipynb` is edited as `read` shows it. A changed code cell loses its outputs;\n\
+             a `# %% [code] cell:new` marker adds a cell, removing a block deletes one."
         }
-        "write" => "Write content to a file, creating it if it doesn't exist.",
+        "write" => {
+            "Write content to a file, creating it if it doesn't exist.\n\
+             For a `.ipynb`, cell-marker text (as `read` shows it) becomes notebook JSON;\n\
+             raw JSON is written as given."
+        }
         "grep" => {
             "Search file contents with regex (in-process). Respects .gitignore;\n\
              skips binaries and heavy dirs. Hits are `path:line tag:text`."

@@ -42,6 +42,9 @@ GitHub reads use the same token discovery and network allowlist as `github_pr`.
 - `mcp://<server>/<uri>` — an MCP resource; `mcp://<server>` lists that server's
 resources, `mcp://` the connected servers.
 
+A `.ipynb` reads as its cells: `# %% [code] cell:N` before each source,
+outputs summarized in one `# out:` line. `edit` / `write` take that text.
+
 ## Related
 
 - [User guide: Tools](../guide.md#tools)

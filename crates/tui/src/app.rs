@@ -417,6 +417,9 @@ pub enum ConfirmAction {
     /// User accepted the home-screen / `/import` settings confirm. The run
     /// loop copies MCP, permissions, and hooks from other agents.
     ImportSettings,
+    /// User accepted `/terminal-setup`: the run loop appends the missing
+    /// settings to `~/.tmux.conf` (after a `.bak` copy).
+    TerminalSetup,
 }
 
 /// One checkbox row in the import picker (MCP / permission / hook).
@@ -667,6 +670,11 @@ pub struct ProviderDialogState {
     pub selected: usize,
     /// Provider names loaded from config.
     pub providers: Vec<String>,
+    /// Local servers found on loopback after the dialog opened; listed
+    /// after `providers`, before "Add Custom".
+    pub local_servers: Vec<whycodes_llm::LocalServer>,
+    /// True while the loopback probe spawned on open is still running.
+    pub discovering: bool,
     // ── Add-custom form fields ──
     pub form_name: String,
     pub form_api_key: String,
@@ -693,6 +701,8 @@ impl Default for ProviderDialogState {
             mode: ProviderDialogMode::Select,
             selected: 0,
             providers: vec![],
+            local_servers: Vec::new(),
+            discovering: false,
             form_name: String::new(),
             form_api_key: String::new(),
             form_base_url: String::new(),
@@ -1585,6 +1595,10 @@ pub struct TuiApp {
     pub(crate) import_prompted: bool,
     /// User accepted Import settings — run loop merges MCP / permission / hooks.
     pub(crate) pending_import: bool,
+    /// User accepted the `/terminal-setup` tmux edit.
+    pub(crate) pending_terminal_setup: bool,
+    /// The startup probe enabled the kitty keyboard protocol.
+    pub(crate) keyboard_enhanced: bool,
     /// Checkbox picker for which MCP / permission / hook rows to copy.
     pub(crate) import_picker: ImportPickerState,
     /// Draft in the first-launch OpenRouter API-key modal.
@@ -1593,6 +1607,11 @@ pub struct TuiApp {
     pub(crate) openrouter_key_prompted: bool,
     /// Confirmed OpenRouter key waiting for the run loop to persist + `/connect`.
     pub(crate) pending_openrouter_key: Option<String>,
+    /// Provider dialog opened: the run loop probes loopback once (never at startup).
+    pub(crate) pending_local_discovery: bool,
+    /// Discovered local server picked in the provider dialog; the run loop
+    /// saves it as a provider and switches to it.
+    pub(crate) pending_local_server: Option<whycodes_llm::LocalServer>,
 
     /// Primary agent names for Ctrl+T cycling (build/plan).
     pub(crate) primary_agents: Vec<String>,
@@ -2038,6 +2057,14 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Environment / config diagnostics",
     },
     SlashCommand {
+        name: "/terminal-setup",
+        hint: "What this terminal can deliver; offer the tmux fix",
+    },
+    SlashCommand {
+        name: "/keys",
+        hint: "Active key bindings and conflicts",
+    },
+    SlashCommand {
         name: "/diff",
         hint: "Git status + diff --stat for the project",
     },
@@ -2337,10 +2364,14 @@ impl TuiApp {
             pending_upgrade: false,
             import_prompted: false,
             pending_import: false,
+            pending_terminal_setup: false,
+            keyboard_enhanced: false,
             import_picker: ImportPickerState::default(),
             openrouter_key_input: String::new(),
             openrouter_key_prompted: false,
             pending_openrouter_key: None,
+            pending_local_discovery: false,
+            pending_local_server: None,
             primary_agents: vec!["build".into(), "plan".into(), "ask".into()],
             agent_cycle_idx: 0,
             provider_name: String::new(),

@@ -163,14 +163,22 @@ impl ReadTool {
         }
 
         let size = file_len(&full_path).unwrap_or(0);
-        note_large_default_window(size, offset, limit);
-        let stale_writer = ctx
+        let stale = ctx
             .check_file_read(&full_path)
             .map(|s| s.writer_label.clone());
+        match super::notebook::Notebook::read(&full_path) {
+            Some(nb) => {
+                let window = text_window(&nb.rendering, offset, limit);
+                let header = format!("{shown} (notebook: cells as text, outputs summarized)");
+                return window_from(Ok(window), &header, size, limit, stale);
+            }
+            None => note_text_read(),
+        }
+        note_large_default_window(size, offset, limit);
 
         match outline_read(&full_path, &shown, size, mode) {
             Some(mut outline) => {
-                note_stale(&mut outline, &shown, stale_writer.as_deref());
+                note_stale(&mut outline, &shown, stale.as_deref());
                 return ok(&outline);
             }
             None => note_paged_text(),
@@ -181,7 +189,7 @@ impl ReadTool {
             &shown,
             size,
             limit,
-            stale_writer,
+            stale,
         )
     }
 }
@@ -275,6 +283,26 @@ fn read_window(path: &Path, offset: usize, limit: usize) -> std::io::Result<Read
         total_known,
         truncated: more || (total_known && end_line < total_lines),
     })
+}
+
+/// The `offset`/`limit` window of an in-memory text (a notebook rendering).
+fn text_window(text: &str, offset: usize, limit: usize) -> ReadWindow {
+    let all: Vec<&str> = text.lines().collect();
+    let lines: Vec<String> = all
+        .iter()
+        .skip(offset - 1)
+        .take(limit)
+        .map(|line| line.to_string())
+        .collect();
+    let end_line = offset - 1 + lines.len();
+    ReadWindow {
+        start_line: offset,
+        end_line,
+        total_lines: all.len(),
+        total_known: true,
+        truncated: end_line < all.len(),
+        lines,
+    }
 }
 
 fn truncate_line(line: &str, max_chars: usize) -> String {

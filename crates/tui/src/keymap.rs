@@ -202,6 +202,22 @@ const ACTION_NAMES: &[(&str, Action)] = &[
     ("paste_clipboard", Action::PasteClipboard),
 ];
 
+/// Config name for `action` (`toggle_sidebar`); actions with no config name
+/// fall back to their snake-cased variant name.
+pub fn action_name(action: Action) -> String {
+    if let Some((name, _)) = ACTION_NAMES.iter().find(|(_, a)| *a == action) {
+        return (*name).to_string();
+    }
+    let mut out = String::new();
+    for (i, c) in format!("{action:?}").chars().enumerate() {
+        if c.is_ascii_uppercase() && i > 0 {
+            out.push('_');
+        }
+        out.push(c.to_ascii_lowercase());
+    }
+    out
+}
+
 /// Bindable action for a config name (`"none"` is handled by the caller).
 pub fn action_from_name(name: &str) -> Option<Action> {
     let name = name.trim().to_ascii_lowercase().replace('-', "_");
@@ -245,6 +261,48 @@ impl Chord {
 
     fn from_event(key: &KeyEvent) -> Self {
         Self::new(key.code, key.modifiers)
+    }
+
+    pub fn code(&self) -> KeyCode {
+        self.code
+    }
+
+    pub fn mods(&self) -> KeyModifiers {
+        self.mods
+    }
+
+    /// The key event a terminal sends for this chord (capitals for Shift+letter).
+    pub fn to_event(self) -> KeyEvent {
+        let code = match self.code {
+            KeyCode::Char(c) if self.mods.contains(KeyModifiers::SHIFT) => {
+                KeyCode::Char(c.to_ascii_uppercase())
+            }
+            other => other,
+        };
+        KeyEvent::new(code, self.mods)
+    }
+
+    /// Config spelling: `ctrl+shift+t`, `alt+enter`, `pageup`, `f2`.
+    pub fn label(&self) -> String {
+        let mut out = String::new();
+        for (flag, name) in [
+            (KeyModifiers::CONTROL, "ctrl+"),
+            (KeyModifiers::ALT, "alt+"),
+            (KeyModifiers::SHIFT, "shift+"),
+        ] {
+            if self.mods.contains(flag) {
+                out.push_str(name);
+            }
+        }
+        match self.code {
+            KeyCode::Char(' ') => out.push_str("space"),
+            KeyCode::Char(c) => out.push(c),
+            KeyCode::F(n) => out.push_str(&format!("f{n}")),
+            KeyCode::PageUp => out.push_str("pageup"),
+            KeyCode::PageDown => out.push_str("pagedown"),
+            other => out.push_str(&format!("{other:?}").to_ascii_lowercase()),
+        }
+        out
     }
 
     /// Parse `ctrl+k`, `ctrl-shift-g`, `alt+enter`, `f2`, `G`, `ctrl++`.
