@@ -38,6 +38,17 @@ whether it exists, the data dir, and the `WHYCODES_*` variables it saw.
 `whycodes config show` / `get <key>` / `set <key> <value>` read and write
 the global file only (no project or environment layer).
 
+**WhyCodes writes only the keys you change, to the global file.** Saving a
+setting from a running session (the first-launch OpenRouter key modal,
+picking a discovered local server, `/mode`, the reasoning-effort picker,
+`/import`, `config set`, `provider add|remove|discover --save`,
+`model default`, `mcp add|remove`) re-reads the global `config.toml` as
+written, applies that one change and writes it back. Values that came from
+the project file, environment variables (`WHYCODES_*`, `<PROVIDER>_API_KEY`
+and the other key variables) or command-line flags stay in memory for the
+run and never land in the global file; `${VAR}` placeholders in `[notify]`
+stay unexpanded on disk.
+
 ## Layers
 
 Lowest to highest precedence, from `Config::load_layered`:
@@ -128,6 +139,7 @@ such table at the top level. `model_id` and `provider_id` are required.
 | `tool_profile` | `"core"` | — | Tools advertised to the model: `core` (about 12 tools, faster first token) or `full` (every built-in including github, web, lsp, browser, panel, checkpoint). |
 | `prompt_cache` | `"auto"` | — | Prompt-cache policy for providers that support cached prefixes: `auto` or `none`. |
 | `cache_warm_minutes` | `0` | — | Keep the prompt cache warm for this many idle minutes after a turn (TUI and daemon). Each keep-alive is a paid request; `0` turns it off. |
+| `undo_depth` | `50` | `WHYCODES_UNDO_DEPTH` | Turns `/undo` can step back in the TUI and `--plain` REPL. Past the cap the oldest entries drop first and `/undo` reports "Nothing older to undo (undo_depth = N)". `0` = unlimited. Snapshots share one copy of the transcript, so each entry costs a length marker plus a git stash ref; a compaction keeps the pre-compaction copy alive until no entry needs it. |
 | `model_fast` | — | — | Fast model for trivial chat and `/goal` checks (`provider/model` or bare id). Unset auto-picks the small sibling of the session model. |
 | `model_smol` | — | — | Cheap model for `task` / `swarm` workers. Unset auto-picks the small sibling. |
 | `model_plan` | — | — | Model used while the `plan` agent is active. Unset keeps the session model. |
