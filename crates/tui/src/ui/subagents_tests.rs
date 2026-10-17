@@ -305,17 +305,17 @@ fn render_frame_paints_open_subagent_and_skips_missing() {
     let backend = TestBackend::new(60, 12);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
-        .draw(|f| render_frame(f, f.area(), &app, &palette))
+        .draw(|f| render_frame(f, f.area(), &mut app, &palette))
         .unwrap();
     app.upsert_subagent(running("kid", "explore", "look"));
     app.open_subagent = Some("missing".into());
     terminal
-        .draw(|f| render_frame(f, f.area(), &app, &palette))
+        .draw(|f| render_frame(f, f.area(), &mut app, &palette))
         .unwrap();
     app.open_subagent = Some("kid".into());
     app.subagents[0].output = "child output".into();
     terminal
-        .draw(|f| render_frame(f, f.area(), &app, &palette))
+        .draw(|f| render_frame(f, f.area(), &mut app, &palette))
         .unwrap();
     let text: String = terminal
         .backend()

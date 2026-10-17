@@ -867,6 +867,7 @@ fn turn_event_to_ci_maps_all_variants() {
         activity: "Thinking".into(),
         elapsed_ms: 0,
         output: String::new(),
+        tokens: 0,
     });
     assert_eq!(
         child,

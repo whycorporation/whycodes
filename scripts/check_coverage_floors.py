@@ -62,9 +62,15 @@ WORKSPACE_FLOOR = float(os.environ.get("FAIL_UNDER", "98.5"))
 # Floors as (crate, min_percent). `whycodes-tui` and `whycodes-cli` are
 # ratchets at their measured level (2026-10-10: tui 96.7%, cli 95.6%), not
 # 100%: the rest is live TTY / OAuth / download paths. Raise, never lower.
+# `whycodes-shell` is glue over third-party utilities, run in child processes
+# by its e2e harness; the misses are error paths of those utilities (locale
+# load, stdout flush, `chdir` failure) that no test can provoke. Measured
+# 2026-10-17 at 97.5% on Windows; its `cfg(windows)` parts differ on the
+# Linux runner, so the floor starts at 95.0 until CI has measured it there.
 FLOORS: list[tuple[str, float]] = [(c, 100.0) for c in FULL_COVER_CRATES] + [
     ("whycodes-tui", 96.5),
     ("whycodes-cli", 95.5),
+    ("whycodes-shell", 95.0),
 ]
 
 

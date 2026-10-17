@@ -163,6 +163,34 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 info.modal,
             );
         }
+        crate::app::DialogKind::Agents => {
+            let items: Vec<SelectItem> = crate::agent_hub::rows(app)
+                .into_iter()
+                .map(|row| {
+                    let (label, detail) = crate::agent_hub::row_text(row);
+                    SelectItem::with_detail(label, detail)
+                })
+                .collect();
+            let selected = app.agents_cursor.min(items.len().saturating_sub(1));
+            let info = render_select(
+                frame,
+                crate::agent_hub::title(app),
+                &items,
+                selected,
+                "No workers yet — task and swarm workers show up here.",
+                palette,
+                mouse,
+            );
+            app.apply_select_paint(
+                info.close_hit,
+                info.list_area,
+                info.scrollbar_hit,
+                info.scroll_start,
+                info.visible,
+                info.total,
+                info.modal,
+            );
+        }
         crate::app::DialogKind::Sessions => {
             let items: Vec<SelectItem> = app
                 .sessions_rows

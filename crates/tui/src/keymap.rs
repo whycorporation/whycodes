@@ -47,6 +47,8 @@ pub enum Action {
     ToggleTasksPane,
     /// Open the framed child transcript (Enter on a subagent row).
     OpenSubagent,
+    /// Alt+A — agent hub: list, view, message, cancel, re-run workers.
+    OpenAgentHub,
     OpenProviderDialog,
     OpenModelDialog,
     DialogConfirm,
@@ -173,6 +175,7 @@ const ACTION_NAMES: &[(&str, Action)] = &[
     ("sidebar_tab_5", Action::SidebarTab5),
     ("sidebar_tab_6", Action::SidebarTab6),
     ("toggle_tasks", Action::ToggleTasksPane),
+    ("agent_hub", Action::OpenAgentHub),
     ("provider_dialog", Action::OpenProviderDialog),
     ("model_dialog", Action::OpenModelDialog),
     ("input_home", Action::InputHome),
@@ -454,6 +457,7 @@ impl Keymap {
                     (false, KeyCode::Esc) => return Some(Action::EscapeMode),
                     (true, KeyCode::Char('b')) => return Some(Action::ToggleSidebar),
                     (true, KeyCode::Char('g')) => return Some(Action::ToggleTasksPane),
+                    (false, KeyCode::Char('a')) if alt => return Some(Action::OpenAgentHub),
                     // Ctrl+. / Ctrl+, cycle tabs from either focus (prompt still
                     // types bare `.` / `,`). Avoid Ctrl+[ (CSI/Esc) and Ctrl+Tab
                     // (MRU session switch in the run loop).
@@ -705,6 +709,7 @@ fn normal_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("Ctrl+M", "Model selection", KeymapContext::Normal),
         KeyBinding::new("Ctrl+B", "Toggle sidebar", KeymapContext::Normal),
         KeyBinding::new("Ctrl+G", "Toggle tasks panel", KeymapContext::Normal),
+        KeyBinding::new("Alt+A", "Agent hub (workers)", KeymapContext::Normal),
         KeyBinding::new(
             "Ctrl+. / Ctrl+,",
             "Sidebar next / prev tab",

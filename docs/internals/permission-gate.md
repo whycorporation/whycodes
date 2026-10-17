@@ -140,7 +140,18 @@ user already approved this call with the command or path in hand, so later
      (`crates/sandbox/src/bwrap.rs`). Without `bwrap` (or on other OSes)
      `SandboxFallback::Allow` runs on the host with a one-time warning in
      the output; `Deny` fails the call with `Sandbox error: …`
-     (`crates/sandbox/src/policy.rs`). `Agent::tool_context` also forces
+     (`crates/sandbox/src/policy.rs`). The host shell on Windows
+     (`resolve_windows_host_shell`, `crates/sandbox/src/host.rs`) is
+     `WHYCODES_SHELL`, then Git Bash, then the embedded shell, then
+     `cmd.exe /C`. The embedded shell is the running binary as a child
+     process (`<current_exe> __shell -c <command>`, `crates/shell`),
+     registered by `whycodes-cli`'s `main` through
+     `whycodes_sandbox::set_embedded_shell` before anything else runs; its
+     bundled utilities run in further children
+     (`<current_exe> __shell/<name>`), never in the agent process, so a
+     utility panic ends only that child and the timeout and output caps
+     apply exactly as for Git Bash. The risk classifier sees the same
+     bash syntax either way. `Agent::tool_context` also forces
      `sandbox.network = false` when the agent's `permission.allow_network`
      is false.
    - File writers (`write`, `edit`, `apply_patch`) call
@@ -337,7 +348,8 @@ custom agents: `CustomAgent::permission`).
   several `Ask` dialogs can be queued at once (the TUI queue is a `VecDeque`).
 - Sandboxing is Linux + `bwrap` only; with the default `sandbox_fallback =
   "allow"` every other host runs commands on the host shell with a one-time
-  warning. Selected `$HOME` subpaths stay writable inside the sandbox. It is
+  warning. On Windows a timeout kills the shell process only (Git Bash or
+  the embedded shell), not the programs it started. Selected `$HOME` subpaths stay writable inside the sandbox. It is
   not a multi-tenant boundary.
 - The HTTP domain policy applies to `webfetch`, `websearch`, GitHub tools
   (verified) — not to the shell, `browser`, or MCP tools (MCP not verified).

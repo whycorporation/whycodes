@@ -22,6 +22,7 @@ members = [
     "crates/plugin",
     "crates/command-risk",
     "crates/sandbox",
+    "crates/shell",
     "crates/memory",
     "crates/index",
     "crates/import",

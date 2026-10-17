@@ -156,6 +156,8 @@ pub struct SessionRuntime {
     /// Turns handed to the running turn, in order, so the ones it never read
     /// can be queued again exactly as typed (images included).
     pub(crate) steered: VecDeque<PendingTurn>,
+    /// Cancel registry of the agent running the current turn (agent hub `k`).
+    pub(crate) worker_cancels: whycodes_agent::worker_cancel::WorkerCancels,
     /// Live turn task — aborted on force-stop so a hung LLM/tool cannot pin UI.
     pub(crate) turn_join: Option<JoinHandle<()>>,
     /// Session clone taken just before the turn task starts (after user msg).
@@ -227,6 +229,7 @@ impl SessionRuntime {
         let goal = crate::goal::restore(db.as_ref(), &session);
         let (goal_tx, goal_rx) = mpsc::unbounded_channel();
         let steer = agent.steer_inbox();
+        let worker_cancels = agent.worker_cancels();
         Self {
             agent,
             session,
@@ -239,6 +242,7 @@ impl SessionRuntime {
             steer,
             steer_session: String::new(),
             steered: VecDeque::new(),
+            worker_cancels,
             turn_join: None,
             session_backup: None,
             pending_compact: None,
