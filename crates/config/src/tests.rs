@@ -747,6 +747,7 @@ fn merge_with_session_and_tui_fields() {
     overlay.session.tool_profile = "full".into();
     overlay.session.prompt_cache = "none".into();
     overlay.session.cache_warm_minutes = 30;
+    overlay.session.undo_depth = 0;
     overlay.session.compaction_llm = "off".into();
     overlay.session.model_fast = Some("flash".into());
     overlay.session.model_smol = Some("haiku".into());
@@ -779,6 +780,10 @@ fn merge_with_session_and_tui_fields() {
     assert_eq!(merged.session.tool_profile, "full");
     assert_eq!(merged.session.prompt_cache, "none");
     assert_eq!(merged.session.cache_warm_minutes, 30);
+    assert_eq!(
+        merged.session.undo_depth, 0,
+        "0 (unlimited) overrides the default"
+    );
     assert_eq!(merged.session.compaction_llm, "off");
     assert_eq!(merged.session.model_fast.as_deref(), Some("flash"));
     assert_eq!(merged.session.model_smol.as_deref(), Some("haiku"));
@@ -1402,11 +1407,13 @@ fn apply_env_overrides_provider_and_model() {
         "WHYCODES_PROVIDER",
         "WHYCODES_MODEL",
         "WHYCODES_MAX_TURNS",
+        "WHYCODES_UNDO_DEPTH",
         "WHYCODES_LOG_LEVEL",
         "WHYCODES_PROJECT_DIR",
     ];
     let prev = clear_env(&names);
     unsafe {
+        std::env::set_var("WHYCODES_UNDO_DEPTH", "7");
         std::env::set_var("WHYCODES_PROVIDER", "acme");
         std::env::set_var("WHYCODES_MODEL", "acme-sonnet");
         std::env::set_var("WHYCODES_MAX_TURNS", "42");
@@ -1423,6 +1430,7 @@ fn apply_env_overrides_provider_and_model() {
     assert_eq!(dm.model_id, "acme-sonnet");
     assert_eq!(dm.provider_id, "acme");
     assert_eq!(cfg.session.max_context_tokens, 42);
+    assert_eq!(cfg.session.undo_depth, 7);
     assert_eq!(cfg.general.log_level.as_deref(), Some("debug"));
     assert_eq!(
         cfg.general.project_path.as_deref(),
