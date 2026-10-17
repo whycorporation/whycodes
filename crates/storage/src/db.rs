@@ -1,6 +1,7 @@
 use crate::migrations::run_migrations;
 use crate::models::{
-    CodeChunkRow, MemoryRow, MessageRow, SessionChunkRow, SessionRow, SessionTextHit, UsageTotals,
+    BranchRow, CodeChunkRow, MemoryRow, MessageRow, SessionChunkRow, SessionRow, SessionTextHit,
+    UsageTotals,
 };
 use rusqlite::Connection;
 use whycodes_core::types::Usage;
@@ -20,6 +21,10 @@ pub type MessageInsert = (
     Option<String>,
     String,
 );
+
+/// One stored branch accepted by [`Database::replace_transcript`]: its
+/// optional name and every message JSON from the root to its leaf.
+pub type BranchInsert = (Option<String>, Vec<String>);
 
 /// How long to wait for another process to release a database lock before
 /// giving up. Without this SQLite returns SQLITE_BUSY immediately, so two
@@ -249,6 +254,7 @@ impl Database {
             "DELETE FROM messages WHERE session_id = ?1",
             rusqlite::params![id],
         )?;
+        delete_branches(&self.conn, id)?;
         self.conn
             .execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
@@ -290,27 +296,67 @@ impl Database {
         messages: &[MessageInsert],
     ) -> crate::error::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "DELETE FROM messages WHERE session_id = ?1",
-            rusqlite::params![session_id],
-        )?;
-        for (msg_id, role, content, tool_call_id, name, created_at) in messages {
+        write_messages(&tx, session_id, messages)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Replace the active path and every stored branch of a session in one
+    /// transaction, so a crash mid-save never leaves a switched-away path
+    /// unsaved: the old rows stay until the new ones commit.
+    pub fn replace_transcript(
+        &self,
+        session_id: &str,
+        messages: &[MessageInsert],
+        branches: &[BranchInsert],
+    ) -> crate::error::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        write_messages(&tx, session_id, messages)?;
+        delete_branches(&tx, session_id)?;
+        for (ord, (name, rows)) in branches.iter().enumerate() {
+            let ord = ord as i64;
             tx.execute(
-                "INSERT INTO messages (id, session_id, role, content, tool_call_id, name, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![
-                    msg_id,
-                    session_id,
-                    role,
-                    content,
-                    tool_call_id,
-                    name,
-                    created_at
-                ],
+                "INSERT INTO session_branches (session_id, ord, name) VALUES (?1, ?2, ?3)",
+                rusqlite::params![session_id, ord, name],
             )?;
+            for (seq, content) in rows.iter().enumerate() {
+                let seq = seq as i64;
+                tx.execute(
+                    "INSERT INTO branch_messages (session_id, ord, seq, content) \
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![session_id, ord, seq, content],
+                )?;
+            }
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Stored branches of a session in save order. A session saved before
+    /// branches existed has none. Message rows whose branch header is missing
+    /// still come back, as an unnamed branch, rather than being dropped.
+    pub fn get_branches(&self, session_id: &str) -> crate::error::Result<Vec<BranchRow>> {
+        let mut branches = std::collections::BTreeMap::new();
+        let mut heads = self
+            .conn
+            .prepare("SELECT ord, name FROM session_branches WHERE session_id = ?1")?;
+        for head in heads.query_map(rusqlite::params![session_id], map_branch_head)? {
+            let (ord, name) = head?;
+            let row = BranchRow {
+                name,
+                messages: Vec::new(),
+            };
+            branches.insert(ord, row);
+        }
+        let mut rows = self.conn.prepare(
+            "SELECT ord, content FROM branch_messages WHERE session_id = ?1 ORDER BY ord, seq",
+        )?;
+        for row in rows.query_map(rusqlite::params![session_id], map_branch_message)? {
+            let (ord, content) = row?;
+            let branch: &mut BranchRow = branches.entry(ord).or_default();
+            branch.messages.push(content);
+        }
+        Ok(branches.into_values().collect())
     }
 
     /// Message counts for every session in one query (session picker).
@@ -763,6 +809,55 @@ fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
     })
 }
 
+/// Delete every stored branch of a session (headers and messages).
+fn delete_branches(conn: &Connection, session_id: &str) -> crate::error::Result<()> {
+    conn.execute(
+        "DELETE FROM branch_messages WHERE session_id = ?1",
+        rusqlite::params![session_id],
+    )?;
+    conn.execute(
+        "DELETE FROM session_branches WHERE session_id = ?1",
+        rusqlite::params![session_id],
+    )?;
+    Ok(())
+}
+
+/// Replace the active-path rows of a session inside `tx`.
+fn write_messages(
+    tx: &rusqlite::Transaction<'_>,
+    session_id: &str,
+    messages: &[MessageInsert],
+) -> crate::error::Result<()> {
+    tx.execute(
+        "DELETE FROM messages WHERE session_id = ?1",
+        rusqlite::params![session_id],
+    )?;
+    for (msg_id, role, content, tool_call_id, name, created_at) in messages {
+        tx.execute(
+            "INSERT INTO messages (id, session_id, role, content, tool_call_id, name, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                msg_id,
+                session_id,
+                role,
+                content,
+                tool_call_id,
+                name,
+                created_at
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn map_branch_head(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Option<String>)> {
+    Ok((row.get(0)?, row.get(1)?))
+}
+
+fn map_branch_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, String)> {
+    Ok((row.get(0)?, row.get(1)?))
+}
+
 fn map_session_message_count(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, usize)> {
     let id: String = row.get(0)?;
     let n: i64 = row.get(1)?;
@@ -1195,6 +1290,182 @@ mod tests {
             ],
         );
         assert!(err.is_err());
+    }
+
+    fn row(id: &str, content: &str) -> MessageInsert {
+        let created = "2020-01-01T00:00:00+00:00".to_string();
+        (
+            id.into(),
+            "user".into(),
+            content.into(),
+            None,
+            None,
+            created,
+        )
+    }
+
+    fn branch(name: Option<&str>, msgs: &[&str]) -> BranchInsert {
+        (
+            name.map(str::to_string),
+            msgs.iter().map(|m| m.to_string()).collect(),
+        )
+    }
+
+    #[test]
+    fn replace_transcript_round_trips_branches_in_order() {
+        let db = test_db();
+        db.create_session("s1", "Test", "/tmp").unwrap();
+        db.create_session("s2", "Other", "/tmp").unwrap();
+        db.replace_transcript(
+            "s1",
+            &[row("m1", "a"), row("m2", "b")],
+            &[
+                branch(Some("try"), &["a", "x"]),
+                branch(None, &["a", "y", "z"]),
+            ],
+        )
+        .unwrap();
+        db.replace_transcript("s2", &[row("o1", "q")], &[branch(None, &["q", "r"])])
+            .unwrap();
+
+        assert_eq!(db.get_messages("s1").unwrap().len(), 2);
+        let branches = db.get_branches("s1").unwrap();
+        assert_eq!(
+            branches,
+            vec![
+                BranchRow {
+                    name: Some("try".into()),
+                    messages: vec!["a".into(), "x".into()],
+                },
+                BranchRow {
+                    name: None,
+                    messages: vec!["a".into(), "y".into(), "z".into()],
+                },
+            ]
+        );
+
+        // A later save replaces the set; other sessions keep theirs.
+        db.replace_transcript("s1", &[row("m1", "a")], &[branch(None, &["b"])])
+            .unwrap();
+        assert_eq!(db.get_branches("s1").unwrap().len(), 1);
+        assert_eq!(db.get_branches("s2").unwrap().len(), 1);
+        // The plain message replace leaves stored branches alone.
+        db.replace_messages("s1", &[row("m9", "c")]).unwrap();
+        assert_eq!(db.get_branches("s1").unwrap().len(), 1);
+
+        db.delete_session("s1").unwrap();
+        assert!(db.get_branches("s1").unwrap().is_empty());
+        assert_eq!(db.get_branches("s2").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn get_branches_keeps_message_rows_without_a_header() {
+        let db = test_db();
+        db.conn
+            .execute_batch(
+                "INSERT INTO branch_messages (session_id, ord, seq, content)
+                     VALUES ('s', 3, 1, 'second'), ('s', 3, 0, 'first');",
+            )
+            .unwrap();
+        assert_eq!(
+            db.get_branches("s").unwrap(),
+            vec![BranchRow {
+                name: None,
+                messages: vec!["first".into(), "second".into()],
+            }]
+        );
+    }
+
+    /// A database written by the schema before branches existed opens,
+    /// keeps its transcript as the single active path, and can store
+    /// branches afterwards.
+    #[test]
+    fn database_from_the_previous_schema_migrates_forward() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("old.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY, title TEXT, created_at TEXT,
+                    updated_at TEXT, project_path TEXT,
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_creation_input_tokens INTEGER,
+                    cache_read_input_tokens INTEGER
+                );
+                CREATE TABLE messages (
+                    id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+                    tool_call_id TEXT, name TEXT, created_at TEXT,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id)
+                );
+                CREATE INDEX idx_messages_session ON messages(session_id);
+                CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT);
+                INSERT INTO sessions (id, title, created_at, updated_at, project_path)
+                    VALUES ('s', 'old', '2020-01-01T00:00:00+00:00',
+                            '2020-01-01T00:00:00+00:00', '/p');
+                INSERT INTO messages (id, session_id, role, content, created_at) VALUES
+                    ('m1', 's', 'user', 'one', '2020-01-01T00:00:01+00:00'),
+                    ('m2', 's', 'assistant', 'two', '2020-01-01T00:00:02+00:00');
+                ",
+            )
+            .unwrap();
+        }
+        let db = Database::open(&path.to_string_lossy()).unwrap();
+        let msgs = db.get_messages("s").unwrap();
+        assert_eq!(
+            msgs.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(),
+            ["one", "two"]
+        );
+        assert!(db.get_branches("s").unwrap().is_empty());
+        db.replace_transcript("s", &[row("m1", "one")], &[branch(None, &["one", "x"])])
+            .unwrap();
+        drop(db);
+        // Reopening (migrations run again) keeps everything.
+        let db = Database::open(&path.to_string_lossy()).unwrap();
+        assert_eq!(db.get_messages("s").unwrap().len(), 1);
+        assert_eq!(db.get_branches("s").unwrap()[0].messages, ["one", "x"]);
+    }
+
+    #[test]
+    fn branch_writes_and_reads_report_sql_errors() {
+        let broken = |sql: &str| {
+            let db = test_db();
+            db.create_session("s", "t", "/p").unwrap();
+            db.conn.execute_batch(sql).unwrap();
+            db
+        };
+        let msgs = [row("m", "a")];
+        let one = [branch(None, &["a"])];
+
+        // Header insert fails; the transaction leaves the old rows in place.
+        let db = broken(
+            "DROP TABLE session_branches;
+             CREATE TABLE session_branches (session_id TEXT);",
+        );
+        db.replace_messages("s", &[row("old", "kept")]).unwrap();
+        assert!(db.replace_transcript("s", &msgs, &one).is_err());
+        assert_eq!(db.get_messages("s").unwrap()[0].content, "kept");
+        assert!(db.get_branches("s").is_err());
+
+        let db = broken(
+            "DROP TABLE branch_messages;
+             CREATE TABLE branch_messages (session_id TEXT);",
+        );
+        assert!(db.replace_transcript("s", &msgs, &one).is_err());
+        assert!(db.get_branches("s").is_err());
+
+        let db = broken("DROP TABLE branch_messages;");
+        assert!(db.replace_transcript("s", &msgs, &[]).is_err());
+        assert!(db.delete_session("s").is_err());
+
+        let db = broken("DROP TABLE session_branches;");
+        assert!(db.replace_transcript("s", &msgs, &[]).is_err());
+        assert!(db.get_branches("s").is_err());
+
+        let db = broken("DROP TABLE messages;");
+        assert!(db.replace_transcript("s", &msgs, &[]).is_err());
     }
 
     #[test]

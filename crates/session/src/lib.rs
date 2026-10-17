@@ -6,6 +6,7 @@ pub mod pairing;
 pub mod search;
 pub mod session;
 pub mod title;
+pub mod tree;
 
 pub use edit_stats::EditStats;
 pub use error::{Result, SessionError};
@@ -18,6 +19,7 @@ pub use session::{
     is_compact_summary_text,
 };
 pub use title::{TitleSource, default_title, heuristic_title, sanitize_title};
+pub use tree::{Branch, BranchError, TreeRow, TreeTarget};
 
 #[cfg(test)]
 mod tests {

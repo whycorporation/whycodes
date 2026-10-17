@@ -447,6 +447,8 @@ pub(crate) fn print_slash_help() {
     println!("  /init                  — Create/update AGENTS.md for this project");
     println!("  /undo                  — Undo last message + file changes (git)");
     println!("  /redo                  — Redo previously undone turn");
+    println!("  /branch [name]         — Mark this point of the conversation as a branch");
+    println!("  /tree [n]              — Show the conversation tree; switch to turn n");
     println!("  /share, /export        — Export session JSON");
     println!("  /compact [context]     — Compact conversation (LLM summary)");
     println!("  /summarize             — Alias for /compact");
