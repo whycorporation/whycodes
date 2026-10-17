@@ -303,6 +303,11 @@ async fn async_wrapper_delegates_sync_schemes_and_plain_paths() {
         .await
         .unwrap();
     assert!(!guide.is_error);
+    assert!(
+        guide.content.contains("`outline: false`"),
+        "{}",
+        guide.content
+    );
     for scheme in [
         "skill://", "agent://", "proc://", "rule://", "pr://", "issue://", "mcp://",
     ] {

@@ -1177,6 +1177,15 @@ cache_read = 1.25   # optional
 Long tool notes live at `agent://tools/<name>` (`read agent://tools/bash`).
 The default tool schema keeps a one-line description.
 
+`read` of a source file longer than 400 lines, with no `offset` or `limit`,
+returns the file's outline instead of its first page: the declaration lines
+`repomap` would keep (functions, types, classes, impls, headings), with their
+line numbers, indentation and the usual content tags, then a line naming the
+file's length and how to read a range. The tags work with `edit` as they do
+after a normal read. `outline: false` always pages; `outline: true` outlines a
+file of any length. Files `repomap` cannot map (other extensions, over 512 KB,
+no declarations) page as before.
+
 A command substitution is judged by what it runs, not by the command that
 receives its output: `echo $(rm -rf ~)` is `catastrophic`, and so is the
 same body inside backticks or nested substitutions.
