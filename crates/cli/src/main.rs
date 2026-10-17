@@ -100,6 +100,12 @@ pub(crate) fn run_parsed_cli(cli: Cli) -> anyhow::Result<()> {
     if let Some(Commands::Completions { shell }) = &cli.command {
         return cmd_completions(*shell);
     }
+    if cli.prewalk {
+        // Before the runtime starts any thread; every config load (TUI
+        // hydrate included) reads it through `apply_env_overrides`.
+        // SAFETY: still single-threaded here.
+        unsafe { std::env::set_var("WHYCODES_PREWALK", "1") };
+    }
     let bounded_shutdown = crate::cmd::hang::is_short_command(&cli);
     let rt = runtime_for(&cli)?;
     let result = rt.block_on(async_main(cli));

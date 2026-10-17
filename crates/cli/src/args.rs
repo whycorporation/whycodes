@@ -103,6 +103,10 @@ pub struct Cli {
     #[arg(long = "no-auto-update", global = true)]
     pub no_auto_update: bool,
 
+    /// Plan on the strong model, then hand each turn to the cheap model at
+    /// the first edit (`[session] prewalk`)
+    #[arg(long, global = true)]
+    pub prewalk: bool,
     /// Approval preset for this run: auto, important or manual (overrides `[general] approval_mode` and WHYCODES_APPROVAL_MODE)
     #[arg(
         long = "approval-mode",

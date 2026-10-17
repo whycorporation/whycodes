@@ -604,6 +604,13 @@ impl Config {
         {
             self.session.headless_ask = Some(mode);
         }
+        if let Ok(val) = std::env::var("WHYCODES_PREWALK") {
+            match val.to_ascii_lowercase().as_str() {
+                "0" | "false" | "no" | "off" => self.session.prewalk = Some(false),
+                "1" | "true" | "yes" | "on" => self.session.prewalk = Some(true),
+                _ => {}
+            }
+        }
         if let Ok(val) = std::env::var("WHYCODES_MEMORY") {
             match val.to_ascii_lowercase().as_str() {
                 "0" | "false" | "no" | "off" => self.memory.enabled = false,

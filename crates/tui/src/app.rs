@@ -2028,6 +2028,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Skip provider prompt cache on the next turn",
     },
     SlashCommand {
+        name: "/prewalk",
+        hint: "restart  Plan the next turn on the strong model again",
+    },
+    SlashCommand {
         name: "/queue",
         hint: "<message> Run after the current turn ends (never interrupts)",
     },

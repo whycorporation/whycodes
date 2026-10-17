@@ -12,6 +12,7 @@ async fn dispatch_web_stub() {
         fork_session: false,
         debug: false,
         no_auto_update: true,
+        prewalk: false,
         approval_mode: None,
         no_memory: true,
     };
@@ -39,6 +40,7 @@ async fn dispatch_slop_json_non_git() {
         fork_session: false,
         debug: false,
         no_auto_update: true,
+        prewalk: false,
         approval_mode: None,
         no_memory: true,
     };

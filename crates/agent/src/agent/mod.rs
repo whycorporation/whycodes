@@ -8,6 +8,7 @@ mod compact;
 mod dispatch;
 mod gate;
 mod lifecycle;
+pub(crate) mod prewalk;
 mod spawn;
 mod spill;
 mod turn;
@@ -98,6 +99,11 @@ pub struct Agent {
     model_smol: Option<String>,
     /// Model used while the `plan` agent is active.
     model_plan: Option<String>,
+    /// `[session] prewalk`: plan on the strong model, edit on the cheap one.
+    prewalk: bool,
+    /// The strong route and cheap target of the last prewalk hand-off; later
+    /// turns start on it until `/prewalk restart`.
+    prewalk_handoff: Mutex<Option<prewalk::PrewalkHandoff>>,
     /// Compiled stream-interrupt rules.
     stream_rules: Vec<crate::stream_rules::StreamRule>,
     /// Parallel multi-agent swarm (config-driven).
@@ -405,6 +411,8 @@ impl Agent {
             skip_prompt_cache_once: std::sync::atomic::AtomicBool::new(false),
             model_smol: None,
             model_plan: None,
+            prewalk: false,
+            prewalk_handoff: Mutex::new(None),
             stream_rules: Vec::new(),
             swarm_enabled: true,
             swarm_max_agents: 4,
@@ -664,6 +672,7 @@ impl Agent {
         self.approval_mode = config.general.approval_mode.unwrap_or_default();
         self.model_smol = config.session.model_smol.clone();
         self.model_plan = config.session.model_plan.clone();
+        self.prewalk = config.session.prewalk.unwrap_or(false);
         self.stream_rules = crate::stream_rules::compile(&config.session.stream_rules);
         self.swarm_enabled = config.swarm.enabled;
         self.swarm_max_agents = config
@@ -930,20 +939,8 @@ impl Agent {
             {
                 continue;
             }
-            let api_key = if provider == active_provider {
-                active_key.to_string()
-            } else if let Some(key) = self.fallback_config_keys.get(provider) {
-                key.clone()
-            } else {
-                let var = format!("{}_API_KEY", provider.to_uppercase());
-                match std::env::var(&var) {
-                    Ok(key) if !key.is_empty() => key,
-                    Ok(_) => continue,
-                    Err(missing) => {
-                        tracing::debug!(%var, "fallback skipped, no key: {missing}");
-                        continue;
-                    }
-                }
+            let Some(api_key) = self.target_key(provider, active_provider, active_key) else {
+                continue;
             };
             return Some((
                 idx,
@@ -955,6 +952,31 @@ impl Agent {
             ));
         }
         None
+    }
+
+    /// Key for a switch to `provider`: the active key (same provider), config
+    /// `api_key`, then a non-empty `<PROVIDER>_API_KEY`.
+    pub(crate) fn target_key(
+        &self,
+        provider: &str,
+        active_provider: &str,
+        active_key: &str,
+    ) -> Option<String> {
+        if provider == active_provider {
+            return Some(active_key.to_string());
+        }
+        if let Some(key) = self.fallback_config_keys.get(provider) {
+            return Some(key.clone());
+        }
+        let var = format!("{}_API_KEY", provider.to_uppercase());
+        match std::env::var(&var) {
+            Ok(key) if !key.is_empty() => Some(key),
+            Ok(_) => None,
+            Err(missing) => {
+                tracing::debug!(%var, "no key for the target: {missing}");
+                None
+            }
+        }
     }
 
     /// Resolve an optional first-token race partner (`off` / `auto` / ref).

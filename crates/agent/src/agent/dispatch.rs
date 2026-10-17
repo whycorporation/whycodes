@@ -1003,16 +1003,16 @@ impl Agent {
             let label = format!("{worker_id}/{}", spec.subagent_type);
             let permit = Arc::clone(&sem);
             let custom = customs.get(&spec.subagent_type).cloned();
-            let (pn, m): (Arc<str>, Arc<str>) = match &custom {
+            let (pn, m, handoff): (Arc<str>, Arc<str>, _) = match &custom {
                 Some(c) => {
-                    let (p, m) = c.route(
+                    let ((p, m), handoff) = c.prewalk_route(
                         &session_route.0,
                         &session_route.1,
                         (provider_name.to_string(), model.to_string()),
                     );
-                    (p.into(), m.into())
+                    (p.into(), m.into(), handoff)
                 }
-                None => (Arc::clone(&provider_name), Arc::clone(&model)),
+                None => (Arc::clone(&provider_name), Arc::clone(&model), None),
             };
             let ak = Arc::clone(&api_key);
             let claims = claims.clone();
@@ -1237,7 +1237,8 @@ impl Agent {
                         .with_approval_mode(approval_mode)
                         .with_risk_threshold(risk_threshold)
                         .with_redactor(secrets)
-                        .with_hooks(hooks);
+                        .with_hooks(hooks)
+                        .with_prewalk(handoff);
                 if !use_worktrees {
                     runner =
                         runner.with_file_claims(claims.clone(), worker_id.clone(), label.clone());
@@ -1490,9 +1491,9 @@ impl Agent {
         // Permission profile per subagent type
         let worker =
             crate::routing::resolve_worker_model(provider_name, model, self.model_smol.as_deref());
-        let (worker_provider, worker_model) = match &custom {
-            Some(c) => c.route(provider_name, model, worker),
-            None => worker,
+        let ((worker_provider, worker_model), handoff) = match &custom {
+            Some(c) => c.prewalk_route(provider_name, model, worker),
+            None => (worker, None),
         };
         let (permission, system_prompt) = match (&custom, subagent_type) {
             (Some(c), _) => (
@@ -1593,6 +1594,7 @@ impl Agent {
         .with_redactor(self.secrets.clone())
         .with_hooks(self.hooks.clone())
         .with_steer(self.steer.clone(), format!("task-{}", call.id))
+        .with_prewalk(handoff)
         .with_cancel(self.worker_cancels.clone(), format!("task-{}", call.id))
         .with_progress(
             events.cloned(),

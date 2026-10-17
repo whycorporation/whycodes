@@ -115,10 +115,16 @@ impl Agent {
         let skip_cache = self
             .skip_prompt_cache_once
             .swap(false, std::sync::atomic::Ordering::Relaxed);
+        // Prewalk plans on `model_plan`, like the `plan` agent.
+        let plan_role = if self.prewalk {
+            "plan"
+        } else {
+            &self.info.name
+        };
         let (role_provider, role_model) = crate::routing::resolve_agent_model(
             provider_name,
             model,
-            &self.info.name,
+            plan_role,
             self.model_plan.as_deref(),
         );
         let provider_name = role_provider.as_str();
@@ -183,9 +189,23 @@ impl Agent {
         let mut overflow_retries: u32 = 0;
         let mut harmony_retries: u32 = 0;
         let mut api_key = api_key.to_string();
-        // Set once the primary fails to open; sticks for the rest of this turn.
+        // Set once the primary fails to open, or at the prewalk hand-off;
+        // sticks for the rest of this turn. The index is the next
+        // `fallback_models` entry to try.
         let mut fallback: Option<(usize, super::FallbackTarget, &dyn whycodes_llm::LlmProvider)> =
             None;
+        let (strong_provider, strong_model) = (provider_name, model);
+        if let Some((target, next)) = self.prewalk_resume(strong_provider, strong_model) {
+            emit(
+                &events,
+                TurnEvent::Status(format!(
+                    "Prewalk: continuing on {}/{} (/prewalk restart plans again)",
+                    target.provider, target.model
+                )),
+            );
+            api_key = target.api_key.clone();
+            fallback = Some((0, target, next));
+        }
 
         loop {
             let (provider_name, model, provider) = match &fallback {
@@ -432,7 +452,7 @@ impl Agent {
                             continue;
                         }
                     }
-                    let from = fallback.as_ref().map_or(0, |(idx, _, _)| idx + 1);
+                    let from = fallback.as_ref().map_or(0, |(next, _, _)| *next);
                     if kind.retryable()
                         && let Some((idx, target)) =
                             self.next_fallback(from, provider_name, model, &api_key)
@@ -448,7 +468,7 @@ impl Agent {
                         );
                         tracing::warn!(from = %from_ref, to = %to_ref, %kind, "model fallback");
                         api_key = target.api_key.clone();
-                        fallback = Some((idx, target, next));
+                        fallback = Some((idx + 1, target, next));
                         continue;
                     }
                     return Err(e);
@@ -890,6 +910,27 @@ impl Agent {
                     Err(e) => return Err(close_unanswered_calls(session, &tool_calls, e)),
                 };
                 crate::speculative_read::abort_all(&mut speculative_reads);
+                // Prewalk: the strong model planned and made the first edit;
+                // the remaining steps run on the cheap model.
+                if fallback.is_none()
+                    && let Some((target, next)) = self.prewalk_target(
+                        &tool_calls,
+                        &tool_ctx.working_dir,
+                        strong_provider,
+                        strong_model,
+                        &api_key,
+                    )
+                {
+                    emit(
+                        &events,
+                        TurnEvent::Status(format!(
+                            "Prewalk: handing off to {}/{} after the plan",
+                            target.provider, target.model
+                        )),
+                    );
+                    api_key = target.api_key.clone();
+                    fallback = Some((0, target, next));
+                }
                 let tool_batch_ms = tool_t0.elapsed().as_millis();
                 for tc in &tool_calls {
                     let sig = tool_call_signature(tc);

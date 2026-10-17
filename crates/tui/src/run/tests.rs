@@ -2162,6 +2162,27 @@ async fn handle_slash_covers_local_commands() {
         "{}",
         h.app.status_message
     );
+    h.run("/prewalk").await;
+    assert_eq!(h.app.status_message, "Usage: /prewalk restart");
+    h.run("/prewalk restart").await;
+    assert!(h.app.status_message.starts_with("Prewalk is off"));
+    let mut prewalk_cfg = Config::default();
+    prewalk_cfg.session.prewalk = Some(true);
+    let on = Agent::new(whycodes_core::types::AgentInfo {
+        name: "build".into(),
+        description: String::new(),
+        mode: AgentMode::Primary,
+        permission: whycodes_core::types::PermissionSet::default(),
+        model: None,
+        system_prompt: None,
+        temperature: None,
+        top_p: None,
+    })
+    .with_config(&prewalk_cfg);
+    assert_eq!(
+        super::slash::prewalk_slash(&on, "restart"),
+        "Prewalk: already on the strong model"
+    );
     h.run("/agents").await;
     assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Agents)));
     crate::input::dismiss_dialog(&mut h.app);
