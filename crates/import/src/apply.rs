@@ -81,9 +81,7 @@ fn map_msg(e: impl ToString) -> crate::error::ImportError {
 }
 
 pub fn apply_and_save(plan: &ImportPlan) -> crate::error::Result<std::path::PathBuf> {
-    let mut config = whycodes_config::Config::load().map_err(map_msg)?;
-    apply(&mut config, plan);
-    config.save().map_err(map_msg)?;
+    whycodes_config::Config::update_global(&mut |global| apply(global, plan)).map_err(map_msg)?;
     let path = whycodes_config::Config::default_path().map_err(map_msg)?;
     Ok(path)
 }

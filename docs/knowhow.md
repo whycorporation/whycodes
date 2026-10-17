@@ -144,6 +144,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-10-17 — Tests shelled out to the real gh
+
+**Symptom:** `cargo test -p whycodes-cli --bin whycodes` on a developer machine printed real GitHub CLI output (`aborted: you must first push the current branch to a remote…`, a list of real issues). The tests were running `gh pr create --fill`, `gh pr list/view`, `gh issue list/view` against the developer's account and the checkout's repository; a pushed branch would have got a real pull request.
+
+**Root cause:** `gh_program()` fell back to `gh` from `PATH` when no stub was set. `pr_stub_runs` and the first half of `dispatch_offline_commands` set no stub. `IsolatedGh` prepended a stub directory to `PATH`, but wrote the stub only on Unix (Windows ran the installed `gh`), joined `PATH` with `:` (wrong on Windows), and raced every parallel test that reads `PATH`. In `whycodes-tools`, `gh_auth_cli_probe_does_not_panic` and `gh_auth_token_with(false)` ran the real `gh auth token`, and a missing `gh` fell back to Program Files / Homebrew installs.
+
+**Fix:** Both `gh_program()`s (`cli/src/cmd/github.rs`, `tools/src/github/api.rs`) take a per-thread stub from `TestGhGuard`. In test builds a bare `gh` panics (`test ran the real gh from PATH`), and the tools fallback list is empty. `IsolatedGh` writes a `gh.cmd` / `gh` stub and sets the guard instead of editing `PATH`.
+
+**Prevention:** `real_gh_is_refused_in_tests` in both crates. Any new test that reaches `gh` without a stub fails loudly. To audit, put a fake `gh` first on `PATH` that logs its argv and run the suite: the log must stay empty. Rust's `Command` on Windows looks up `gh.exe` only, so the fake must be an `.exe`.
+
+---
+
 ### 2026-10-12 — Swarm mail went to the wrong inbox in worktree mode
 
 **Symptom:** Swarm workers in a git repo (worktree mode, the default) could not message each other. `swarm_msg` to `worker-N` was never read, every sender showed as `worker`, `all` missed siblings after their first read, and mail to `parent` only reached a toast.

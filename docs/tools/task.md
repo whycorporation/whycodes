@@ -12,6 +12,7 @@ Launch a subagent to handle a complex multi-step task. Use for research, explora
 | `context` | string | no | Additional context for the subagent (optional) |
 | `goal` | string | yes | The goal or task for the subagent to accomplish |
 | `max_turns` | integer | no | Maximum conversation turns for the subagent (default: 15) |
+| `output_schema` | object | no | JSON Schema (object) for a typed result. The subagent ends with a matching ```json block (plus a required `what_i_did_not_check` string array); it is validated, retried once if invalid, returned after the summary and readable as `read agent://<id>/<json-pointer>`. Overrides a custom agent's `output`. |
 | `subagent_type` | string | no | general (default), explore, scout, or a name from the system prompt's `# Custom agents` list |
 
 ## Related

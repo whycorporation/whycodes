@@ -310,11 +310,13 @@ fn format_stamps_auto_picked_answers() {
 static STDIN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn queue_stdin(lines: &[&str]) {
-    let mut q = TEST_STDIN.lock().unwrap_or_else(|e| e.into_inner());
-    q.clear();
-    for line in lines {
-        q.push_back((*line).to_string());
-    }
+    TEST_STDIN.with(|q| {
+        let mut q = q.lock().unwrap_or_else(|e| e.into_inner());
+        q.clear();
+        for line in lines {
+            q.push_back((*line).to_string());
+        }
+    });
 }
 
 #[test]
@@ -474,16 +476,14 @@ fn stdin_questionnaire_numbers_questions_and_skips_blank_descriptions() {
 #[test]
 fn poisoned_test_stdin_still_returns_a_line() {
     let _g = STDIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    {
-        let mut q = TEST_STDIN.lock().unwrap_or_else(|e| e.into_inner());
-        q.clear();
-        q.push_back("kept".into());
-    }
+    queue_stdin(&["kept"]);
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _guard = TEST_STDIN.lock().unwrap_or_else(|e| e.into_inner());
-        panic!("poison test stdin");
+        TEST_STDIN.with(|q| {
+            let _guard = q.lock().unwrap_or_else(|e| e.into_inner());
+            panic!("poison test stdin");
+        })
     }));
-    assert!(TEST_STDIN.lock().is_err());
+    assert!(TEST_STDIN.with(|q| q.lock().is_err()));
     assert_eq!(read_line_stdin().unwrap(), "kept");
 }
 
@@ -558,10 +558,7 @@ fn remaining_stdin_and_parse_arms() {
     assert!(empty_other[0].free_text.is_none(), "{:?}", empty_other[0]);
     assert!(empty_other[0].selected.is_empty(), "{:?}", empty_other[0]);
     assert!(
-        TEST_STDIN
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_empty(),
+        TEST_STDIN.with(|q| q.lock().unwrap_or_else(|e| e.into_inner()).is_empty()),
         "empty Other line must be consumed"
     );
 
@@ -573,7 +570,7 @@ fn remaining_stdin_and_parse_arms() {
             .unwrap_err()
             .contains("Failed to read input")
     );
-    TEST_STDIN.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    queue_stdin(&[]);
     let _ = read_line_stdin();
 }
 

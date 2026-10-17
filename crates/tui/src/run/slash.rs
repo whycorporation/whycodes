@@ -315,7 +315,7 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             if ctx.goal.take().is_some() {
                 crate::goal::save(ctx.goal_db, &ctx.session.id, None);
             }
-            *ctx.history = SessionHistory::new();
+            ctx.history.clear();
             *ctx.session = Session::new(
                 ctx.project_dir.to_path_buf(),
                 with_project_memory(
@@ -360,6 +360,8 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.session.set_messages(msgs);
                 ctx.app.load_messages_from_session(ctx.session);
                 ctx.app.status_message = "Undid last turn".into();
+            } else if let Some(depth) = ctx.history.exhausted_depth() {
+                ctx.app.status_message = format!("Nothing older to undo (undo_depth = {depth})");
             } else if ctx.session.undo_last_turn() > 0 {
                 ctx.app.load_messages_from_session(ctx.session);
                 ctx.app.status_message = "Undid last turn".into();
