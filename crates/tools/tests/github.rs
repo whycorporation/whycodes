@@ -1,7 +1,9 @@
 //! Integration tests for GitHub API tools (github_issue, github_pr).
 //!
-//! These tests probe the live GitHub API when GITHUB_TOKEN is set.
-//! When the token is absent, tests are skipped with [`std::process::exit(0)`].
+//! These tests probe the live GitHub API when GITHUB_TOKEN is set and skip
+//! otherwise. Every call passes an explicit `token`: without one the tools
+//! fall back to `gh auth token`, which would run the developer's real `gh`
+//! (the missing-token path is covered by the unit tests, which stub `gh`).
 
 use whycodes_core::ToolContext;
 use whycodes_tools::executor::ToolExecutor;
@@ -84,39 +86,6 @@ async fn test_github_issue_list() {
     );
 }
 
-#[tokio::test]
-async fn test_github_issue_list_without_token() {
-    let executor = ToolExecutor::new();
-    let tool = executor
-        .get("github_issue")
-        .expect("github_issue tool not found");
-    let ctx = neutral_ctx();
-
-    let args = serde_json::json!({
-        "action": "list",
-        "owner": TEST_OWNER,
-        "repo": TEST_REPO,
-        "state": "open"
-    });
-
-    // Env token present: empty `token` falls through to env / `gh`, so skip.
-    // No env token: missing-token error, unless the host has `gh auth login`.
-    if github_token().is_some() {
-        eprintln!("SKIP: GITHUB_TOKEN/GH_TOKEN set; missing-token path not isolated");
-        return;
-    }
-    let result = tool.execute(args, &ctx).await;
-    if result.is_error {
-        assert!(
-            result.content.contains("token not found")
-                || result.content.contains("gh auth login")
-                || result.content.contains("token"),
-            "should mention token: {}",
-            result.content
-        );
-    }
-}
-
 // ---------------------------------------------------------------------------
 // github_pr
 // ---------------------------------------------------------------------------
@@ -156,35 +125,6 @@ async fn test_github_pr_list() {
         "should contain status line: {}",
         &result.content[..result.content.len().min(200)]
     );
-}
-
-#[tokio::test]
-async fn test_github_pr_list_without_token() {
-    let executor = ToolExecutor::new();
-    let tool = executor.get("github_pr").expect("github_pr tool not found");
-    let ctx = neutral_ctx();
-
-    let args = serde_json::json!({
-        "action": "list",
-        "owner": TEST_OWNER,
-        "repo": TEST_REPO,
-        "state": "open"
-    });
-
-    if github_token().is_some() {
-        eprintln!("SKIP: GITHUB_TOKEN/GH_TOKEN set; missing-token path not isolated");
-        return;
-    }
-    let result = tool.execute(args, &ctx).await;
-    if result.is_error {
-        assert!(
-            result.content.contains("token")
-                || result.content.contains("gh auth login")
-                || result.content.contains("required"),
-            "should mention token: {}",
-            result.content
-        );
-    }
 }
 
 #[tokio::test]

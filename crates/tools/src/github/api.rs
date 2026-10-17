@@ -93,13 +93,66 @@ fn configure_gh_auth_token(cmd: &mut Command) {
 }
 
 fn spawn_gh_auth_token() -> Option<Child> {
-    let mut cmd = Command::new("gh");
+    let mut cmd = Command::new(gh_program());
     configure_gh_auth_token(&mut cmd);
     spawn_or_fallback(cmd.spawn())
 }
 
+/// GitHub CLI binary: `gh` from `PATH` in production. Test builds must set a
+/// stub with `TestGhGuard`; running the real `gh` from a test panics.
+fn gh_program() -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = TEST_GH.with(|slot| slot.borrow().clone()) {
+        return path;
+    }
+    real_gh(cfg!(test))
+}
+
+/// The real `gh` from `PATH`. `refuse` is `cfg!(test)`: a test that reaches
+/// here has no stub and would act on the developer's GitHub login.
+fn real_gh(refuse: bool) -> PathBuf {
+    assert!(
+        !refuse,
+        "test ran the real `gh` from PATH; stub it with TestGhGuard"
+    );
+    PathBuf::from("gh")
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_GH: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Points [`gh_program`] at `program` on the current thread until dropped.
+#[cfg(test)]
+pub(crate) struct TestGhGuard(Option<PathBuf>);
+
+#[cfg(test)]
+impl TestGhGuard {
+    pub(crate) fn set(program: Option<PathBuf>) -> Self {
+        Self(TEST_GH.with(|slot| slot.replace(program)))
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestGhGuard {
+    fn drop(&mut self) {
+        TEST_GH.with(|slot| *slot.borrow_mut() = self.0.take());
+    }
+}
+
 fn spawn_or_fallback(result: std::io::Result<Child>) -> Option<Child> {
-    spawn_or_fallback_from(result, well_known_gh_paths())
+    spawn_or_fallback_from(result, fallback_gh_paths(cfg!(test)))
+}
+
+/// Install locations tried when `gh` is not on `PATH`. Test builds never fall
+/// back to an installed `gh` (Program Files, Homebrew…).
+fn fallback_gh_paths(in_test: bool) -> Vec<PathBuf> {
+    if in_test {
+        Vec::new()
+    } else {
+        well_known_gh_paths()
+    }
 }
 
 fn spawn_or_fallback_from(

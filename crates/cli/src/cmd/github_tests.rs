@@ -16,7 +16,23 @@ async fn pr_stub_runs() {
         no_auto_update: true,
         no_memory: true,
     };
+    let (_dir, stub) = gh_stub(1);
+    let _guard = super::TestGhGuard::set(Some(stub));
     super::cmd_pr(&cli, Some("t"), Some("dev")).await.unwrap();
+}
+
+/// Without a stub, a test build refuses to run the real `gh` from PATH:
+/// `gh pr create` / `gh issue list` would act on a real account.
+#[test]
+#[should_panic(expected = "real `gh`")]
+fn real_gh_is_refused_in_tests() {
+    let _cleared = super::TestGhGuard::set(None);
+    super::gh_program();
+}
+
+#[test]
+fn real_gh_is_bare_gh_in_production() {
+    assert_eq!(super::real_gh(false), "gh");
 }
 
 #[test]
@@ -136,9 +152,6 @@ async fn github_success_paths_use_stub() {
     super::cmd_github(&cli, &crate::GithubCmd::Issue { number: Some(9) })
         .await
         .unwrap();
-
-    let _cleared = super::TestGhGuard::set(None);
-    assert_eq!(super::gh_program(), "gh");
 }
 
 #[tokio::test]

@@ -37,9 +37,12 @@ pub(crate) async fn cmd_config(
             }
         }
         ConfigCmd::Set { key, value } => {
+            // Validate first, then write only this key to the global file.
             let mut config = config.clone();
             set_config_value(&mut config, key, value)?;
-            config.save()?;
+            let mut applied = Ok(());
+            Config::update_global(&mut |global| applied = set_config_value(global, key, value))?;
+            applied?;
             println!("{}", config_set_line(key, value));
         }
         ConfigCmd::Path => {
