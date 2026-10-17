@@ -16,7 +16,7 @@ path = "src/main.rs"
 # so Boot/TTFF stays low.
 default = ["self-update", "server", "embedded-shell"]
 # Everything including diagram render + extended syntax pack.
-full = ["self-update", "server", "embedded-shell", "mermaid", "extended-syntax"]
+full = ["self-update", "server", "embedded-shell", "mermaid", "extended-syntax", "ast-tools"]
 # Windows only: `whycodes __shell -c`, a bash-compatible shell with bundled
 # coreutils that the `bash` tool uses when no Git Bash is installed (before
 # falling back to cmd.exe). Cargo has no per-target default features, so the
@@ -39,6 +39,8 @@ onnx = ["whycodes-memory/onnx", "whycodes-tools/onnx", "whycodes-agent/onnx"]
 # storage crate always bundles — MSVC has no sqlite3.lib (LNK1181).
 # Enable for fully static Linux release artifacts / CI without libsqlite3-dev.
 bundled-sqlite = ["whycodes-storage/bundled"]
+# `ast_grep` / `ast_edit` tools (tree-sitter grammars, ~5.2 MB). Off by default.
+ast-tools = ["whycodes-tools/ast-tools"]
 
 [dependencies]
 whycodes-core = { path = "../core" }

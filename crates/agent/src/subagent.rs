@@ -696,6 +696,7 @@ impl SubagentRunner {
                             | "write"
                             | "edit"
                             | "apply_patch"
+                            | "ast_edit"
                             | "git_commit"
                             | "todo_write"
                             | "todo"
