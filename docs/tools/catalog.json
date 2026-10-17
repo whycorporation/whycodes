@@ -1364,6 +1364,26 @@
     "guide": null
   },
   {
+    "name": "wait",
+    "description": "Block until something you are waiting for happens instead of polling `bg` every step: a background job finishes (its id, exit status and output tail come back), a message from the user arrives (reported as pending; end the step to read it), or `timeout_secs` elapses. Returns at once when no job is running.",
+    "parameters": {
+      "properties": {
+        "job_id": {
+          "description": "Only wait for this background job (e.g. bg-1); default: any job",
+          "type": "string"
+        },
+        "timeout_secs": {
+          "description": "Seconds to wait before giving up (default 60, max 300)",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "profile": "deferred",
+    "aliasOf": null,
+    "guide": null
+  },
+  {
     "name": "webfetch",
     "description": "Fetch content from a URL and return readable text. Prefers machine-readable responses (JSON, Markdown, plain text) via Accept headers. For package versions prefer registry APIs (e.g. https://registry.npmjs.org/<pkg>/latest) or GitHub Releases over marketing HTML pages. If a site exposes llm.txt / llms.txt, fetch that URL when you need LLM-oriented docs.",
     "parameters": {

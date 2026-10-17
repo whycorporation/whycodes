@@ -230,16 +230,21 @@ results in call order:
   `execute_with_permission`, raced against cancel.
 - All calls parallel-safe (`is_parallel_safe_tool`: not in `SERIAL_TOOLS`,
   `crates/agent/src/tool_policy.rs` — shell, write/edit/apply_patch/ast_edit,
-  git_commit, todo tools, task, swarm, bg, schedule, tool_search, worktree,
-  plan, browser, question, code_mode, skill, external_directory, memory):
+  git_commit, todo tools, task, swarm, bg, schedule, wait, tool_search,
+  worktree, plan, browser, question, code_mode, skill, external_directory,
+  memory):
   speculative results are consumed first, the rest run through
   `futures::join_all`, the whole batch raced against cancel.
 - Mixed batch: strictly sequential, cancel checked before each call.
+- `wait` is serial and blocks the lane on purpose: `execute_wait_tool` polls
+  the job registry and the steer inbox every 250 ms until a job finishes, a
+  message is pending, or `timeout_secs` (max 300) elapses; the cancel race
+  above drops it like any other call.
 
 Every gate a call passes inside `execute_with_permission` is listed in
 [permission-gate.md](permission-gate.md). `dispatch_tool` then routes `task`,
 `swarm`, `bg`, `read` of an `mcp://` URL (`execute_mcp_read`, the MCP clients
-live on the agent), `schedule`, `tool_search`, `worktree`, background and
+live on the agent), `schedule`, `wait`, `tool_search`, `worktree`, background and
 auto-background shell in-process (`crates/agent/src/agent/dispatch.rs`) and
 everything else to `ToolExecutor::execute`. The other internal `read` URLs
 (`skill://`, `agent://`, `proc://`, `rule://`, `pr://`, `issue://`) resolve
@@ -368,7 +373,7 @@ written back to the parent session.
 - `crates/agent/src/agent/turn.rs` — `run_turn`, `run_turn_with_events`, `run_turn_steps`: the step loop, stream handling, retries, result appending.
 - `crates/agent/src/agent/mod.rs` — `Agent` struct and config application; steering / background injection; `would_doom_loop`, `first_stream_rule_hit`, `settle_checkpoint_rewind`, `tool_context`, fallback and race resolution.
 - `crates/agent/src/agent/gate.rs` — `execute_tool_calls` scheduling and `execute_with_permission` gates.
-- `crates/agent/src/agent/dispatch.rs` — in-process tools: background shell, `bg`, `read mcp://`, `schedule`, `tool_search`, `worktree`, `swarm`, `task`.
+- `crates/agent/src/agent/dispatch.rs` — in-process tools: background shell, `bg`, `wait`, `read mcp://`, `schedule`, `tool_search`, `worktree`, `swarm`, `task`.
 - `crates/agent/src/agent/lifecycle.rs` — `session_start`, `user_prompt_submit`, `stop`, `pre_compact` hooks.
 - `crates/agent/src/agent/compact.rs` — `compact_session` (auto and `/compact`).
 - `crates/agent/src/agent/spawn.rs` — public `spawn_subagent` / `spawn_parallel`.

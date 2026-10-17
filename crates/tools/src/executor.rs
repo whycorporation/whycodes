@@ -10,7 +10,7 @@ use crate::{
     apply_patch, background, blame, browser, checkpoint, code_mode, commit, diff, edit,
     external_directory, fetch, glob, grep, issue, list, log, lsp, memory, panel, plan, pr,
     question, read, repomap, schedule, search, shell, skill, status, swarm, swarm_message, task,
-    todo_read, todo_write, tool_search, truncate, worktree, write,
+    todo_read, todo_write, tool_search, truncate, wait, worktree, write,
 };
 
 /// Central executor that manages all available tools
@@ -89,6 +89,7 @@ impl ToolExecutor {
         executor.register(Box::new(swarm_message::SwarmMsgTool::new()));
         executor.register(Box::new(background::BgTool::new()));
         executor.register(Box::new(schedule::ScheduleTool::new()));
+        executor.register(Box::new(wait::WaitTool::new()));
         executor.register(Box::new(tool_search::ToolSearchTool::new()));
         executor.register(Box::new(worktree::WorktreeTool::new()));
         executor.register(Box::new(diff::GitDiffTool::new()));
