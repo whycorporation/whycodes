@@ -83,8 +83,10 @@ jobs:
         run: cargo fmt --all --check
       # Self-hosted runner has no libsqlite3-dev. Dev builds use system sqlite;
       # CI/release compile the bundled amalgamation (`whycodes-storage/bundled`).
+      # `whycodes-tools/ast-tools` is off by default (binary size) but Clippy,
+      # Test and Coverage turn it on so `ast_grep` / `ast_edit` stay guarded.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --features whycodes-storage/bundled -- -D warnings
+        run: cargo clippy --workspace --all-targets --features whycodes-storage/bundled,whycodes-tools/ast-tools -- -D warnings
       - name: Panic budget
         run: python scripts/check_panic_budget.py
       - name: Swallowed error budget
@@ -204,7 +206,7 @@ jobs:
           # can activate it. Others get their bundled-sqlite alias, or no
           # --features (whycodes-config has neither).
           python3 scripts/affected_tests.py --base "$AFFECTED_BASE" \
-            --locked --features whycodes-storage/bundled --execute
+            --locked --features whycodes-storage/bundled,whycodes-tools/ast-tools --execute
 
   coverage:
     name: Coverage (line floor)
@@ -262,7 +264,7 @@ jobs:
           # Job-scoped; do not put ${{ runner.temp }} in job-level env (0-job
           # workflow failure). Compile cache is ${CARGO_TARGET_DIR}-llvm-cov
           # (scripts/coverage.sh). REPORT_JSON stays in temp.
-          COVERAGE_FEATURES: whycodes-storage/bundled
+          COVERAGE_FEATURES: whycodes-storage/bundled,whycodes-tools/ast-tools
           REPORT_JSON: ${{ runner.temp }}/cov.json
         run: scripts/coverage.sh
 
@@ -337,7 +339,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
-        run: cargo test --workspace --locked --features whycodes-storage/bundled
+        run: cargo test --workspace --locked --features whycodes-storage/bundled,whycodes-tools/ast-tools
 
   build-multi:
     name: Build (${{ matrix.os }})

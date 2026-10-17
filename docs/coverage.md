@@ -25,9 +25,12 @@ COVERAGE_FEATURES=whycodes-storage/bundled scripts/coverage.sh
 REPORT_JSON=/tmp/cov.json scripts/coverage.sh
 ```
 
-CI sets `COVERAGE_FEATURES=whycodes-storage/bundled` because the self-hosted
-runners have no `libsqlite3-dev`. Locally, omit it if system sqlite is
-installed (`pkg-config sqlite3`).
+CI sets `COVERAGE_FEATURES=whycodes-storage/bundled,whycodes-tools/ast-tools`:
+`bundled` because the self-hosted runners have no `libsqlite3-dev` (locally,
+omit it if system sqlite is installed: `pkg-config sqlite3`), and `ast-tools`
+so the off-by-default `ast_grep` / `ast_edit` modules count toward the
+`whycodes-tools` 100% floor. Keep `ast-tools` in the local run too, or those
+modules are not compiled at all.
 
 - `--ignore-filename-regex '/usr/src/|/rustc-'` drops rustc sysroot files that
   leak into totals on Arch / system toolchains.
