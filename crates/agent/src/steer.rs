@@ -52,6 +52,14 @@ impl SteerInbox {
             .push_back((mode, content));
     }
 
+    /// Whether a message is waiting for `session_id`. Nothing is consumed:
+    /// the turn loop drains it at the start of the next step.
+    pub fn has_pending(&self, session_id: &str) -> bool {
+        crate::agent::recover_lock(&self.0)
+            .get(session_id)
+            .is_some_and(|queue| !queue.is_empty())
+    }
+
     /// Every message waiting for `session_id`, oldest first.
     pub fn drain(&self, session_id: &str) -> Vec<MessageContent> {
         let queue = crate::agent::recover_lock(&self.0).remove(session_id);

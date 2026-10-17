@@ -64,3 +64,14 @@ fn mode_names_on_the_wire() {
     );
     assert_eq!(SteerMode::default(), SteerMode::NextStep);
 }
+
+#[test]
+fn has_pending_reports_without_consuming() {
+    let inbox = SteerInbox::default();
+    assert!(!inbox.has_pending("a"));
+    inbox.push("a", text("hello"));
+    assert!(inbox.has_pending("a"));
+    assert!(!inbox.has_pending("b"));
+    assert_eq!(inbox.drain("a").len(), 1);
+    assert!(!inbox.has_pending("a"));
+}

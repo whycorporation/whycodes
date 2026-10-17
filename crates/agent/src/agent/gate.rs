@@ -75,8 +75,8 @@ fn tool_error_is_retryable(name: &str, result: &ToolResult) -> bool {
         return false;
     }
     match name {
-        "question" | "task" | "swarm" | "bg" | "schedule" | "worktree" | "todowrite" | "todo"
-        | "todoread" | "checkpoint" | "rewind" => false,
+        "question" | "task" | "swarm" | "bg" | "schedule" | "wait" | "worktree" | "todowrite"
+        | "todo" | "todoread" | "checkpoint" | "rewind" => false,
         _ => {
             let c = result.content.to_ascii_lowercase();
             !(c.contains("permission denied")
@@ -478,6 +478,8 @@ impl Agent {
             self.execute_mcp_read(tc, rest).await
         } else if tc.name == "schedule" {
             self.execute_schedule_tool(tc, tool_ctx, events).await
+        } else if tc.name == "wait" {
+            self.execute_wait_tool(tc, &session.id).await
         } else if tc.name == "tool_search" {
             self.execute_tool_search(tc)
         } else if tc.name == "worktree" {
