@@ -1051,7 +1051,7 @@ async fn execute_background_shell_errors_when_job_cap_hit() {
 fn hang_shell() -> &'static str {
     #[cfg(windows)]
     {
-        "ping -n 30 127.0.0.1 >NUL"
+        "ping -n 4 127.0.0.1 >NUL"
     }
     #[cfg(not(windows))]
     {
@@ -3747,6 +3747,148 @@ fn a_worker_prompt_names_its_own_directory_and_the_project_instructions() {
     assert!(prompt.contains(&own), "{prompt}");
     let main = format!("Working directory: {}\n", project.path().display());
     assert!(!prompt.contains(&main), "{prompt}");
+}
+
+#[cfg(windows)]
+fn wait_hang_cmd() -> &'static str {
+    "ping -n 4 127.0.0.1 >NUL"
+}
+
+#[cfg(not(windows))]
+fn wait_hang_cmd() -> &'static str {
+    "sleep 3"
+}
+
+/// Finishes after about a second: long enough for `wait` to poll at least once.
+#[cfg(windows)]
+fn wait_slow_cmd() -> &'static str {
+    "ping -n 2 127.0.0.1 >NUL && echo slow-done"
+}
+
+#[cfg(not(windows))]
+fn wait_slow_cmd() -> &'static str {
+    "sleep 1 && echo slow-done"
+}
+
+fn start_wait_job(a: &Agent, command: &str, label: &str) -> String {
+    a.background
+        .start_shell(
+            command,
+            std::env::temp_dir(),
+            whycodes_core::SandboxSettings::off(),
+            Some(label.into()),
+        )
+        .expect("start job")
+}
+
+#[tokio::test]
+async fn execute_wait_tool_nothing_to_wait_for_and_unknown_job() {
+    let a = test_agent();
+    let idle = a.execute_wait_tool(&tc("wait", json!({})), "s1").await;
+    assert!(!idle.is_error);
+    assert!(idle.content.contains("Nothing to wait for"), "{idle:?}");
+
+    let unknown = a
+        .execute_wait_tool(&tc("wait", json!({"job_id": "bg-404"})), "s1")
+        .await;
+    assert!(unknown.is_error);
+    assert!(
+        unknown.content.contains("unknown background job `bg-404`"),
+        "{unknown:?}"
+    );
+}
+
+#[tokio::test]
+async fn execute_wait_tool_returns_when_a_job_finishes() {
+    let a = test_agent();
+    let id = start_wait_job(&a, wait_slow_cmd(), "slow");
+    let started = std::time::Instant::now();
+    let r = a
+        .execute_wait_tool(&tc("wait", json!({"timeout_secs": 30})), "s1")
+        .await;
+    assert!(!r.is_error);
+    assert!(started.elapsed() < std::time::Duration::from_secs(25));
+    assert!(
+        r.content
+            .starts_with(&format!("Background job `{id}` finished (done exit=0).")),
+        "{r:?}"
+    );
+    assert!(r.content.contains("slow-done"), "{r:?}");
+}
+
+#[tokio::test]
+async fn execute_wait_tool_named_job_already_finished_then_nothing_new() {
+    let a = test_agent();
+    let id = start_wait_job(&a, "echo named-done", "named");
+    let status = a
+        .background
+        .wait_until_idle(&id, std::time::Duration::from_secs(10))
+        .await;
+    assert_eq!(status, crate::background::JobStatus::Done);
+
+    let named = a
+        .execute_wait_tool(&tc("wait", json!({"job_id": id, "timeout_secs": 5})), "s1")
+        .await;
+    assert!(!named.is_error);
+    assert!(named.content.contains("finished (done"), "{named:?}");
+    assert!(named.content.contains("named-done"), "{named:?}");
+
+    // Without `job_id` the old completion is not news and nothing is running.
+    let again = a.execute_wait_tool(&tc("wait", json!({})), "s1").await;
+    assert!(again.content.contains("Nothing to wait for"), "{again:?}");
+}
+
+#[tokio::test]
+async fn execute_wait_tool_times_out_while_a_job_runs() {
+    let a = test_agent();
+    let id = start_wait_job(&a, wait_hang_cmd(), "hang");
+    let any = a
+        .execute_wait_tool(&tc("wait", json!({"timeout_secs": 0})), "s1")
+        .await;
+    assert!(!any.is_error);
+    assert_eq!(any.content, "Nothing happened in 0 s.");
+    let named = a
+        .execute_wait_tool(&tc("wait", json!({"timeout_secs": 0, "job_id": id})), "s1")
+        .await;
+    assert_eq!(named.content, "Nothing happened in 0 s.");
+    a.background.kill_all();
+}
+
+#[tokio::test]
+async fn execute_wait_tool_reports_a_pending_steer_message_without_consuming_it() {
+    let a = test_agent();
+    start_wait_job(&a, wait_hang_cmd(), "hang");
+    let inbox = a.steer_inbox();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        inbox.push(
+            "s1",
+            whycodes_core::types::MessageContent::Text("stop".into()),
+        );
+    });
+    let r = a
+        .execute_wait_tool(&tc("wait", json!({"timeout_secs": 30})), "s1")
+        .await;
+    assert!(!r.is_error);
+    assert!(
+        r.content.contains("message from the user is pending"),
+        "{r:?}"
+    );
+    assert_eq!(
+        a.steer_inbox().drain("s1").len(),
+        1,
+        "message must stay queued"
+    );
+    // Another session's inbox is not this session's news.
+    a.steer_inbox().push(
+        "other",
+        whycodes_core::types::MessageContent::Text("x".into()),
+    );
+    let other = a
+        .execute_wait_tool(&tc("wait", json!({"timeout_secs": 0})), "s1")
+        .await;
+    assert_eq!(other.content, "Nothing happened in 0 s.");
+    a.background.kill_all();
 }
 
 #[tokio::test]
