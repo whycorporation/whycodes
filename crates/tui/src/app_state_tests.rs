@@ -1546,6 +1546,38 @@ fn chat_messages_from_session_folds_inline_tool_result_blocks() {
 }
 
 #[test]
+fn steerable_turns_skip_queued_ones_and_stop_at_images_for_text_only() {
+    use whycodes_agent::steer::SteerMode;
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let turn = |text: &str, mode: SteerMode| PendingTurn {
+        text: text.into(),
+        images: Vec::new(),
+        mode,
+    };
+    app.enqueue_turn(turn("later", SteerMode::Queue));
+    app.enqueue_turn(turn("now", SteerMode::Urgent));
+    app.enqueue_turn(PendingTurn {
+        images: vec![crate::images::PromptImage {
+            label: "a.png".into(),
+            path: "a.png".into(),
+            media_type: "image/png".into(),
+        }],
+        ..turn("picture", SteerMode::NextStep)
+    });
+    app.enqueue_turn(turn("after", SteerMode::NextStep));
+    let taken: Vec<String> = app
+        .take_steerable_turns(true)
+        .into_iter()
+        .map(|t| t.text)
+        .collect();
+    assert_eq!(taken, ["now"]);
+    let left: Vec<String> = std::iter::from_fn(|| app.take_pending_turn())
+        .map(|t| t.text)
+        .collect();
+    assert_eq!(left, ["later", "picture", "after"]);
+}
+
+#[test]
 fn chat_messages_from_session_paints_a_provider_summary_as_a_system_card() {
     use whycodes_core::types::{ContentBlock, Message, MessageContent, Role};
     use whycodes_session::session::Session;

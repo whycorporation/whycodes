@@ -502,10 +502,13 @@ fn replay_unread_steering(
 #[derive(Deserialize)]
 pub struct SteerRequest {
     pub message: String,
+    /// `next_step` (default), `queue` or `urgent`.
+    #[serde(default)]
+    pub mode: whycodes_agent::steer::SteerMode,
 }
 
 /// Queue a message for the turn running on `session_id`; the agent reads it
-/// at its next step. Text only.
+/// at its next step (`mode` changes when). Text only.
 pub async fn steer(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -515,7 +518,10 @@ pub async fn steer(
         return StatusCode::BAD_REQUEST;
     }
     let content = whycodes_core::types::MessageContent::Text(req.message);
-    state.agent.steer_inbox().push(&session_id, content);
+    state
+        .agent
+        .steer_inbox()
+        .push_mode(&session_id, req.mode, content);
     StatusCode::ACCEPTED
 }
 

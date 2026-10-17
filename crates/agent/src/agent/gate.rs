@@ -40,6 +40,29 @@ fn refuse_question_open_work(tool_call_id: &str, detail: &str) -> ToolResult {
     }
 }
 
+pub(crate) const NOT_RUN_URGENT: &str = "Tool not run: the user sent a message first";
+
+/// "Not run" results for the calls an urgent message skipped.
+fn skipped_for_urgent(calls: &[ToolCall], events: &Option<EventSink>) -> Vec<ToolResult> {
+    let mut results = Vec::with_capacity(calls.len());
+    for tc in calls {
+        emit(
+            events,
+            TurnEvent::ToolEnd {
+                id: tc.id.clone(),
+                content: NOT_RUN_URGENT.into(),
+                is_error: false,
+            },
+        );
+        results.push(ToolResult {
+            tool_call_id: tc.id.clone(),
+            content: NOT_RUN_URGENT.into(),
+            is_error: false,
+        });
+    }
+    results
+}
+
 /// A result answers `tc`. Most tools leave `tool_call_id` empty; without the
 /// call's id the request repair (`pairing`) treats the call as unanswered,
 /// drops the real output and tells the model the call never ran.
@@ -218,10 +241,17 @@ impl Agent {
 
         // Mixed or unsafe batch — sequential (correct + simple).
         let mut results = Vec::with_capacity(tool_calls.len());
-        for tc in tool_calls {
+        for (i, tc) in tool_calls.iter().enumerate() {
             if is_cancelled(cancel) {
                 emit(events, TurnEvent::Cancelled);
                 return Err(whycodes_core::Error::Agent("Cancelled".into()));
+            }
+            // An urgent message: the calls not started yet are answered
+            // (strict APIs need a result for every call) and the next
+            // request carries the message.
+            if self.steer.has_urgent(&session.id) {
+                results.extend(skipped_for_urgent(&tool_calls[i..], events));
+                break;
             }
             emit(
                 events,
