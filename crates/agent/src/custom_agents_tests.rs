@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 
 fn agent_file(dir: &Path, file: &str, body: &str) -> PathBuf {
     std::fs::create_dir_all(dir).unwrap();
@@ -16,6 +17,8 @@ fn sample(model: Option<&str>) -> CustomAgent {
         disallowed_tools: Vec::new(),
         model: model.map(str::to_string),
         prewalk: false,
+
+        output: None,
         path: PathBuf::from("rev.md"),
     }
 }
@@ -289,4 +292,112 @@ fn mcp_tool_names_use_the_bridge_wire_form() {
         );
         assert_ne!(expected, format!("{server}_{tool}"));
     }
+}
+
+fn front(output: &str) -> String {
+    format!("---\ndescription: d\n{output}\nmodel: inherit\n---\nbody\n")
+}
+
+#[test]
+fn output_key_parses_a_yaml_schema() {
+    let text = front(
+        "output:
+  type: object
+  # comment lines are skipped
+  properties:
+    findings:
+      type: array
+      items:
+        type: object
+        properties:
+          path: { \"type\": \"string\" }
+          line: {\"type\": \"integer\"}
+        required: [path]
+    tags:
+      enum:
+      - a
+      - 'b c'
+      - 3
+      - true
+      - null
+    pairs:
+      type: array
+      items:
+        - type: string
+          enum: [x, \"y\"]
+        -
+          type: number
+        -
+    \"quoted key\": ~
+  required:
+    - findings",
+    );
+    let a = parse(&text, Path::new("x.md")).unwrap();
+    let out = a.output.unwrap();
+    assert_eq!(out["type"], "object");
+    let props = &out["properties"];
+    assert_eq!(props["findings"]["items"]["required"], json!(["path"]));
+    assert_eq!(
+        props["findings"]["items"]["properties"]["line"],
+        json!({"type": "integer"})
+    );
+    assert_eq!(props["tags"]["enum"], json!(["a", "b c", 3, true, null]));
+    assert_eq!(
+        props["pairs"]["items"],
+        json!([{"type": "string", "enum": ["x", "y"]}, {"type": "number"}, null])
+    );
+    assert_eq!(props["quoted key"], json!(null));
+    assert_eq!(out["required"], json!(["findings", "what_i_did_not_check"]));
+    assert_eq!(
+        a.model.as_deref(),
+        Some("inherit"),
+        "keys after output still parse"
+    );
+}
+
+#[test]
+fn output_key_accepts_inline_json_and_scalars() {
+    let a = parse(
+        &front("output: {\"properties\": {\"n\": {\"type\": \"number\"}}}"),
+        Path::new("x.md"),
+    )
+    .unwrap();
+    assert_eq!(
+        a.output.unwrap()["properties"]["n"],
+        json!({"type": "number"})
+    );
+    assert_eq!(yaml_scalar("false"), Ok(json!(false)));
+    assert_eq!(yaml_scalar("-1.5"), Ok(json!(-1.5)));
+    assert_eq!(yaml_scalar("\"open"), Ok(json!("\"open")));
+    assert_eq!(yaml_scalar("[]"), Ok(json!([])));
+    assert_eq!(yaml_scalar("[a, , 2]"), Ok(json!(["a", 2])));
+    assert_eq!(yaml_value("- a\n- b"), Ok(json!(["a", "b"])));
+    assert_eq!(yaml_value("-\n- b"), Ok(json!([null, "b"])));
+    assert_eq!(yaml_value("url: http://x"), Ok(json!({"url": "http://x"})));
+    assert_eq!(yaml_value("- http://x"), Ok(json!(["http://x"])));
+    assert_eq!(yaml_value("'a:b': 1"), Ok(json!({"a:b": 1})));
+    assert_eq!(yaml_key("'open: 1"), None);
+    assert_eq!(yaml_key("a:b"), None);
+}
+
+#[test]
+fn bad_output_schema_is_ignored_but_the_agent_loads() {
+    for bad in [
+        "output:",
+        "output: {type: object}",
+        "output:\n  type: object\n    stray: 1",
+        "output:\n  just text",
+        "output:\n  type: array",
+        "output:\n  - a\n    - b",
+    ] {
+        let a = parse(&front(bad), Path::new("x.md")).unwrap();
+        assert_eq!(a.output, None, "{bad}");
+    }
+    let none = parse(&front("tools: Read"), Path::new("x.md")).unwrap();
+    assert_eq!(none.output, None);
+    assert_eq!(
+        yaml_value("{type: x}"),
+        Err("inline maps must be JSON: `{type: x}`".into())
+    );
+    assert_eq!(yaml_value(""), Err("`output` is empty".into()));
 }

@@ -311,6 +311,7 @@ async fn subagent_hands_off_after_its_first_edit() {
         context: None,
         tools: None,
         max_turns: 6,
+        output_schema: None,
     };
     for (target, expect) in [
         (("openai", "gpt-4o-mini"), "gpt-4o-mini"),

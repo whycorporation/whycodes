@@ -353,7 +353,7 @@ Both TUI and `--plain`:
 | `/security-review` | Security-focused review of changes |
 | `/commit` | Draft (and optionally create) a git commit |
 | `/diff` | Git status + `diff --stat` |
-| `/undo` | Undo the last turn and restore files via git |
+| `/undo` | Undo the last turn and restore files via git. Steps back up to `[session] undo_depth` turns (default 50); past that it says "Nothing older to undo (undo_depth = N)" |
 | `/redo` | Redo the last undone turn |
 | `/share` `/export` | Export the session and print its local share URL |
 | `/compact [context]` `/summarize` | Compact the conversation (LLM full-replace; optional note of what to keep) |
@@ -607,6 +607,63 @@ output lives in `.whycodes/agents/` too). Built-in names (`general`,
   model after its first edit. No switch when both are the same model.
 - The body is the agent's system prompt; AGENTS.md and the skill catalog
   are appended as for built-in workers.
+- `output` (a JSON Schema object, written as YAML) makes the agent return a
+  typed result; see below.
+
+#### Typed results
+
+A custom agent's `output` key, or the `task` tool's `output_schema`
+parameter for one call (it wins over `output`), asks the worker for a
+structured result:
+
+```markdown
+---
+name: auditor
+description: Lists risky call sites
+tools: Read, Grep
+output:
+  type: object
+  properties:
+    findings:
+      type: array
+      items:
+        type: object
+        properties:
+          path: { "type": "string" }
+          line: { "type": "integer" }
+          severity:
+            enum: [low, medium, high]
+        required: [path, severity]
+  required: [findings]
+---
+Find call sites that can panic on user input.
+```
+
+The worker's system prompt ends with an instruction to finish with one
+fenced ` ```json ` block that matches the schema. The schema always gains a
+required `what_i_did_not_check` field (an array of strings), so the result
+says what the worker left unverified. When the worker finishes, WhyCodes
+takes the last ` ```json ` block and checks it against the supported subset
+of JSON Schema: `type` (`object`, `array`, `string`, `number`, `integer`,
+`boolean`, `null`, or a list of them), `properties`, `required`, `items` and
+`enum`; other keywords are ignored. A missing or invalid block gets one
+retry step that quotes the errors. If it is still invalid, the text result
+comes back with `structured: null` and the errors; the parent's turn never
+fails because of it.
+
+A valid result is stored as `.whycodes/agents/<id>.json` next to the
+Markdown artifact (which keeps the prose, without the block). The `task`
+result shows the JSON in compact form after the summary, and `read
+agent://<id>/<json-pointer>` returns one value pretty-printed, for example
+`read agent://task-1/findings/0/path`; `read agent://<id>` still returns the
+Markdown. `swarm` workers of a custom agent with `output` are checked the
+same way.
+
+The YAML subset covers nested `key: value` maps, `- item` lists, inline JSON
+(`{ "type": "string" }`) and `[a, b]` lists, and plain or quoted scalars.
+A whole schema can also be inline JSON (`output: {"type": "object", ...}`).
+An `output` that does not parse, or is not an object schema, is ignored with
+a warning in the log.
 
 The system prompt lists custom agents by name and description. An unknown
 `subagent_type` is an error that names the available ones.
@@ -621,7 +678,7 @@ The system prompt lists custom agents by name and description. An unknown
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
 | GitHub | `github_issue`, `github_pr` (token: env, `gh auth login`, or stored git credentials — not SSH-only remotes) |
 | Web | `webfetch`, `websearch`, `browser` |
-| Workflow | `task`, `swarm`, `swarm_msg`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel`, `checkpoint`, `rewind` |
+| Workflow | `task` (`output_schema` for a typed result), `swarm`, `swarm_msg`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel`, `checkpoint`, `rewind` |
 | Memory | `memory` (`write` / `list` / `search` / `delete` / `learn` / `code_search` / `index`) |
 | Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search`, `plugin_*` |
 
@@ -644,7 +701,9 @@ directories and binary files. MCP server tools bind as `{server}_{tool}`.
 **Internal URLs.** `read` resolves a few `scheme://` paths so the model has
 one interface for things that are not files; a bare scheme lists what it can
 read. `skill://<name>` is a skill body; `agent://<id>` a finished task/swarm
-artifact and `agent://tools/<name>` a long tool guide; `proc://<job-id>` the
+artifact, `agent://<id>/<json-pointer>` one value of its typed result (see
+[Typed results](#typed-results)), and `agent://tools/<name>` a long tool
+guide; `proc://<job-id>` the
 stored log of a background shell job (`.whycodes/scratch/<id>.log`, the file
 `bg` reads from memory); `rule://<name>` a project rule file by stem
 (`.whycodes/rules/*.md`, `.cursor/rules/*.mdc`, `.clinerules/*.md`,
@@ -864,6 +923,8 @@ theme = "default_dark"
 [session]
 auto_title = true
 # title_model = "anthropic/claude-haiku-4-5-20251001"
+# Turns /undo can step back (oldest drop first); 0 = unlimited.
+# undo_depth = 50
 
 [mcp_servers.filesystem]
 command = "npx"
@@ -1197,6 +1258,15 @@ cache_read = 1.25   # optional
 
 Long tool notes live at `agent://tools/<name>` (`read agent://tools/bash`).
 The default tool schema keeps a one-line description.
+
+`read` of a source file longer than 400 lines, with no `offset` or `limit`,
+returns the file's outline instead of its first page: the declaration lines
+`repomap` would keep (functions, types, classes, impls, headings), with their
+line numbers, indentation and the usual content tags, then a line naming the
+file's length and how to read a range. The tags work with `edit` as they do
+after a normal read. `outline: false` always pages; `outline: true` outlines a
+file of any length. Files `repomap` cannot map (other extensions, over 512 KB,
+no declarations) page as before.
 
 A command substitution is judged by what it runs, not by the command that
 receives its output: `echo $(rm -rf ~)` is `catastrophic`, and so is the

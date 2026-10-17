@@ -13,7 +13,7 @@ pub enum Role {
 }
 
 /// A message in the conversation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Message {
     pub role: Role,
     pub content: MessageContent,
@@ -38,7 +38,7 @@ impl Message {
 }
 
 /// Content can be text or a list of content blocks
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum MessageContent {
     Text(String),
@@ -79,7 +79,7 @@ fn first_text_block(blocks: &[ContentBlock]) -> Option<&str> {
 }
 
 /// Content blocks for structured messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ContentBlock {
     Text {
@@ -137,7 +137,7 @@ pub fn strip_trailing_thinking(blocks: &[ContentBlock]) -> Vec<ContentBlock> {
     out
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ImageSource {
     #[serde(rename = "base64")]

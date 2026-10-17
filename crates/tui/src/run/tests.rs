@@ -4003,6 +4003,21 @@ models = ["m1"]
     h.run("/redo").await;
     assert!(h.app.status_message.to_lowercase().contains("redid"));
 
+    // Past `undo_depth`, `/undo` says why it stops instead of dropping a
+    // turn without restoring files.
+    h.history = SessionHistory::with_depth(1);
+    h.history.push_before_turn(&h.session.messages, &project);
+    h.session.add_user_message("capped turn 1");
+    h.history.push_before_turn(&h.session.messages, &project);
+    h.session.add_user_message("capped turn 2");
+    h.run("/undo").await;
+    assert!(h.app.status_message.to_lowercase().contains("undid"));
+    h.run("/undo").await;
+    assert_eq!(
+        h.app.status_message,
+        "Nothing older to undo (undo_depth = 1)"
+    );
+
     h.app.api_context_for = Some((h.provider.clone(), h.model.clone()));
     h.run("/models").await;
     h.app.dialogs.clear();
@@ -11449,4 +11464,36 @@ fn apply_local_discovery_hides_servers_already_configured() {
         .map(|s| s.provider.as_str())
         .collect();
     assert_eq!(ids, vec!["vllm", "llamacpp"]);
+}
+
+#[test]
+fn saves_from_the_tui_write_only_the_change_to_the_global_file() {
+    let (_lock, home) = isolate_home_fresh();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    // The run's merged config: an env API key, a project-layer value and a
+    // CLI `--approval-mode`, none of which is in the global file.
+    let mut config = Config::seeded_openrouter();
+    config.providers.get_mut("openrouter").unwrap().api_key = Some("sk-env-only".into());
+    config.default_agent = "project-agent".into();
+    config.general.approval_mode = Some(ApprovalMode::Manual);
+
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("lmstudio", &["q"]),
+    );
+    let mut agent = Agent::new(dummy_info("build"));
+    apply_approval_mode(&mut app, &mut agent, &mut config, ApprovalMode::Important);
+
+    let saved = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
+    assert!(saved.contains("[providers.lmstudio]"), "{saved}");
+    assert!(saved.contains("approval_mode = \"important\""), "{saved}");
+    for leak in ["sk-env-only", "project-agent"] {
+        assert!(!saved.contains(leak), "{leak} leaked:\n{saved}");
+    }
+    // The running session keeps its merged values.
+    assert_eq!(config.default_agent, "project-agent");
+    assert!(config.get_provider("lmstudio").is_some());
 }

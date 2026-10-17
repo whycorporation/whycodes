@@ -164,52 +164,41 @@ impl Drop for IsolatedHome {
     }
 }
 
-/// Prepend a stub `gh` that prints its argv and exits `exit`. Restores `PATH` on drop.
-/// Does not take `ENV_LOCK` — compose with [`IsolatedHome`] which already serializes env.
+/// Point `gh_program()` at a stub `gh` that prints its argv and exits `exit`,
+/// for the current test thread only. Never touches `PATH`: the real `gh`
+/// must not run from tests (it acts on the developer's GitHub account).
 struct IsolatedGh {
     _bin: tempfile::TempDir,
-    prev_path: Option<std::ffi::OsString>,
+    _guard: crate::cmd::TestGhGuard,
 }
 
 impl IsolatedGh {
     fn new(exit: i32) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let gh = dir.path().join("gh");
-            std::fs::write(
-                &gh,
-                format!("#!/bin/sh\necho fake-gh \"$@\"\nexit {exit}\n"),
-            )
-            .unwrap();
-            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = exit;
-        }
-        let prev_path = std::env::var_os("PATH");
-        let mut path = dir.path().display().to_string();
-        if let Some(rest) = &prev_path {
-            path.push(':');
-            path.push_str(&rest.to_string_lossy());
-        }
-        unsafe { std::env::set_var("PATH", &path) };
-        Self {
-            _bin: dir,
-            prev_path,
-        }
+        let gh = write_gh_stub(dir.path(), exit);
+        let _guard = crate::cmd::TestGhGuard::set(Some(gh.display().to_string()));
+        Self { _bin: dir, _guard }
     }
 }
 
-impl Drop for IsolatedGh {
-    fn drop(&mut self) {
-        match &self.prev_path {
-            Some(v) => unsafe { std::env::set_var("PATH", v) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
-    }
+#[cfg(unix)]
+fn write_gh_stub(dir: &std::path::Path, exit: i32) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let gh = dir.join("gh");
+    std::fs::write(
+        &gh,
+        format!("#!/bin/sh\necho fake-gh \"$@\"\nexit {exit}\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    gh
+}
+
+#[cfg(not(unix))]
+fn write_gh_stub(dir: &std::path::Path, exit: i32) -> std::path::PathBuf {
+    let gh = dir.join("gh.cmd");
+    std::fs::write(&gh, format!("@echo fake-gh %*\r\n@exit /b {exit}\r\n")).unwrap();
+    gh
 }
 
 fn cli(command: Option<Commands>) -> Cli {
@@ -2177,6 +2166,7 @@ async fn dispatch_offline_commands() {
     c.no_auto_update = true;
     c.no_memory = true;
 
+    let _gh = IsolatedGh::new(1);
     dispatch_command(&Commands::Web, &c).await.unwrap();
     dispatch_command(
         &Commands::Pr {
@@ -2187,7 +2177,6 @@ async fn dispatch_offline_commands() {
     )
     .await
     .unwrap();
-    let _gh = IsolatedGh::new(1);
     dispatch_command(
         &Commands::Github {
             cmd: GithubCmd::Issue { number: None },
@@ -4263,8 +4252,8 @@ async fn cmd_model_list_with_configured_models() {
 async fn github_without_gh_on_path() {
     let _home = IsolatedHome::new();
     let empty = tempfile::tempdir().unwrap();
-    let prev = std::env::var_os("PATH");
-    unsafe { std::env::set_var("PATH", empty.path()) };
+    let missing = empty.path().join("gh-not-installed");
+    let _gh = crate::cmd::TestGhGuard::set(Some(missing.display().to_string()));
     let c = cli(None);
     cmd_pr(&c, None, None).await.unwrap();
     cmd_github(&c, &GithubCmd::Pr { action: None })
@@ -4284,10 +4273,6 @@ async fn github_without_gh_on_path() {
     cmd_github(&c, &GithubCmd::Issue { number: Some(2) })
         .await
         .unwrap();
-    match prev {
-        Some(v) => unsafe { std::env::set_var("PATH", v) },
-        None => unsafe { std::env::remove_var("PATH") },
-    }
 }
 
 #[tokio::test]

@@ -181,7 +181,10 @@ Speculative reads (`crates/agent/src/speculative_read.rs`): as soon as a
 `read` call's `path` string is closed in the partial JSON, and the file
 exists, a `ReadTool` job is spawned with the same `ToolContext`. The result is
 consumed later only when the finalized call has the same id, canonical path,
-offset and limit; otherwise the job is aborted. They are never started when a
+offset and limit, and names a window (`offset`/`limit`) exactly when the
+early read did, since a windowless read of a long source file returns an
+outline; otherwise the job is aborted. A call carrying `outline` is never
+speculated. They are never started when a
 `pre_tool` / `post_tool` hook matches `read` (`Agent::read_has_hooks`).
 
 Stream rules (`session.stream_rules`, compiled in `agent/mod.rs`): after every
@@ -335,7 +338,17 @@ speculative reads, stream rules, the doom-loop guard, auto-compact and the
 overflow / rate-limit / fallback handling, the cancel flag, or any of the
 `execute_with_permission` gates. The worker's output is returned as the tool
 result, persisted under `.whycodes/agents/<id>.md`, and its usage is folded
-into the parent at the end of the batch. `Agent::spawn_subagent` /
+into the parent at the end of the batch.
+
+With an output schema (`task` `output_schema`, or a custom agent's `output`),
+`SubagentRunner::run` appends the `# Structured result` instruction to the
+worker's system prompt and, after `run_turn_inner` returns, checks the last
+` ```json ` block (`crates/agent/src/structured_output.rs`). A failure adds
+one user message with the errors and runs `run_turn_inner` once more with
+`max_turns = 1`; its usage is added to the worker's. The outcome is
+`SubagentResult::structured` (`value` or `errors`); a valid value is written to
+`.whycodes/agents/<id>.json` and appended compactly to the tool result. The
+run itself stays `success` either way. `Agent::spawn_subagent` /
 `spawn_parallel` (`crates/agent/src/agent/spawn.rs`) expose the same runner to
 hosts.
 

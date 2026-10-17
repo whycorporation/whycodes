@@ -10,6 +10,12 @@
 //! tools: Read, Grep, Glob
 //! model: inherit
 //! prewalk: true
+//! output:
+//!   type: object
+//!   properties:
+//!     findings:
+//!       type: array
+//!       items: { "type": "string" }
 //! ---
 //! You are a careful code reviewer…
 //! ```
@@ -45,6 +51,10 @@ pub struct CustomAgent {
     /// `prewalk: true`: plan on the strong route, then hand off to the
     /// worker model at the first edit.
     pub prewalk: bool,
+
+    /// Prepared result schema from the `output` key (see
+    /// [`crate::structured_output`]); `None` when absent or invalid.
+    pub output: Option<serde_json::Value>,
     pub path: PathBuf,
 }
 
@@ -245,6 +255,17 @@ pub fn parse(text: &str, path: &Path) -> Option<CustomAgent> {
     let prewalk = fields
         .get("prewalk")
         .is_some_and(|v| v.text().eq_ignore_ascii_case("true"));
+
+    let output = output_schema(front).and_then(|raw| {
+        match yaml_value(&raw).and_then(|v| crate::structured_output::prepare(&v)) {
+            Ok(schema) => Some(schema),
+            Err(e) => {
+                let file = path.display();
+                tracing::warn!("custom agent {file}: `output` schema ignored: {e}");
+                None
+            }
+        }
+    });
     let prompt = if body.is_empty() {
         crate::agent::Agent::system_prompt_for("general")
     } else {
@@ -258,7 +279,152 @@ pub fn parse(text: &str, path: &Path) -> Option<CustomAgent> {
         disallowed_tools,
         model,
         prewalk,
+        output,
         path: path.to_path_buf(),
+    })
+}
+
+/// The raw `output:` entry: its inline value plus the indented lines under it.
+fn output_schema(front: &str) -> Option<String> {
+    let mut lines = front.lines();
+    let first = lines.find(|l| l.starts_with("output:"))?;
+    let mut raw = first["output:".len()..].trim().to_string();
+    for line in lines.take_while(|l| l.trim().is_empty() || l.starts_with([' ', '\t'])) {
+        raw.push('\n');
+        raw.push_str(line);
+    }
+    Some(raw)
+}
+
+/// Parse the YAML subset a schema needs: nested `key: value` maps, `- item`
+/// lists (of scalars or maps), inline JSON or `[a, b]` flow values, and plain,
+/// quoted, numeric, boolean or null scalars. Block scalars and anchors are
+/// not supported.
+fn yaml_value(raw: &str) -> Result<serde_json::Value, String> {
+    if raw.trim_start().starts_with(['{', '[']) {
+        return yaml_scalar(raw.trim());
+    }
+    let mut lines: Vec<(usize, String)> = raw
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+        .map(|l| (l.len() - l.trim_start().len(), l.trim().to_string()))
+        .collect();
+    let Some(&(indent, _)) = lines.first() else {
+        return Err("`output` is empty".into());
+    };
+    let mut i = 0;
+    let value = yaml_node(&mut lines, &mut i, indent)?;
+    match lines.get(i) {
+        Some((_, line)) => Err(format!("unexpected indentation at `{line}`")),
+        None => Ok(value),
+    }
+}
+
+fn yaml_node(
+    lines: &mut [(usize, String)],
+    i: &mut usize,
+    indent: usize,
+) -> Result<serde_json::Value, String> {
+    use serde_json::Value;
+    if lines[*i].1 == "-" || lines[*i].1.starts_with("- ") {
+        let mut items = Vec::new();
+        while let Some((at, line)) = lines.get(*i).cloned() {
+            if at != indent || !(line == "-" || line.starts_with("- ")) {
+                break;
+            }
+            let rest = line[1..].trim_start().to_string();
+            if rest.is_empty() {
+                *i += 1;
+                items.push(yaml_child(lines, i, indent, false)?);
+            } else if yaml_key(&rest).is_some() && !rest.starts_with(['{', '[']) {
+                // `- key: value` opens a map whose keys line up with `key`.
+                let inner = at + (line.len() - rest.len());
+                lines[*i] = (inner, rest);
+                items.push(yaml_node(lines, i, inner)?);
+            } else {
+                *i += 1;
+                items.push(yaml_scalar(&rest)?);
+            }
+        }
+        return Ok(Value::Array(items));
+    }
+    let mut map = serde_json::Map::new();
+    while let Some((at, line)) = lines.get(*i).cloned() {
+        if at != indent {
+            break;
+        }
+        let Some((key, value)) = yaml_key(&line) else {
+            return Err(format!("expected `key: value`, got `{line}`"));
+        };
+        *i += 1;
+        let value = if value.is_empty() {
+            yaml_child(lines, i, indent, true)?
+        } else {
+            yaml_scalar(value)?
+        };
+        map.insert(unquote(key), value);
+    }
+    Ok(Value::Object(map))
+}
+
+/// The value nested under a `key:` or `-` line at `indent`: a deeper block,
+/// a list at the same indent (only under a `key:`, `same_level_list`), or null.
+fn yaml_child(
+    lines: &mut [(usize, String)],
+    i: &mut usize,
+    indent: usize,
+    same_level_list: bool,
+) -> Result<serde_json::Value, String> {
+    match lines.get(*i) {
+        Some((at, _)) if *at > indent => {
+            let at = *at;
+            yaml_node(lines, i, at)
+        }
+        Some((at, line)) if same_level_list && *at == indent && line.starts_with("- ") => {
+            yaml_node(lines, i, indent)
+        }
+        _ => Ok(serde_json::Value::Null),
+    }
+}
+
+/// `key: value` split at the first `:` followed by a space or the end.
+fn yaml_key(line: &str) -> Option<(&str, &str)> {
+    let quoted = line.starts_with(['"', '\'']);
+    let start = if quoted {
+        line[1..].find(line.as_bytes()[0] as char)? + 2
+    } else {
+        0
+    };
+    let at = start + line[start..].find(':')?;
+    let rest = &line[at + 1..];
+    (rest.is_empty() || rest.starts_with(' ')).then(|| (line[..at].trim(), rest.trim()))
+}
+
+fn yaml_scalar(raw: &str) -> Result<serde_json::Value, String> {
+    use serde_json::Value;
+    if raw.starts_with(['{', '[', '"']) {
+        if let Ok(v) = serde_json::from_str::<Value>(raw) {
+            return Ok(v);
+        }
+        if let Some(inner) = raw.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            let items = inner.split(',').map(str::trim).filter(|s| !s.is_empty());
+            return items
+                .map(yaml_scalar)
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::Array);
+        }
+        if raw.starts_with('{') {
+            return Err(format!("inline maps must be JSON: `{raw}`"));
+        }
+    }
+    Ok(match raw {
+        "true" => Value::Bool(true),
+        "false" => Value::Bool(false),
+        "null" | "~" => Value::Null,
+        _ => match raw.parse::<serde_json::Number>() {
+            Ok(n) => Value::Number(n),
+            Err(_e) => Value::String(unquote(raw)),
+        },
     })
 }
 

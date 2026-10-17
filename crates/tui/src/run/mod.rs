@@ -648,7 +648,7 @@ async fn prepare_tui_runtime(opts: &TuiRunOptions, app: &mut TuiApp) -> TuiRunti
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
     app.session_id = session.id.clone();
-    let history = SessionHistory::new();
+    let history = SessionHistory::with_depth(opts.config.session.undo_depth);
 
     if let Some(ref want) = opts.resume_session_id {
         let fresh_id = session.id.clone();
@@ -3275,7 +3275,7 @@ async fn spawn_new_session_runtime(
     );
 
     let session = Session::new(project_dir.to_path_buf(), system_prompt);
-    let history = SessionHistory::new();
+    let history = SessionHistory::with_depth(config.session.undo_depth);
     let (event_tx, event_rx) = mpsc::unbounded_channel::<TurnEvent>();
     let (done_tx, done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
 
@@ -3947,7 +3947,7 @@ fn resume_or_switch_session(
                 rt.persist("switch");
             }
             let n = loaded.messages.len();
-            rt.history = SessionHistory::new();
+            rt.history.clear();
             rt.session = loaded;
             let (p, m) = rt.agent.route();
             rt.session.system_prompt = with_project_memory(
@@ -4183,8 +4183,15 @@ fn apply_local_server_choice(
             return;
         }
     };
-    config.providers.insert(server.provider.clone(), block);
-    if let Err(e) = config.save() {
+    config
+        .providers
+        .insert(server.provider.clone(), block.clone());
+    // Only the new block goes to disk; `config` also holds project and env values.
+    if let Err(e) = Config::update_global(&mut |global| {
+        global
+            .providers
+            .insert(server.provider.clone(), block.clone());
+    }) {
         tracing::warn!("could not persist provider '{}': {e}", server.provider);
         app.toasts.push(
             crate::toast::ToastKind::Warning,
@@ -4662,9 +4669,9 @@ fn apply_reasoning_effort(app: &mut TuiApp, agent: &mut Agent, config: &mut Conf
 }
 
 fn persist_session_reasoning_effort(value: &str) -> anyhow::Result<()> {
-    let mut disk = Config::load()?;
-    disk.session.reasoning_effort = Some(value.to_string());
-    disk.save()?;
+    Config::update_global(&mut |global| {
+        global.session.reasoning_effort = Some(value.to_string());
+    })?;
     Ok(())
 }
 
@@ -4696,9 +4703,7 @@ fn apply_approval_mode(
 }
 
 fn persist_general_approval_mode(mode: ApprovalMode) -> anyhow::Result<()> {
-    let mut disk = Config::load()?;
-    disk.general.approval_mode = Some(mode);
-    disk.save()?;
+    Config::update_global(&mut |global| global.general.approval_mode = Some(mode))?;
     Ok(())
 }
 
