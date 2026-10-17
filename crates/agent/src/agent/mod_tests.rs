@@ -329,33 +329,6 @@ fn skills_catalog_is_appended_without_bodies() {
 }
 
 #[test]
-fn stream_rules_compile_and_match() {
-    use whycodes_config::StreamRuleConfig;
-    let rules = [
-        StreamRuleConfig {
-            name: String::new(),
-            pattern: "x".into(),
-            hint: "h".into(),
-        },
-        StreamRuleConfig {
-            name: "bad".into(),
-            pattern: "(".into(),
-            hint: "h".into(),
-        },
-        StreamRuleConfig {
-            name: "no-leak".into(),
-            pattern: "Box::leak".into(),
-            hint: "use Arc".into(),
-        },
-    ];
-    let compiled = compile_stream_rules(&rules);
-    assert_eq!(compiled.len(), 1);
-    let hit = first_stream_rule_hit(&compiled, "please Box::leak this");
-    assert_eq!(hit, Some(("no-leak", "use Arc")));
-    assert!(first_stream_rule_hit(&compiled, "Arc::from").is_none());
-}
-
-#[test]
 fn persist_agent_artifact_sanitizes_id() {
     let dir = tempfile::tempdir().unwrap();
     persist_agent_artifact(dir.path(), "task-ok", "hello");
@@ -3916,6 +3889,107 @@ async fn execute_wait_tool_reports_a_pending_steer_message_without_consuming_it(
         .await;
     assert_eq!(other.content, "Nothing happened in 0 s.");
     a.background.kill_all();
+}
+
+#[tokio::test]
+async fn task_tool_returns_cancelled_by_the_user_when_the_hub_cancels_it() {
+    let a = test_agent();
+    let exec = crate::subagent::tests::stopper_executor(a.worker_cancels(), "task-t1");
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        [whycodes_llm::ScriptedStep::ToolCall {
+            id: "s1".into(),
+            name: "stopper".into(),
+            input: json!({}),
+        }],
+    )));
+    let a = a.with_tool_executor(exec).with_provider_registry(registry);
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::new(dir.path().to_path_buf(), "sys".into());
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = a
+        .execute_task_tool(
+            &tc("task", json!({"goal": "loop forever", "max_turns": 5})),
+            &session,
+            "script",
+            "m",
+            "k",
+            Some(&tx),
+        )
+        .await;
+    assert_eq!(out.tool_call_id, "t1", "the parent's call gets its result");
+    assert!(out.is_error);
+    assert!(
+        out.content
+            .starts_with("Subagent (general) cancelled by the user"),
+        "{}",
+        out.content
+    );
+    let mut last = None;
+    while let Ok(ev) = rx.try_recv() {
+        if let TurnEvent::Subagent { status, .. } = ev {
+            last = Some(status);
+        }
+    }
+    assert_eq!(last.as_deref(), Some("cancelled"));
+    assert!(
+        !whycodes_core::project_dir(dir.path())
+            .join("agents")
+            .join("task-t1.md")
+            .exists(),
+        "only finished work is saved"
+    );
+}
+
+#[tokio::test]
+async fn swarm_worker_cancelled_by_the_hub_reports_cancelled() {
+    let mut a = test_agent();
+    let exec = crate::subagent::tests::stopper_executor(a.worker_cancels(), "worker-0");
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        [whycodes_llm::ScriptedStep::ToolCall {
+            id: "s1".into(),
+            name: "stopper".into(),
+            input: json!({}),
+        }],
+    )));
+    a = a.with_tool_executor(exec).with_provider_registry(registry);
+    a.swarm_enabled = true;
+    a.swarm_worktrees = false;
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::new(dir.path().to_path_buf(), "sys".into());
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = a
+        .execute_swarm_tool(
+            &tc(
+                "swarm",
+                json!({"tasks": [{"goal": "loop", "subagent_type": "general", "max_turns": 5}]}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            Some(&tx),
+        )
+        .await;
+    assert!(
+        out.content.contains(crate::subagent::CANCELLED_BY_USER),
+        "{}",
+        out.content
+    );
+    let mut statuses = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let TurnEvent::Subagent { status, .. } = ev {
+            statuses.push(status);
+        }
+    }
+    assert_eq!(statuses.last().map(String::as_str), Some("cancelled"));
+    assert!(
+        statuses.iter().filter(|s| *s == "running").count() >= 2,
+        "{statuses:?}"
+    );
 }
 
 #[tokio::test]

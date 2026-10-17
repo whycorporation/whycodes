@@ -178,7 +178,8 @@ fn text_block(block: &whycodes_core::types::ContentBlock) -> Option<&str> {
         whycodes_core::types::ContentBlock::ToolUse { .. } => None,
         whycodes_core::types::ContentBlock::ToolResult { .. } => None,
         whycodes_core::types::ContentBlock::Thinking { .. } => None,
-        whycodes_core::types::ContentBlock::RedactedThinking { .. } => None,
+        whycodes_core::types::ContentBlock::RedactedThinking { .. }
+        | whycodes_core::types::ContentBlock::Compaction { .. } => None,
     }
 }
 

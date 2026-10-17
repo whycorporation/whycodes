@@ -1,13 +1,16 @@
 # Context compaction
 
-> Status: Implemented · Updated: 2026-10-16
+> Status: Implemented · Updated: 2026-10-17
 
 Compaction is how a session keeps fitting into the model's context window.
-There is one method in production, *full-replace*: the whole transcript is
-summarized (by the session model when possible, by a local stub otherwise)
-and the message list is rebuilt as `[last real user prompt, its tail,
-summary carrier]`. Cheaper measures run before it on every step: oversized
-tool results are capped, older ones are pruned, and under pressure "shaken".
+There are two methods. *Full-replace* (the default) summarizes the whole
+transcript (by the session model when possible, by a local stub otherwise)
+and rebuilds the message list as `[last real user prompt, its tail,
+summary carrier]`. *Provider-native* (opt-in, `compaction_method = "auto"`,
+Anthropic only, §4a) asks the provider to summarize the messages before the
+last real user prompt and replaces them with the signed block it returns.
+Cheaper measures run before both on every step: oversized tool results are
+capped, older ones are pruned, and under pressure "shaken".
 Everything below is read from the code; unconfirmed details say "not verified".
 
 ## How it works
@@ -68,7 +71,8 @@ if compaction_threshold > 0 && !compact_paused && before > compaction_threshold:
 on the next user turn.
 
 **Speculative summary.** When the step is under the threshold but at or
-above `SPECULATIVE_LEAD_PERCENT` (85%) of it and compaction uses the model,
+above `SPECULATIVE_LEAD_PERCENT` (85%) of it, compaction uses the model and
+native compaction is not enabled for the step's model,
 `maybe_spawn_speculative_summary` (`compact.rs`) starts a background task
 that summarizes the *prefix* — the messages before the last real user turn,
 `Session::prefix_transcript_for_summary` — with the same prompt and
@@ -84,6 +88,13 @@ the threshold. `CompactOutcome::still_over` is
 `TurnEvent::Status("Compacted context (a → b msgs, ~x → ~y tok)…")`
 (`turn.rs:229-238`); only a status line, not a transcript rebuild (see §8).
 
+The speculative job stays local-only. A native block is signed for exactly
+the messages it was asked about, so preparing one ahead of the threshold
+would need the provider's background recipe (record how many messages were
+sent, then swap exactly that many) on top of the prefix tracking here. With
+native compaction on, no job is started and the threshold pass asks the
+provider directly.
+
 ### 4. `compact_session` (full-replace)
 
 `crates/agent/src/agent/compact.rs:70-97`, in order:
@@ -92,7 +103,8 @@ the threshold. `CompactOutcome::still_over` is
 2. Empty session → default `CompactOutcome`, nothing else runs.
 3. `run_pre_compact_hooks` (`crates/agent/src/agent/lifecycle.rs:50-57`):
    every `[[hooks]]` with `event = "pre_compact"`, no extra env, cannot block,
-   feedback ignored.
+   feedback ignored. Then `native_compact` (§4a); when it returns an
+   outcome, the pass ends there.
 4. `transcript = session.transcript_for_full_summary(0)` — the *whole*
    message list rendered as `Role: body` lines, capped at 48 000 chars
    (`FULL_TRANSCRIPT_MAX_CHARS`, `session.rs:38`, `1257-1265`, `513-545`).
@@ -102,6 +114,52 @@ the threshold. `CompactOutcome::still_over` is
 6. `want_llm = compaction_llm && api_key non-empty && transcript non-empty`.
    If so, `llm_compact_summary`; an empty or failed reply falls back to `local`.
 7. `session.apply_full_replace(&summary)`.
+
+### 4a. Provider-native compaction (`native_compact`)
+
+`crates/agent/src/agent/compact.rs`, after the cheap passes and the
+`pre_compact` hooks. It runs only when `compaction_method = "auto"`,
+`compaction_llm` is on, the key is non-empty and
+`detect_capabilities(provider, model).compaction` is true (first-party
+`anthropic` provider, a model on the list of the on-demand compaction page,
+`crates/llm/src/capabilities.rs`). Every `None` below falls through to
+full-replace with a debug log:
+
+1. Cut: `Session::native_compaction_prefix` — the same cut as full-replace
+   (the last real user turn), but only when something precedes it and the
+   message just before it is an assistant reply without a `tool_use` (the
+   API rejects a summarized range that ends on an open call, and the first
+   kept message must differ in role from the last summarized one). The
+   prefix goes through the same tool-pairing repair as `build_request`.
+2. Request: `build_request(step_tools(), max_tokens 8192, temperature)`
+   with `messages` = the prefix, the agent's prompt-cache setting and
+   `attach_thinking_request` — the same system prompt, tools and thinking
+   settings as a turn, which the API requires for thinking in the kept turns
+   to stay valid. `instructions` = the full-replace prompt without the
+   transcript (`compact_instructions`), the `/compact` note capped at 8,000
+   characters so the whole stays under the 16,384-character limit.
+3. Call: `LlmTransport::compact` → `LlmProvider::compact` (redactor, 2
+   retries, 120 s timeout, never the response cache). The Anthropic body is
+   `compaction_body` (see `docs/providers.md`), header
+   `anthropic-beta: compact-2026-09-04`.
+4. Result: `stop_reason == "compaction"` and exactly one
+   `ContentBlock::Compaction` (`native_compaction_block`). HTTP errors,
+   `max_tokens` / `tool_use` / `refusal` / `end_turn` stops with empty content
+   and extra blocks all fall through.
+5. Swap: `Session::apply_native_compaction(cut, block)`:
+
+```
+before:  [m0 … m(k-1)] [U_last] [tail…]
+after:   [Assistant: compaction block] [U_last] [tail…]      (unchanged, thinking included)
+```
+
+The block is stored as ordinary message JSON (`{"type":"compaction",
+"content", "raw"}`) and sent back with `raw` verbatim on every later request
+(with the beta header) while the model supports it; otherwise it degrades to
+text (see `docs/providers.md`). The redactor leaves it alone (its signature
+covers the text). Compacting again sends a prefix that starts with the old
+block; the new block replaces it. A later full-replace pass reads the block's
+text into its transcript.
 
 ### 5. The LLM summary call
 
@@ -203,8 +261,11 @@ part of the parent's context, so they do not drive the parent's compaction.
 
 Stated as absences, not plans:
 
-- No provider-native compaction or server-side context management is
-  requested; the only provider-facing mechanism is prompt caching.
+- Provider-native compaction exists for Anthropic's on-demand compaction
+  only (§4a). Anthropic's threshold compaction (`context_management`) and
+  context editing are not used. OpenAI's compaction is a Responses-API
+  feature (`/v1/responses/compact`, encrypted items), which whycodes does not
+  speak to api.openai.com; Gemini has no such primitive.
 - No incremental/rolling summary: each pass re-summarizes the whole (capped)
   transcript, relying on the prompt to carry an earlier carrier forward.
 - No token counting against the provider's tokenizer; thresholds use chars/4.
@@ -214,7 +275,8 @@ Stated as absences, not plans:
 | knob | where | effect |
 |---|---|---|
 | `compaction_threshold` (default 150 000) | `[session]` config, `crates/config/src/types.rs:1331-1332`, `1544-1546` | autocompact when heuristic tokens exceed it; `0` disables autocompact and the shake (`turn.rs:214`, `222`) |
-| `compaction_llm` (`"auto"` default; `off`/`false`/`0`/`none`/`local`) | `[session]`, `types.rs:1394-1398`; parsed in `crates/agent/src/agent/mod.rs:614-621` | `off` keeps the local stub only |
+| `compaction_llm` (`"auto"` default; `off`/`false`/`0`/`none`/`local`) | `[session]`, `types.rs:1394-1398`; parsed in `crates/agent/src/agent/mod.rs:614-621` | `off` keeps the local stub only (and disables native compaction) |
+| `compaction_method` (`"local"` default; `"auto"`), env `WHYCODES_COMPACTION_METHOD` | `[session]`, `crates/config/src/types.rs`; parsed in `Agent::apply_config` | `auto` tries provider-native compaction first (§4a) |
 | `/compact [note]`, `/summarize` | slash command (TUI + REPL) | full-replace now, note forwarded to the prompt |
 | `[[hooks]] event = "pre_compact"` | config hooks, `lifecycle.rs:50-57` | runs before the transcript is captured; cannot block |
 | `max_context_tokens` (default 200 000) | `[session]`, `types.rs:1329-1330` | not read by compaction (grep); used elsewhere, not verified here |
@@ -224,7 +286,10 @@ the 48 000-char transcript cap, or the 3-pass breaker.
 
 ## Implementation files
 
-- `crates/agent/src/agent/compact.rs` — `compact_session`, `llm_compact_summary`, the summarizer prompt.
+- `crates/agent/src/agent/compact.rs` — `compact_session`, `native_compact`, `llm_compact_summary`, the summarizer prompt.
+- `crates/llm/src/providers/anthropic.rs` — `compaction_body`, `compact`, block replay and the compaction beta.
+- `crates/llm/src/capabilities.rs` — `ModelCapabilities::compaction`, `ANTHROPIC_COMPACTION_MODELS`.
+- `crates/core/src/types.rs` — `ContentBlock::Compaction`.
 - `crates/agent/src/agent/turn.rs` — per-step caps/shake, autocompact + breaker (`212-268`), overflow compact-and-retry (`363-379`, `472-494`, `597-619`).
 - `crates/agent/src/agent/mod.rs` — `MAX_CONSECUTIVE_COMPACT_FAILURES`, `compaction_threshold` / `compaction_llm` from config.
 - `crates/agent/src/agent/lifecycle.rs` — `run_pre_compact_hooks`.
@@ -234,6 +299,44 @@ the 48 000-char transcript cap, or the 3-pass breaker.
 - `crates/agent/src/agent/turn_tests.rs` — `auto_compact_pauses_after_failures`, `mid_stream_context_overflow_compacts_and_retries`, `overflow_fail_open_retries_then_succeeds`, `shake_and_compact_reset_with_tool_dumps`.
 
 ## Known limitations / not enforced
+
+- Native compaction is off by default because these were not run against
+  the live API (no test calls the network); run them before turning it on
+  by default:
+  1. A history whose first message is an `assistant` message holding the
+     block is accepted, and `compaction_block_misplaced` fires when one
+     summarized message is left in front of it.
+  2. The block survives a storage round trip: no
+     `compaction_signature_invalid`, `compaction_content_mismatch` or
+     "Extra inputs" 400 after a session reload.
+  3. The `instructions` (full whycodes prompt) with the full tool list yield
+     `stop_reason: "compaction"` with text, not `tool_use`.
+  4. `anthropic-beta: oauth-2025-04-20,compact-2026-09-04` is accepted on a
+     subscription OAuth token; if the beta is API-key only, the capability
+     must depend on the credential kind.
+  5. `usage.iterations` is present and is what is reported; top-level
+     tokens are zero.
+  6. After the swap, `cache_read_input_tokens` shows the system prompt still
+     cached.
+  7. Kept thinking stays valid on a preserved-thinking model: whycodes
+     appends ephemeral text (turn context, intent posture) to the latest user
+     message per step, so the kept turns may not be byte-identical to what
+     produced their thinking; a 400 here would surface on the next step.
+  8. A model switch inside the list accepts the block; a switch to a model
+     outside it sends the summary as user text without a 400.
+  9. Compacting a history that already starts with a block returns one new
+     block.
+- The usage of a compaction call (native or local) is not added to the
+  session cost.
+- Gemini and Ollama render a message from its first text, so after a switch
+  away from Anthropic the summary is sent as a leading assistant message;
+  not verified how Gemini treats a model-first history.
+- A binary older than this change cannot read a stored session holding a
+  compaction block (unknown content block type).
+- Native compaction sends the turn's thinking settings; with thinking on,
+  `max_tokens 8192` is raised to budget + 4096 by `apply_anthropic`.
+- Images and documents in the summarized range are gone after a native
+  swap, as with full-replace.
 
 - The summary call goes through `LlmTransport::complete`, which consults the
   process-local `ResponseCache` (exact or semantic ≥ 0.88, 600 s TTL,

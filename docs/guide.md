@@ -252,6 +252,7 @@ recent sessions under it.
 | `:` | Command mode (`:theme`, `:q`, …) |
 | `Ctrl+P` / `Ctrl+M` | Provider setup / model selection |
 | `Ctrl+B` | Toggle sidebar (Files / Diag / MCP / Todos / View) |
+| `Alt+A` | Agent hub: `task` / `swarm` workers of this session (see [Agent hub](#agent-hub)) |
 | click / `t` | Fold the sticky todo panel (header chevron; finished items stay visible when expanded) |
 | `[` / `]` | Cycle sidebar tabs (scrollback focus) |
 | `Ctrl+C` | Clear the draft; cancel a running turn; otherwise ask to quit (again to confirm) |
@@ -319,7 +320,7 @@ Actions: `quit`, `force_quit`, `escape`, `submit`, `scroll_up`, `scroll_down`,
 `page_up`, `page_down`, `scroll_to_top`, `scroll_to_bottom`,
 `toggle_auto_scroll`, `clear_session`, `toggle_sidebar`, `sidebar_next_tab`,
 `sidebar_prev_tab`, `sidebar_tab_1`–`sidebar_tab_6`, `toggle_tasks`,
-`provider_dialog`, `model_dialog`, `input_home`, `input_end`, `input_left`,
+`agent_hub`, `provider_dialog`, `model_dialog`, `input_home`, `input_end`, `input_left`,
 `input_right`, `history_prev`, `history_next`, `newline`, `clear_input`,
 `kill_word_back`, `kill_word_forward`, `word_left`, `word_right`,
 `toggle_thinking`, `toggle_tool_result`, `toggle_todos`, `switch_agent`,
@@ -361,6 +362,7 @@ Both TUI and `--plain`:
 | `/fresh` | Skip the provider prompt cache on the next turn (stale cache / wedged stream) |
 | `/btw <question>` | Side question: shown once, not written to session history, no `bash`/`write` |
 | `/tell <id> <message>` | While a turn runs: message a running `task` subagent or swarm worker (`id` prefix from the subagent panel; omit it when only one runs). Read at its next step; if it finishes first, the message is appended to its result for the parent. Local sessions only |
+| `/agents` | Agent hub (same as `Alt+A`), also while a turn runs. TUI only |
 | `/context` | Context window breakdown |
 | `/cost` `/usage` | Session + last-turn token usage (credential **name** only, never the secret) |
 | `/slop` | ΔLOC / verbosity / erosion vs git base (not a test score) |
@@ -582,6 +584,31 @@ overwrite the same path.
 In **build**, high-confidence questions get an ephemeral intent hint so the
 model answers instead of over-eager edits. Set
 `session.intent_guidance = "off"` to disable.
+
+### Agent hub
+
+`Alt+A` or `/agents` opens a list of the session's `task` and `swarm`
+workers: the ones running in the current turn first, then finished ones,
+newest first. Each row shows the id prefix, the agent type, the status
+(`running` / `done` / `failed` / `cancelled`), elapsed time, tokens when the
+provider reported them, and the last activity (the running step's tool call,
+or the first line of a finished worker's output). `↑`/`↓` move; on the
+selected row:
+
+| Key | Action |
+|---|---|
+| `Enter` | Read-only view of the worker's transcript: while it runs, a log of its text, tool calls and the first line of each result, updated after every step; once finished, its saved `.whycodes/agents/<id>.md` (or the final output when nothing was saved). `↑`/`↓`, `PgUp`/`PgDn`, `g` scroll; `q` / `Esc` close |
+| `t` | Put `/tell <id> ` in the prompt, to message a running worker |
+| `k` | Cancel a running worker. It finishes its current step (the model call and its tool calls), then stops and returns `cancelled by the user` to the parent as its result, with any text it wrote before. The parent's turn goes on |
+| `r` | Re-run a finished worker: queues the user message `Re-run worker <id>: <goal>` for when the session is idle, and the parent starts a new `task` call. The UI never calls tools itself |
+| `Esc` / `q` | Close |
+
+While the hub or the transcript view is open during a turn, `Esc` closes it
+instead of cancelling the turn; `Ctrl+C` still cancels the turn.
+
+Attached to `whycodes serve` (`whycodes connect`), the hub lists the workers
+the daemon reports, without logs or token counts, and hides `k` and `r`: the
+`/api` has no per-worker cancel, and a re-run belongs to the daemon session.
 
 ### Custom subagents
 
@@ -1040,22 +1067,76 @@ Context-window errors are classified separately from 429s: the same request is
 not retried; whycodes compacts once and retries the step. From 85% of the
 compaction threshold on, the summary of everything before your latest prompt
 is prepared in the background, so the compaction at the threshold applies it
-instead of waiting for a model call. Before every step,
+instead of waiting for a model call. With `[session] compaction_method =
+"auto"` on an Anthropic model that supports on-demand compaction (a beta;
+default is `local`), whycodes asks the API to summarize everything before
+your latest prompt instead and keeps that prompt and what followed it word for
+word; if the API does not return a summary, the usual compaction runs.
+Before every step,
 old tool outputs longer than 2,048 characters are saved whole under
 `.whycodes/scratch/artifacts/<tool_call_id>.txt` and the transcript keeps
 their first 400 characters plus a `read` pointer, so the model can look the
 output up instead of running the tool again; what is left is shaken to 512
 characters when the session is still hot.
 
-Stream rules abort a draft mid-token when the assistant text matches a regex,
-then inject the hint:
+Stream rules abort a draft mid-token when the streamed output matches a
+regex, then inject the hint and retry the step. The draft is never added to
+the session.
 
 ```toml
 [[session.stream_rules]]
 name = "no-box-leak"
 pattern = "Box::leak"
 hint = "Don't use Box::leak on production paths; prefer Arc."
+
+[[session.stream_rules]]
+name = "no-rm-rf"
+pattern = 'rm\s+-rf'
+hint = "Never delete directory trees; move them aside instead."
+scope = ["tool_args"]        # text (default) | thinking | tool_args
+tools = ["bash"]             # tool_args only; empty = every tool
+repeat = "once"              # always (default) | once | { after_turns = 3 }
 ```
+
+- `scope` picks what is matched: `text` is the reply text so far, `thinking`
+  the step's thinking so far, `tool_args` each tool call's JSON arguments as
+  they stream (so a `tool_args` hit stops the call before it runs).
+- `repeat` limits how often a rule fires. `always` (the default) fires on
+  every matching draft; `once` fires at most once per session;
+  `{ after_turns = N }` fires again once N user turns have passed since its
+  last hit. Fired rules are kept on the session but not in the database, so a
+  resumed session starts fresh.
+
+A rule can also live in its own file, `.whycodes/rules/<name>.md`, with the
+pattern in YAML frontmatter and the hint as the body:
+
+```markdown
+---
+pattern: '\bunsafe\b'
+scope: [text, tool_args]
+tools: [edit, write]
+repeat: { after_turns: 5 }
+---
+Do not add `unsafe` blocks; find a safe API instead.
+```
+
+`name` defaults to the file stem. Quote the pattern with single quotes (or
+leave it bare) so backslashes stay literal. File rules are added to the
+config-table rules; a file wins over a table rule of the same name. A rule
+file without `pattern` stays an ordinary project rule, and a stream-rule file
+is still a project rule too: its body is part of the system prompt and
+`read rule://<name>` serves it.
+
+Check rules without a model:
+
+```bash
+whycodes rules list                               # every rule, its source and scope
+whycodes rules test "let x = Box::leak(v);"       # which rules fire on this text
+whycodes rules test 'rm -rf build' --scope tool_args --tool bash
+```
+
+`rules test` ignores `repeat`. Without `--tool`, `tool_args` matches only
+rules that have no `tools` list.
 
 ### Subscription login
 
@@ -1278,7 +1359,7 @@ Default `security.sandbox = "workspace"`. On Linux this uses
 | Mode | Behaviour |
 |---|---|
 | `workspace` (default) | Project is read-write; the rest of the host is read-only; `/tmp` is a private tmpfs. Common toolchain caches (`~/.cargo`, `~/.npm`, …) stay writable. |
-| `off` | Host shell with no namespace isolation (`bash -c` on Unix; Git Bash or `cmd.exe /C` on Windows — never WSL). |
+| `off` | Host shell with no namespace isolation (`bash -c` on Unix; on Windows Git Bash, the embedded shell, or `cmd.exe /C` — never WSL). |
 
 Network is allowed inside the sandbox by default. Set
 `sandbox_network = false` to cut TCP/UDP (`--unshare-net`). Dedicated
@@ -1307,18 +1388,34 @@ If `bwrap` is missing (or you are on macOS/Windows), `sandbox_fallback =
 "allow"` warns and runs on the host; `"deny"` fails the tool call.
 This is not a multi-tenant security boundary — it reduces blast radius.
 
-On Windows the host shell is **not** WSL. WhyCodes looks for Git for
-Windows (`bash.exe` outside `System32` / `WindowsApps`), then falls back
-to `cmd.exe`. Set `WHYCODES_SHELL` to an explicit interpreter
-(`pwsh.exe`, a Git Bash path, `cmd.exe`) if you need to override.
+On Windows the host shell is **not** WSL. WhyCodes picks, in order:
 
-Install Git for Windows if you want the `bash` tool to work the way it does
-on Linux and macOS. Models write Unix-style commands (`ls`, `grep`, pipes,
-`&&`, `$VAR`); `cmd.exe` is a degraded mode where most of them fail, and the
-shell risk classifier sees `cmd` syntax it was not written for. Nothing else
-in WhyCodes needs Git for Windows: installing, the TUI, every other tool and
-the sandbox fallback work without it. When no Git Bash is found, the first
-`bash` result carries a warning that says so and how to fix it.
+1. `WHYCODES_SHELL`, when set (`pwsh.exe`, a Git Bash path, `cmd.exe`).
+2. Git for Windows (`bash.exe` outside `System32` / `WindowsApps`).
+3. The **embedded shell**: the `whycodes` binary itself, run as a child
+   process (`whycodes __shell -c <command>`). It is a bash-compatible
+   interpreter with bundled `cat cp cut diff env find grep head ls mkdir mv
+   rm sed sort tail tee touch tr uniq wc which xargs`. Bundled names win over
+   `PATH`, so `find` and `sort` never reach the DOS programs in `System32`;
+   everything else (`git`, `cargo`, `npm`, `.cmd`/`.bat` scripts) runs from
+   `PATH` as usual. The system prompt calls it "the whycodes embedded shell
+   (bash-compatible)".
+4. `cmd.exe /C`, only in a build without the embedded shell (`cargo build
+   --no-default-features …`). The first `bash` result then carries a
+   warning that says so and how to fix it.
+
+Git for Windows is still the most complete option: the embedded shell has
+no `awk`, `diff -r`, or the rest of the
+MSYS userland, and a command that needs them fails with "command not
+found". MSYS drive paths (`/c/Users/...`) are rewritten to `C:/Users/...`
+for `cd` and the bundled file utilities only (when the drive exists), not
+for arguments to external programs. After a subshell that changes
+directory (`(cd sub && ./x)`), a relative program path resolves from the
+subshell's directory until the next `cd`. A timeout ends the shell, but on
+Windows (as with Git Bash) programs it started are not killed with it.
+Nothing else in WhyCodes needs Git for Windows: installing, the TUI, every
+other tool and the sandbox fallback work without it. Linux and macOS
+builds do not contain the embedded shell and always run `bash -c`.
 
 ### Secret redaction
 

@@ -141,7 +141,7 @@ run. How to measure, flags, and floors: [`docs/coverage.md`](docs/coverage.md).
 
 ## Workspace map
 
-26 crates, one-way layering. Full map and allowed edges:
+27 crates, one-way layering. Full map and allowed edges:
 [`docs/architecture.md`](docs/architecture.md).
 
 Package names use the `whycodes-` prefix even when the directory is shorter

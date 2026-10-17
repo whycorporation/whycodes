@@ -5,6 +5,7 @@ pub mod import;
 pub mod pairing;
 pub mod search;
 pub mod session;
+pub mod stream_rules;
 pub mod title;
 pub mod tree;
 
@@ -18,6 +19,7 @@ pub use session::{
     compact_summary_display_text, format_compact_summary, format_compact_summary_content,
     is_compact_summary_text,
 };
+pub use stream_rules::StreamRuleLedger;
 pub use title::{TitleSource, default_title, heuristic_title, sanitize_title};
 pub use tree::{Branch, BranchError, TreeRow, TreeTarget};
 

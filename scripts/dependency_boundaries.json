@@ -34,7 +34,9 @@
     "tools",
     "tui",
     "sdk",
-    "slop"
+    "slop",
+    "sandbox",
+    "shell"
   ],
   "command-risk": [],
   "config": [
@@ -135,5 +137,6 @@
     "storage",
     "tools",
     "slop"
-  ]
+  ],
+  "shell": []
 }

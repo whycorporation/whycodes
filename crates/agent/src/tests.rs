@@ -1239,6 +1239,7 @@ async fn stream_rule_interrupts_matching_draft() {
             name: "no-secret".into(),
             pattern: "FORBIDDENWORD".into(),
             hint: "do not leak secrets".into(),
+            ..Default::default()
         });
     let mut registry = whycodes_llm::ProviderRegistry::new();
     registry.register(Box::new(whycodes_llm::ScriptedProvider::new([

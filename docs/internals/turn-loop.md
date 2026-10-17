@@ -164,9 +164,9 @@ flag (`wait_until_cancelled` polls every 40 ms). Handling per
 
 | Event | Effect |
 |---|---|
-| `TextDelta` | flush pending thinking, record TTFT, emit `TurnEvent::TextDelta`, append to `accumulated_text`, check stream rules |
-| `ToolUse` / `ToolUseDelta` | `ToolCallAssembler` (`crates/agent/src/tool_stream.rs`) merges Anthropic-style and OpenAI-style fragments; after each delta `speculative_read::maybe_start` may start an early `read` |
-| `Thinking` / `ThinkingDelta` / `ThinkingSignature` / `RedactedThinking` | `ThinkingAccumulator` (`crates/agent/src/thinking_acc.rs`) collects blocks; `TurnEvent::ThinkingDelta` is emitted for text |
+| `TextDelta` | flush pending thinking, record TTFT, emit `TurnEvent::TextDelta`, append to `accumulated_text`, check `text` stream rules |
+| `ToolUse` / `ToolUseDelta` | `ToolCallAssembler` (`crates/agent/src/tool_stream.rs`) merges Anthropic-style and OpenAI-style fragments; check `tool_args` stream rules on the updated call's argument buffer (only when some rule has that scope); after each delta `speculative_read::maybe_start` may start an early `read` |
+| `Thinking` / `ThinkingDelta` / `ThinkingSignature` / `RedactedThinking` | `ThinkingAccumulator` (`crates/agent/src/thinking_acc.rs`) collects blocks; `TurnEvent::ThinkingDelta` is emitted for text, which is also appended to `accumulated_thinking` and checked against `thinking` stream rules |
 | `Usage` / `CacheUsage` | folded as a snapshot max (providers repeat or split usage) |
 | `MessageStart` / `MessageDelta` | ignored |
 | `MessageStop` | end of step |
@@ -182,12 +182,20 @@ outline; otherwise the job is aborted. A call carrying `outline` is never
 speculated. They are never started when a
 `pre_tool` / `post_tool` hook matches `read` (`Agent::read_has_hooks`).
 
-Stream rules (`session.stream_rules`, compiled in `agent/mod.rs`): after every
-text delta `first_stream_rule_hit` tests the accumulated text against each
-regex. On a hit `apply_stream_rule_hit` aborts speculative reads, emits
-`Status("Stream rule `name` interrupted the draft")`, appends a user message
-`<whycodes_rule name=…>hint…</whycodes_rule>`, discards the draft (it is never
-added to the session) and restarts the step.
+Stream rules (`session.stream_rules` plus `.whycodes/rules/*.md` files merged
+by `Config::load_stream_rule_files`, compiled by `crates/agent/src/stream_rules.rs`):
+`check_stream_rules` asks `stream_rules::first_hit` for the first rule that
+watches the channel (`Text`, `Thinking`, or `ToolArgs(tool)` filtered by the
+rule's `tools`), whose `repeat` policy still allows a hit, and whose regex
+matches the accumulated channel text. On a hit it aborts speculative reads,
+emits `Status("Stream rule `name` interrupted the draft")`, records the hit on
+`session.stream_rules` (`StreamRuleLedger`: rule → user turn of its last hit),
+appends a user message `<whycodes_rule name=…>hint…</whycodes_rule>`, discards
+the draft (it is never added to the session; a `tool_args` hit means the call
+never runs) and restarts the step. `run_turn_steps` calls
+`StreamRuleLedger::begin_turn` once per user turn; the default
+`repeat = "always"` never blocks, `"once"` blocks a rule after its first hit,
+`{ after_turns = N }` until N turns have passed.
 
 Cancel during streaming: speculative reads aborted, the thinking blocks and
 partial text are appended as an assistant message, `TurnEvent::Cancelled`,
@@ -296,7 +304,8 @@ messages.
 `ToolStart`, `ToolEnd`, `Usage` (once per step), `Status`, `Intent`,
 `Cancelled`, `Background` (job started / done / failed / killed),
 `EnqueuePrompt` (`schedule` goal), `Panel`, `Todos`, `Subagent` (running /
-completed / failed), `SwarmStatus`, `SwarmMessage`, `FileConflict`,
+completed / failed / cancelled; a running worker sends one before and one
+after each step's tools with its log so far and its token count), `SwarmStatus`, `SwarmMessage`, `FileConflict`,
 `FileStale`, `PermissionAsk` and `QuestionAsk` (daemon → SDK client). `emit`
 drops events silently when the receiver is gone.
 
@@ -311,6 +320,17 @@ drops events silently when the receiver is gone.
 - `ToolCallAssembler`, `Session::build_request`, usage folding;
 - steering (`with_steer`, keyed by `task-<call id>` or `worker-N`), the swarm
   mailbox (`SwarmHub`), and file claims in same-checkout swarm mode;
+- a per-worker cancel request (`with_cancel`, `Agent::worker_cancels()`,
+  `crates/agent/src/worker_cancel.rs`) under the same key. The worker
+  registers at start and leaves at the end, so a late request cannot hit a
+  later worker that reuses `worker-N`. It is read at the top of each step:
+  the worker stops with the tool results of its last step in place and
+  returns `cancelled by the user` (plus any text it wrote) as a normal tool
+  result, so the parent's `tool_use` / `tool_result` pairing holds. Status
+  `cancelled`; nothing is saved under `.whycodes/agents/`;
+- step progress (`with_progress`): `Subagent` events with status `running`,
+  the last tool call as `activity`, a log of text / calls / first result
+  lines (newest 16 000 bytes) as `output`, and input + output `tokens`;
 - a parallel/serial split equivalent to `SERIAL_TOOLS`, pre/post tool hooks,
   `subagent_stop` hooks;
 - `max_turns` (the `task` tool defaults to 15), worker model
@@ -318,9 +338,11 @@ drops events silently when the receiver is gone.
   read-only; `general` = parent minus todo / task / swarm; custom agents from
   `custom_agents.rs`).
 
-It does **not** reuse: streaming `TurnEvent`s (thinking is only logged),
-speculative reads, stream rules, the doom-loop guard, auto-compact and the
-overflow / rate-limit / fallback handling, the cancel flag, or any of the
+It does **not** reuse: streaming `TurnEvent`s (thinking is only logged; the
+UI gets the per-step `Subagent` events above), speculative reads, stream
+rules, the doom-loop guard, auto-compact and the overflow / rate-limit /
+fallback handling, the turn's cancel flag (a cancel is per worker and never
+interrupts a stream or a running tool), or any of the
 `execute_with_permission` gates. The worker's output is returned as the tool
 result, persisted under `.whycodes/agents/<id>.md`, and its usage is folded
 into the parent at the end of the batch.

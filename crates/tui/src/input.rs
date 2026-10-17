@@ -492,12 +492,11 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
     let ctx = app.key_context;
 
     if app.open_subagent.is_some()
-        && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
         && !key
             .modifiers
             .contains(crossterm::event::KeyModifiers::CONTROL)
+        && subagent_view_key(app, key.code)
     {
-        app.close_subagent_view();
         return true;
     }
 
@@ -725,6 +724,10 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
         }
         Some(Action::OpenSubagent) => {
             open_selected_subagent(app);
+            true
+        }
+        Some(Action::OpenAgentHub) => {
+            crate::agent_hub::open(app);
             true
         }
         Some(Action::SidebarNextTab) => {
@@ -974,6 +977,26 @@ fn open_selected_subagent(app: &mut TuiApp) {
         let id = row.id.clone();
         app.open_subagent_view(&id);
     }
+}
+
+/// Close / scroll keys of the framed child transcript. `false` when the key
+/// is not one of them.
+fn subagent_view_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    let scroll = app.subagent_view_scroll;
+    app.subagent_view_scroll = match code {
+        KeyCode::Char('q') | KeyCode::Esc => {
+            app.close_subagent_view();
+            return true;
+        }
+        KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
+        KeyCode::Down | KeyCode::Char('j') => scroll.saturating_add(1),
+        KeyCode::PageUp => scroll.saturating_sub(10),
+        KeyCode::PageDown => scroll.saturating_add(10),
+        KeyCode::Home | KeyCode::Char('g') => 0,
+        _ => return false,
+    };
+    app.mark_dirty();
+    true
 }
 
 fn handle_escape(app: &mut TuiApp) {
@@ -2153,7 +2176,7 @@ fn handle_model_type(app: &mut TuiApp, key: &KeyEvent) -> bool {
 }
 
 /// Pop the active dialog and leave dialog mode when the stack is empty.
-fn dismiss_dialog(app: &mut TuiApp) {
+pub(crate) fn dismiss_dialog(app: &mut TuiApp) {
     // Questionnaire oneshot must complete — signal the run loop.
     if matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
         app.question_dismissed = true;
@@ -2263,6 +2286,9 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
                 app.import_picker.cursor = idx.min(len - 1);
             }
         }
+        DialogKind::Agents => {
+            app.agents_cursor = idx.min(app.subagents.len().saturating_sub(1));
+        }
         _ => {}
     }
 }
@@ -2284,6 +2310,9 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
 
     if matches!(active, DialogKind::Help) && handle_help_type(app, key) {
         app.mark_dirty();
+        return true;
+    }
+    if matches!(active, DialogKind::Agents) && crate::agent_hub::handle_key(app, key) {
         return true;
     }
     // Model search steals letters (including j/k/q) the same way help does.
@@ -2633,6 +2662,14 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.pending_approval_mode = Some(mode);
             }
         }
+        DialogKind::Agents => {
+            let id = crate::agent_hub::selected_id(app);
+            dismiss_dialog(app);
+            if let Some(id) = id {
+                app.open_subagent_view(&id);
+            }
+            return;
+        }
         DialogKind::Question(_) => {
             // Keyboard confirm is owned by `handle_question_key` in the run
             // loop. If Enter still lands here, do not dismiss (that would
@@ -2897,6 +2934,9 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
                 app.import_picker.items.len(),
                 delta,
             );
+        }
+        DialogKind::Agents => {
+            app.agents_cursor = move_selection(app.agents_cursor, app.subagents.len(), delta);
         }
         _ => {}
     }
