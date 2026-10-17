@@ -164,9 +164,9 @@ flag (`wait_until_cancelled` polls every 40 ms). Handling per
 
 | Event | Effect |
 |---|---|
-| `TextDelta` | flush pending thinking, record TTFT, emit `TurnEvent::TextDelta`, append to `accumulated_text`, check stream rules |
-| `ToolUse` / `ToolUseDelta` | `ToolCallAssembler` (`crates/agent/src/tool_stream.rs`) merges Anthropic-style and OpenAI-style fragments; after each delta `speculative_read::maybe_start` may start an early `read` |
-| `Thinking` / `ThinkingDelta` / `ThinkingSignature` / `RedactedThinking` | `ThinkingAccumulator` (`crates/agent/src/thinking_acc.rs`) collects blocks; `TurnEvent::ThinkingDelta` is emitted for text |
+| `TextDelta` | flush pending thinking, record TTFT, emit `TurnEvent::TextDelta`, append to `accumulated_text`, check `text` stream rules |
+| `ToolUse` / `ToolUseDelta` | `ToolCallAssembler` (`crates/agent/src/tool_stream.rs`) merges Anthropic-style and OpenAI-style fragments; check `tool_args` stream rules on the updated call's argument buffer (only when some rule has that scope); after each delta `speculative_read::maybe_start` may start an early `read` |
+| `Thinking` / `ThinkingDelta` / `ThinkingSignature` / `RedactedThinking` | `ThinkingAccumulator` (`crates/agent/src/thinking_acc.rs`) collects blocks; `TurnEvent::ThinkingDelta` is emitted for text, which is also appended to `accumulated_thinking` and checked against `thinking` stream rules |
 | `Usage` / `CacheUsage` | folded as a snapshot max (providers repeat or split usage) |
 | `MessageStart` / `MessageDelta` | ignored |
 | `MessageStop` | end of step |
@@ -182,12 +182,20 @@ outline; otherwise the job is aborted. A call carrying `outline` is never
 speculated. They are never started when a
 `pre_tool` / `post_tool` hook matches `read` (`Agent::read_has_hooks`).
 
-Stream rules (`session.stream_rules`, compiled in `agent/mod.rs`): after every
-text delta `first_stream_rule_hit` tests the accumulated text against each
-regex. On a hit `apply_stream_rule_hit` aborts speculative reads, emits
-`Status("Stream rule `name` interrupted the draft")`, appends a user message
-`<whycodes_rule name=…>hint…</whycodes_rule>`, discards the draft (it is never
-added to the session) and restarts the step.
+Stream rules (`session.stream_rules` plus `.whycodes/rules/*.md` files merged
+by `Config::load_stream_rule_files`, compiled by `crates/agent/src/stream_rules.rs`):
+`check_stream_rules` asks `stream_rules::first_hit` for the first rule that
+watches the channel (`Text`, `Thinking`, or `ToolArgs(tool)` filtered by the
+rule's `tools`), whose `repeat` policy still allows a hit, and whose regex
+matches the accumulated channel text. On a hit it aborts speculative reads,
+emits `Status("Stream rule `name` interrupted the draft")`, records the hit on
+`session.stream_rules` (`StreamRuleLedger`: rule → user turn of its last hit),
+appends a user message `<whycodes_rule name=…>hint…</whycodes_rule>`, discards
+the draft (it is never added to the session; a `tool_args` hit means the call
+never runs) and restarts the step. `run_turn_steps` calls
+`StreamRuleLedger::begin_turn` once per user turn; the default
+`repeat = "always"` never blocks, `"once"` blocks a rule after its first hit,
+`{ after_turns = N }` until N turns have passed.
 
 Cancel during streaming: speculative reads aborted, the thinking blocks and
 partial text are appended as an assistant message, `TurnEvent::Cancelled`,
