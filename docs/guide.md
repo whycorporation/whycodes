@@ -363,6 +363,8 @@ Both TUI and `--plain`:
 | `/new` `/clear` | Start a new session |
 | `/rename [name]` | Set the session title (locks auto-title) |
 | `/fork [title]` | Continue in a copy under a new id; the original stays as saved |
+| `/branch [name]` | Mark this point of the conversation as a named branch (default `branch N`) |
+| `/tree` | Conversation tree of user turns (TUI picker, Enter continues from a turn; `--plain` prints it numbered, `/tree <n>` switches) |
 | `/mcp` | List connected MCP servers, their prompts (`/mcp__<server>__<prompt>`) and resources |
 | `/init` | Create or update `AGENTS.md` |
 | `/review` | AI review of git changes (read-only) |
@@ -433,6 +435,20 @@ Turn it off with:
 [session]
 preconnect = false
 ```
+
+#### Branches
+
+One session can hold several paths. `/branch [name]` marks the current point;
+`/tree` shows every user turn as a tree, with branch names and the active
+path (`●` its last turn, `•` the turns on it, `○` turns on other paths).
+Choosing a turn makes it the active leaf: the transcript you see and the one
+sent to the model run from the first turn to that one. The next prompt adds a
+new child there, and the path you left stays in the tree as a sibling, so
+nothing is deleted. Switching is refused while a turn runs. Branches are
+saved with the session; sessions from before branches load as one path.
+`/compact`, tool-output spill and `/undo` act on the active path only, and
+`/undo` history starts over after a switch. `/fork` copies the whole tree to
+a new session. Branches are not merged.
 
 TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
 `/loop` (`/loop 3 <prompt>`; `/loop stop`), `/goal` (below).
