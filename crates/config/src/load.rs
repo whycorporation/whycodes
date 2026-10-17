@@ -493,6 +493,11 @@ impl Config {
         {
             self.session.max_context_tokens = n;
         }
+        if let Ok(val) = std::env::var("WHYCODES_UNDO_DEPTH")
+            && let Ok(n) = val.parse::<usize>()
+        {
+            self.session.undo_depth = n;
+        }
 
         // WHYCODES_LOG_LEVEL
         if let Ok(val) = std::env::var("WHYCODES_LOG_LEVEL") {

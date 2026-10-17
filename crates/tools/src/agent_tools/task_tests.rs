@@ -31,3 +31,14 @@ async fn execute_reports_missing_intercept() {
         missing.content
     );
 }
+
+#[test]
+fn parameters_offer_an_output_schema() {
+    let p = TaskTool.parameters();
+    assert_eq!(p["properties"]["output_schema"]["type"], "object");
+    let desc = p["properties"]["output_schema"]["description"]
+        .as_str()
+        .unwrap();
+    assert!(desc.contains("what_i_did_not_check"), "{desc}");
+    assert!(desc.contains("agent://<id>/<json-pointer>"), "{desc}");
+}
