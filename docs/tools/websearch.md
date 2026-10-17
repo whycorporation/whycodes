@@ -3,7 +3,7 @@
 
 > Profile: deferred · Permission key: `[permission] websearch`
 
-Search the web and return result snippets. Requires SERPAPI_API_KEY for best results (falls back to DuckDuckGo HTML). For 'latest version' questions: do not pin the query to a past calendar year (e.g. avoid '2024'/'2025'); search 'Nuxt latest release' or fetch canonical APIs via webfetch (npm registry, GitHub Releases, official docs).
+Search the web and return result snippets. The engine comes from `[websearch]` config; by default SerpAPI when SERPAPI_API_KEY is set, else DuckDuckGo HTML. For 'latest version' questions: do not pin the query to a past calendar year (e.g. avoid '2024'/'2025'); search 'Nuxt latest release' or fetch canonical APIs via webfetch (npm registry, GitHub Releases, official docs).
 
 Deferred tools are not advertised on every request. Activate one with `tool_search` or set `session.tool_profile = "full"`.
 
