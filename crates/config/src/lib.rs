@@ -19,12 +19,13 @@ pub use types::{
     MagicKeywordsConfig, McpServerConfig, McpTransportKind, MemoryConfig, NotifyConfig,
     NotifyEvent, PriceConfig, QuestionToolConfig, RuntimeLspServer, SecurityConfig, SessionConfig,
     SlopConfig, StreamRuleConfig, SwarmConfig, SystemPromptOverlays, ToolsConfig, TuiConfig,
-    is_discord_webhook_url,
+    WebSearchConfig, WebSearchCustomConfig, is_discord_webhook_url,
 };
 
 #[cfg(test)]
 pub(crate) use load::{
-    encode_toml, ensure_parent_dir, map_toml_ser, parse_command_markdown, toml_err, write_atomic,
+    encode_toml, ensure_parent_dir, map_toml_ser, parse_command_markdown,
+    project_websearch_warning, toml_err, write_atomic,
 };
 
 /// `.whycodes/slop.toml` next to project config.

@@ -381,6 +381,37 @@ required sub-table (no serde default on the field), and its three
 |---|---|---|---|
 | `max_background_jobs` | `8` | — | Maximum concurrent background shell jobs (auto-detached `bash`, `/bg`). |
 
+## `[websearch]`, `[websearch.custom]`
+
+Which engine the `websearch` tool (and `mcp_websearch`) queries. Without this
+table the tool behaves as before: SerpAPI when `SERPAPI_API_KEY` is set, else
+DuckDuckGo HTML. A higher layer that sets `[websearch.custom]` replaces the
+whole table; `endpoint` is required in it.
+
+The project layer (`.whycodes/config.toml`) cannot set `[websearch.custom]`
+or `custom` as `engine` / in `fallback`: those keys are dropped with a
+warning, so a repository cannot send `header_env` secrets to its own host.
+Set them in the global config or with `WHYCODES_WEBSEARCH_ENGINE`.
+
+| Key | Default | Env override | Meaning |
+|---|---|---|---|
+| `engine` | — | `WHYCODES_WEBSEARCH_ENGINE` | `serpapi`, `duckduckgo` or `custom`. Unset = SerpAPI when `SERPAPI_API_KEY` is set, else DuckDuckGo. Case-insensitive; an unknown name fails the call with the list of valid names. |
+| `fallback` | `[]` | — | Engines tried in order when the primary returns an error (request failure, network policy block, missing key, bad mapping). Repeats are skipped. When every engine fails, the error lists each one. |
+| `custom.endpoint` | required | — | Request URL. `security.network_allowlist` / `network_denylist` apply to its host. Redirects are not followed; a 3xx or other non-2xx status is an error. Each request times out after 20 s. |
+| `custom.method` | `"GET"` | — | `GET` sends the parameters as a query string; `POST` sends them as a JSON object body (the count as a number). |
+| `custom.query_param` | `"q"` | — | Parameter that carries the query. |
+| `custom.count_param` | — | — | Parameter that carries `num_results`. Unset = not sent. |
+| `custom.params` | `{}` | — | Extra static parameters sent with every request. |
+| `custom.headers` | `{}` | — | Static request headers. |
+| `custom.header_env` | `{}` | — | Header name → environment variable that holds its value, read at request time and never stored. Global config only. A variable that is not set fails the call with its name. |
+| `custom.results_pointer` | `"/results"` | — | [JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901) to the result array. A pointer that does not reach an array is an error. |
+| `custom.title_pointer` | `"/title"` | — | JSON Pointer, inside one result, to its title. Results without a string title or URL are skipped; if none has both, the call fails. |
+| `custom.url_pointer` | `"/url"` | — | JSON Pointer, inside one result, to its URL. |
+| `custom.snippet_pointer` | `"/snippet"` | — | JSON Pointer, inside one result, to its snippet. Missing = empty snippet. |
+
+Error messages name the endpoint without its query string and never include
+the response body.
+
 ## `[slop]`
 
 Tripwires for `whycodes slop` / `/slop`. The default verdict at the first

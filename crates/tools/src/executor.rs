@@ -26,6 +26,8 @@ pub struct ToolExecutor {
     lsp: lsp::LspTool,
     /// Run the project's formatter on files `edit` / `write` change.
     format_after_write: AtomicBool,
+    /// Shares its settings with the registered `websearch` tool.
+    websearch: search::WebSearchTool,
 }
 
 /// Most (permissions, profile, extra) schema sets held at once. Each new
@@ -66,6 +68,7 @@ impl ToolExecutor {
             defs_cache: Mutex::new(FxHashMap::default()),
             lsp: lsp::LspTool::new(),
             format_after_write: AtomicBool::new(true),
+            websearch: search::WebSearchTool::new(),
         };
 
         executor.register(Box::new(read::ReadTool::new()));
@@ -80,7 +83,7 @@ impl ToolExecutor {
         executor.register(Box::new(shell::ShellTool::as_shell()));
         executor.register(Box::new(browser::BrowserTool::new()));
         executor.register(Box::new(fetch::WebFetchTool::new()));
-        executor.register(Box::new(search::WebSearchTool::new()));
+        executor.register(Box::new(executor.websearch.clone()));
         executor.register(Box::new(issue::GithubIssueTool::new()));
         executor.register(Box::new(pr::GitHubPrTool::new()));
         executor.register(Box::new(task::TaskTool::new()));
@@ -236,6 +239,11 @@ impl ToolExecutor {
     /// `[tools.format] enabled`; shared executors pick it up in place.
     pub fn set_format_after_write(&self, enabled: bool) {
         self.format_after_write.store(enabled, Ordering::Relaxed);
+    }
+
+    /// `[websearch]` engine settings; shared executors pick them up in place.
+    pub fn set_websearch(&self, settings: search::WebSearchSettings) {
+        self.websearch.set_settings(settings);
     }
 
     pub fn configure_lsp(&mut self, overlay: &whycodes_lsp::LspSettings) {
