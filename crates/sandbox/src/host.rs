@@ -1,15 +1,41 @@
 //! Host shell used when bubblewrap is off or unavailable.
 //!
 //! Unix runs `bash -c`. Windows never launches WSL: Git Bash if present,
-//! otherwise `cmd.exe /C`. `C:\Windows\System32\bash.exe` is the WSL stub.
+//! then the binary's embedded shell when one is registered
+//! ([`set_embedded_shell`]), otherwise `cmd.exe /C`.
+//! `C:\Windows\System32\bash.exe` is the WSL stub.
 
 #[cfg(any(windows, test))]
 use std::ffi::OsStr;
 #[cfg(any(windows, test))]
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use super::policy::{Backend, PreparedCommand};
+
+/// What the system prompt calls the embedded shell. "bash-compatible" keeps
+/// models on the bash dialect.
+pub const EMBEDDED_SHELL_NAME: &str = "the whycodes embedded shell (bash-compatible)";
+
+/// Argv between the embedded-shell program and the command string.
+#[cfg(any(windows, test))]
+const EMBEDDED_SHELL_ARGS: [&str; 2] = ["__shell", "-c"];
+
+static EMBEDDED_SHELL: OnceLock<PathBuf> = OnceLock::new();
+
+/// Register `program` (the running binary) as able to run
+/// `program __shell -c <command>`. On Windows it then runs commands when no
+/// Git Bash is found, instead of `cmd.exe`. Only the first call counts; call
+/// it before the first command so [`host_shell_name`] sees it.
+pub fn set_embedded_shell(program: PathBuf) {
+    EMBEDDED_SHELL.get_or_init(|| program);
+}
+
+/// The program registered with [`set_embedded_shell`], if any.
+pub fn embedded_shell() -> Option<&'static std::path::Path> {
+    EMBEDDED_SHELL.get().map(PathBuf::as_path)
+}
 
 /// Plain host shell (no namespace isolation).
 pub fn prepare_host(
@@ -27,12 +53,21 @@ pub fn prepare_host(
     }
 }
 
-/// File name of the shell the `bash` tool runs in on this host: `bash` on
-/// Unix; on Windows Git Bash's `bash.exe`, `cmd.exe`, or `WHYCODES_SHELL`.
+/// Name of the shell the `bash` tool runs in on this host: `bash` on Unix;
+/// on Windows Git Bash's `bash.exe`, [`EMBEDDED_SHELL_NAME`], `cmd.exe`, or
+/// `WHYCODES_SHELL`.
 pub fn host_shell_name() -> String {
-    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    NAME.get_or_init(|| shell_file_name(&host_invocation("").program))
+    static NAME: OnceLock<String> = OnceLock::new();
+    NAME.get_or_init(|| shell_display_name(&host_invocation("").program, embedded_shell()))
         .clone()
+}
+
+pub(crate) fn shell_display_name(program: &str, embedded: Option<&std::path::Path>) -> String {
+    if embedded.is_some_and(|exe| exe.as_os_str() == program) {
+        EMBEDDED_SHELL_NAME.to_string()
+    } else {
+        shell_file_name(program)
+    }
 }
 
 pub(crate) fn shell_file_name(program: &str) -> String {
@@ -78,8 +113,12 @@ fn windows_host_invocation(command: &str) -> HostInvocation {
         ),
     );
     let comspec = std::env::var_os("ComSpec").map(|v| v.to_string_lossy().into_owned());
-    let shell =
-        resolve_windows_host_shell(override_shell.as_deref(), native_bash, comspec.as_deref());
+    let shell = resolve_windows_host_shell(
+        override_shell.as_deref(),
+        native_bash,
+        embedded_shell(),
+        comspec.as_deref(),
+    );
     let mut args = shell.args_prefix;
     args.push(command.to_string());
     HostInvocation {
@@ -96,11 +135,13 @@ pub(crate) struct WindowsHostShell {
     pub warning: Option<String>,
 }
 
-/// Pick a Windows shell that will not start WSL2.
+/// Pick a Windows shell that will not start WSL2: `WHYCODES_SHELL`, Git
+/// Bash, the embedded shell, then `cmd.exe`.
 #[cfg(any(windows, test))]
 pub(crate) fn resolve_windows_host_shell(
     override_shell: Option<&str>,
     native_bash: Option<PathBuf>,
+    embedded: Option<&Path>,
     comspec: Option<&str>,
 ) -> WindowsHostShell {
     if let Some(raw) = override_shell.map(str::trim).filter(|s| !s.is_empty()) {
@@ -113,6 +154,13 @@ pub(crate) fn resolve_windows_host_shell(
         return WindowsHostShell {
             program: bash.to_string_lossy().into_owned(),
             args_prefix: vec!["-c".into()],
+            warning: None,
+        };
+    }
+    if let Some(exe) = embedded {
+        return WindowsHostShell {
+            program: exe.to_string_lossy().into_owned(),
+            args_prefix: EMBEDDED_SHELL_ARGS.map(String::from).to_vec(),
             warning: None,
         };
     }

@@ -3791,134 +3791,6 @@ fn apply_config_maps_websearch_settings() {
     assert_eq!(a.websearch, Default::default());
 }
 
-#[tokio::test]
-async fn execute_task_tool_returns_and_stores_a_structured_result() {
-    let a = scripted_test_agent([whycodes_llm::ScriptedStep::Text(
-        "Checked.\n```json\n{\"findings\": [{\"path\": \"src/a.rs\"}], \"what_i_did_not_check\": []}\n```"
-            .into(),
-    )]);
-    let dir = tempfile::tempdir().unwrap();
-    let session = Session::new(dir.path().to_path_buf(), "sys".into());
-    let schema = json!({
-        "properties": {"findings": {"type": "array", "items": {"type": "object"}}},
-        "required": ["findings"]
-    });
-    let out = a
-        .execute_task_tool(
-            &tc(
-                "task",
-                json!({"goal": "audit", "max_turns": 1, "output_schema": schema}),
-            ),
-            &session,
-            "script",
-            "m",
-            "k",
-            None,
-        )
-        .await;
-    assert!(!out.is_error, "{out:?}");
-    assert!(
-        out.content.contains(
-            "Checked.\n\nStructured result (`read agent://task-t1/<json-pointer>`):\n{\"findings\":[{\"path\":\"src/a.rs\"}],\"what_i_did_not_check\":[]}"
-        ),
-        "{}",
-        out.content
-    );
-    let agents = whycodes_core::project_dir(dir.path()).join("agents");
-    assert_eq!(
-        std::fs::read_to_string(agents.join("task-t1.md")).unwrap(),
-        "Checked."
-    );
-    let stored: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(agents.join("task-t1.json")).unwrap())
-            .unwrap();
-    assert_eq!(stored["findings"][0]["path"], "src/a.rs");
-
-    let bad = a
-        .execute_task_tool(
-            &tc(
-                "task",
-                json!({"goal": "audit", "output_schema": {"type": "string"}}),
-            ),
-            &session,
-            "script",
-            "m",
-            "k",
-            None,
-        )
-        .await;
-    assert!(bad.is_error, "{bad:?}");
-    assert!(bad.content.starts_with("task `output_schema`:"), "{bad:?}");
-}
-
-fn write_typed_reviewer(project: &std::path::Path) {
-    let dir = project.join(".whycodes").join("agents");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("typed.md"),
-        "---\ndescription: Typed reviewer\noutput:\n  properties:\n    ok:\n      type: boolean\n  required: [ok]\n---\nZQ-TYPED\n",
-    )
-    .unwrap();
-}
-
-#[tokio::test]
-async fn custom_agent_output_key_types_task_and_swarm_workers() {
-    let (mut a, seen) = capture_agent();
-    a.swarm_enabled = true;
-    a.swarm_worktrees = false;
-    let dir = tempfile::tempdir().unwrap();
-    write_typed_reviewer(dir.path());
-    let session = Session::new(dir.path().to_path_buf(), "sys".into());
-
-    let out = a
-        .execute_task_tool(
-            &tc(
-                "task",
-                json!({"goal": "review", "subagent_type": "typed", "max_turns": 1}),
-            ),
-            &session,
-            "script",
-            "m",
-            "k",
-            None,
-        )
-        .await;
-    assert!(!out.is_error, "{out:?}");
-    assert!(
-        out.content.contains("custom-ok\n\ncustom-ok\n\nstructured: null\nStructured result errors:\n- no fenced ```json block found"),
-        "{}",
-        out.content
-    );
-    {
-        let seen = seen.lock().unwrap();
-        let system = &seen[0].0;
-        assert!(system.contains("ZQ-TYPED"), "{system}");
-        assert!(system.contains("# Structured result"), "{system}");
-        assert!(system.contains("\"what_i_did_not_check\""), "{system}");
-    }
-    let agents = whycodes_core::project_dir(dir.path()).join("agents");
-    assert!(!agents.join("task-t1.json").exists());
-
-    let report = a
-        .execute_swarm_tool(
-            &tc(
-                "swarm",
-                json!({"tasks": [{"goal": "review", "subagent_type": "typed", "max_turns": 1}]}),
-            ),
-            &session,
-            "script",
-            "m",
-            "k",
-            None,
-        )
-        .await;
-    assert!(
-        report.content.contains("structured: null"),
-        "{}",
-        report.content
-    );
-}
-
 #[cfg(windows)]
 fn wait_hang_cmd() -> &'static str {
     "ping -n 4 127.0.0.1 >NUL"
@@ -3929,6 +3801,7 @@ fn wait_hang_cmd() -> &'static str {
     "sleep 3"
 }
 
+/// Finishes after about a second: long enough for `wait` to poll at least once.
 #[cfg(windows)]
 fn wait_slow_cmd() -> &'static str {
     "ping -n 2 127.0.0.1 >NUL && echo slow-done"
@@ -4058,4 +3931,233 @@ async fn execute_wait_tool_reports_a_pending_steer_message_without_consuming_it(
         .await;
     assert_eq!(other.content, "Nothing happened in 0 s.");
     a.background.kill_all();
+}
+
+#[tokio::test]
+async fn task_tool_returns_cancelled_by_the_user_when_the_hub_cancels_it() {
+    let a = test_agent();
+    let exec = crate::subagent::tests::stopper_executor(a.worker_cancels(), "task-t1");
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        [whycodes_llm::ScriptedStep::ToolCall {
+            id: "s1".into(),
+            name: "stopper".into(),
+            input: json!({}),
+        }],
+    )));
+    let a = a.with_tool_executor(exec).with_provider_registry(registry);
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::new(dir.path().to_path_buf(), "sys".into());
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = a
+        .execute_task_tool(
+            &tc("task", json!({"goal": "loop forever", "max_turns": 5})),
+            &session,
+            "script",
+            "m",
+            "k",
+            Some(&tx),
+        )
+        .await;
+    assert_eq!(out.tool_call_id, "t1", "the parent's call gets its result");
+    assert!(out.is_error);
+    assert!(
+        out.content
+            .starts_with("Subagent (general) cancelled by the user"),
+        "{}",
+        out.content
+    );
+    let mut last = None;
+    while let Ok(ev) = rx.try_recv() {
+        if let TurnEvent::Subagent { status, .. } = ev {
+            last = Some(status);
+        }
+    }
+    assert_eq!(last.as_deref(), Some("cancelled"));
+    assert!(
+        !whycodes_core::project_dir(dir.path())
+            .join("agents")
+            .join("task-t1.md")
+            .exists(),
+        "only finished work is saved"
+    );
+}
+
+#[tokio::test]
+async fn swarm_worker_cancelled_by_the_hub_reports_cancelled() {
+    let mut a = test_agent();
+    let exec = crate::subagent::tests::stopper_executor(a.worker_cancels(), "worker-0");
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        [whycodes_llm::ScriptedStep::ToolCall {
+            id: "s1".into(),
+            name: "stopper".into(),
+            input: json!({}),
+        }],
+    )));
+    a = a.with_tool_executor(exec).with_provider_registry(registry);
+    a.swarm_enabled = true;
+    a.swarm_worktrees = false;
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::new(dir.path().to_path_buf(), "sys".into());
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = a
+        .execute_swarm_tool(
+            &tc(
+                "swarm",
+                json!({"tasks": [{"goal": "loop", "subagent_type": "general", "max_turns": 5}]}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            Some(&tx),
+        )
+        .await;
+    assert!(
+        out.content.contains(crate::subagent::CANCELLED_BY_USER),
+        "{}",
+        out.content
+    );
+    let mut statuses = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let TurnEvent::Subagent { status, .. } = ev {
+            statuses.push(status);
+        }
+    }
+    assert_eq!(statuses.last().map(String::as_str), Some("cancelled"));
+    assert!(
+        statuses.iter().filter(|s| *s == "running").count() >= 2,
+        "{statuses:?}"
+    );
+}
+
+#[tokio::test]
+async fn execute_task_tool_returns_and_stores_a_structured_result() {
+    let a = scripted_test_agent([whycodes_llm::ScriptedStep::Text(
+        "Checked.\n```json\n{\"findings\": [{\"path\": \"src/a.rs\"}], \"what_i_did_not_check\": []}\n```"
+            .into(),
+    )]);
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::new(dir.path().to_path_buf(), "sys".into());
+    let schema = json!({
+        "properties": {"findings": {"type": "array", "items": {"type": "object"}}},
+        "required": ["findings"]
+    });
+    let out = a
+        .execute_task_tool(
+            &tc(
+                "task",
+                json!({"goal": "audit", "max_turns": 1, "output_schema": schema}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(!out.is_error, "{out:?}");
+    assert!(
+        out.content.contains(
+            "Checked.\n\nStructured result (`read agent://task-t1/<json-pointer>`):\n{\"findings\":[{\"path\":\"src/a.rs\"}],\"what_i_did_not_check\":[]}"
+        ),
+        "{}",
+        out.content
+    );
+    let agents = whycodes_core::project_dir(dir.path()).join("agents");
+    assert_eq!(
+        std::fs::read_to_string(agents.join("task-t1.md")).unwrap(),
+        "Checked."
+    );
+    let stored: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(agents.join("task-t1.json")).unwrap())
+            .unwrap();
+    assert_eq!(stored["findings"][0]["path"], "src/a.rs");
+
+    let bad = a
+        .execute_task_tool(
+            &tc(
+                "task",
+                json!({"goal": "audit", "output_schema": {"type": "string"}}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(bad.is_error, "{bad:?}");
+    assert!(bad.content.starts_with("task `output_schema`:"), "{bad:?}");
+}
+
+fn write_typed_reviewer(project: &std::path::Path) {
+    let dir = project.join(".whycodes").join("agents");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("typed.md"),
+        "---\ndescription: Typed reviewer\noutput:\n  properties:\n    ok:\n      type: boolean\n  required: [ok]\n---\nZQ-TYPED\n",
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn custom_agent_output_key_types_task_and_swarm_workers() {
+    let (mut a, seen) = capture_agent();
+    a.swarm_enabled = true;
+    a.swarm_worktrees = false;
+    let dir = tempfile::tempdir().unwrap();
+    write_typed_reviewer(dir.path());
+    let session = Session::new(dir.path().to_path_buf(), "sys".into());
+
+    let out = a
+        .execute_task_tool(
+            &tc(
+                "task",
+                json!({"goal": "review", "subagent_type": "typed", "max_turns": 1}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(!out.is_error, "{out:?}");
+    assert!(
+        out.content.contains("custom-ok\n\ncustom-ok\n\nstructured: null\nStructured result errors:\n- no fenced ```json block found"),
+        "{}",
+        out.content
+    );
+    {
+        let seen = seen.lock().unwrap();
+        let system = &seen[0].0;
+        assert!(system.contains("ZQ-TYPED"), "{system}");
+        assert!(system.contains("# Structured result"), "{system}");
+        assert!(system.contains("\"what_i_did_not_check\""), "{system}");
+    }
+    let agents = whycodes_core::project_dir(dir.path()).join("agents");
+    assert!(!agents.join("task-t1.json").exists());
+
+    let report = a
+        .execute_swarm_tool(
+            &tc(
+                "swarm",
+                json!({"tasks": [{"goal": "review", "subagent_type": "typed", "max_turns": 1}]}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(
+        report.content.contains("structured: null"),
+        "{}",
+        report.content
+    );
 }

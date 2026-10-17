@@ -2,6 +2,7 @@
 // Re-exports all public modules in the whycodes-tui crate.
 // `TuiApp` stays in `app` (not re-exported); callers use `run()`.
 
+mod agent_hub;
 pub mod app;
 pub mod bench;
 pub mod cell_grid;

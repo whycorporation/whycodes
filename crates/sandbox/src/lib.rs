@@ -13,7 +13,7 @@ mod clean;
 mod host;
 mod policy;
 
-pub use host::host_shell_name;
+pub use host::{EMBEDDED_SHELL_NAME, embedded_shell, host_shell_name, set_embedded_shell};
 pub use policy::{
     Backend, PreparedCommand, SandboxError, SandboxOutcome, SandboxRequest, first_sighting,
     kill_pid_group, prepare, prepare_with, run, run_timeout,

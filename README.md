@@ -36,7 +36,8 @@ provider.
   is in-process (`ripgrep` not needed); optional OS integrations such as Linux
   bubblewrap strengthen sandboxing when available. On Windows the `bash` tool
   runs commands through Git for Windows when it is installed; without it,
-  commands go to `cmd.exe` and the Unix-style commands models emit will fail.
+  commands run in an embedded bash-compatible shell with bundled coreutils,
+  `grep`, `find`, `sed` and `diff`.
 - **Cross-platform.** The same workflow on Linux, macOS and Windows. Linux
   runs on every CI change; Windows and macOS jobs are available through the
   multi-OS CI matrix.
