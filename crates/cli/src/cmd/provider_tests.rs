@@ -255,3 +255,18 @@ fn provider_discover_run_saves_and_keeps_json_clean() {
     provider_discover_run(&mut config, &[], false, true).unwrap();
     assert!(config.get_provider("vllm").is_none());
 }
+
+#[test]
+fn provider_discover_save_writes_only_new_blocks() {
+    let home = IsolatedHome::new();
+    let found = vec![local_server("vllm", &["m"])];
+    // In memory: an env-only key and a CLI approval mode.
+    let mut config = whycodes_config::Config::seeded_openrouter();
+    config.providers.get_mut("openrouter").unwrap().api_key = Some("sk-env-only".into());
+    config.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+    provider_discover_run(&mut config, &found, true, true).unwrap();
+    let saved = std::fs::read_to_string(home.dir().join("config.toml")).unwrap();
+    assert!(saved.contains("[providers.vllm]"), "{saved}");
+    assert!(!saved.contains("sk-env-only"), "{saved}");
+    assert!(!saved.contains("approval_mode"), "{saved}");
+}

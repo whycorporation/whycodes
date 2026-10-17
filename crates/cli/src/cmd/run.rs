@@ -1222,7 +1222,9 @@ pub(crate) async fn cmd_run(
                                     let value = level.as_str().to_string();
                                     config.session.reasoning_effort = Some(value.clone());
                                     agent.set_reasoning_effort(Some(value.clone()));
-                                    if let Err(e) = config.save() {
+                                    if let Err(e) = Config::update_global(&mut |global| {
+                                        global.session.reasoning_effort = Some(value.clone());
+                                    }) {
                                         eprintln!("{} Could not persist: {e}", "✗".red());
                                     }
                                     println!(
