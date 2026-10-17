@@ -1024,7 +1024,12 @@ Context-window errors are classified separately from 429s: the same request is
 not retried; whycodes compacts once and retries the step. From 85% of the
 compaction threshold on, the summary of everything before your latest prompt
 is prepared in the background, so the compaction at the threshold applies it
-instead of waiting for a model call. Before every step,
+instead of waiting for a model call. With `[session] compaction_method =
+"auto"` on an Anthropic model that supports on-demand compaction (a beta;
+default is `local`), whycodes asks the API to summarize everything before
+your latest prompt instead and keeps that prompt and what followed it word for
+word; if the API does not return a summary, the usual compaction runs.
+Before every step,
 old tool outputs longer than 2,048 characters are saved whole under
 `.whycodes/scratch/artifacts/<tool_call_id>.txt` and the transcript keeps
 their first 400 characters plus a `read` pointer, so the model can look the

@@ -510,6 +510,14 @@ impl Config {
         if let Ok(val) = std::env::var("WHYCODES_PROJECT_DIR") {
             self.general.project_path = Some(PathBuf::from(val));
         }
+
+        // WHYCODES_COMPACTION_METHOD — `auto` | `local`; anything else is ignored.
+        if let Ok(val) = std::env::var("WHYCODES_COMPACTION_METHOD") {
+            let val = val.trim().to_ascii_lowercase();
+            if matches!(val.as_str(), "auto" | "local") {
+                self.session.compaction_method = val;
+            }
+        }
     }
 
     fn apply_security_env(&mut self) {

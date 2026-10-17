@@ -99,6 +99,7 @@ fn message_tokens(msg: &Message) -> usize {
                         + signature.as_ref().map(|s| estimate_tokens(s)).unwrap_or(0)
                 }
                 ContentBlock::RedactedThinking { data } => estimate_tokens(data),
+                ContentBlock::Compaction { content, .. } => estimate_tokens(content),
             })
             .sum(),
     }
@@ -551,6 +552,7 @@ fn messages_transcript(messages: &[Message], max_chars: usize) -> String {
                     ContentBlock::Text { text } => Some(text.as_str()),
                     ContentBlock::ToolResult { content, .. } => Some(content.as_str()),
                     ContentBlock::ToolUse { name, .. } => Some(name.as_str()),
+                    ContentBlock::Compaction { content, .. } => Some(content.as_str()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -1489,6 +1491,60 @@ impl Session {
         }
     }
 
+    /// Where provider-native compaction would cut, with the messages it
+    /// would summarize: everything before the last real user turn. `None`
+    /// unless something precedes that turn and the message just before it
+    /// is an assistant reply without a tool call: the summarized range must
+    /// not end on an open call, and the first kept message (the user turn)
+    /// must differ in role from the last summarized one, or the provider
+    /// merges them and kept thinking no longer matches.
+    pub fn native_compaction_prefix(&self) -> Option<(usize, Vec<Message>)> {
+        let end = self.last_real_user_index().filter(|&end| end > 0)?;
+        let last = &self.messages[end - 1];
+        let open_call = matches!(&last.content, MessageContent::Blocks(blocks)
+            if blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { .. })));
+        if last.role != Role::Assistant || open_call {
+            return None;
+        }
+        let prefix = &self.messages[..end];
+        let prefix = crate::pairing::paired_messages(prefix).unwrap_or_else(|| prefix.to_vec());
+        Some((end, prefix))
+    }
+
+    /// Replace the messages before `cut` (from
+    /// [`Self::native_compaction_prefix`]) with one assistant message that
+    /// holds the provider's compaction block. The kept turns follow it
+    /// unchanged, thinking included, as the provider requires.
+    pub fn apply_native_compaction(&mut self, cut: usize, block: ContentBlock) -> CompactOutcome {
+        let tokens_before = self.token_count_cached();
+        let messages_before = self.messages.len();
+        let dropped_transcript =
+            messages_transcript(&self.messages[..cut], DROPPED_TRANSCRIPT_MAX_CHARS);
+        let mut messages = Vec::with_capacity(1 + messages_before - cut);
+        messages.push(
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::Blocks(vec![block]),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            }
+            .stamp(),
+        );
+        messages.extend(self.messages.drain(cut..));
+        self.messages = messages;
+        self.token_cache
+            .rebuild(&self.system_prompt, &self.messages);
+        self.touch();
+        CompactOutcome {
+            tokens_before,
+            tokens_after: self.token_count_cached(),
+            messages_before,
+            messages_after: self.messages.len(),
+            dropped_transcript,
+        }
+    }
+
     /// Full-replace compact without an LLM (local stub summary).
     pub fn compact_full_replace_local(&mut self) -> CompactOutcome {
         self.truncate_large_tool_results();
@@ -1980,6 +2036,11 @@ impl Session {
                             ContentBlock::RedactedThinking { .. } => {
                                 out.push_str("*[redacted thinking]*\n\n");
                             }
+                            ContentBlock::Compaction { content, .. } => {
+                                out.push_str(&format!(
+                                    "*[earlier conversation summary]*\n\n{content}\n\n"
+                                ));
+                            }
                         }
                     }
                 }
@@ -2048,6 +2109,111 @@ mod tests {
 
     fn test_system_prompt() -> String {
         "You are a helpful assistant.".to_string()
+    }
+
+    fn compaction_block() -> ContentBlock {
+        ContentBlock::compaction_from_raw(serde_json::json!({
+            "type": "compaction",
+            "content": "summary of the old work",
+            "signature": "sig"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn native_compaction_cuts_before_the_last_ask_and_keeps_the_tail() {
+        let mut s = Session::new(test_project_path(), test_system_prompt());
+        s.add_user_message("old ask");
+        s.add_assistant_message(vec![ContentBlock::ToolUse {
+            id: "t1".into(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "a.rs"}),
+        }]);
+        s.add_tool_results(vec![whycodes_core::types::ToolResult {
+            tool_call_id: "t1".into(),
+            content: "fn a() {}".into(),
+            is_error: false,
+        }]);
+        s.add_assistant_message(vec![ContentBlock::Text {
+            text: "done".into(),
+        }]);
+        s.add_user_message("new ask");
+        s.add_assistant_message(vec![
+            ContentBlock::Thinking {
+                text: "plan".into(),
+                signature: Some("tsig".into()),
+            },
+            ContentBlock::Text {
+                text: "working".into(),
+            },
+        ]);
+
+        let (cut, prefix) = s.native_compaction_prefix().unwrap();
+        assert_eq!(cut, 4);
+        assert_eq!(prefix.len(), 4);
+
+        let outcome = s.apply_native_compaction(cut, compaction_block());
+        assert!(outcome.dropped_messages());
+        assert!(outcome.dropped_transcript.contains("old ask"));
+        assert_eq!(outcome.messages_before, 6);
+        assert_eq!(outcome.messages_after, 3);
+        assert_eq!(s.messages[0].role, Role::Assistant);
+        assert_eq!(
+            s.messages[0].content.as_text(),
+            Some("summary of the old work")
+        );
+        assert_eq!(s.messages[1].content.as_text(), Some("new ask"));
+        // Kept thinking stays as it was.
+        assert!(matches!(
+            &s.messages[2].content,
+            MessageContent::Blocks(b) if b[0].is_thinking()
+        ));
+        assert_eq!(
+            s.token_count_cached(),
+            estimate_tokens(&s.system_prompt)
+                + s.messages.iter().map(message_tokens).sum::<usize>()
+        );
+
+        // The summary is carried into a later local summary and the export.
+        assert!(
+            s.transcript_for_full_summary(0)
+                .contains("summary of the old work")
+        );
+        assert!(
+            s.export_markdown()
+                .contains("*[earlier conversation summary]*")
+        );
+
+        // Compacting again: the old block is part of the summarized prefix.
+        s.add_user_message("third ask");
+        let (cut, prefix) = s.native_compaction_prefix().unwrap();
+        assert_eq!(cut, 3);
+        assert!(matches!(
+            &prefix[0].content,
+            MessageContent::Blocks(b) if matches!(b[0], ContentBlock::Compaction { .. })
+        ));
+    }
+
+    #[test]
+    fn native_compaction_has_no_cut_without_a_clean_boundary() {
+        let mut s = Session::new(test_project_path(), test_system_prompt());
+        assert!(s.native_compaction_prefix().is_none(), "empty");
+        s.add_user_message("only ask");
+        assert!(s.native_compaction_prefix().is_none(), "nothing before it");
+        s.add_user_message("second ask");
+        assert!(
+            s.native_compaction_prefix().is_none(),
+            "user before the last ask"
+        );
+        let mut open = Session::new(test_project_path(), test_system_prompt());
+        open.add_user_message("ask");
+        open.add_assistant_message(vec![ContentBlock::ToolUse {
+            id: "t1".into(),
+            name: "read".into(),
+            input: serde_json::json!({}),
+        }]);
+        open.add_user_message("interrupting ask");
+        assert!(open.native_compaction_prefix().is_none(), "open tool call");
     }
 
     #[test]
@@ -3412,7 +3578,8 @@ mod tests {
                     ContentBlock::Image { .. }
                     | ContentBlock::ToolUse { .. }
                     | ContentBlock::Thinking { .. }
-                    | ContentBlock::RedactedThinking { .. } => true,
+                    | ContentBlock::RedactedThinking { .. }
+                    | ContentBlock::Compaction { .. } => true,
                 })
         ));
     }
@@ -3475,7 +3642,8 @@ mod tests {
                     ContentBlock::Image { .. }
                     | ContentBlock::ToolUse { .. }
                     | ContentBlock::Thinking { .. }
-                    | ContentBlock::RedactedThinking { .. } => true,
+                    | ContentBlock::RedactedThinking { .. }
+                    | ContentBlock::Compaction { .. } => true,
                 })
         ));
     }
