@@ -239,8 +239,9 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                 .resolved_transport()
                 .map_err(|e| anyhow::anyhow!(e))?;
 
-            config.mcp_servers.insert(name.clone(), server);
-            config.save()?;
+            Config::update_global(&mut |global| {
+                global.mcp_servers.insert(name.clone(), server.clone());
+            })?;
 
             if let Some(url) = url {
                 println!("{}", mcp_saved_remote_line(name, url));
@@ -269,7 +270,9 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
         }
         McpCmd::Remove { name } => {
             if config.mcp_servers.remove(name).is_some() {
-                config.save()?;
+                Config::update_global(&mut |global| {
+                    global.mcp_servers.remove(name);
+                })?;
                 println!("{}", mcp_removed_line(name));
             } else {
                 eprintln!("{}", mcp_not_found_line(name));

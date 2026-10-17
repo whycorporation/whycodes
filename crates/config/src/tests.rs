@@ -747,6 +747,7 @@ fn merge_with_session_and_tui_fields() {
     overlay.session.tool_profile = "full".into();
     overlay.session.prompt_cache = "none".into();
     overlay.session.cache_warm_minutes = 30;
+    overlay.session.undo_depth = 0;
     overlay.session.compaction_llm = "off".into();
     overlay.session.model_fast = Some("flash".into());
     overlay.session.model_smol = Some("haiku".into());
@@ -780,6 +781,10 @@ fn merge_with_session_and_tui_fields() {
     assert_eq!(merged.session.tool_profile, "full");
     assert_eq!(merged.session.prompt_cache, "none");
     assert_eq!(merged.session.cache_warm_minutes, 30);
+    assert_eq!(
+        merged.session.undo_depth, 0,
+        "0 (unlimited) overrides the default"
+    );
     assert_eq!(merged.session.compaction_llm, "off");
     assert_eq!(merged.session.model_fast.as_deref(), Some("flash"));
     assert_eq!(merged.session.model_smol.as_deref(), Some("haiku"));
@@ -1403,11 +1408,13 @@ fn apply_env_overrides_provider_and_model() {
         "WHYCODES_PROVIDER",
         "WHYCODES_MODEL",
         "WHYCODES_MAX_TURNS",
+        "WHYCODES_UNDO_DEPTH",
         "WHYCODES_LOG_LEVEL",
         "WHYCODES_PROJECT_DIR",
     ];
     let prev = clear_env(&names);
     unsafe {
+        std::env::set_var("WHYCODES_UNDO_DEPTH", "7");
         std::env::set_var("WHYCODES_PROVIDER", "acme");
         std::env::set_var("WHYCODES_MODEL", "acme-sonnet");
         std::env::set_var("WHYCODES_MAX_TURNS", "42");
@@ -1424,6 +1431,7 @@ fn apply_env_overrides_provider_and_model() {
     assert_eq!(dm.model_id, "acme-sonnet");
     assert_eq!(dm.provider_id, "acme");
     assert_eq!(cfg.session.max_context_tokens, 42);
+    assert_eq!(cfg.session.undo_depth, 7);
     assert_eq!(cfg.general.log_level.as_deref(), Some("debug"));
     assert_eq!(
         cfg.general.project_path.as_deref(),
@@ -2977,4 +2985,77 @@ fn redact_secrets_defaults_on_and_only_an_explicit_off_wins() {
         Some(v) => unsafe { std::env::set_var("WHYCODES_REDACT_SECRETS", v) },
         None => unsafe { std::env::remove_var("WHYCODES_REDACT_SECRETS") },
     }
+}
+
+#[test]
+fn update_global_writes_only_the_edit_to_the_global_file() {
+    with_isolated_home(|home| {
+        // Old schema (forces the migrate rewrite) and a placeholder secret.
+        std::fs::write(
+            home.join("config.toml"),
+            "[notify]\ndiscord_webhook = \"${WC_TEST_HOOK}\"\n",
+        )
+        .unwrap();
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".whycodes")).unwrap();
+        std::fs::write(
+            project.path().join(".whycodes/config.toml"),
+            "default_agent = \"project-only-agent\"\n",
+        )
+        .unwrap();
+        let vars = [
+            ("WC_TEST_HOOK", "https://hook.example/secret-path"),
+            ("WHYCODES_PROVIDER", "envprov"),
+            ("ENVPROV_API_KEY", "sk-env-secret"),
+        ];
+        for (k, v) in vars {
+            unsafe { std::env::set_var(k, v) };
+        }
+        let mut layered = Config::load_layered(project.path()).unwrap();
+        for (k, _) in vars {
+            unsafe { std::env::remove_var(k) };
+        }
+        // What a run holds in memory: env key, project value, a CLI flag.
+        assert_eq!(
+            layered.providers["envprov"].api_key.as_deref(),
+            Some("sk-env-secret")
+        );
+        assert_eq!(layered.default_agent, "project-only-agent");
+        assert_eq!(
+            layered.notify.discord_webhook.as_deref(),
+            Some("https://hook.example/secret-path")
+        );
+        layered.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+
+        let added = make_provider("added");
+        layered.providers.insert("added".into(), added.clone());
+        Config::update_global(&mut |global| {
+            global.providers.insert("added".into(), added.clone());
+        })
+        .unwrap();
+
+        let on_disk = std::fs::read_to_string(home.join("config.toml")).unwrap();
+        assert!(on_disk.contains("[providers.added]"), "{on_disk}");
+        assert!(on_disk.contains("${WC_TEST_HOOK}"), "{on_disk}");
+        for leak in [
+            "sk-env-secret",
+            "envprov",
+            "project-only-agent",
+            "secret-path",
+            "approval_mode",
+        ] {
+            assert!(!on_disk.contains(leak), "{leak} leaked:\n{on_disk}");
+        }
+        let raw = Config::load_global_raw().unwrap();
+        assert_eq!(raw.schema_version, CONFIG_SCHEMA_VERSION);
+        assert_eq!(raw.general.approval_mode, None);
+    });
+}
+
+#[test]
+fn update_global_reports_an_unreadable_global_file() {
+    with_isolated_home(|home| {
+        std::fs::create_dir(home.join("config.toml")).unwrap();
+        assert!(Config::update_global(&mut |_| {}).is_err());
+    });
 }

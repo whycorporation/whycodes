@@ -3,7 +3,7 @@
 
 > Profile: core · Permission key: `[permission] read`
 
-Read a text file (line-numbered) or an internal URL: skill://, agent://, proc://, rule://, pr://, issue://, mcp:// (a bare scheme lists). Long notes: `read agent://tools/read`.
+Read a text file (line-numbered; a long source file returns its declaration outline first) or an internal URL: skill://, agent://, proc://, rule://, pr://, issue://, mcp:// (a bare scheme lists). Long notes: `read agent://tools/read`.
 
 ## Parameters
 
@@ -11,6 +11,7 @@ Read a text file (line-numbered) or an internal URL: skill://, agent://, proc://
 |---|---|---|---|
 | `limit` | integer | no | Max lines to return (default: 400, max: 2000) |
 | `offset` | integer | no | 1-based line to start from (default: 1) |
+| `outline` | boolean | no | Declaration outline instead of lines. Default: on for source files over 400 lines read without offset/limit; false forces lines, true outlines any size |
 | `path` | string | yes | File path (relative to project root or absolute), or an internal URL: skill://<name>, agent://<id>, proc://<job-id>, rule://<name>, pr://<number>[/diff], issue://<number>, mcp://<server>/<uri> |
 
 ## Guide
@@ -19,9 +20,19 @@ The model reads this with `read agent://tools/read`.
 
 Read a text file with line numbers. Prefer project-relative paths.
 
+Outline: a source file over 400 lines read without `offset`/`limit` returns its
+declaration lines (fn/struct/class/impl/headings, indentation kept) with line
+numbers and content tags, then `[file has N lines; showing its outline. ...]`.
+The tags work with `edit`. Read a range next with `offset`/`limit`.
+`outline: false` always pages; `outline: true` outlines a file of any length.
+Extensions repomap does not map, files over 512 KB, or files with no
+declarations page as usual.
+
 Internal URLs (a bare scheme lists what it can read):
 - `skill://<name>` — a skill body.
-- `agent://<id>` — a finished task/swarm artifact; `agent://tools/<name>` this guide set.
+- `agent://<id>` — a finished task/swarm artifact; `agent://<id>/<json-pointer>` one
+value of its structured result (e.g. `agent://task-1/findings/0/path`);
+`agent://tools/<name>` this guide set.
 - `proc://<job-id>` — the stored log of a background shell job
 (`.whycodes/scratch/<id>.log`); `bg` lists live jobs.
 - `rule://<name>` — a project rule file (`.whycodes/rules/*.md`, `.cursor/rules/*.mdc`,
@@ -32,6 +43,9 @@ remote (metadata and body, or the diff); `pr://` lists the open ones (first page
 GitHub reads use the same token discovery and network allowlist as `github_pr`.
 - `mcp://<server>/<uri>` — an MCP resource; `mcp://<server>` lists that server's
 resources, `mcp://` the connected servers.
+
+A `.ipynb` reads as its cells: `# %% [code] cell:N` before each source,
+outputs summarized in one `# out:` line. `edit` / `write` take that text.
 
 ## Related
 

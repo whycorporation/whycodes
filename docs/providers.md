@@ -120,6 +120,24 @@ same model on the next name before fallback kicks in. `/cost` and
 lets a loaded auth plugin's `inference` object replace the User-Agent and
 add headers; without a plugin the identity is always WhyCodes.
 
+**Local servers** — `discover_local_servers` (`crates/llm/src/local_discovery.rs`)
+probes `LOCAL_SERVER_CANDIDATES` on `127.0.0.1` concurrently: `lmstudio`
+`:1234`, `vllm` `:8000`, `llamacpp` `:8080`, each a
+`GET /v1/models` with one 250 ms connect+response budget
+(`DEFAULT_DISCOVERY_TIMEOUT`). A 2xx JSON body with a `data` array counts as
+found (`probe_openai_models`, model ids from `data[].id`); refused, timeout,
+non-JSON and non-success replies are "not running" and debug-logged only.
+It runs on demand (`whycodes provider discover`, the TUI provider dialog),
+never at startup. `LocalServer::provider_config` is the block that gets
+saved: `api_base`, no key, the listed `models`; each id becomes a
+`CustomProvider`. `LocalServer::plan_save` keeps a configured block safe:
+no block → `New`; a block without `base_url` / `api_base` → `FillApiBase`
+(only that field changes); the same base (trailing `/` and case ignored) →
+`AlreadyConfigured`, and the TUI drops that row from the dialog; any other
+base → `Conflict`, nothing written. Ollama is not a candidate because it already has the
+native `OllamaProvider`. `provider_requires_api_key` is false for all of
+them because the host is loopback.
+
 **Shared stream plumbing** — `line_buffer.rs` splits raw bytes on `\n`
 before UTF-8 decoding so multi-byte characters survive chunk boundaries;
 `think_tags.rs` turns a leading `<think>…</think>` in chat `content` into

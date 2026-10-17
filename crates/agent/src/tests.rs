@@ -784,6 +784,7 @@ fn test_subagent_task_creation() {
         context: Some("Project is a Rust workspace".to_string()),
         tools: Some(vec!["read".to_string(), "write".to_string()]),
         max_turns: 10,
+        output_schema: None,
     };
 
     assert_eq!(task.goal, "Write a test file");
@@ -799,6 +800,7 @@ fn test_subagent_task_no_context() {
         context: None,
         tools: None,
         max_turns: 5,
+        output_schema: None,
     };
 
     assert_eq!(task.goal, "Simple task");
@@ -814,6 +816,7 @@ fn test_subagent_task_debug_format() {
         context: None,
         tools: None,
         max_turns: 3,
+        output_schema: None,
     };
     let debug_str = format!("{task:?}");
     assert!(debug_str.contains("Debug me"));
@@ -1422,12 +1425,14 @@ async fn spawn_parallel_collects_outputs() {
                     context: None,
                     tools: None,
                     max_turns: 2,
+                    output_schema: None,
                 },
                 SubagentTask {
                     goal: "two".into(),
                     context: Some("ctx".into()),
                     tools: Some(vec!["read".into()]),
                     max_turns: 2,
+                    output_schema: None,
                 },
             ],
             2,

@@ -27,6 +27,7 @@ pub mod side_turn;
 pub mod speculative_read;
 pub mod steer;
 pub mod stream_rules;
+pub mod structured_output;
 pub mod subagent;
 pub mod swarm;
 pub mod swarm_worktree;

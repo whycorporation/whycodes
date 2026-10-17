@@ -370,3 +370,231 @@ fn image_io_error_string_is_named() {
         "unreadable"
     );
 }
+
+fn rust_sample(methods: usize) -> String {
+    let mut s =
+        String::from("use std::fmt;\n\npub struct Widget {\n    id: u32,\n}\n\nimpl Widget {\n");
+    for i in 0..methods {
+        s.push_str(&format!(
+            "    pub fn method_{i}(&self) -> u32 {{\n        let x = {i};\n        let y = x + 1;\n        y\n    }}\n\n"
+        ));
+    }
+    s.push_str("}\n");
+    s
+}
+
+async fn read_args(dir: &TempDir, args: serde_json::Value) -> String {
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let r = ReadTool::new().execute(args, &ctx).await;
+    assert!(!r.is_error, "{}", r.content);
+    r.content
+}
+
+#[test]
+fn outline_mode_from_args() {
+    use serde_json::json;
+    assert_eq!(outline_mode(&json!({"path": "a"})), OutlineMode::Auto);
+    assert_eq!(outline_mode(&json!({"offset": 3})), OutlineMode::Off);
+    assert_eq!(outline_mode(&json!({"limit": 3})), OutlineMode::Off);
+    assert_eq!(outline_mode(&json!({"outline": false})), OutlineMode::Off);
+    assert_eq!(
+        outline_mode(&json!({"outline": true, "offset": 3})),
+        OutlineMode::Forced
+    );
+}
+
+#[tokio::test]
+async fn large_rust_file_reads_as_outline() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "big.rs", &rust_sample(100));
+    let out = read_args(&dir, serde_json::json!({"path": "big.rs"})).await;
+    assert!(
+        out.contains("# outline: 102 declarations of 608 lines"),
+        "{out}"
+    );
+    assert!(out.contains("pub struct Widget {"), "{out}");
+    assert!(out.contains("|impl Widget {"), "{out}");
+    // Nesting shows through the kept indentation.
+    assert!(
+        out.contains("|    pub fn method_7(&self) -> u32 {"),
+        "{out}"
+    );
+    assert!(!out.contains("let y = x + 1"), "{out}");
+    assert!(out.ends_with(
+        "[file has 608 lines; showing its outline. Read a range with offset/limit, e.g. offset=3 limit=80]"
+    ), "{out}");
+}
+
+#[tokio::test]
+async fn large_python_and_typescript_files_read_as_outline() {
+    let dir = TempDir::new().unwrap();
+    let mut py = String::from("import os\n\nclass Store:\n");
+    let mut ts = String::from("import x from 'y';\n\nexport class Store {\n}\n");
+    for i in 0..150 {
+        py.push_str(&format!("    def get_{i}(self):\n        return {i}\n\n"));
+        ts.push_str(&format!(
+            "export function get{i}(): number {{\n  return {i};\n}}\n"
+        ));
+    }
+    write(&dir, "big.py", &py);
+    write(&dir, "big.ts", &ts);
+    let out = read_args(&dir, serde_json::json!({"path": "big.py"})).await;
+    assert!(out.contains("|class Store:"), "{out}");
+    assert!(out.contains("|    def get_42(self):"), "{out}");
+    assert!(!out.contains("return 42"), "{out}");
+    assert!(
+        out.contains("[file has 453 lines; showing its outline."),
+        "{out}"
+    );
+    let out = read_args(&dir, serde_json::json!({"path": "big.ts"})).await;
+    assert!(out.contains("|export class Store {"), "{out}");
+    assert!(out.contains("|export function get9(): number {"), "{out}");
+    assert!(
+        out.contains("[file has 454 lines; showing its outline."),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn small_file_pages_unless_outline_is_asked() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "small.rs", &rust_sample(3));
+    let out = read_args(&dir, serde_json::json!({"path": "small.rs"})).await;
+    assert!(out.contains("# lines 1–26 of 26"), "{out}");
+    let out = read_args(
+        &dir,
+        serde_json::json!({"path": "small.rs", "outline": true}),
+    )
+    .await;
+    assert!(
+        out.contains("# outline: 5 declarations of 26 lines"),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn explicit_window_or_outline_false_pages_a_large_file() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "big.rs", &rust_sample(100));
+    for args in [
+        serde_json::json!({"path": "big.rs", "offset": 1}),
+        serde_json::json!({"path": "big.rs", "limit": 400}),
+        serde_json::json!({"path": "big.rs", "outline": false}),
+    ] {
+        let out = read_args(&dir, args).await;
+        assert!(out.contains("# lines 1–400 of 608"), "{out}");
+        assert!(!out.contains("outline"), "{out}");
+    }
+}
+
+#[tokio::test]
+async fn files_repomap_cannot_outline_page_as_before() {
+    let dir = TempDir::new().unwrap();
+    // Unsupported extension.
+    write(&dir, "big.txt", &rust_sample(100));
+    // Supported, but no declaration lines.
+    write(&dir, "flat.rs", &"let x = 1;\n".repeat(500));
+    // Supported, but past repomap's per-file size cap.
+    write(&dir, "huge.rs", &rust_sample(9000));
+    for path in ["big.txt", "flat.rs", "huge.rs"] {
+        let out = read_args(&dir, serde_json::json!({"path": path, "outline": true})).await;
+        assert!(out.contains("# lines 1–400 of"), "{path}: {out}");
+    }
+}
+
+#[tokio::test]
+async fn outline_caps_its_entries() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "many.rs", &"fn f() {}\n".repeat(450));
+    let out = read_args(&dir, serde_json::json!({"path": "many.rs"})).await;
+    assert!(
+        out.contains("# outline: 450 declarations of 450 lines"),
+        "{out}"
+    );
+    assert!(
+        out.contains("[outline shows the first 400 of 450 declarations]"),
+        "{out}"
+    );
+    assert!(out.contains("\n   400 "), "{out}");
+    assert!(!out.contains("\n   401 "), "{out}");
+}
+
+#[tokio::test]
+async fn outline_tags_resolve_with_edit() {
+    let dir = TempDir::new().unwrap();
+    let path = write(&dir, "big.rs", &rust_sample(100));
+    let out = read_args(&dir, serde_json::json!({"path": "big.rs"})).await;
+    let row = out
+        .lines()
+        .find(|l| l.ends_with("|    pub fn method_42(&self) -> u32 {"))
+        .expect("method_42 in outline");
+    let tag = row
+        .trim_start()
+        .split(' ')
+        .nth(1)
+        .unwrap()
+        .split('|')
+        .next()
+        .unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let r = crate::file::edit::EditTool::new()
+        .execute(
+            serde_json::json!({
+                "path": "big.rs",
+                "from": tag,
+                "new_string": "    pub fn renamed_42(&self) -> u32 {\n"
+            }),
+            &ctx,
+        )
+        .await;
+    assert!(!r.is_error, "{}", r.content);
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("pub fn renamed_42(&self) -> u32 {"));
+    assert!(!text.contains("pub fn method_42("));
+}
+
+#[tokio::test]
+async fn execute_renders_a_notebook_as_cells() {
+    let dir = TempDir::new().unwrap();
+    write(
+        &dir,
+        "n.ipynb",
+        r##"{"cells": [{"cell_type": "markdown", "source": ["# T\n", "x"]}, {"cell_type": "code", "source": ["y = 1"], "outputs": [{"output_type": "stream"}]}]}"##,
+    );
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let tool = ReadTool::new();
+    let read = |args| tool.execute(args, &ctx);
+    let result = read(serde_json::json!({"path": "n.ipynb"})).await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("(notebook: cells as text"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains("# lines 1–7 of 7"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains("|# %% [code] cell:2"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains("|# out: 1 output (stream)"),
+        "{}",
+        result.content
+    );
+    let result = read(serde_json::json!({"path": "n.ipynb", "offset": 2, "limit": 2})).await;
+    assert!(
+        result.content.contains("# lines 2–3 of 7"),
+        "{}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Re-call with offset=4"),
+        "{}",
+        result.content
+    );
+}

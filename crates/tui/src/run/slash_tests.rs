@@ -276,3 +276,62 @@ fn busy_tell_queues_for_the_subagent_or_explains() {
         "check the logs"
     );
 }
+
+#[test]
+fn terminal_setup_asks_before_editing_tmux_conf() {
+    use crate::terminal_setup::{TerminalEnv, tmux_conf_path};
+    let home = tempfile::tempdir().unwrap();
+    let tmux = TerminalEnv {
+        tmux: true,
+        ..TerminalEnv::default()
+    };
+
+    // Outside tmux: report only.
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    handle_terminal_setup_slash(&mut app, &TerminalEnv::default(), Some(home.path()));
+    assert!(!app.dialogs.is_open());
+    assert!(
+        app.messages
+            .last()
+            .is_some_and(|m| m.content.contains("inside tmux: no"))
+    );
+
+    // Inside tmux with settings missing: a confirm, and no file yet.
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    handle_terminal_setup_slash(&mut app, &tmux, Some(home.path()));
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Confirm {
+            on_confirm: ConfirmAction::TerminalSetup,
+            ..
+        })
+    ));
+    let conf = tmux_conf_path(home.path());
+    assert!(
+        !conf.exists(),
+        "nothing is written before the user says yes"
+    );
+
+    // Confirmed: the run loop writes it; a second run has nothing to offer.
+    apply_terminal_setup(&mut app, Some(home.path()));
+    assert!(
+        std::fs::read_to_string(&conf)
+            .unwrap()
+            .contains("extended-keys")
+    );
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    handle_terminal_setup_slash(&mut app, &tmux, Some(home.path()));
+    assert!(!app.dialogs.is_open(), "already configured: no confirm");
+    assert!(
+        app.messages
+            .last()
+            .is_some_and(|m| m.content.contains("already configured"))
+    );
+
+    // No home: no confirm, and applying says why.
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    handle_terminal_setup_slash(&mut app, &tmux, None);
+    assert!(!app.dialogs.is_open());
+    apply_terminal_setup(&mut app, None);
+    assert!(app.status_message.contains("No home directory"));
+}

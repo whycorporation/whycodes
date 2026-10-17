@@ -8,6 +8,7 @@ pub mod internal;
 pub(crate) mod internal_github;
 pub(crate) mod line_tag;
 pub mod list;
+pub(crate) mod notebook;
 pub mod paths;
 pub mod read;
 pub mod repomap;

@@ -147,6 +147,108 @@ pub(crate) fn plugins_header(n: usize) -> String {
     format!("{} Shell plugins ({n}):", "🔌".bold())
 }
 
+/// Text or JSON listing for `provider discover`.
+pub(crate) fn provider_discover_lines(
+    found: &[whycodes_llm::LocalServer],
+    json: bool,
+) -> anyhow::Result<Vec<String>> {
+    if json {
+        return Ok(vec![serde_json::to_string_pretty(found)?]);
+    }
+    if found.is_empty() {
+        let probed: Vec<String> = whycodes_llm::LOCAL_SERVER_CANDIDATES
+            .iter()
+            .map(|c| format!("{} :{}", c.label, c.port))
+            .collect();
+        return Ok(vec![
+            format!(
+                "{} No local model servers answered on 127.0.0.1 ({}).",
+                "ℹ".cyan(),
+                probed.join(", ")
+            ),
+            "Start one, then run `whycodes provider discover --save` or pick it with Ctrl+P in the TUI.".into(),
+        ]);
+    }
+    let mut lines = vec![format!("{} Local model servers:", "🔌".bold())];
+    for server in found {
+        lines.push(format!(
+            "  {} {}  {}",
+            server.provider.cyan(),
+            server.label.dimmed(),
+            server.api_base
+        ));
+        if server.models.is_empty() {
+            lines.push("    (no models loaded)".dimmed().to_string());
+        }
+        for model in &server.models {
+            lines.push(format!("    {model}"));
+        }
+    }
+    Ok(lines)
+}
+
+/// Save every found server into `config.providers` without overwriting a
+/// configured block; returns one status line per server and whether
+/// `config` changed.
+pub(crate) fn save_discovered_providers(
+    config: &mut Config,
+    found: &[whycodes_llm::LocalServer],
+) -> (Vec<String>, bool) {
+    let mut lines = Vec::new();
+    let mut changed = false;
+    for server in found {
+        let id = &server.provider;
+        let (block, summary) = match server.plan_save(config.get_provider(id)) {
+            whycodes_llm::LocalSave::New(pc) => (pc, "saved (api_base, no key)"),
+            whycodes_llm::LocalSave::FillApiBase(pc) => (pc, "api_base filled in, rest kept"),
+            whycodes_llm::LocalSave::AlreadyConfigured => {
+                lines.push(format!(
+                    "{} Provider '{}' already points at {}; left as is",
+                    "ℹ".cyan(),
+                    id.cyan(),
+                    server.api_base
+                ));
+                continue;
+            }
+            whycodes_llm::LocalSave::Conflict { configured } => {
+                lines.push(format!(
+                    "{} Provider '{}' already configured with a different api_base ({configured}); skipped",
+                    "⚠".yellow(),
+                    id.cyan()
+                ));
+                continue;
+            }
+        };
+        config.providers.insert(id.clone(), block);
+        lines.push(provider_saved_line(id, summary));
+        changed = true;
+    }
+    (lines, changed)
+}
+
+/// `provider discover` body: with `save`, persist `found` to config first;
+/// the save status lines are text-mode only so `--json` stays parseable.
+pub(crate) fn provider_discover_run(
+    config: &mut Config,
+    found: &[whycodes_llm::LocalServer],
+    json: bool,
+    save: bool,
+) -> anyhow::Result<Vec<String>> {
+    let mut lines = provider_discover_lines(found, json)?;
+    if save {
+        let (status, changed) = save_discovered_providers(config, found);
+        if changed {
+            Config::update_global(&mut |global| {
+                save_discovered_providers(global, found);
+            })?;
+        }
+        if !json {
+            lines.extend(status);
+        }
+    }
+    Ok(lines)
+}
+
 fn empty_provider_lines() -> Vec<String> {
     provider_none_lines(&whycodes_llm::ProviderRegistry::default().names().join(", "))
 }
@@ -217,8 +319,9 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                 println!("{}", provider_updating_line(name));
             }
 
-            config.providers.insert(name.clone(), provider);
-            config.save()?;
+            Config::update_global(&mut |global| {
+                global.providers.insert(name.clone(), provider.clone());
+            })?;
             println!(
                 "{}",
                 provider_saved_line(name, provider_add_summary(api_key.is_some()))
@@ -226,7 +329,9 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
         }
         ProviderCmd::Remove { name } => {
             if config.providers.remove(name).is_some() {
-                config.save()?;
+                Config::update_global(&mut |global| {
+                    global.providers.remove(name);
+                })?;
                 println!("{}", provider_removed_line(name));
             } else {
                 eprintln!("{}", provider_not_found_line(name));
@@ -235,11 +340,18 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
         ProviderCmd::Default { name } => {
             if config.providers.contains_key(name) {
                 // Save provider name as metadata
-                config.save()?;
+                Config::update_global(&mut |_| {})?;
                 println!("{}", provider_default_set_line(name));
                 println!("{}", provider_default_use_line(name));
             } else {
                 eprintln!("{}", provider_default_missing_line(name));
+            }
+        }
+        ProviderCmd::Discover { json, save } => {
+            let found =
+                whycodes_llm::discover_local_servers(whycodes_llm::DEFAULT_DISCOVERY_TIMEOUT).await;
+            for line in provider_discover_run(&mut config, &found, *json, *save)? {
+                println!("{line}");
             }
         }
     }
@@ -274,8 +386,7 @@ pub(crate) async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
             }
         }
         ModelCmd::Default { provider, model } => {
-            let mut config = config.clone();
-            config.default_model = Some(ModelConfig {
+            let default_model = ModelConfig {
                 model_id: model.clone(),
                 provider_id: provider.clone(),
                 max_tokens: None,
@@ -285,8 +396,10 @@ pub(crate) async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
                 thinking: None,
                 supports_tools: Some(true),
                 supports_images: None,
-            });
-            config.save()?;
+            };
+            Config::update_global(&mut |global| {
+                global.default_model = Some(default_model.clone());
+            })?;
             println!("{}", model_default_set_line(provider, model));
         }
     }

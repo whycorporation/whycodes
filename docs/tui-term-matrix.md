@@ -78,6 +78,7 @@ Do these in the window that just opened. Mark fail + host in the PR / issue.
 | 12 | `?` help modal: scroll, select-copy, `[✗]` close | |
 | 13 | Modal chrome uses theme colours (not white / profile default). Thinking rail is `palette.thinking`, not build-green | |
 | 14 | **Windows:** prompt/dialog borders are line-drawing (`╭─╮│╰─╯`), not `Ö`/`ö`/mojibake. `chcp` after quit should match the pre-TUI code page | |
+| 15 | `/terminal-setup`: "kitty keyboard protocol" matches row 9 (on ⇒ Shift+Enter works). Inside tmux it lists missing `~/.tmux.conf` lines and edits only after `y` (`.bak` written); a second run says already configured. `/keys` lists bindings; on a host without the protocol it flags `shift+enter` / `ctrl+m` | |
 
 ## Capability cuts (same emulator)
 
