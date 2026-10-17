@@ -286,8 +286,8 @@ impl Redactor {
         })
     }
 
-    /// Thinking blocks are left alone: their signature covers the text, and
-    /// the model only wrote what it had already been shown.
+    /// Thinking and compaction blocks are left alone: their signature covers
+    /// the text, and the model only wrote what it had already been shown.
     fn redact_block(&self, block: &ContentBlock) -> Option<ContentBlock> {
         match block {
             ContentBlock::Text { text } => Some(ContentBlock::Text {

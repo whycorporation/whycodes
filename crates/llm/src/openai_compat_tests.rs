@@ -1094,3 +1094,24 @@ fn mistral_and_deepseek_reasoner_never_get_reasoning_back() {
         assert_eq!(messages[3]["content"], "answer");
     }
 }
+
+#[test]
+fn compaction_block_is_sent_as_summary_text() {
+    let req = req_with(vec![Message {
+        role: Role::Assistant,
+        content: MessageContent::Blocks(vec![
+            whycodes_core::types::ContentBlock::compaction_from_raw(serde_json::json!({
+                "type": "compaction", "content": "the summary", "signature": "sig"
+            }))
+            .unwrap(),
+        ]),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }]);
+    let msgs = convert_messages(&req);
+    assert_eq!(
+        msgs[1]["content"].as_str().unwrap(),
+        "[Earlier conversation summary]\nthe summary"
+    );
+}

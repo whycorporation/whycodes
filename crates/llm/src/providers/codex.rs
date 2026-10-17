@@ -141,6 +141,9 @@ fn convert_input(messages: &[Message]) -> Vec<Value> {
                             ]));
                         }
                         ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {}
+                        ContentBlock::Compaction { content, .. } => {
+                            texts.push(ContentBlock::compaction_text(content));
+                        }
                     }
                 }
                 flush_message(&mut items, role, &mut texts);

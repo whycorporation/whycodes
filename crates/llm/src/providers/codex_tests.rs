@@ -555,3 +555,20 @@ fn events_for_payload_error_message_and_empty_delta() {
         matches!(&events[0], StreamEvent::ToolUse { name, input, .. } if name.is_empty() && input.is_null())
     );
 }
+
+#[test]
+fn convert_input_sends_a_compaction_block_as_text() {
+    let items = convert_input(&[Message {
+        role: Role::Assistant,
+        content: MessageContent::Blocks(vec![
+            whycodes_core::types::ContentBlock::compaction_from_raw(serde_json::json!({
+                "type": "compaction", "content": "the summary", "signature": "sig"
+            }))
+            .unwrap(),
+        ]),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }]);
+    assert!(items[0].to_string().contains("the summary"), "{}", items[0]);
+}

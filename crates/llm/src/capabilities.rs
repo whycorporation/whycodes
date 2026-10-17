@@ -24,6 +24,9 @@ pub struct ModelCapabilities {
     pub context_window: u32,
     /// Whether the model supports prompt caching.
     pub caching: bool,
+    /// Whether the provider can compact a conversation server-side for this
+    /// model (Anthropic on-demand compaction, beta `compact-2026-09-04`).
+    pub compaction: bool,
 }
 
 impl Default for ModelCapabilities {
@@ -34,6 +37,7 @@ impl Default for ModelCapabilities {
             thinking: false,
             context_window: 128_000,
             caching: false,
+            compaction: false,
         }
     }
 }
@@ -77,8 +81,9 @@ pub fn detect_capabilities(provider: &str, model: &str) -> ModelCapabilities {
     let model_lower = model.to_lowercase();
     let provider_lower = provider.to_lowercase();
 
+    let compaction = native_compaction(&provider_lower, &model_lower);
     if let Some(caps) = known_capabilities(&model_lower) {
-        return caps;
+        return ModelCapabilities { compaction, ..caps };
     }
 
     // Heuristic fallback based on provider and model name
@@ -139,7 +144,42 @@ pub fn detect_capabilities(provider: &str, model: &str) -> ModelCapabilities {
         thinking,
         context_window,
         caching,
+        compaction,
     }
+}
+
+/// Anthropic models documented for on-demand compaction
+/// (<https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand>).
+const ANTHROPIC_COMPACTION_MODELS: &[&str] = &[
+    "claude-fable-5-1",
+    "claude-mythos-5-1",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-mythos-preview",
+    "claude-opus-5-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-5-5",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+    "claude-haiku-5-5",
+];
+
+/// Native compaction: only the first-party `anthropic` provider, and only a
+/// listed model id, bare or with a `-YYYYMMDD` snapshot suffix (so
+/// `claude-opus-5` does not also admit an unlisted `claude-opus-5-1`).
+fn native_compaction(provider_lower: &str, model_lower: &str) -> bool {
+    provider_lower == "anthropic"
+        && ANTHROPIC_COMPACTION_MODELS.iter().any(|id| {
+            model_lower.strip_prefix(id).is_some_and(|rest| {
+                rest.is_empty()
+                    || rest
+                        .strip_prefix('-')
+                        .is_some_and(|d| d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit()))
+            })
+        })
 }
 
 /// Exact / family catalog hit only (no generic 128k default).
@@ -202,6 +242,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 128_000,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower == "gpt-4.5" || model_lower.starts_with("gpt-4.5-") {
@@ -211,6 +252,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: true,
             context_window: 128_000,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.starts_with("gpt-5") {
@@ -220,6 +262,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: true,
             context_window: 200_000,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.starts_with("gpt-4-turbo") || model_lower.starts_with("gpt-4-") {
@@ -233,6 +276,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
                 128_000
             },
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.starts_with("gpt-3.5") {
@@ -242,6 +286,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 16_384,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.starts_with("o1") {
@@ -251,6 +296,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: true,
             context_window: 200_000,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.starts_with("o3") || model_lower.starts_with("o4") {
@@ -260,6 +306,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: true,
             context_window: 200_000,
             caching: false,
+            compaction: false,
         });
     }
 
@@ -274,6 +321,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: !model_lower.contains("haiku"),
             context_window: 200_000,
             caching: true,
+            compaction: false,
         });
     }
     if model_lower.contains("claude-3-7") || model_lower.contains("claude-3.7") {
@@ -283,6 +331,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: true,
             context_window: 200_000,
             caching: true,
+            compaction: false,
         });
     }
     if model_lower.contains("claude-3-5") || model_lower.contains("claude-3.5") {
@@ -292,6 +341,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 200_000,
             caching: true,
+            compaction: false,
         });
     }
     if model_lower.contains("claude-3-opus")
@@ -304,6 +354,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 200_000,
             caching: false,
+            compaction: false,
         });
     }
 
@@ -315,6 +366,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: true,
             context_window: 256_000,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.contains("grok-3") {
@@ -324,6 +376,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: model_lower.contains("mini") || model_lower.contains("reason"),
             context_window: 131_072,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.contains("grok-2") {
@@ -333,6 +386,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 131_072,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.contains("grok") {
@@ -342,6 +396,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 131_072,
             caching: false,
+            compaction: false,
         });
     }
 
@@ -353,6 +408,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: true,
             context_window: 128_000,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.contains("deepseek-v3") || model_lower.contains("deepseek-chat") {
@@ -362,6 +418,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 128_000,
             caching: false,
+            compaction: false,
         });
     }
 
@@ -376,6 +433,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: model_lower.contains("2.5"),
             context_window: 1_000_000,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.contains("gemini-1.5-pro") {
@@ -385,6 +443,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 2_000_000,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.contains("gemini-1.5-flash") {
@@ -394,6 +453,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 1_000_000,
             caching: false,
+            compaction: false,
         });
     }
 
@@ -405,6 +465,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 128_000,
             caching: false,
+            compaction: false,
         });
     }
     if model_lower.contains("codestral") || model_lower.contains("mistral-small") {
@@ -414,6 +475,7 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             thinking: false,
             context_window: 32_000,
             caching: false,
+            compaction: false,
         });
     }
 
