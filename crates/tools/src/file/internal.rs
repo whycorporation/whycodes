@@ -149,6 +149,13 @@ fn tool_guide(name: &str) -> Option<&'static str> {
         }
         "read" => {
             "Read a text file with line numbers. Prefer project-relative paths.\n\n\
+             Outline: a source file over 400 lines read without `offset`/`limit` returns its\n\
+             declaration lines (fn/struct/class/impl/headings, indentation kept) with line\n\
+             numbers and content tags, then `[file has N lines; showing its outline. ...]`.\n\
+             The tags work with `edit`. Read a range next with `offset`/`limit`.\n\
+             `outline: false` always pages; `outline: true` outlines a file of any length.\n\
+             Extensions repomap does not map, files over 512 KB, or files with no\n\
+             declarations page as usual.\n\n\
              Internal URLs (a bare scheme lists what it can read):\n\
              - `skill://<name>` — a skill body.\n\
              - `agent://<id>` — a finished task/swarm artifact; `agent://<id>/<json-pointer>` one\n\

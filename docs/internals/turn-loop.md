@@ -176,7 +176,10 @@ Speculative reads (`crates/agent/src/speculative_read.rs`): as soon as a
 `read` call's `path` string is closed in the partial JSON, and the file
 exists, a `ReadTool` job is spawned with the same `ToolContext`. The result is
 consumed later only when the finalized call has the same id, canonical path,
-offset and limit; otherwise the job is aborted. They are never started when a
+offset and limit, and names a window (`offset`/`limit`) exactly when the
+early read did, since a windowless read of a long source file returns an
+outline; otherwise the job is aborted. A call carrying `outline` is never
+speculated. They are never started when a
 `pre_tool` / `post_tool` hook matches `read` (`Agent::read_has_hooks`).
 
 Stream rules (`session.stream_rules`, compiled in `agent/mod.rs`): after every

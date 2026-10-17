@@ -14,6 +14,29 @@ use whycodes_core::types::ToolResult;
 const DEFAULT_LIMIT: usize = 400;
 /// Hard ceiling so a single read cannot blow the context window.
 const HARD_LIMIT: usize = 2000;
+/// Most declaration lines one outline shows.
+const MAX_OUTLINE_ENTRIES: usize = 400;
+
+/// Whether a disk read may answer with a declaration outline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OutlineMode {
+    /// Page as usual (`outline: false`, or an explicit `offset`/`limit`).
+    Off,
+    /// Outline a source file longer than one default page.
+    Auto,
+    /// Outline any source file repomap can map (`outline: true`).
+    Forced,
+}
+
+/// The outline mode a set of `read` arguments asks for.
+pub(crate) fn outline_mode(args: &serde_json::Value) -> OutlineMode {
+    match args["outline"].as_bool() {
+        Some(true) => OutlineMode::Forced,
+        Some(false) => OutlineMode::Off,
+        None if args["offset"].is_null() && args["limit"].is_null() => OutlineMode::Auto,
+        None => OutlineMode::Off,
+    }
+}
 
 pub struct ReadTool;
 
@@ -34,7 +57,8 @@ impl Tool for ReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read a text file (line-numbered) or an internal URL: skill://, agent://, proc://, \
+        "Read a text file (line-numbered; a long source file returns its declaration outline \
+         first) or an internal URL: skill://, agent://, proc://, \
          rule://, pr://, issue://, mcp:// (a bare scheme lists). Long notes: `read agent://tools/read`."
     }
 
@@ -53,6 +77,10 @@ impl Tool for ReadTool {
                 "limit": {
                     "type": "integer",
                     "description": "Max lines to return (default: 400, max: 2000)"
+                },
+                "outline": {
+                    "type": "boolean",
+                    "description": "Declaration outline instead of lines. Default: on for source files over 400 lines read without offset/limit; false forces lines, true outlines any size"
                 }
             },
             "required": ["path"]
@@ -81,10 +109,11 @@ impl Tool for ReadTool {
                 .map(|n| n as usize)
                 .unwrap_or(DEFAULT_LIMIT)
                 .clamp(1, HARD_LIMIT);
+            let mode = outline_mode(&args);
             let working_dir = ctx.working_dir.clone();
             let ctx_clone = ctx.clone();
             crate::blocking::tool(Box::new(move || {
-                Self::run(path_str, offset, limit, working_dir, ctx_clone)
+                Self::run(path_str, offset, limit, mode, working_dir, ctx_clone)
             }))
             .await
         })
@@ -96,6 +125,7 @@ impl ReadTool {
         path_str: String,
         offset: usize,
         limit: usize,
+        mode: OutlineMode,
         working_dir: String,
         ctx: ToolContext,
     ) -> ToolResult {
@@ -145,6 +175,14 @@ impl ReadTool {
             None => note_text_read(),
         }
         note_large_default_window(size, offset, limit);
+
+        match outline_read(&full_path, &shown, size, mode) {
+            Some(mut outline) => {
+                note_stale(&mut outline, &shown, stale.as_deref());
+                return ok(&outline);
+            }
+            None => note_paged_text(),
+        }
 
         window_from(
             take_read_window(read_window(&full_path, offset, limit).map_err(io_error_string)),
@@ -343,10 +381,7 @@ fn window_from(
                     limit
                 ));
             }
-            match stale_writer.as_deref() {
-                Some(writer_label) => note_stale_read(&mut out, shown, writer_label),
-                None => note_fresh_read(),
-            }
+            note_stale(&mut out, shown, stale_writer.as_deref());
             ToolResult {
                 tool_call_id: String::new(),
                 content: out,
@@ -355,6 +390,68 @@ fn window_from(
         }
     }
 }
+
+/// Declaration outline of a source file, or `None` to page it as usual.
+fn outline_read(path: &Path, shown: &str, size: u64, mode: OutlineMode) -> Option<String> {
+    let forced = match mode {
+        OutlineMode::Off => return None,
+        OutlineMode::Auto => false,
+        OutlineMode::Forced => true,
+    };
+    // A `?` here is an expansion line coverage misses (see `image_media_type`).
+    #[allow(clippy::question_mark)]
+    let (total, entries) = match super::repomap::file_outline(path) {
+        Some(outline) => outline,
+        None => return None,
+    };
+    if entries.is_empty() || (!forced && total <= DEFAULT_LIMIT) {
+        return None;
+    }
+    Some(render_outline(shown, size, total, &entries))
+}
+
+/// Declaration lines keep their indentation (nesting) and get the same
+/// content tags a normal read would, so `edit` can name them directly.
+fn render_outline(shown: &str, size: u64, total: usize, entries: &[(usize, String)]) -> String {
+    let kept = &entries[..entries.len().min(MAX_OUTLINE_ENTRIES)];
+    let mut out = format!(
+        "# {shown}\n# outline: {} declarations of {total} lines  |  {}\n",
+        entries.len(),
+        super::paths::human_size(size)
+    );
+    let refs: Vec<&str> = kept.iter().map(|(_, line)| line.as_str()).collect();
+    let tags = super::line_tag::tags_for_window(&refs);
+    for ((n, line), tag) in kept.iter().zip(&tags) {
+        out.push_str(&super::line_tag::format_read_line(
+            *n,
+            tag,
+            &truncate_line(line, 4000),
+        ));
+        out.push('\n');
+    }
+    if kept.len() < entries.len() {
+        out.push_str(&format!(
+            "[outline shows the first {} of {} declarations]\n",
+            kept.len(),
+            entries.len()
+        ));
+    }
+    out.push_str(&format!(
+        "\n[file has {total} lines; showing its outline. Read a range with offset/limit, \
+         e.g. offset={} limit=80]",
+        kept[0].0
+    ));
+    out
+}
+
+fn note_stale(out: &mut String, shown: &str, stale_writer: Option<&str>) {
+    match stale_writer {
+        Some(writer_label) => note_stale_read(out, shown, writer_label),
+        None => note_fresh_read(),
+    }
+}
+
+fn note_paged_text() {}
 
 fn note_disk_read() {}
 
