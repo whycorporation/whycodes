@@ -2320,7 +2320,9 @@ fn dispatch_completions_on_a_large_stack() {
         .spawn(|| {
             let _home = IsolatedHome::new();
             let c = cli(None);
-            let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
             rt.block_on(dispatch_command(
                 &Commands::Completions {
                     shell: clap_complete::Shell::Bash,
