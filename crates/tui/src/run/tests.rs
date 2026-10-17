@@ -11476,6 +11476,9 @@ async fn branch_and_tree_slash_open_the_picker_on_the_active_leaf() {
 
 #[test]
 fn apply_tree_target_refuses_while_busy_then_switches() {
+    // A successful switch persists the session; hold the home lock so it
+    // cannot land in a sibling test's exclusive empty store.
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut rt = test_runtime();
     rt.session.add_user_message("one");
