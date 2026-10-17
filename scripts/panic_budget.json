@@ -20,6 +20,7 @@
   "sdk": 0,
   "server": 0,
   "session": 0,
+  "shell": 0,
   "skill": 0,
   "slop": 0,
   "storage": 0,
