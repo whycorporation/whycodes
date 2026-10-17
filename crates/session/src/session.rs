@@ -618,6 +618,10 @@ pub struct Session {
     /// a resumed session sees each once more.
     #[serde(skip)]
     pub instruction_dirs: std::collections::BTreeSet<PathBuf>,
+    /// Stream rules that fired this session (`repeat` limits). Not stored in
+    /// the database, so a resumed session may fire each `once` rule again.
+    #[serde(default, skip_serializing_if = "crate::StreamRuleLedger::is_empty")]
+    pub stream_rules: crate::StreamRuleLedger,
 }
 
 /// Running USD estimate. Steps whose model has no known price are counted,
@@ -740,6 +744,7 @@ impl Session {
             last_rewind_report: None,
             turn_context: None,
             instruction_dirs: Default::default(),
+            stream_rules: Default::default(),
         }
     }
 
@@ -1719,6 +1724,7 @@ impl Session {
             last_rewind_report: None,
             turn_context: None,
             instruction_dirs: Default::default(),
+            stream_rules: Default::default(),
         }))
     }
 

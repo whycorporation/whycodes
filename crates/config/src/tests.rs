@@ -757,6 +757,7 @@ fn merge_with_session_and_tui_fields() {
         name: "no-leak".into(),
         pattern: "Box::leak".into(),
         hint: "don't".into(),
+        ..Default::default()
     }];
     overlay.session.model_race = "auto".into();
     overlay.session.race_after_ms = 1500;

@@ -164,15 +164,23 @@ such table at the top level. `model_id` and `provider_id` are required.
 
 ## `[[session.stream_rules]]`
 
-Regexes matched against streamed assistant text. A hit aborts the current
+Regexes matched against the streamed draft. A hit aborts the current
 request and injects `hint` before the next step. A non-empty list in a
-higher layer replaces the whole list.
+higher layer replaces the whole list. Rules from `.whycodes/rules/*.md`
+files with a `pattern` frontmatter key are then added; a file rule replaces a
+table rule of the same name (see the guide's *Stream rules*).
 
 | Key | Default | Env override | Meaning |
 |---|---|---|---|
-| `name` | `""` | — | Label shown when the rule fires. |
+| `name` | `""` | — | Label shown when the rule fires; also the key for `repeat` tracking. |
 | `pattern` | `""` | — | Regular expression matched against the draft. |
 | `hint` | `""` | — | Text injected after the abort. |
+| `scope` | `["text"]` | — | Any of `text` (reply text), `thinking` (thinking text), `tool_args` (each tool call's JSON arguments as they stream). |
+| `tools` | `[]` | — | `tool_args` only: tool names to watch. Empty = every tool. |
+| `repeat` | `"always"` | — | `"always"` (every matching draft), `"once"` per session, or `{ after_turns = N }` (again after N user turns). |
+
+A rule missing `name`, `pattern` or `hint`, or with an invalid regex, is
+skipped. `whycodes rules list` shows each rule and whether it is active.
 
 ## `[memory]`
 
