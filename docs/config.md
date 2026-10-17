@@ -131,6 +131,7 @@ such table at the top level. `model_id` and `provider_id` are required.
 | `model_fast` | — | — | Fast model for trivial chat and `/goal` checks (`provider/model` or bare id). Unset auto-picks the small sibling of the session model. |
 | `model_smol` | — | — | Cheap model for `task` / `swarm` workers. Unset auto-picks the small sibling. |
 | `model_plan` | — | — | Model used while the `plan` agent is active. Unset keeps the session model. |
+| `prewalk` | unset (off) | `WHYCODES_PREWALK` (`0/1`), `--prewalk` | Start each turn on the strong model (`model_plan`, else the session model) and run the rest of the turn on the cheap one (`model_smol`, else the small sibling) after the first `edit` / `write` / `apply_patch` or non-safe `bash` call. Later turns stay on the cheap model until `/prewalk restart`. No cheaper sibling keeps the strong model. A higher layer can turn it on or off. |
 | `model_race` | `"off"` | — | First-token race partner: `off`, `auto` (small sibling) or `provider/model`. When set, a slow primary first token starts the partner. |
 | `race_after_ms` | `800` | — | How long to wait for the primary first token before opening `model_race`. Validation reports values above 30000. |
 | `fallback_models` | `[]` | — | `provider/model` refs tried in order when the active model cannot open a stream (429 after named credentials, 5xx, network, timeout). Entries without a usable key are skipped. Not carried by the layer merge in this version (see last section). |

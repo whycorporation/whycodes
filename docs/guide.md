@@ -65,6 +65,7 @@ Options (global):
       --plain                Line-based stdin REPL instead of the TUI
       --debug                Write debug logs under the data dir
       --no-memory            Disable cross-session memory for this process
+      --prewalk              Plan on the strong model, edit on the cheap one
 ```
 
 Unique prefixes work like `git` / `gh`: `whycodes sess` is `session`,
@@ -357,6 +358,7 @@ Both TUI and `--plain`:
 | `/share` `/export` | Export the session and print its local share URL |
 | `/compact [context]` `/summarize` | Compact the conversation (LLM full-replace; optional note of what to keep) |
 | `/fresh` | Skip the provider prompt cache on the next turn (stale cache / wedged stream) |
+| `/prewalk restart` | After a prewalk hand-off: plan the next turn on the strong model again |
 | `/btw <question>` | Side question: shown once, not written to session history, no `bash`/`write` |
 | `/tell <id> <message>` | While a turn runs: message a running `task` subagent or swarm worker (`id` prefix from the subagent panel; omit it when only one runs). Read at its next step; if it finishes first, the message is appended to its result for the parent. Local sessions only |
 | `/context` | Context window breakdown |
@@ -600,6 +602,9 @@ output lives in `.whycodes/agents/` too). Built-in names (`general`,
 - `model`: `inherit` uses the session model, `provider/model` or a bare id
   picks one, and no value (or the tier aliases `sonnet` / `opus` /
   `haiku`) uses the normal worker model (`session.model_smol`).
+- `prewalk: true`: the agent starts on the strong model (its `model` when
+  that names one, else the session model) and switches to the worker
+  model after its first edit. No switch when both are the same model.
 - The body is the agent's system prompt; AGENTS.md and the skill catalog
   are appended as for built-in workers.
 
@@ -951,7 +956,25 @@ Model roles (optional; empty = auto small sibling of the session model):
 model_smol = "anthropic/claude-haiku-4-5-20251001"   # task + swarm workers
 model_plan = "anthropic/claude-opus-4-6"            # while /agent plan
 reasoning_effort = "medium"                         # low | medium | high | xhigh
+prewalk = true                                      # plan strong, edit cheap
 ```
+
+**Prewalk.** With `prewalk = true` (or `--prewalk`, or
+`WHYCODES_PREWALK=1`), a turn starts on the strong model: `model_plan` when
+it is set, else the session model. That model reads, plans, and makes the
+first edit itself. Once a step has run its first mutating call (`edit`,
+`write`, `apply_patch`, or a `bash` command the shell risk check does not
+rate safe), the rest of the turn runs on the cheap model: `model_smol`, else
+the small sibling of the strong model. The status line says
+`Prewalk: handing off to <provider/model> after the plan`. Turns that only
+read never switch.
+
+Later turns stay on the cheap model (`Prewalk: continuing on …`) until
+`/prewalk restart` in the TUI, or until the session runs on a different
+strong model. When the strong model has no cheaper sibling, or the cheap
+model's provider is not set up or has no key, the turn stays on the strong
+model (the reason is logged at debug level). A turn that already switched to
+a `fallback_models` entry does not hand off.
 
 OpenAI-compat and xAI Grok send `reasoning_effort` on thinking models. Default
 is `medium`. `xhigh` (Max) is grok-4.6+ only; older Grok models clamp to

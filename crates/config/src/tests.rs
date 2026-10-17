@@ -751,6 +751,7 @@ fn merge_with_session_and_tui_fields() {
     overlay.session.model_fast = Some("flash".into());
     overlay.session.model_smol = Some("haiku".into());
     overlay.session.model_plan = Some("sonnet".into());
+    overlay.session.prewalk = Some(true);
     overlay.session.stream_rules = vec![crate::StreamRuleConfig {
         name: "no-leak".into(),
         pattern: "Box::leak".into(),
@@ -783,6 +784,16 @@ fn merge_with_session_and_tui_fields() {
     assert_eq!(merged.session.model_fast.as_deref(), Some("flash"));
     assert_eq!(merged.session.model_smol.as_deref(), Some("haiku"));
     assert_eq!(merged.session.model_plan.as_deref(), Some("sonnet"));
+    assert_eq!(merged.session.prewalk, Some(true));
+    // A layer that leaves `prewalk` unset keeps the lower one; an explicit
+    // `false` turns it back off.
+    assert_eq!(
+        merged.merge_with(&Config::default()).session.prewalk,
+        Some(true)
+    );
+    let mut off = Config::default();
+    off.session.prewalk = Some(false);
+    assert_eq!(merged.merge_with(&off).session.prewalk, Some(false));
     assert_eq!(merged.session.stream_rules.len(), 1);
     assert_eq!(merged.session.stream_rules[0].name, "no-leak");
     assert_eq!(merged.session.model_race, "auto");
@@ -823,6 +834,7 @@ fn model_roles_and_stream_rules_from_toml() {
 [session]
 model_smol = "anthropic/claude-haiku-4-5-20251001"
 model_plan = "claude-opus-4-6"
+prewalk = true
 
 [[session.stream_rules]]
 name = "no-leak"
@@ -836,11 +848,13 @@ hint = "Don't use Box::leak"
         Some("anthropic/claude-haiku-4-5-20251001")
     );
     assert_eq!(cfg.session.model_plan.as_deref(), Some("claude-opus-4-6"));
+    assert_eq!(cfg.session.prewalk, Some(true));
     assert_eq!(cfg.session.stream_rules.len(), 1);
     assert_eq!(cfg.session.stream_rules[0].pattern, "Box::leak");
     let empty: Config = toml::from_str("[session]\n").unwrap();
     assert!(empty.session.stream_rules.is_empty());
     assert!(empty.session.model_smol.is_none());
+    assert_eq!(empty.session.prewalk, None, "prewalk is off by default");
     let deny: Config = toml::from_str("[session]\nheadless_ask = \"deny\"\n").unwrap();
     assert_eq!(
         deny.session.headless_ask,
@@ -2213,6 +2227,7 @@ fn apply_env_overrides_cover_every_knob() {
         "WHYCODES_SWARM",
         "WHYCODES_SWARM_MAX_AGENTS",
         "WHYCODES_SWARM_WORKTREES",
+        "WHYCODES_PREWALK",
     ];
     let prev = clear_env(&names);
 
@@ -2331,6 +2346,16 @@ fn apply_approval_env_knobs(cfg: &mut Config) {
     assert_eq!(cfg.session.headless_ask, Some(crate::HeadlessAskMode::Deny));
     unsafe { std::env::set_var("WHYCODES_MEMORY", "maybe") };
     cfg.apply_env_overrides();
+    assert_eq!(cfg.session.prewalk, None);
+    unsafe { std::env::set_var("WHYCODES_PREWALK", "1") };
+    cfg.apply_env_overrides();
+    assert_eq!(cfg.session.prewalk, Some(true));
+    unsafe { std::env::set_var("WHYCODES_PREWALK", "maybe") };
+    cfg.apply_env_overrides();
+    assert_eq!(cfg.session.prewalk, Some(true));
+    unsafe { std::env::set_var("WHYCODES_PREWALK", "off") };
+    cfg.apply_env_overrides();
+    assert_eq!(cfg.session.prewalk, Some(false));
 }
 
 fn apply_swarm_env_knobs(cfg: &mut Config) {

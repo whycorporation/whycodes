@@ -101,6 +101,11 @@ pub struct Cli {
     /// Skip the home-screen "update available?" prompt for this process
     #[arg(long = "no-auto-update", global = true)]
     pub no_auto_update: bool,
+
+    /// Plan on the strong model, then hand each turn to the cheap model at
+    /// the first edit (`[session] prewalk`)
+    #[arg(long, global = true)]
+    pub prewalk: bool,
 }
 
 #[derive(Subcommand, Debug)]

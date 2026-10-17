@@ -225,6 +225,7 @@ fn cli(command: Option<Commands>) -> Cli {
         fork_session: false,
         debug: false,
         no_auto_update: false,
+        prewalk: false,
         no_memory: false,
     }
 }
@@ -523,6 +524,12 @@ fn cli_parser_maps_global_flags_and_nested_commands() {
 
     assert_eq!(parsed.provider.as_deref(), Some("openai"));
     assert_eq!(parsed.model.as_deref(), Some("gpt-5"));
+    assert!(!parsed.prewalk);
+    assert!(
+        Cli::try_parse_from(["whycodes", "run", "--prewalk"])
+            .unwrap()
+            .prewalk
+    );
     match parsed.command {
         Some(Commands::Generate {
             prompt,

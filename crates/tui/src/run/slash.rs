@@ -65,6 +65,19 @@ pub(super) fn handle_goal_slash(rest: &str, ctx: &mut SlashContext<'_>) {
     }
 }
 
+/// `/prewalk restart`: the next turn plans on the strong model again.
+pub(super) fn prewalk_slash(agent: &Agent, rest: &str) -> &'static str {
+    if rest != "restart" {
+        "Usage: /prewalk restart"
+    } else if !agent.prewalk_enabled() {
+        "Prewalk is off ([session] prewalk = true or --prewalk)"
+    } else if agent.prewalk_restart() {
+        "Prewalk: next turn plans on the strong model"
+    } else {
+        "Prewalk: already on the strong model"
+    }
+}
+
 pub(super) fn oauth_unavailable_hint(names: Vec<String>) -> String {
     if names.is_empty() {
         "install an auth plugin".to_string()
@@ -369,6 +382,9 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 crate::toast::ToastKind::Info,
                 "Next turn skips the provider prompt cache",
             );
+        }
+        "/prewalk" => {
+            ctx.app.status_message = prewalk_slash(ctx.agent, rest.trim()).into();
         }
         "/btw" => {
             let q = rest.trim();

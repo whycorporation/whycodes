@@ -1375,6 +1375,11 @@ pub struct SessionConfig {
     /// Model used while the `plan` agent is active (`provider/model` or bare id).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_plan: Option<String>,
+    /// Plan on the strong model, then hand the rest of the turn to the cheap
+    /// one (`model_smol`, else the small sibling) after the first edit.
+    /// Unset = off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prewalk: Option<bool>,
     /// First-token race partner: `off` (default), `auto` (small sibling), or
     /// `provider/model`. When set, a slow primary TTFT starts the partner.
     #[serde(default = "default_model_race")]
@@ -1506,6 +1511,7 @@ impl Default for SessionConfig {
             model_fast: None,
             model_smol: None,
             model_plan: None,
+            prewalk: None,
             model_race: default_model_race(),
             race_after_ms: default_race_after_ms(),
             fallback_models: Vec::new(),

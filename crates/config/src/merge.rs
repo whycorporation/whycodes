@@ -199,6 +199,9 @@ impl Config {
         if other.session.model_plan.is_some() {
             self.session.model_plan = other.session.model_plan.clone();
         }
+        if other.session.prewalk.is_some() {
+            self.session.prewalk = other.session.prewalk;
+        }
         if !other.session.stream_rules.is_empty() {
             self.session.stream_rules = other.session.stream_rules.clone();
         }

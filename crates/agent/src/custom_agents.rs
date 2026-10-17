@@ -9,6 +9,7 @@
 //! description: Reviews a diff for bugs
 //! tools: Read, Grep, Glob
 //! model: inherit
+//! prewalk: true
 //! ---
 //! You are a careful code reviewer…
 //! ```
@@ -41,6 +42,9 @@ pub struct CustomAgent {
     pub disallowed_tools: Vec<String>,
     /// `inherit`, `provider/model`, or a bare model id.
     pub model: Option<String>,
+    /// `prewalk: true`: plan on the strong route, then hand off to the
+    /// worker model at the first edit.
+    pub prewalk: bool,
     pub path: PathBuf,
 }
 
@@ -83,6 +87,27 @@ impl CustomAgent {
             return (provider.to_string(), model.to_string());
         }
         crate::routing::resolve_override(provider, model, Some(raw))
+    }
+
+    /// [`route`](Self::route) plus the prewalk hand-off target. A `prewalk`
+    /// agent starts on the strong route (`model` when it names one, else the
+    /// session model) and hands off to `worker` at its first edit; no
+    /// hand-off when that is the same model.
+    pub fn prewalk_route(
+        &self,
+        provider: &str,
+        model: &str,
+        worker: (String, String),
+    ) -> ((String, String), Option<(String, String)>) {
+        if !self.prewalk {
+            return (self.route(provider, model, worker), None);
+        }
+        let strong = self.route(provider, model, (provider.to_string(), model.to_string()));
+        if strong == worker {
+            tracing::debug!(agent = %self.name, "prewalk: no cheaper worker model, staying");
+            return (strong, None);
+        }
+        (strong, Some(worker))
     }
 }
 
@@ -217,6 +242,9 @@ pub fn parse(text: &str, path: &Path) -> Option<CustomAgent> {
         .get("model")
         .map(Field::text)
         .filter(|m| !m.is_empty());
+    let prewalk = fields
+        .get("prewalk")
+        .is_some_and(|v| v.text().eq_ignore_ascii_case("true"));
     let prompt = if body.is_empty() {
         crate::agent::Agent::system_prompt_for("general")
     } else {
@@ -229,6 +257,7 @@ pub fn parse(text: &str, path: &Path) -> Option<CustomAgent> {
         tools,
         disallowed_tools,
         model,
+        prewalk,
         path: path.to_path_buf(),
     })
 }
