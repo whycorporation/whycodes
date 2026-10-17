@@ -160,14 +160,18 @@ pub async fn stream_chat(
     Ok(text)
 }
 
-/// Hand `message` to the turn running on the daemon; it is read at the next
-/// step, or comes back as an `enqueue_prompt` event if the turn ends first.
-pub async fn steer(remote: &RemoteAttach, message: &str) -> anyhow::Result<()> {
+/// Hand `message` to the turn running on the daemon; it is read per `mode`,
+/// or comes back as an `enqueue_prompt` event if the turn ends first.
+pub async fn steer(
+    remote: &RemoteAttach,
+    message: &str,
+    mode: whycodes_agent::steer::SteerMode,
+) -> anyhow::Result<()> {
     let url = format!(
         "{}/api/session/{}/steer",
         remote.base_url, remote.session_id
     );
-    let body = serde_json::json!({ "message": message });
+    let body = serde_json::json!({ "message": message, "mode": mode });
     let res = client()?.post(&url).json(&body).send().await?;
     if !res.status().is_success() {
         anyhow::bail!("steer {}: {}", res.status(), url);

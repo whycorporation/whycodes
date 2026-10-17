@@ -1618,7 +1618,19 @@ fn busy_key_action_maps_esc_quit_ctrl_c_enter_and_passthrough() {
     );
     assert_eq!(
         busy_key_action(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-        BusyKey::WaitEnter
+        BusyKey::WaitEnter(SteerMode::NextStep)
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+        BusyKey::WaitEnter(SteerMode::Queue)
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)),
+        BusyKey::WaitEnter(SteerMode::Urgent)
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
+        BusyKey::WaitEnter(SteerMode::NextStep)
     );
     assert_eq!(
         busy_key_action(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
@@ -9907,6 +9919,28 @@ async fn apply_idle_loop_key_covers_session_and_slash_arms() {
     assert!(app.input_buffer.is_empty());
 
     app.mode = AppMode::Normal;
+    app.input_buffer = "/queue later".into();
+    assert!(
+        !apply_idle_loop_key(
+            IdleLoopKey::SlashEnter,
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut mru,
+            &mut config,
+            dir.path(),
+            &idx,
+            &claims,
+            &mut provider,
+            &mut model,
+            &mut api_key,
+            &auth_tx,
+        )
+        .await,
+        "idle /queue is a plain prompt"
+    );
+    assert_eq!(app.input_buffer, "later");
+
     app.input_buffer = "not a slash".into();
     assert!(
         !apply_idle_loop_key(
@@ -10192,7 +10226,7 @@ fn apply_busy_key_covers_cancel_quit_ctrl_c_wait_and_passthrough() {
 
     rt.agent_busy = true;
     apply_busy_key(
-        BusyKey::WaitEnter,
+        BusyKey::WaitEnter(SteerMode::NextStep),
         &press(KeyCode::Enter),
         &mut app,
         &mut rt,
@@ -10215,7 +10249,7 @@ fn apply_busy_key_covers_cancel_quit_ctrl_c_wait_and_passthrough() {
     );
     app.input_buffer = "follow up".into();
     apply_busy_key(
-        BusyKey::WaitEnter,
+        BusyKey::WaitEnter(SteerMode::NextStep),
         &press(KeyCode::Enter),
         &mut app,
         &mut rt,
@@ -11139,6 +11173,7 @@ fn image_turn(text: &str, path: PathBuf) -> crate::app::PendingTurn {
             path,
             media_type: "image/png".into(),
         }],
+        mode: whycodes_agent::steer::SteerMode::NextStep,
     }
 }
 
@@ -11443,6 +11478,65 @@ fn apply_local_discovery_hides_servers_already_configured() {
         .map(|s| s.provider.as_str())
         .collect();
     assert_eq!(ids, vec!["vllm", "llamacpp"]);
+}
+
+#[tokio::test]
+async fn busy_enter_modes_queue_or_interrupt_the_running_turn() {
+    let (dir, idx) = temp_index();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.steer_session = "s".into();
+    rt.agent_busy = true;
+    let mut cancel_at = None;
+    let config = Config::default();
+    let mut enter = |app: &mut TuiApp, rt: &mut SessionRuntime, mode: SteerMode| {
+        apply_busy_key(
+            BusyKey::WaitEnter(mode),
+            &press(KeyCode::Enter),
+            app,
+            rt,
+            &mut cancel_at,
+            &config,
+            dir.path(),
+            &idx,
+        );
+    };
+
+    // Shift+Enter: stays queued while the turn runs.
+    app.input_buffer = "after this".into();
+    enter(&mut app, &mut rt, SteerMode::Queue);
+    assert_eq!(app.status_message, "queued for after this turn");
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    assert_eq!(app.queued_turn_count(), 1, "not handed to the turn");
+    assert!(rt.steer.drain("s").is_empty());
+
+    // `/now` overrides plain Enter and reaches the inbox as urgent.
+    app.input_buffer = "/now stop that".into();
+    enter(&mut app, &mut rt, SteerMode::NextStep);
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    assert!(rt.steer.has_urgent("s"));
+    let sent: Vec<String> = rt
+        .steer
+        .drain("s")
+        .iter()
+        .map(whycodes_agent::steer::content_text)
+        .collect();
+    assert_eq!(sent, ["stop that"]);
+    rt.steered.clear();
+
+    // `/queue` alone shows its usage and sends nothing.
+    app.input_buffer = "/queue".into();
+    enter(&mut app, &mut rt, SteerMode::NextStep);
+    assert_eq!(app.status_message, "Usage: /queue <message>");
+    assert!(app.input_buffer.is_empty());
+    assert!(app.toasts.is_empty(), "no wait toast for a usage error");
+
+    // The turn ends: the queued message runs next.
+    rt.agent_busy = false;
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    let next = app.take_pending_turn().expect("queued turn");
+    assert_eq!(next.text, "after this");
+    assert_eq!(next.mode, SteerMode::Queue);
 }
 
 #[test]

@@ -2731,3 +2731,189 @@ async fn retried_first_step_keeps_suffix_and_does_not_count_toward_max_turns() {
         "a retry must not be announced as step 2: {status:?}"
     );
 }
+
+/// Sends one message in `mode` while the first request is in flight.
+struct SteerModeDuringFirstRequest {
+    inner: ScriptedProvider,
+    inbox: crate::steer::SteerInbox,
+    session_id: String,
+    mode: crate::steer::SteerMode,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl LlmProvider for SteerModeDuringFirstRequest {
+    fn name(&self) -> &str {
+        "script"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        self.inner.complete(request, api_key, model)
+    }
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            let text = whycodes_core::types::MessageContent::Text("stop and look".into());
+            self.inbox.push_mode(&self.session_id, self.mode, text);
+        }
+        self.inner.stream(request, api_key, model)
+    }
+}
+
+fn steer_mode_agent(
+    dir: &std::path::Path,
+    mode: crate::steer::SteerMode,
+    first: Vec<ScriptedStep>,
+) -> (Agent, Session, crate::steer::SteerInbox) {
+    let agent = Agent::new(info("build"));
+    let inbox = agent.steer_inbox();
+    let session = session_at(dir, "write the two files");
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(SteerModeDuringFirstRequest {
+        inner: ScriptedProvider::batched(
+            "script",
+            [first, vec![ScriptedStep::Text("done".into())]],
+        ),
+        inbox: inbox.clone(),
+        session_id: session.id.clone(),
+        mode,
+        calls: Default::default(),
+    }));
+    (agent.with_provider_registry(registry), session, inbox)
+}
+
+fn write_call(id: &str, path: &str) -> ScriptedStep {
+    ScriptedStep::ToolCall {
+        id: id.into(),
+        name: "write".into(),
+        input: json!({"path": path, "content": "x"}),
+    }
+}
+
+/// Tool results in history, as (call id, content).
+fn tool_results(session: &Session) -> Vec<(String, String)> {
+    session
+        .messages
+        .iter()
+        .filter_map(|m| {
+            let id = m.tool_call_id.clone()?;
+            Some((id, m.content.as_text().unwrap_or_default().to_string()))
+        })
+        .collect()
+}
+
+fn user_message_at(session: &Session, text: &str) -> Option<usize> {
+    session
+        .messages
+        .iter()
+        .position(|m| m.role == Role::User && m.content.as_text() == Some(text))
+}
+
+#[tokio::test]
+async fn urgent_message_answers_unrun_calls_and_reaches_the_next_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let (agent, mut session, inbox) = steer_mode_agent(
+        dir.path(),
+        crate::steer::SteerMode::Urgent,
+        vec![write_call("w1", "a.txt"), write_call("w2", "b.txt")],
+    );
+    let out = agent
+        .run_turn_with_events(&mut session, opts(None))
+        .await
+        .expect("turn");
+    assert!(out.contains("done"), "{out}");
+    assert!(
+        !dir.path().join("a.txt").exists(),
+        "skipped calls do not run"
+    );
+    assert!(!dir.path().join("b.txt").exists());
+    let results = tool_results(&session);
+    let ids: Vec<&str> = results.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, ["w1", "w2"], "every call keeps a result");
+    assert!(
+        results
+            .iter()
+            .all(|(_, c)| c.contains("the user sent a message first")),
+        "{results:?}"
+    );
+    let steer_at = user_message_at(&session, "stop and look").expect("delivered");
+    let last_result = session
+        .messages
+        .iter()
+        .rposition(|m| m.tool_call_id.is_some())
+        .unwrap_or(0);
+    assert!(steer_at > last_result, "the message follows the results");
+    assert!(inbox.drain(&session.id).is_empty());
+}
+
+#[tokio::test]
+async fn queued_message_never_enters_the_running_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
+    let (agent, mut session, inbox) = steer_mode_agent(
+        dir.path(),
+        crate::steer::SteerMode::Queue,
+        vec![ScriptedStep::ToolCall {
+            id: "r1".into(),
+            name: "read".into(),
+            input: json!({"path": "note.txt"}),
+        }],
+    );
+    let out = agent
+        .run_turn_with_events(&mut session, opts(None))
+        .await
+        .expect("turn");
+    assert!(out.contains("done"), "{out}");
+    assert_eq!(user_message_at(&session, "stop and look"), None);
+    let left: Vec<String> = inbox
+        .drain(&session.id)
+        .iter()
+        .map(crate::steer::content_text)
+        .collect();
+    assert_eq!(left, ["stop and look"], "left for the next turn");
+}
+
+#[tokio::test]
+async fn next_step_message_lets_the_whole_batch_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let (agent, mut session, inbox) = steer_mode_agent(
+        dir.path(),
+        crate::steer::SteerMode::NextStep,
+        vec![write_call("w1", "a.txt"), write_call("w2", "b.txt")],
+    );
+    let out = agent
+        .run_turn_with_events(&mut session, opts(None))
+        .await
+        .expect("turn");
+    assert!(out.contains("done"), "{out}");
+    assert!(
+        dir.path().join("a.txt").exists(),
+        "default mode skips nothing"
+    );
+    assert!(dir.path().join("b.txt").exists());
+    let results = tool_results(&session);
+    assert!(
+        results
+            .iter()
+            .all(|(_, c)| !c.contains("the user sent a message first")),
+        "{results:?}"
+    );
+    let steer_at = user_message_at(&session, "stop and look").expect("delivered");
+    let last_result = session
+        .messages
+        .iter()
+        .rposition(|m| m.tool_call_id.is_some())
+        .unwrap_or(0);
+    assert!(steer_at > last_result, "the message follows the results");
+    assert!(inbox.drain(&session.id).is_empty());
+}

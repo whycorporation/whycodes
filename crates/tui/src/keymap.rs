@@ -660,6 +660,16 @@ fn normal_bindings() -> Vec<KeyBinding> {
         ),
         KeyBinding::new("Enter", "Send message (prompt)", KeymapContext::Normal),
         KeyBinding::new(
+            "Shift+Enter",
+            "While a turn runs: queue for after it (/queue)",
+            KeymapContext::Normal,
+        ),
+        KeyBinding::new(
+            "Ctrl+Enter",
+            "While a turn runs: interrupt between tool calls (/now)",
+            KeymapContext::Normal,
+        ),
+        KeyBinding::new(
             "j/k · ↑/↓",
             "Select message (scrollback) / scroll todos",
             KeymapContext::Normal,
