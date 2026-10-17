@@ -10,6 +10,7 @@ use ratatui::layout::Rect;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::Instant;
+use whycodes_agent::steer::SteerMode;
 use whycodes_core::types::ApprovalMode;
 use whycodes_tools::question::{QuestionAnswer, QuestionSpec};
 
@@ -18,6 +19,8 @@ use whycodes_tools::question::{QuestionAnswer, QuestionSpec};
 pub struct PendingTurn {
     pub text: String,
     pub images: Vec<PromptImage>,
+    /// When a running turn reads it; `Queue` waits for the turn to end.
+    pub mode: SteerMode,
 }
 
 impl PendingTurn {
@@ -25,6 +28,7 @@ impl PendingTurn {
         Self {
             text: text.into(),
             images: Vec::new(),
+            mode: SteerMode::NextStep,
         }
     }
 }
@@ -2025,6 +2029,14 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "restart  Plan the next turn on the strong model again",
     },
     SlashCommand {
+        name: "/queue",
+        hint: "<message> Run after the current turn ends (never interrupts)",
+    },
+    SlashCommand {
+        name: "/now",
+        hint: "<message> Interrupt between tool calls; unstarted calls are skipped",
+    },
+    SlashCommand {
         name: "/agents",
         hint: "Agent hub: view, message, cancel or re-run workers",
     },
@@ -2949,19 +2961,24 @@ impl TuiApp {
         self.pending_turns.pop_front()
     }
 
-    /// Queued turns to hand to a running turn, oldest first. With
-    /// `text_only`, a turn with images stops the hand-off; it and later
-    /// ones wait for the turn to end.
+    /// Queued turns to hand to a running turn, oldest first. Turns sent
+    /// with [`SteerMode::Queue`] stay for the next turn. With `text_only`, a
+    /// turn with images stops the hand-off; it and later ones wait for the
+    /// turn to end.
     pub fn take_steerable_turns(&mut self, text_only: bool) -> Vec<PendingTurn> {
-        let n = if text_only {
-            self.pending_turns
-                .iter()
-                .take_while(|t| t.images.is_empty())
-                .count()
-        } else {
-            self.pending_turns.len()
-        };
-        self.pending_turns.drain(..n).collect()
+        let mut taken = Vec::new();
+        let mut kept = VecDeque::new();
+        let mut blocked = false;
+        for turn in self.pending_turns.drain(..) {
+            blocked |= text_only && !turn.images.is_empty();
+            if blocked || turn.mode == SteerMode::Queue {
+                kept.push_back(turn);
+            } else {
+                taken.push(turn);
+            }
+        }
+        self.pending_turns = kept;
+        taken
     }
 
     /// Queue turns a finished turn never read, ahead of anything newer.
@@ -4041,6 +4058,11 @@ impl TuiApp {
 
     /// Submit current input as user message and queue it for the agent.
     pub fn submit_input(&mut self) {
+        self.submit_input_with(SteerMode::NextStep);
+    }
+
+    /// [`Self::submit_input`]; a running turn reads the message per `mode`.
+    pub fn submit_input_with(&mut self, mode: SteerMode) {
         // OAuth paste-code flow intercepts before anything else: the input
         // line is the sign-in code, not a prompt for the agent.
         if let Some(sink) = self.auth_code_sink.take() {
@@ -4096,6 +4118,7 @@ impl TuiApp {
         self.enqueue_turn(PendingTurn {
             text: expanded,
             images,
+            mode,
         });
         self.input_buffer.clear();
         self.input_lines.clear();

@@ -168,6 +168,31 @@ pub(super) fn resolve_tell(running: &[String], rest: &str) -> Option<(String, St
     }
 }
 
+/// `/queue <message>` / `/now <message>`: leave just the message in the
+/// draft and return its mode. Without a message the draft is cleared and the
+/// usage shown. `None` when the draft is neither command.
+pub(super) fn take_mode_command(app: &mut TuiApp) -> Option<SteerMode> {
+    let draft = app.input_buffer.trim_start();
+    let (name, mode, rest) = [("/queue", SteerMode::Queue), ("/now", SteerMode::Urgent)]
+        .into_iter()
+        .find_map(|(name, mode)| {
+            let rest = draft.strip_prefix(name)?;
+            let whole_word = rest.is_empty() || rest.starts_with(char::is_whitespace);
+            whole_word.then_some((name, mode, rest))
+        })?;
+    let message = rest.trim().to_string();
+    app.slash_suggest.dismiss();
+    if message.is_empty() {
+        consume_slash_draft(app);
+        app.status_message = format!("Usage: {name} <message>");
+        app.mark_dirty();
+    } else {
+        app.input_cursor = message.len();
+        app.input_buffer = message;
+    }
+    Some(mode)
+}
+
 /// Handle `/tell` typed while a turn runs: queue the message for that
 /// subagent, which reads it at its next step. `false` when the draft is not
 /// a `/tell`.

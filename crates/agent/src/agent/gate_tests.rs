@@ -1439,6 +1439,102 @@ async fn read_mcp_url_is_dispatched_in_process() {
     );
 }
 
+/// A serial tool that sends an urgent message the first time it runs.
+struct UrgentOnRun {
+    inbox: crate::steer::SteerInbox,
+    session_id: String,
+    runs: Arc<AtomicUsize>,
+}
+
+impl whycodes_core::Tool for UrgentOnRun {
+    fn name(&self) -> &str {
+        "git_commit"
+    }
+    fn description(&self) -> &str {
+        "urgent"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        json!({"type": "object"})
+    }
+    fn execute<'a>(
+        &'a self,
+        _args: serde_json::Value,
+        _ctx: &'a whycodes_core::ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            let content = whycodes_core::types::MessageContent::Text("stop".into());
+            self.inbox
+                .push_mode(&self.session_id, crate::steer::SteerMode::Urgent, content);
+            ToolResult {
+                tool_call_id: String::new(),
+                content: "ran".into(),
+                is_error: false,
+            }
+        })
+    }
+}
+
+fn calls(ids: &[&str]) -> Vec<ToolCall> {
+    ids.iter()
+        .map(|id| ToolCall {
+            id: (*id).into(),
+            name: "git_commit".into(),
+            arguments: json!({}),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn urgent_message_skips_the_rest_of_a_sequential_batch() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let probe = Agent::new(info("build"));
+    let inbox = probe.steer_inbox();
+    let (session, _) = session_ctx(&probe);
+    let mut exec = whycodes_tools::executor::ToolExecutor::new();
+    exec.register(Box::new(UrgentOnRun {
+        inbox: inbox.clone(),
+        session_id: session.id.clone(),
+        runs: Arc::clone(&runs),
+    }));
+    let mut a = probe.with_tool_executor(exec);
+    a.set_approval_mode(ApprovalMode::Auto);
+    let ctx = a.tool_context(&session);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let batch = calls(&["c1", "c2", "c3"]);
+    let results = a
+        .execute_tool_calls(
+            &batch,
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            &Some(tx),
+            &None,
+            None,
+            &mut Vec::new(),
+        )
+        .await
+        .expect("batch");
+    assert_eq!(runs.load(Ordering::SeqCst), 1, "only the first call ran");
+    let ids: Vec<&str> = results.iter().map(|r| r.tool_call_id.as_str()).collect();
+    assert_eq!(ids, ["c1", "c2", "c3"], "every call keeps its result");
+    assert_eq!(results[0].content, "ran");
+    for r in &results[1..] {
+        assert_eq!(r.content, NOT_RUN_URGENT);
+        assert!(!r.is_error);
+    }
+    let mut ended = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let TurnEvent::ToolEnd { id, .. } = ev {
+            ended.push(id);
+        }
+    }
+    assert_eq!(ended, ["c1", "c2", "c3"]);
+    assert!(inbox.has_urgent(&session.id), "the turn loop delivers it");
+}
+
 #[cfg(windows)]
 fn gate_hang_cmd() -> &'static str {
     "ping -n 4 127.0.0.1 >NUL"

@@ -852,11 +852,34 @@ async fn steer_queues_a_message_for_the_session() {
     };
     let (st, _) = call(app.clone(), steer(serde_json::json!({"message": "  "}))).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
-    let (st, _) = call(app, steer(serde_json::json!({"message": "check X"}))).await;
+    let (st, _) = call(
+        app.clone(),
+        steer(serde_json::json!({"message": "check X"})),
+    )
+    .await;
     assert_eq!(st, StatusCode::ACCEPTED);
     let queued = agent.steer_inbox().drain("s1");
     assert_eq!(queued.len(), 1);
     assert_eq!(whycodes_agent::steer::content_text(&queued[0]), "check X");
+
+    let body = serde_json::json!({"message": "later", "mode": "queue"});
+    let (st, _) = call(app.clone(), steer(body)).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    assert!(agent.steer_inbox().take_for_turn("s1").is_empty(), "queued");
+    let body = serde_json::json!({"message": "now", "mode": "urgent"});
+    let (st, _) = call(app.clone(), steer(body)).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    assert!(agent.steer_inbox().has_urgent("s1"));
+    let texts: Vec<String> = agent
+        .steer_inbox()
+        .drain("s1")
+        .iter()
+        .map(whycodes_agent::steer::content_text)
+        .collect();
+    assert_eq!(texts, ["later", "now"]);
+    let body = serde_json::json!({"message": "x", "mode": "soon"});
+    let (st, _) = call(app, steer(body)).await;
+    assert!(st.is_client_error(), "{st}");
 }
 
 #[tokio::test]

@@ -876,8 +876,9 @@ impl Agent {
 
     /// Add messages the user sent during this turn, so the next request
     /// carries them. Called at the start of a step, after tool results.
+    /// Queued messages stay in the inbox for the next turn.
     pub(crate) fn inject_steering(&self, session: &mut Session, events: &Option<EventSink>) {
-        for content in self.steer.drain(&session.id) {
+        for content in self.steer.take_for_turn(&session.id) {
             crate::steer::add_to_session(session, content);
             crate::events::emit(
                 events,

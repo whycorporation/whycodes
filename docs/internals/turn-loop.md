@@ -97,11 +97,14 @@ In order, at the top of the `loop`:
 1. `inject_auto_background_completions` (`agent/mod.rs`): finished
    auto-detached shell jobs not yet delivered become a user message
    `Background job \`id\` finished (status). Output: <last 4000 chars>`.
-2. `inject_steering`: `SteerInbox::drain(session.id)`
+2. `inject_steering`: `SteerInbox::take_for_turn(session.id)`
    (`crates/agent/src/steer.rs`) appends each message the user sent while the
    turn was running as a user message and emits
-   `Status("message delivered to the running turn")`. Whatever is still queued
-   when the turn ends is taken back by the UI and sent as the next turn.
+   `Status("message delivered to the running turn")`. Each message carries a
+   `SteerMode`: `NextStep` (default) and `Urgent` are taken here; `Queue`
+   messages stay in the inbox. Whatever is still queued when the turn ends
+   is taken back by the UI (or replayed by the daemon as `enqueue_prompt`)
+   and sent as the next turn.
 3. `step_tools`: `ToolExecutor::get_definitions_profile_extra(permission,
    tool_profile, activated)` — the configured profile (`core` by default)
    plus tools activated through `tool_search` this session; the `swarm`
@@ -248,7 +251,14 @@ results in call order:
   memory):
   speculative results are consumed first, the rest run through
   `futures::join_all`, the whole batch raced against cancel.
-- Mixed batch: strictly sequential, cancel checked before each call.
+- Mixed batch: strictly sequential, cancel checked before each call. Before
+  each call, `SteerInbox::has_urgent` is checked too: with an urgent message
+  waiting, that call and the rest are not run and each gets the result
+  `Tool not run: the user sent a message first` (`NOT_RUN_URGENT`,
+  `gate.rs`, `is_error = false`, plus a `ToolEnd` event), so every
+  `tool_use` keeps its `tool_result`. The next step's `inject_steering`
+  delivers the message. Single calls and all-parallel batches are not cut
+  short.
 - `wait` is serial and blocks the lane on purpose: `execute_wait_tool` polls
   the job registry and the steer inbox every 250 ms until a job finishes, a
   message is pending, or `timeout_secs` (max 300) elapses; the cancel race
@@ -409,7 +419,7 @@ written back to the parent session.
 | `[pricing."provider/model"]` | config | USD per million tokens used by `step_cost` |
 | `/fresh` | TUI slash command (`Agent::skip_prompt_cache_next`) | Skip prompt and response cache for the next step |
 | Esc / `[stop]` | TUI | Sets the `CancelFlag` |
-| steering | TUI prompt while a turn runs; `POST /api/session/{id}/steer` | Pushes into `SteerInbox` |
+| steering | TUI prompt while a turn runs (`Enter` / `Shift+Enter` or `/queue` / `Ctrl+Enter` or `/now`); `POST /api/session/{id}/steer` with optional `mode` (`next_step`, `queue`, `urgent`) | Pushes into `SteerInbox` with a `SteerMode` |
 
 ## Implementation files
 
