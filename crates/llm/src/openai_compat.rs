@@ -415,6 +415,9 @@ fn convert_blocks_message(
                 }
             }
             ContentBlock::RedactedThinking { .. } => {}
+            ContentBlock::Compaction { content, .. } => {
+                text_parts.push(ContentBlock::compaction_text(content));
+            }
         }
     }
 

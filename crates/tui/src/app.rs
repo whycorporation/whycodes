@@ -4242,8 +4242,20 @@ pub fn chat_messages_from_session(
                                 "[redacted]".to_string(),
                             )));
                         }
+                        // A provider compaction summary: a session event,
+                        // painted like a local compact carrier.
+                        ContentBlock::Compaction {
+                            content: summary, ..
+                        } => {
+                            content.push_str(&ContentBlock::compaction_text(summary));
+                        }
                     }
                 }
+                let role = if matches!(blocks.first(), Some(ContentBlock::Compaction { .. })) {
+                    ChatRole::System
+                } else {
+                    role
+                };
 
                 // Assistant text often lives only in Text blocks; keep content for
                 // the bubble and blocks for tools/thinking layout.

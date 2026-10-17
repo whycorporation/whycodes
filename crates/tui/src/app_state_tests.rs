@@ -1544,3 +1544,30 @@ fn chat_messages_from_session_folds_inline_tool_result_blocks() {
         "inline ToolResult must stay as a UI block"
     );
 }
+
+#[test]
+fn chat_messages_from_session_paints_a_provider_summary_as_a_system_card() {
+    use whycodes_core::types::{ContentBlock, Message, MessageContent, Role};
+    use whycodes_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    let block = ContentBlock::compaction_from_raw(serde_json::json!({
+        "type": "compaction",
+        "content": "what happened so far",
+        "signature": "sig"
+    }))
+    .unwrap();
+    session.messages.push(
+        Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![block]),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }
+        .stamp(),
+    );
+    let msgs = chat_messages_from_session(&session);
+    assert_eq!(msgs[0].role, ChatRole::System);
+    assert!(msgs[0].content.contains("what happened so far"));
+}
