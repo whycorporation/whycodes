@@ -62,6 +62,9 @@ pub struct Agent {
     compaction_threshold: usize,
     /// `"auto"` = LLM summary on compact (full-replace); `"off"` = local stub.
     compaction_llm: bool,
+    /// `[session] compaction_method = "auto"`: try the provider's own
+    /// compaction before full-replace when the model has it.
+    compaction_native: bool,
     /// Tools schema sent to the model (`core` = smaller TTFT).
     tool_profile: ToolProfile,
     /// When false, Anthropic bodies skip cache_control markers.
@@ -413,6 +416,7 @@ impl Agent {
             // Match config default when `with_config` is not used.
             compaction_threshold: 150_000,
             compaction_llm: true,
+            compaction_native: false,
             tool_profile: ToolProfile::Core,
             use_prompt_cache: true,
             model_fast: None,
@@ -644,6 +648,11 @@ impl Agent {
                 .as_str(),
             "off" | "false" | "0" | "none" | "local"
         );
+        self.compaction_native = config
+            .session
+            .compaction_method
+            .trim()
+            .eq_ignore_ascii_case("auto");
         self.tool_profile = ToolProfile::parse(&config.session.tool_profile);
         self.use_prompt_cache = !matches!(
             config

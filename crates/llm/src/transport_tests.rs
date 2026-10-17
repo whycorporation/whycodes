@@ -389,3 +389,20 @@ async fn transport_redacts_outgoing_requests_with_an_explicit_redactor() {
     assert_eq!(plain.outgoing(&request).system, request.system);
     assert!(transport.outgoing(&request).system.contains("$$SECRET:"));
 }
+
+#[tokio::test]
+async fn compact_without_native_support_is_an_error() {
+    let provider = crate::scripted::ScriptedProvider::text("unused");
+    let err = LlmTransport::default()
+        .with_retry(RetryPolicy {
+            max_retries: 0,
+            ..RetryPolicy::default()
+        })
+        .compact(&provider, &req(), "k", "m", "")
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("script has no native compaction"),
+        "{err}"
+    );
+}

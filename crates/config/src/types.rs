@@ -1412,6 +1412,12 @@ pub struct SessionConfig {
     /// `"off"` is the local stub only.
     #[serde(default = "default_compaction_llm")]
     pub compaction_llm: String,
+    /// Which compaction runs first: `"auto"` uses the provider's own
+    /// compaction when the model has it (Anthropic on-demand compaction,
+    /// beta) and falls back to full-replace; `"local"` (default) is
+    /// full-replace only.
+    #[serde(default = "default_compaction_method")]
+    pub compaction_method: String,
     /// OpenAI-compat / xAI `reasoning_effort`: `low` | `medium` | `high` | `xhigh`.
     /// Empty = family default (`medium` when the model supports effort).
     /// `xhigh` (Max) is grok-4.6+ only; older models clamp to `high`.
@@ -1518,6 +1524,7 @@ impl Default for SessionConfig {
             preconnect: true,
             intent_guidance: default_intent_guidance(),
             compaction_llm: default_compaction_llm(),
+            compaction_method: default_compaction_method(),
             reasoning_effort: None,
             magic_keywords: MagicKeywordsConfig::default(),
             stream_rules: Vec::new(),
@@ -1528,6 +1535,10 @@ impl Default for SessionConfig {
 
 pub(crate) fn default_compaction_llm() -> String {
     "auto".into()
+}
+
+pub(crate) fn default_compaction_method() -> String {
+    "local".into()
 }
 
 pub(crate) fn default_tool_profile() -> String {
