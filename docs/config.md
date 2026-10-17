@@ -150,6 +150,7 @@ such table at the top level. `model_id` and `provider_id` are required.
 | `preconnect` | `true` | — | Open the provider connection while the prompt is typed so the first request skips DNS/TCP/TLS. Sends no credentials or prompt. |
 | `intent_guidance` | `"auto"` | — | Heuristic intent posture for build turns: `auto`, `off` or `always`. When active, high-confidence question/plan signals add an ephemeral guidance block to the request. |
 | `compaction_llm` | `"auto"` | — | Full-replace compaction (manual `/compact` and auto): `auto` asks the session model for a structured summary; `off` uses the local stub only. |
+| `compaction_method` | `"local"` | `WHYCODES_COMPACTION_METHOD` | Which compaction runs first. `local`: full-replace only. `auto`: the provider's own compaction when the model has it (today the `anthropic` provider with the models listed for Anthropic's on-demand compaction beta), full-replace whenever that is unavailable or fails. Needs `compaction_llm` on and a key. The environment variable accepts `auto` or `local` and ignores anything else. Off by default until the live checks in [internals/compaction.md](internals/compaction.md#known-limitations--not-enforced) have been run. |
 | `reasoning_effort` | — | — | `low`, `medium`, `high` or `xhigh` for OpenAI-compatible and xAI thinking models. Unset means the family default (`medium` when supported); `xhigh` clamps to `high` on models that lack it. |
 | `headless_ask` | — | `WHYCODES_HEADLESS_ASK` | How `--format json` / `stream-json` treat permission `ask`: `deny` (unset behaviour; tool result stamped `denied:headless`) or `allow` (auto-approve, same as `--approve-tools`). The TUI and `--plain` ignore it. The environment variable also accepts `fail`, `fail-closed`, `auto`, `approve`. |
 
@@ -163,15 +164,23 @@ such table at the top level. `model_id` and `provider_id` are required.
 
 ## `[[session.stream_rules]]`
 
-Regexes matched against streamed assistant text. A hit aborts the current
+Regexes matched against the streamed draft. A hit aborts the current
 request and injects `hint` before the next step. A non-empty list in a
-higher layer replaces the whole list.
+higher layer replaces the whole list. Rules from `.whycodes/rules/*.md`
+files with a `pattern` frontmatter key are then added; a file rule replaces a
+table rule of the same name (see the guide's *Stream rules*).
 
 | Key | Default | Env override | Meaning |
 |---|---|---|---|
-| `name` | `""` | — | Label shown when the rule fires. |
+| `name` | `""` | — | Label shown when the rule fires; also the key for `repeat` tracking. |
 | `pattern` | `""` | — | Regular expression matched against the draft. |
 | `hint` | `""` | — | Text injected after the abort. |
+| `scope` | `["text"]` | — | Any of `text` (reply text), `thinking` (thinking text), `tool_args` (each tool call's JSON arguments as they stream). |
+| `tools` | `[]` | — | `tool_args` only: tool names to watch. Empty = every tool. |
+| `repeat` | `"always"` | — | `"always"` (every matching draft), `"once"` per session, or `{ after_turns = N }` (again after N user turns). |
+
+A rule missing `name`, `pattern` or `hint`, or with an invalid regex, is
+skipped. `whycodes rules list` shows each rule and whether it is active.
 
 ## `[memory]`
 

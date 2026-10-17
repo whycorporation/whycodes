@@ -121,6 +121,23 @@ impl LlmTransport {
             .await
     }
 
+    /// Provider-native compaction ([`LlmProvider::compact`]) with the same
+    /// redaction, retry and timeout as [`Self::complete_uncached`]. Never
+    /// cached: the block it returns is signed for this exact request.
+    pub async fn compact(
+        &self,
+        provider: &dyn LlmProvider,
+        request: &LlmRequest,
+        api_key: &str,
+        model: &str,
+        instructions: &str,
+    ) -> whycodes_core::Result<LlmResponse> {
+        let request = self.outgoing(request);
+        let request = &*request;
+        self.bounded(&|| provider.compact(request, api_key, model, instructions))
+            .await
+    }
+
     /// `complete_uncached` for a request that is already redacted.
     async fn complete_prepared(
         &self,
@@ -132,12 +149,19 @@ impl LlmTransport {
         let name = provider.name();
         let max_retries = self.retry.max_retries;
         debug!("llm.complete provider={name} model={model} max_retries={max_retries}");
+        self.bounded(&|| provider.complete(request, api_key, model))
+            .await
+    }
+
+    /// One non-streaming call under the retry policy and `complete_timeout`.
+    async fn bounded<'a>(
+        &self,
+        call: &(dyn Fn() -> crate::provider::ProviderResponseFuture<'a> + Sync),
+    ) -> whycodes_core::Result<LlmResponse> {
         let retry = self.retry.clone();
         let timeout = self.complete_timeout;
 
-        let work = execute_with_policy(&retry, "complete", || {
-            provider.complete(request, api_key, model)
-        });
+        let work = execute_with_policy(&retry, "complete", call);
 
         match timeout {
             Some(t) => match tokio::time::timeout(t, work).await {

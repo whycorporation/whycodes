@@ -179,8 +179,20 @@ fn events_for_data(data: &str) -> Vec<whycodes_core::Result<StreamEvent>> {
     out
 }
 
-fn content_block_to_anthropic_role(b: &ContentBlock, untrusted: bool) -> Value {
+/// Beta that enables on-demand compaction: the `compaction` request field
+/// and the `compaction` content block. Required on the compaction request
+/// and on every later request that carries the block.
+pub(crate) const COMPACTION_BETA: &str = "compact-2026-09-04";
+
+/// `native`: send a compaction block as the API returned it; otherwise as
+/// plain text, for a model without on-demand compaction.
+fn content_block_to_anthropic_role(b: &ContentBlock, untrusted: bool, native: bool) -> Value {
     match b {
+        ContentBlock::Compaction { raw, .. } if native => raw.clone(),
+        ContentBlock::Compaction { content, .. } => obj([
+            ("type", jstr("text")),
+            ("text", jstr(ContentBlock::compaction_text(content))),
+        ]),
         ContentBlock::Text { text } => {
             let text = if untrusted {
                 whycodes_core::harmony::escape_replay(text)
@@ -251,17 +263,122 @@ pub struct AnthropicProvider {
 ///
 /// Local proxies often have no credential — skip both headers when `api_key`
 /// is empty rather than sending `x-api-key:`.
-fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
+///
+/// `betas` are request features (e.g. [`COMPACTION_BETA`]); they join the
+/// OAuth flag in one comma-separated `anthropic-beta` header.
+fn authed_post(url: &str, api_key: &str, betas: &[&str]) -> reqwest::RequestBuilder {
     let req = crate::client_identity::post(url).header("anthropic-version", "2023-06-01");
     let key = api_key.trim();
+    let oauth = key.starts_with("sk-ant-oat");
+    let mut beta: Vec<&str> = Vec::with_capacity(betas.len() + 1);
+    if oauth {
+        beta.push("oauth-2025-04-20");
+    }
+    beta.extend_from_slice(betas);
+    let req = if beta.is_empty() {
+        req
+    } else {
+        req.header("anthropic-beta", beta.join(","))
+    };
     if key.is_empty() {
         req
-    } else if key.starts_with("sk-ant-oat") {
+    } else if oauth {
         req.header("Authorization", format!("Bearer {key}"))
-            .header("anthropic-beta", "oauth-2025-04-20")
     } else {
         req.header("x-api-key", key)
     }
+}
+
+/// True when `messages` opens with a compaction block and `model` can
+/// read it natively: the block is sent verbatim, with [`COMPACTION_BETA`].
+fn replays_compaction(messages: &[Message], model: &str) -> bool {
+    let opens_with_block = match messages.first().map(|m| &m.content) {
+        Some(whycodes_core::types::MessageContent::Blocks(blocks)) => {
+            matches!(blocks.first(), Some(ContentBlock::Compaction { .. }))
+        }
+        _ => false,
+    };
+    opens_with_block && crate::capabilities::detect_capabilities("anthropic", model).compaction
+}
+
+/// Usage of a response. Under the compaction beta the real cost of a
+/// summarization call is in `usage.iterations` (top-level tokens are 0), so
+/// the iterations are summed when present.
+fn usage_from_json(usage: &Value) -> Usage {
+    let (input_tokens, output_tokens) = match usage["iterations"].as_array() {
+        Some(iterations) if !iterations.is_empty() => iterations.iter().fold((0, 0), |acc, it| {
+            (
+                acc.0 + it["input_tokens"].as_u64().unwrap_or(0),
+                acc.1 + it["output_tokens"].as_u64().unwrap_or(0),
+            )
+        }),
+        _ => (
+            usage["input_tokens"].as_u64().unwrap_or(0),
+            usage["output_tokens"].as_u64().unwrap_or(0),
+        ),
+    };
+    Usage {
+        input_tokens,
+        output_tokens,
+        cache_creation_input_tokens: usage["cache_creation_input_tokens"].as_u64(),
+        cache_read_input_tokens: usage["cache_read_input_tokens"].as_u64(),
+    }
+}
+
+fn block_from_json(b: &Value) -> ContentBlock {
+    match b["type"].as_str().unwrap_or("text") {
+        "text" => ContentBlock::Text {
+            text: b["text"].as_str().unwrap_or("").to_string(),
+        },
+        "tool_use" => ContentBlock::ToolUse {
+            id: b["id"].as_str().unwrap_or("").to_string(),
+            name: b["name"].as_str().unwrap_or("").to_string(),
+            input: b["input"].clone(),
+        },
+        "thinking" => ContentBlock::Thinking {
+            text: b["thinking"].as_str().unwrap_or("").to_string(),
+            signature: b["signature"].as_str().map(str::to_string),
+        },
+        "redacted_thinking" => ContentBlock::RedactedThinking {
+            data: b["data"].as_str().unwrap_or("").to_string(),
+        },
+        "compaction" => ContentBlock::compaction_from_raw(b.clone()).unwrap_or(unknown_block()),
+        _ => unknown_block(),
+    }
+}
+
+fn unknown_block() -> ContentBlock {
+    ContentBlock::Text {
+        text: "[unknown block]".to_string(),
+    }
+}
+
+/// A non-streaming Messages response (`complete` and `compact`).
+async fn read_response(resp: reqwest::Response, model: &str) -> whycodes_core::Result<LlmResponse> {
+    let status = resp.status();
+    let json: Value = resp.json().await.map_err(json_parse_error)?;
+
+    if !status.is_success() {
+        let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
+        return Err(whycodes_core::Error::llm(format!(
+            "Anthropic API error ({}): {}",
+            status, err_msg
+        )));
+    }
+
+    let content = json["content"]
+        .as_array()
+        .map(|blocks| blocks.iter().map(block_from_json).collect())
+        .unwrap_or_default();
+
+    let usage = &json["usage"];
+    crate::usage_dump::dump_raw_usage("anthropic", usage);
+    Ok(LlmResponse {
+        content,
+        stop_reason: json["stop_reason"].as_str().map(|s| s.to_string()),
+        usage: usage_from_json(usage),
+        model: model.to_string(),
+    })
 }
 
 impl AnthropicProvider {
@@ -284,14 +401,47 @@ impl AnthropicProvider {
         }
     }
 
+    /// Betas a request needs beyond the credential's own.
+    fn betas_for(request: &LlmRequest, model: &str) -> &'static [&'static str] {
+        if replays_compaction(&request.messages, model) {
+            &[COMPACTION_BETA]
+        } else {
+            &[]
+        }
+    }
+
+    /// The on-demand compaction request: the turn's body without `stream`
+    /// and without the fields the API rejects next to `compaction`, plus
+    /// `"compaction": {"type": "summarize", "instructions"?}`.
+    pub fn compaction_body(&self, request: &LlmRequest, model: &str, instructions: &str) -> Value {
+        let mut body = self.build_body(request, model);
+        body["stream"] = Value::Bool(false);
+        // `build_body` always returns an object.
+        body.as_object_mut().into_iter().for_each(|map| {
+            for key in ["stop_sequences", "tool_choice", "context_management"] {
+                map.remove(key);
+            }
+        });
+        let mut compaction = obj([("type", jstr("summarize"))]);
+        if !instructions.trim().is_empty() {
+            json_value::insert(&mut compaction, "instructions", jstr(instructions));
+        }
+        body["compaction"] = compaction;
+        body
+    }
+
     pub fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
+        let native = replays_compaction(&request.messages, model);
         let mut body = obj([
             ("model", jstr(model)),
             (
                 "max_tokens",
                 Value::from(request.max_tokens.unwrap_or(4096)),
             ),
-            ("messages", arr(self.convert_messages(&request.messages))),
+            (
+                "messages",
+                arr(self.convert_messages(&request.messages, native)),
+            ),
             ("stream", Value::Bool(true)),
         ]);
 
@@ -320,11 +470,18 @@ impl AnthropicProvider {
         body
     }
 
-    fn convert_messages(&self, messages: &[Message]) -> Vec<Value> {
+    /// `native`: compaction blocks go out verbatim. Otherwise a message that
+    /// opens with one is sent as `user` text, so a history that starts with
+    /// the summary still starts with a user turn.
+    fn convert_messages(&self, messages: &[Message], native: bool) -> Vec<Value> {
         messages
             .iter()
             .filter_map(|m| {
+                let summary_as_text = !native
+                    && matches!(&m.content, whycodes_core::types::MessageContent::Blocks(b)
+                        if matches!(b.first(), Some(ContentBlock::Compaction { .. })));
                 let role = match m.role {
+                    _ if summary_as_text => "user",
                     whycodes_core::types::Role::Assistant => "assistant",
                     whycodes_core::types::Role::User => "user",
                     whycodes_core::types::Role::System => "user", // system goes in top-level
@@ -348,7 +505,7 @@ impl AnthropicProvider {
                             blocks.clone()
                         };
                         wire.iter()
-                            .map(|b| content_block_to_anthropic_role(b, untrusted))
+                            .map(|b| content_block_to_anthropic_role(b, untrusted, native))
                             .collect()
                     }
                 };
@@ -394,67 +551,29 @@ impl LlmProvider for AnthropicProvider {
             let mut body = self.build_body(request, model);
             body["stream"] = serde_json::Value::Bool(false);
 
+            let betas = Self::betas_for(request, model);
             let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
-                authed_post(self.default_base_url(), key).json(&body)
+                authed_post(self.default_base_url(), key, betas).json(&body)
             })
             .await?;
+            read_response(resp, model).await
+        })
+    }
 
-            let status = resp.status();
-            let json: Value = resp.json().await.map_err(json_parse_error)?;
-
-            if !status.is_success() {
-                let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-                return Err(whycodes_core::Error::llm(format!(
-                    "Anthropic API error ({}): {}",
-                    status, err_msg
-                )));
-            }
-
-            let content = json["content"]
-                .as_array()
-                .map(|blocks| {
-                    blocks
-                        .iter()
-                        .map(|b| {
-                            let btype = b["type"].as_str().unwrap_or("text");
-                            match btype {
-                                "text" => ContentBlock::Text {
-                                    text: b["text"].as_str().unwrap_or("").to_string(),
-                                },
-                                "tool_use" => ContentBlock::ToolUse {
-                                    id: b["id"].as_str().unwrap_or("").to_string(),
-                                    name: b["name"].as_str().unwrap_or("").to_string(),
-                                    input: b["input"].clone(),
-                                },
-                                "thinking" => ContentBlock::Thinking {
-                                    text: b["thinking"].as_str().unwrap_or("").to_string(),
-                                    signature: b["signature"].as_str().map(str::to_string),
-                                },
-                                "redacted_thinking" => ContentBlock::RedactedThinking {
-                                    data: b["data"].as_str().unwrap_or("").to_string(),
-                                },
-                                _ => ContentBlock::Text {
-                                    text: "[unknown block]".to_string(),
-                                },
-                            }
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let usage = json["usage"].clone();
-            crate::usage_dump::dump_raw_usage("anthropic", &usage);
-            Ok(LlmResponse {
-                content,
-                stop_reason: json["stop_reason"].as_str().map(|s| s.to_string()),
-                usage: Usage {
-                    input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
-                    output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
-                    cache_creation_input_tokens: usage["cache_creation_input_tokens"].as_u64(),
-                    cache_read_input_tokens: usage["cache_read_input_tokens"].as_u64(),
-                },
-                model: model.to_string(),
+    fn compact<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+        instructions: &'a str,
+    ) -> ProviderResponseFuture<'a> {
+        Box::pin(async move {
+            let body = self.compaction_body(request, model, instructions);
+            let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
+                authed_post(self.default_base_url(), key, &[COMPACTION_BETA]).json(&body)
             })
+            .await?;
+            read_response(resp, model).await
         })
     }
 
@@ -466,11 +585,12 @@ impl LlmProvider for AnthropicProvider {
     ) -> ProviderStreamFuture<'a> {
         Box::pin(async move {
             let body = self.build_body(request, model);
+            let betas = Self::betas_for(request, model);
             let api_key = api_key.to_string();
 
             let resp =
                 crate::oauth_refresh::send_with_refresh_retry(self.name(), &api_key, |key| {
-                    authed_post(self.default_base_url(), key).json(&body)
+                    authed_post(self.default_base_url(), key, betas).json(&body)
                 })
                 .await?;
 
