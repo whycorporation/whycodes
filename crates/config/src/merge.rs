@@ -12,7 +12,7 @@ use crate::types::{
     default_prompt_suggestions, default_race_after_ms, default_response_cache,
     default_retain_every_n, default_retain_max_facts, default_risk_threshold,
     default_sandbox_fallback, default_sandbox_mode, default_session_min_score,
-    default_session_top_k, default_swarm_max_agents, default_tool_profile,
+    default_session_top_k, default_swarm_max_agents, default_tool_profile, default_undo_depth,
 };
 use whycodes_core::types::PermissionSet;
 
@@ -183,6 +183,9 @@ impl Config {
         }
         if other.session.cache_warm_minutes != 0 {
             self.session.cache_warm_minutes = other.session.cache_warm_minutes;
+        }
+        if other.session.undo_depth != default_undo_depth() {
+            self.session.undo_depth = other.session.undo_depth;
         }
         if other.session.compaction_llm != default_compaction_llm() {
             self.session.compaction_llm = other.session.compaction_llm.clone();
