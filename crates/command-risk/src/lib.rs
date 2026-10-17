@@ -38,6 +38,7 @@
 //!   network. It is a pure function of the string and the working directory.
 
 mod assess;
+mod parse;
 mod paths;
 mod tokenize;
 

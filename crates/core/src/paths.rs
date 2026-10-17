@@ -104,6 +104,18 @@ pub fn project_scratch_dir(working_dir: &Path) -> PathBuf {
     project_dir(working_dir).join("scratch")
 }
 
+/// Directories of per-topic project rule files, with the extension each one
+/// holds, in precedence order. The context loader appends every file in them
+/// to the system prompt and `read rule://<name>` serves one by file stem.
+pub fn project_rule_dirs(working_dir: &Path) -> [(PathBuf, &'static str); 4] {
+    [
+        (project_dir(working_dir).join("rules"), "md"),
+        (working_dir.join(".cursor").join("rules"), "mdc"),
+        (working_dir.join(".clinerules"), "md"),
+        (working_dir.join(".github").join("instructions"), "md"),
+    ]
+}
+
 /// Format a path for humans (status bar, toasts, copy-to-clipboard).
 ///
 /// `std::fs::canonicalize` on Windows returns a Win32 extended-length path
@@ -163,6 +175,11 @@ mod tests {
             project_scratch_dir(Path::new("/w")),
             PathBuf::from("/w/.whycodes/scratch")
         );
+        let rules = project_rule_dirs(Path::new("/w"));
+        assert_eq!(rules[0], (PathBuf::from("/w/.whycodes/rules"), "md"));
+        assert_eq!(rules[1], (PathBuf::from("/w/.cursor/rules"), "mdc"));
+        assert_eq!(rules[2], (PathBuf::from("/w/.clinerules"), "md"));
+        assert_eq!(rules[3], (PathBuf::from("/w/.github/instructions"), "md"));
         assert_eq!(or_dot(None), PathBuf::from("."));
         assert_eq!(or_dot(Some(PathBuf::from("/x"))), PathBuf::from("/x"));
         assert_eq!(config_file().file_name().unwrap(), "config.toml");

@@ -46,7 +46,22 @@ user already approved this call with the command or path in hand, so later
    non-empty `command`. `whycodes_command_risk::assess(command, working_dir)`
    returns a `RiskLevel` (`Safe` < `Caution` < `Destructive` <
    `Catastrophic`, `crates/command-risk/src/assess.rs`); `decide(assessment,
-   risk_threshold)` (`crates/command-risk/src/lib.rs`) maps it to:
+   risk_threshold)` (`crates/command-risk/src/lib.rs`) maps it to the
+   outcomes below. The command is read by a recursive-descent shell parser
+   (`parse.rs`) lowered to the tokenizer's `Segment`s; on a parse error
+   (unbalanced quotes, PowerShell, a here-document without its terminator,
+   nesting over 64) the tokenizer (`tokenize.rs`) is used as before.
+   `paths.rs` and the per-segment rules in `assess.rs` are shared by both
+   front-ends. Segments are assessed once with variables as written and once
+   per value assigned earlier in the line (`DIR=/; rm -rf $DIR`, `for` items,
+   `export`/`local`/`declare`); the worst reading wins, so a known value only
+   adds risk. Here-document bodies are data unless the pipeline runs a shell
+   (`bash <<EOF`, `cat <<EOF | sh`, `bash <<< '…'`), in which case they are
+   assessed as a script. Redirections are typed: `2>&1`, `>&-` and reads
+   write no file; `>&file` writes one. Comments are re-split by the tokenizer
+   because `cmd.exe` has no `#` comments. Substitution bodies come from the
+   raw scan plus the parser (which adds process-substitution bodies and
+   bodies the scan cuts short at a quoted `)`).
    - `Refuse` — always for `Catastrophic` (home directory, system location,
      whole disk), whatever the threshold. Result:
      `Refused: <reason>. This command is classified catastrophic and cannot
@@ -269,7 +284,7 @@ custom agents: `CustomAgent::permission`).
 - `crates/core/src/file_claims.rs` — `FileClaimRegistry` (claims, stale reads).
 - `crates/core/src/network.rs` — `NetworkPolicy::check_url`, host patterns.
 - `crates/core/src/sandbox.rs` — `SandboxMode`, `SandboxFallback`, `SandboxSettings`.
-- `crates/command-risk/src/lib.rs`, `assess.rs`, `paths.rs`, `tokenize.rs` — `RiskLevel`, `RiskThreshold`, `assess`, `decide`.
+- `crates/command-risk/src/lib.rs`, `assess.rs`, `parse.rs`, `paths.rs`, `tokenize.rs` — `RiskLevel`, `RiskThreshold`, `assess`, `decide`; `parse::parse` (shell AST lowered to `Segment`s, `ParseError` falls back to `tokenize::tokenize`).
 - `crates/sandbox/src/policy.rs`, `bwrap.rs`, `host.rs` — `prepare`, `run_timeout`, bubblewrap argument list, host shell.
 - `crates/tools/src/executor.rs` — `ToolExecutor::execute` (`is_allowed` re-check, formatter / LSP annotations after writes).
 - `crates/tools/src/shell.rs`, `file/write.rs`, `file/edit.rs`, `file/apply_patch.rs`, `file/read.rs`, `file/external_directory.rs`, `web/fetch.rs`, `web/search.rs`, `github/*.rs` — in-tool checks.
@@ -304,7 +319,12 @@ custom agents: `CustomAgent::permission`).
   `read(secrets/**) = deny` are therefore not enforced on that path.
 - The risk classifier is static: unrecognised commands are `Safe`, scripts
   and obfuscated commands are invisible, and only the catastrophic tier is
-  path-based (`crates/command-risk/src/lib.rs` documents this). A `schedule`
+  path-based (`crates/command-risk/src/lib.rs` documents this). The parser
+  reads bash syntax; `cmd.exe`/PowerShell lines that happen to parse are
+  judged by bash quoting, as the tokenizer did. A prefix assignment is read
+  as visible to its own command (`X=~ rm -rf $X` is refused) although bash
+  expands `$X` first, because that is what the line was written to mean.
+  Variables do not flow into `$(…)` bodies or across `cd`. A `schedule`
   command is assessed when scheduled and runs later without re-assessment.
 - `action_for` glob rules live in a `HashMap`; with several matching globs
   the winner depends on iteration order. Exact keys are deterministic.

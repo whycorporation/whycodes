@@ -30,6 +30,11 @@ pub struct ToolExecutor {
     websearch: search::WebSearchTool,
 }
 
+/// Most (permissions, profile, extra) schema sets held at once. Each new
+/// permission rule or tool_search activation is a new key, so a long session
+/// would otherwise keep every past variant; at the cap the memo starts over.
+const DEFS_CACHE_MAX_ENTRIES: usize = 16;
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct DefsCacheKey {
     perm: u64,
@@ -201,6 +206,9 @@ impl ToolExecutor {
         defs.sort_by(|a, b| a.name.cmp(&b.name));
         let arc: Arc<[ToolDefinition]> = defs.into();
         let mut cache = recover_defs_cache(&self.defs_cache);
+        if cache.len() >= DEFS_CACHE_MAX_ENTRIES {
+            cache.clear();
+        }
         cache.insert(key, Arc::clone(&arc));
         arc
     }

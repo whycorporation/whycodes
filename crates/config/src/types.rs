@@ -1369,6 +1369,10 @@ pub struct SessionConfig {
     /// prefix; `0` (default) turns it off.
     #[serde(default)]
     pub cache_warm_minutes: u64,
+    /// Turns `/undo` can step back. The oldest entries drop first past the
+    /// cap; `0` = unlimited (memory grows with every turn).
+    #[serde(default = "default_undo_depth")]
+    pub undo_depth: usize,
     /// Fast model for trivial chat (`provider/model` or bare model id).
     /// Empty = auto-pick small sibling of the session model (haiku/mini/flash).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1508,6 +1512,7 @@ impl Default for SessionConfig {
             tool_profile: default_tool_profile(),
             prompt_cache: default_prompt_cache(),
             cache_warm_minutes: 0,
+            undo_depth: default_undo_depth(),
             model_fast: None,
             model_smol: None,
             model_plan: None,
@@ -1544,6 +1549,10 @@ pub(crate) fn default_model_race() -> String {
 
 pub(crate) fn default_race_after_ms() -> u64 {
     800
+}
+
+pub(crate) fn default_undo_depth() -> usize {
+    50
 }
 
 pub(crate) fn default_response_cache() -> String {

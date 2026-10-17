@@ -258,25 +258,8 @@ impl Config {
         }
 
         // Layer 3: project config
-        let project_config_path = whycodes_core::project_dir(project_dir).join("config.toml");
-        if project_config_path.exists() {
-            match std::fs::read_to_string(&project_config_path) {
-                Ok(content) => match toml::from_str::<Config>(&content) {
-                    Ok(mut project) => {
-                        if project.schema_version < CONFIG_SCHEMA_VERSION {
-                            project.schema_version = CONFIG_SCHEMA_VERSION;
-                        }
-                        let dropped = project.websearch.strip_project_only_keys();
-                        if let Some(msg) = project_websearch_warning(&project_config_path, &dropped)
-                        {
-                            tracing::warn!("{msg}");
-                        }
-                        config = config.merge_with(&project);
-                    }
-                    Err(e) => warn_project_config("parse", &project_config_path, e),
-                },
-                Err(e) => warn_project_config("read", &project_config_path, e),
-            }
+        if let Some(project) = Self::load_project_layer(project_dir) {
+            config = config.merge_with(&project);
         }
 
         // Layer 4: environment variables
@@ -285,6 +268,38 @@ impl Config {
         config.apply_slop_file(project_dir);
 
         Ok(config)
+    }
+
+    /// Layer 3 of [`Self::load_layered`] on its own: `<project>/.whycodes/config.toml`
+    /// parsed but not merged. `None` when the file is absent, unreadable or
+    /// malformed (the last two are logged, as the layered load does).
+    pub fn load_project_layer(project_dir: &Path) -> Option<Self> {
+        let project_config_path = whycodes_core::project_dir(project_dir).join("config.toml");
+        if !project_config_path.exists() {
+            return None;
+        }
+        match std::fs::read_to_string(&project_config_path) {
+            Ok(content) => match toml::from_str::<Config>(&content) {
+                Ok(mut project) => {
+                    if project.schema_version < CONFIG_SCHEMA_VERSION {
+                        project.schema_version = CONFIG_SCHEMA_VERSION;
+                    }
+                    let dropped = project.websearch.strip_project_only_keys();
+                    if let Some(msg) = project_websearch_warning(&project_config_path, &dropped) {
+                        tracing::warn!("{msg}");
+                    }
+                    Some(project)
+                }
+                Err(e) => {
+                    warn_project_config("parse", &project_config_path, e);
+                    None
+                }
+            },
+            Err(e) => {
+                warn_project_config("read", &project_config_path, e);
+                None
+            }
+        }
     }
 
     /// Persist an OpenRouter API key into the global `config.toml`.
@@ -465,6 +480,11 @@ impl Config {
             && let Ok(n) = val.parse::<usize>()
         {
             self.session.max_context_tokens = n;
+        }
+        if let Ok(val) = std::env::var("WHYCODES_UNDO_DEPTH")
+            && let Ok(n) = val.parse::<usize>()
+        {
+            self.session.undo_depth = n;
         }
 
         // WHYCODES_LOG_LEVEL

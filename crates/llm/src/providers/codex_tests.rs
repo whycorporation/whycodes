@@ -452,6 +452,7 @@ async fn complete_sends_chatgpt_account_id_from_stored_extra() {
             "openai",
             whycodes_auth::ProviderAuth {
                 method: "oauth".into(),
+                validated_at: None,
                 token: whycodes_auth::OAuthToken {
                     access_token: "eyJhbGciOiJ.eyJzdWIiOiJx.sig".into(),
                     refresh_token: None,

@@ -312,6 +312,22 @@ fn definitions_profile_extra_activates_deferred_tools() {
 }
 
 #[test]
+fn definitions_cache_is_bounded() {
+    let ex = ToolExecutor::new();
+    let perms = PermissionSet::default();
+    for i in 0..=DEFS_CACHE_MAX_ENTRIES {
+        ex.get_definitions_profile_extra(
+            &perms,
+            crate::profile::ToolProfile::Core,
+            &[format!("extra-{i}")],
+        );
+    }
+    let len = recover_defs_cache(&ex.defs_cache).len();
+    assert!(len <= DEFS_CACHE_MAX_ENTRIES, "defs cache grew to {len}");
+    assert_eq!(len, 1, "the insert past the cap starts the memo over");
+}
+
+#[test]
 fn definitions_cache_reuses_arc_until_register() {
     let mut ex = ToolExecutor::new();
     let perms = PermissionSet::default();

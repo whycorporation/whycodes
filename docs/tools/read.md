@@ -3,7 +3,7 @@
 
 > Profile: core · Permission key: `[permission] read`
 
-Read a text file (line-numbered). Long notes: `read agent://tools/read`.
+Read a text file (line-numbered) or an internal URL: skill://, agent://, proc://, rule://, pr://, issue://, mcp:// (a bare scheme lists). Long notes: `read agent://tools/read`.
 
 ## Parameters
 
@@ -11,15 +11,30 @@ Read a text file (line-numbered). Long notes: `read agent://tools/read`.
 |---|---|---|---|
 | `limit` | integer | no | Max lines to return (default: 400, max: 2000) |
 | `offset` | integer | no | 1-based line to start from (default: 1) |
-| `path` | string | yes | File path (relative to project root or absolute) |
+| `path` | string | yes | File path (relative to project root or absolute), or an internal URL: skill://<name>, agent://<id>, proc://<job-id>, rule://<name>, pr://<number>[/diff], issue://<number>, mcp://<server>/<uri> |
 
 ## Guide
 
 The model reads this with `read agent://tools/read`.
 
 Read a text file with line numbers. Prefer project-relative paths.
-`skill://<name>` loads a skill; `agent://<id>` re-reads a finished task/swarm
-artifact; `agent://tools/<name>` opens the long tool guide.
+
+Internal URLs (a bare scheme lists what it can read):
+- `skill://<name>` — a skill body.
+- `agent://<id>` — a finished task/swarm artifact; `agent://tools/<name>` this guide set.
+- `proc://<job-id>` — the stored log of a background shell job
+(`.whycodes/scratch/<id>.log`); `bg` lists live jobs.
+- `rule://<name>` — a project rule file (`.whycodes/rules/*.md`, `.cursor/rules/*.mdc`,
+`.clinerules/*.md`, `.github/instructions/*.md`).
+- `pr://<number>` / `pr://<number>/diff` — a pull request of the `origin` GitHub
+remote (metadata and body, or the diff); `pr://` lists the open ones (first page).
+- `issue://<number>` — an issue of the same remote; `issue://` lists the open ones.
+GitHub reads use the same token discovery and network allowlist as `github_pr`.
+- `mcp://<server>/<uri>` — an MCP resource; `mcp://<server>` lists that server's
+resources, `mcp://` the connected servers.
+
+A `.ipynb` reads as its cells: `# %% [code] cell:N` before each source,
+outputs summarized in one `# out:` line. `edit` / `write` take that text.
 
 ## Related
 

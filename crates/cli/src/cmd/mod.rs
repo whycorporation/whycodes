@@ -81,10 +81,12 @@ pub(crate) async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Resul
         Commands::Model { cmd: model_cmd } => provider::cmd_model(model_cmd).await,
         Commands::Agent { name } => provider::cmd_agent(name.as_deref()).await,
         Commands::Plugins { cmd } => provider::cmd_plugins(cli, cmd.as_ref()).await,
-        Commands::Config { cmd: config_cmd } => config::cmd_config(config_cmd).await,
+        Commands::Config { cmd: config_cmd } => {
+            config::cmd_config(&helpers::resolve_dir(cli), config_cmd).await
+        }
         Commands::Session { cmd: session_cmd } => session::cmd_session(session_cmd).await,
         Commands::Memory { cmd: memory_cmd } => memory::cmd_memory(cli, memory_cmd).await,
-        Commands::Auth { cmd } => auth::cmd_auth(cmd).await,
+        Commands::Auth { cmd } => auth::cmd_auth(&helpers::resolve_dir(cli), cmd).await,
         Commands::Import { args } => import::cmd_import(args).await,
         Commands::Stats => session::cmd_stats().await,
         Commands::Debug { json, tools } => debug::cmd_debug(*json, *tools).await,
