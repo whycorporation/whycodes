@@ -107,6 +107,7 @@ async fn run_returns_failed_result_for_preflight_errors() {
                     context,
                     tools: Some(vec!["read".into()]),
                     max_turns,
+                    output_schema: None,
                 },
                 provider,
                 "test-model",
@@ -213,6 +214,7 @@ async fn run_tool_loop_reads_usage_thinking_and_question() {
                 context: None,
                 tools: None,
                 max_turns: 4,
+                output_schema: None,
             },
             "script",
             "m",
@@ -270,6 +272,7 @@ async fn run_intercepts_question_and_swarm_inbox() {
                 context: Some("ctx".into()),
                 tools: Some(vec!["question".into(), "read".into()]),
                 max_turns: 4,
+                output_schema: None,
             },
             "script",
             "m",
@@ -338,6 +341,7 @@ async fn run_wraps_stream_error_as_failed_result() {
                 context: None,
                 tools: Some(vec!["read".into()]),
                 max_turns: 2,
+                output_schema: None,
             },
             "script",
             "m",
@@ -391,6 +395,7 @@ async fn run_tool_use_delta_then_text() {
                 context: None,
                 tools: Some(vec!["read".into()]),
                 max_turns: 4,
+                output_schema: None,
             },
             "script",
             "m",
@@ -439,6 +444,7 @@ async fn run_invalid_question_and_manual_prompter() {
                     context: None,
                     tools: Some(vec!["question".into()]),
                     max_turns: 4,
+                    output_schema: None,
                 },
                 "script",
                 "m",
@@ -500,6 +506,7 @@ async fn run_important_question_uses_prompter() {
                     context: None,
                     tools: Some(vec!["question".into()]),
                     max_turns: 4,
+                    output_schema: None,
                 },
                 "script",
                 "m",
@@ -566,6 +573,7 @@ async fn run_tool_loop_serializes_mutator_batch() {
                 context: None,
                 tools: None,
                 max_turns: 4,
+                output_schema: None,
             },
             "script",
             "m",
@@ -693,6 +701,7 @@ async fn finished_subagent_runs_matching_stop_hooks() {
                 context: None,
                 tools: None,
                 max_turns: 2,
+                output_schema: None,
             },
             "script",
             "m",
@@ -722,6 +731,7 @@ async fn reads_messages_told_to_it_and_reports_late_ones() {
         context: None,
         tools: None,
         max_turns: 2,
+        output_schema: None,
     };
     let result = runner.run(task(), "script", "m", "k").await;
     assert!(result.success, "{result:?}");
@@ -1133,6 +1143,7 @@ async fn cancel_stops_the_worker_at_its_next_step_with_a_cancelled_result() {
                 context: None,
                 tools: None,
                 max_turns: 10,
+                output_schema: None,
             },
             "script",
             "m",
@@ -1211,6 +1222,7 @@ async fn progress_to_a_closed_listener_does_not_stop_the_worker() {
         context: None,
         tools: None,
         max_turns: 3,
+        output_schema: None,
     };
     let result = runner.run(task, "script", "m", "k").await;
     assert!(result.success, "{result:?}");
@@ -1264,4 +1276,103 @@ fn worker_log_helpers_label_calls_and_keep_the_tail() {
         cancelled_output("half"),
         format!("{CANCELLED_BY_USER}\n\nOutput before the cancel:\nhalf")
     );
+}
+
+fn batched_runner(batches: Vec<Vec<whycodes_llm::ScriptedStep>>) -> SubagentRunner {
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "script", batches,
+    )));
+    SubagentRunner::new(
+        Arc::new(registry),
+        Arc::new(ToolExecutor::new()),
+        make_info(),
+        std::env::temp_dir(),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    )
+}
+
+fn text(t: &str) -> whycodes_llm::ScriptedStep {
+    whycodes_llm::ScriptedStep::Text(t.into())
+}
+
+fn schema_task() -> SubagentTask {
+    let schema = serde_json::json!({
+        "properties": {"files": {"type": "array", "items": {"type": "string"}}},
+        "required": ["files"]
+    });
+    SubagentTask {
+        goal: "list files".into(),
+        context: None,
+        tools: None,
+        max_turns: 2,
+        output_schema: Some(crate::structured_output::prepare(&schema).unwrap()),
+    }
+}
+
+const GOOD: &str = "Found two.\n```json\n{\"files\": [\"a.rs\", \"b.rs\"], \"what_i_did_not_check\": [\"tests\"]}\n```";
+
+#[tokio::test]
+async fn structured_result_valid_on_first_try() {
+    let result = batched_runner(vec![vec![text(GOOD)]])
+        .run(schema_task(), "script", "m", "k")
+        .await;
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output, "Found two.");
+    let s = result.structured.unwrap();
+    assert_eq!(
+        s.value.unwrap()["files"],
+        serde_json::json!(["a.rs", "b.rs"])
+    );
+    assert!(s.errors.is_empty());
+}
+
+#[tokio::test]
+async fn structured_result_retries_once_with_the_errors() {
+    let result = batched_runner(vec![
+        vec![text("Found two.\n```json\n{\"files\": [1]}\n```")],
+        vec![
+            text("```json\n{\"files\": [\"a.rs\"], \"what_i_did_not_check\": []}\n```"),
+            whycodes_llm::ScriptedStep::Usage {
+                input_tokens: 5,
+                output_tokens: 3,
+            },
+        ],
+    ])
+    .run(schema_task(), "script", "m", "k")
+    .await;
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output, "Found two.");
+    assert_eq!(result.usage.input_tokens, 5);
+    let s = result.structured.unwrap();
+    assert_eq!(s.value.unwrap()["files"], serde_json::json!(["a.rs"]));
+}
+
+#[tokio::test]
+async fn structured_result_stays_null_when_the_retry_is_invalid() {
+    let result = batched_runner(vec![vec![text("no block")], vec![text("still none")]])
+        .run(schema_task(), "script", "m", "k")
+        .await;
+    assert!(result.success, "the parent's turn never fails: {result:?}");
+    assert_eq!(result.output, "no block\n\nstill none");
+    let s = result.structured.unwrap();
+    assert_eq!(s.value, None);
+    assert_eq!(s.errors, vec!["no fenced ```json block found".to_string()]);
+}
+
+#[tokio::test]
+async fn structured_result_keeps_errors_when_the_retry_fails() {
+    let result = batched_runner(vec![
+        vec![text("no block")],
+        vec![whycodes_llm::ScriptedStep::FailOpen("down".into())],
+    ])
+    .run(schema_task(), "script", "m", "k")
+    .await;
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output, "no block");
+    let s = result.structured.unwrap();
+    assert_eq!(s.value, None);
+    assert_eq!(s.errors.len(), 2, "{:?}", s.errors);
+    assert!(s.errors[1].starts_with("retry failed:"), "{:?}", s.errors);
 }

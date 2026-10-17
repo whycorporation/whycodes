@@ -20,6 +20,7 @@ use whycodes_tools::question::parse_questions;
 use crate::question::{
     QuestionPrompter, default_question_prompter, run_question_tool, should_prompt_questions,
 };
+use crate::structured_output::{self, Structured};
 
 use super::agent::DEFAULT_SYSTEM_PROMPT;
 use crate::tool_policy::{SHELL_TOOLS, file_tool_path};
@@ -35,6 +36,9 @@ pub struct SubagentTask {
     pub tools: Option<Vec<String>>,
     /// Maximum conversation turns for the subagent
     pub max_turns: usize,
+    /// Prepared result schema ([`crate::structured_output::prepare`]); the
+    /// worker must end with a matching fenced `json` block.
+    pub output_schema: Option<serde_json::Value>,
 }
 
 /// Result from a subagent run
@@ -52,6 +56,8 @@ pub struct SubagentResult {
     pub usage: whycodes_core::types::Usage,
     /// The user cancelled the worker (agent hub); `output` says so.
     pub cancelled: bool,
+    /// Structured result when the task had an `output_schema`.
+    pub structured: Option<Structured>,
 }
 
 /// Result text of a worker the user cancelled.
@@ -315,6 +321,9 @@ impl SubagentRunner {
             &user_message,
             &self.memory,
         );
+        if let Some(schema) = &task.output_schema {
+            system_prompt.push_str(&structured_output::instruction(schema));
+        }
 
         let mut session = Session::new(self.project_path.clone(), system_prompt);
         session.add_user_message(&user_message);
@@ -337,6 +346,30 @@ impl SubagentRunner {
             cancels.finish(key);
         }
 
+        let mut structured = None;
+        let output = match (output, &task.output_schema) {
+            (Ok(out), Some(schema)) if !out.cancelled => {
+                let route = (provider_name, model, api_key);
+                let (text, usage, s) = self
+                    .structured_result(
+                        &mut session,
+                        schema,
+                        out.text,
+                        out.usage,
+                        route,
+                        &permission,
+                    )
+                    .await;
+                structured = Some(s);
+                Ok(LoopOutput {
+                    text,
+                    usage,
+                    cancelled: false,
+                })
+            }
+            (other, _) => other,
+        };
+
         let duration = start.elapsed();
 
         let result = match output {
@@ -351,6 +384,7 @@ impl SubagentRunner {
                 duration,
                 usage: out.usage,
                 cancelled: out.cancelled,
+                structured,
             },
             Err(e) => SubagentResult {
                 goal: task.goal,
@@ -359,10 +393,77 @@ impl SubagentRunner {
                 duration,
                 usage: whycodes_core::types::Usage::default(),
                 cancelled: false,
+                structured: None,
             },
         };
         self.run_stop_hooks(&session, &result).await;
         result
+    }
+
+    /// Check the worker's final `json` block against `schema`. An invalid or
+    /// missing block gets one retry step with the errors; still invalid gives
+    /// `value: None` and those errors. Never fails the run.
+    async fn structured_result(
+        &self,
+        session: &mut Session,
+        schema: &serde_json::Value,
+        text: String,
+        mut usage: whycodes_core::types::Usage,
+        (provider_name, model, api_key): (&str, &str, &str),
+        permission: &PermissionSet,
+    ) -> (String, whycodes_core::types::Usage, Structured) {
+        let errors = match structured_output::check(schema, &text) {
+            Ok(value) => {
+                let s = Structured {
+                    value: Some(value),
+                    errors: Vec::new(),
+                };
+                return (structured_output::strip_block(&text), usage, s);
+            }
+            Err(errors) => errors,
+        };
+        session.add_user_message(&structured_output::retry_message(&errors));
+        let retry = self
+            .run_turn_inner(session, provider_name, model, api_key, 1, permission)
+            .await;
+        let (retry, retry_usage) = match retry {
+            Ok(r) => (r.text, r.usage),
+            Err(e) => {
+                let mut errors = errors;
+                errors.push(format!("retry failed: {e}"));
+                let s = Structured {
+                    value: None,
+                    errors,
+                };
+                return (text, usage, s);
+            }
+        };
+        usage.add(&retry_usage);
+        match structured_output::check(schema, &retry) {
+            Ok(value) => {
+                let parts = [
+                    structured_output::strip_block(&text),
+                    structured_output::strip_block(&retry),
+                ];
+                let text: Vec<&str> = parts
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|p| !p.is_empty())
+                    .collect();
+                let s = Structured {
+                    value: Some(value),
+                    errors: Vec::new(),
+                };
+                (text.join("\n\n"), usage, s)
+            }
+            Err(errors) => {
+                let s = Structured {
+                    value: None,
+                    errors,
+                };
+                (format!("{text}\n\n{retry}"), usage, s)
+            }
+        }
     }
 
     /// `subagent_stop` hooks; `match` filters the agent type. Never blocks.
