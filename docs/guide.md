@@ -258,13 +258,29 @@ recent sessions under it.
 | `Ctrl+C` | Clear the draft; cancel a running turn; otherwise ask to quit (again to confirm) |
 | `Ctrl+Q` | Quit without asking |
 
-A message sent while a turn is running steers it: the agent reads it before
-its next request, after the current tool calls finish. If the turn ends
-before that, the message runs as the next turn, exactly as typed. `@file`
-mentions are expanded and pasted images attached, as on a normal submit.
-A TUI attached to a daemon sends text messages to
-`POST /api/session/{id}/steer`; messages with images wait for the turn to
-end there, because the daemon chat API is text only.
+A message sent while a turn is running steers it. How soon the turn reads
+it depends on how it is sent:
+
+| Send with | Mode | When the running turn reads it |
+|---|---|---|
+| `Enter` | next step (default) | Before its next request, after the current tool calls finish |
+| `Shift+Enter` or `/queue <message>` | queue | Never: it runs as the next user turn once this one ends |
+| `Ctrl+Enter` or `/now <message>` | urgent | At the next safe point between the tool calls of a sequential batch. Calls not started yet are not run; each gets the result `Tool not run: the user sent a message first`, and the next request carries the message. A call already running finishes; a batch of read-only calls runs in parallel and finishes as one |
+
+`Shift+Enter` and `Ctrl+Enter` need a terminal that reports modifiers on
+Enter (the kitty keyboard protocol; `/terminal-setup` checks and enables
+it). Without it both arrive as plain `Enter`, so `/queue` and `/now` are the
+portable way to pick a mode. While a turn runs, `Shift+Enter` queues
+instead of inserting a newline. While no turn runs, `/queue` and `/now` just
+send their message.
+
+If the turn ends before reading a message, it runs as the next turn,
+exactly as typed. `@file` mentions are expanded and pasted images attached,
+as on a normal submit. A TUI attached to a daemon sends text messages to
+`POST /api/session/{id}/steer` with `{"message": "…", "mode":
+"next_step" | "queue" | "urgent"}` (`mode` is optional and defaults to
+`next_step`); messages with images wait for the turn to end there, because
+the daemon chat API is text only.
 
 Rebind keys under `[tui.key_bindings]` as `"key" = "action"`; `"none"`
 unbinds a default:
@@ -361,6 +377,8 @@ Both TUI and `--plain`:
 | `/compact [context]` `/summarize` | Compact the conversation (LLM full-replace; optional note of what to keep) |
 | `/fresh` | Skip the provider prompt cache on the next turn (stale cache / wedged stream) |
 | `/btw <question>` | Side question: shown once, not written to session history, no `bash`/`write` |
+| `/queue <message>` | TUI, while a turn runs: send the message as the next turn, never interrupting this one (same as `Shift+Enter`) |
+| `/now <message>` | TUI, while a turn runs: interrupt between tool calls; calls not started yet are skipped with a "not run" result (same as `Ctrl+Enter`) |
 | `/tell <id> <message>` | While a turn runs: message a running `task` subagent or swarm worker (`id` prefix from the subagent panel; omit it when only one runs). Read at its next step; if it finishes first, the message is appended to its result for the parent. Local sessions only |
 | `/agents` | Agent hub (same as `Alt+A`), also while a turn runs. TUI only |
 | `/context` | Context window breakdown |

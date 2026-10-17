@@ -322,8 +322,9 @@ async fn steer_reports_an_http_error() {
         }
     });
     let rem = RemoteAttach::new(format!("http://{addr}"), "s1");
-    assert!(steer(&rem, "go").await.is_ok());
-    let err = steer(&rem, "go").await.unwrap_err();
+    let mode = whycodes_agent::steer::SteerMode::Urgent;
+    assert!(steer(&rem, "go", mode).await.is_ok());
+    let err = steer(&rem, "go", mode).await.unwrap_err();
     assert!(err.to_string().contains("404"), "{err}");
 }
 
