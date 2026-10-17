@@ -188,15 +188,18 @@ fn committed_tool_catalog_matches_binary() {
     let mut committed: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("docs/tools/catalog.json"))
             .expect("catalog json");
-    // The committed catalog comes from a `--features ast-tools` build so the
-    // `ast_grep` / `ast_edit` pages exist; a default build lacks those two.
-    if cfg!(not(feature = "ast-tools")) {
+    // The committed catalog comes from an ast-tools build so the `ast_grep` /
+    // `ast_edit` pages exist. Compare against what this binary registers: CI
+    // enables `whycodes-tools/ast-tools` directly, which leaves this crate's own
+    // `ast-tools` feature off.
+    let live = serde_json::to_value(collect_tool_catalog()).unwrap();
+    let is_ast = |t: &serde_json::Value| t["name"].as_str().unwrap_or("").starts_with("ast_");
+    if !live.as_array().expect("live array").iter().any(is_ast) {
         committed
             .as_array_mut()
             .expect("catalog array")
-            .retain(|t| !t["name"].as_str().unwrap_or("").starts_with("ast_"));
+            .retain(|t| !is_ast(t));
     }
-    let live = serde_json::to_value(collect_tool_catalog()).unwrap();
     assert_eq!(
         committed, live,
         "docs/tools/catalog.json is stale — run `whycodes debug --tools --json > docs/tools/catalog.json && python scripts/gen_tool_docs.py` with a `--features ast-tools` build"
