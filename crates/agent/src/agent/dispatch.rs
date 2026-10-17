@@ -13,7 +13,7 @@ use crate::tool_policy::*;
 
 fn skip_dispatch() {}
 
-use super::{Agent, persist_agent_artifact};
+use super::{Agent, persist_agent_artifact, persist_agent_json};
 
 impl Agent {
     /// `bash`/`shell` with `background: true` — return job id immediately.
@@ -1135,6 +1135,7 @@ impl Agent {
                     context,
                     tools: None,
                     max_turns: spec.max_turns,
+                    output_schema: custom.as_ref().and_then(|c| c.output.clone()),
                 };
 
                 // File claims apply in same-checkout mode; with worktrees,
@@ -1183,10 +1184,12 @@ impl Agent {
                 let secs = t0.elapsed().as_secs_f64();
                 claims.release_agent(&worker_id);
 
-                let (success, body, worker_usage) = (result.success, result.output, result.usage);
-                if success {
-                    persist_agent_artifact(&project_path, &worker_id, &body);
+                if result.success {
+                    persist_structured(&project_path, &worker_id, &result);
                 }
+                let note = structured_note(&worker_id, &result);
+                let (success, body, worker_usage) =
+                    (result.success, format!("{}{note}", result.output), result.usage);
                 match &events_tx {
                     Some(tx) => match tx.send(TurnEvent::Subagent {
                         id: worker_id.clone(),
@@ -1386,6 +1389,19 @@ impl Agent {
             }
         };
 
+        let output_schema =
+            match crate::structured_output::from_arg(call.arguments.get("output_schema")) {
+                Ok(Some(schema)) => Some(schema),
+                Ok(None) => custom.as_ref().and_then(|c| c.output.clone()),
+                Err(e) => {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: format!("task `output_schema`: {e}"),
+                        is_error: true,
+                    };
+                }
+            };
+
         // Permission profile per subagent type
         let worker =
             crate::routing::resolve_worker_model(provider_name, model, self.model_smol.as_deref());
@@ -1472,6 +1488,7 @@ impl Agent {
             context,
             tools: None,
             max_turns,
+            output_schema,
         };
 
         let runner = SubagentRunner::new(
@@ -1542,13 +1559,14 @@ impl Agent {
             },
         );
         if result.success {
-            persist_agent_artifact(&session.project_path, &child_id, &result.output);
+            persist_structured(&session.project_path, &child_id, &result);
         }
+        let structured_note = structured_note(&child_id, &result);
         ToolResult {
             tool_call_id: call.id.clone(),
             content: if result.success {
                 format!(
-                    "Subagent ({}) completed in {:.1}s. Re-read with `read agent://{child_id}`.\n\n{}{usage_note}",
+                    "Subagent ({}) completed in {:.1}s. Re-read with `read agent://{child_id}`.\n\n{}{structured_note}{usage_note}",
                     subagent_type,
                     result.duration.as_secs_f64(),
                     result.output
@@ -1561,6 +1579,27 @@ impl Agent {
             },
             is_error: !result.success,
         }
+    }
+}
+
+/// Write a finished worker's Markdown artifact and, when it has one, its
+/// validated structured result.
+fn persist_structured(
+    project: &std::path::Path,
+    id: &str,
+    result: &crate::subagent::SubagentResult,
+) {
+    persist_agent_artifact(project, id, &result.output);
+    if let Some(value) = result.structured.as_ref().and_then(|s| s.value.as_ref()) {
+        persist_agent_json(project, id, value);
+    }
+}
+
+/// The structured-result part of a worker report; empty without a schema.
+fn structured_note(id: &str, result: &crate::subagent::SubagentResult) -> String {
+    match &result.structured {
+        Some(s) => s.note(id),
+        None => String::new(),
     }
 }
 

@@ -29,6 +29,10 @@ trap 'rm -rf "$tmp"' EXIT
 
 envfile="$tmp/github.env"
 : >"$envfile"
+# Every call below must write here, never into the CI job's own GITHUB_ENV:
+# an inherited one received CARGO_HOME/CARGO_TARGET_DIR under $tmp, so later
+# steps rebuilt cold into it after the trap ran and /tmp filled the disk.
+export GITHUB_ENV="$envfile"
 out1="$(
     HOME="$tmp/home" \
         RUNNER_TOOL_CACHE="$tmp/tools" \
@@ -80,6 +84,10 @@ out_hit="$(
         "$SCRIPT"
 )"
 need "CARGO_CACHE_HIT_LOCAL=1" "$out_hit"
+[ "$(grep -c '^CARGO_HOME=' "$envfile")" -eq 2 ] || {
+    printf 'error: a call without GITHUB_ENV escaped the test env file\n' >&2
+    exit 1
+}
 
 out2="$(
     HOME="$tmp/home" \
