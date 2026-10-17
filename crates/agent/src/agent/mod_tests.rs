@@ -3817,3 +3817,131 @@ fn apply_config_maps_websearch_settings() {
     a.apply_config(&whycodes_config::Config::default());
     assert_eq!(a.websearch, Default::default());
 }
+
+#[tokio::test]
+async fn execute_task_tool_returns_and_stores_a_structured_result() {
+    let a = scripted_test_agent([whycodes_llm::ScriptedStep::Text(
+        "Checked.\n```json\n{\"findings\": [{\"path\": \"src/a.rs\"}], \"what_i_did_not_check\": []}\n```"
+            .into(),
+    )]);
+    let dir = tempfile::tempdir().unwrap();
+    let session = Session::new(dir.path().to_path_buf(), "sys".into());
+    let schema = json!({
+        "properties": {"findings": {"type": "array", "items": {"type": "object"}}},
+        "required": ["findings"]
+    });
+    let out = a
+        .execute_task_tool(
+            &tc(
+                "task",
+                json!({"goal": "audit", "max_turns": 1, "output_schema": schema}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(!out.is_error, "{out:?}");
+    assert!(
+        out.content.contains(
+            "Checked.\n\nStructured result (`read agent://task-t1/<json-pointer>`):\n{\"findings\":[{\"path\":\"src/a.rs\"}],\"what_i_did_not_check\":[]}"
+        ),
+        "{}",
+        out.content
+    );
+    let agents = whycodes_core::project_dir(dir.path()).join("agents");
+    assert_eq!(
+        std::fs::read_to_string(agents.join("task-t1.md")).unwrap(),
+        "Checked."
+    );
+    let stored: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(agents.join("task-t1.json")).unwrap())
+            .unwrap();
+    assert_eq!(stored["findings"][0]["path"], "src/a.rs");
+
+    let bad = a
+        .execute_task_tool(
+            &tc(
+                "task",
+                json!({"goal": "audit", "output_schema": {"type": "string"}}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(bad.is_error, "{bad:?}");
+    assert!(bad.content.starts_with("task `output_schema`:"), "{bad:?}");
+}
+
+fn write_typed_reviewer(project: &std::path::Path) {
+    let dir = project.join(".whycodes").join("agents");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("typed.md"),
+        "---\ndescription: Typed reviewer\noutput:\n  properties:\n    ok:\n      type: boolean\n  required: [ok]\n---\nZQ-TYPED\n",
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn custom_agent_output_key_types_task_and_swarm_workers() {
+    let (mut a, seen) = capture_agent();
+    a.swarm_enabled = true;
+    a.swarm_worktrees = false;
+    let dir = tempfile::tempdir().unwrap();
+    write_typed_reviewer(dir.path());
+    let session = Session::new(dir.path().to_path_buf(), "sys".into());
+
+    let out = a
+        .execute_task_tool(
+            &tc(
+                "task",
+                json!({"goal": "review", "subagent_type": "typed", "max_turns": 1}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(!out.is_error, "{out:?}");
+    assert!(
+        out.content.contains("custom-ok\n\ncustom-ok\n\nstructured: null\nStructured result errors:\n- no fenced ```json block found"),
+        "{}",
+        out.content
+    );
+    {
+        let seen = seen.lock().unwrap();
+        let system = &seen[0].0;
+        assert!(system.contains("ZQ-TYPED"), "{system}");
+        assert!(system.contains("# Structured result"), "{system}");
+        assert!(system.contains("\"what_i_did_not_check\""), "{system}");
+    }
+    let agents = whycodes_core::project_dir(dir.path()).join("agents");
+    assert!(!agents.join("task-t1.json").exists());
+
+    let report = a
+        .execute_swarm_tool(
+            &tc(
+                "swarm",
+                json!({"tasks": [{"goal": "review", "subagent_type": "typed", "max_turns": 1}]}),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            None,
+        )
+        .await;
+    assert!(
+        report.content.contains("structured: null"),
+        "{}",
+        report.content
+    );
+}

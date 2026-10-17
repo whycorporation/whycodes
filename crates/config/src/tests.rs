@@ -3122,3 +3122,76 @@ fn project_config_cannot_set_the_custom_search_endpoint() {
     assert!(msg.contains("p/.whycodes/config.toml"), "{msg}");
     assert!(project_websearch_warning(Path::new("p"), &[]).is_none());
 }
+
+#[test]
+fn update_global_writes_only_the_edit_to_the_global_file() {
+    with_isolated_home(|home| {
+        // Old schema (forces the migrate rewrite) and a placeholder secret.
+        std::fs::write(
+            home.join("config.toml"),
+            "[notify]\ndiscord_webhook = \"${WC_TEST_HOOK}\"\n",
+        )
+        .unwrap();
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".whycodes")).unwrap();
+        std::fs::write(
+            project.path().join(".whycodes/config.toml"),
+            "default_agent = \"project-only-agent\"\n",
+        )
+        .unwrap();
+        let vars = [
+            ("WC_TEST_HOOK", "https://hook.example/secret-path"),
+            ("WHYCODES_PROVIDER", "envprov"),
+            ("ENVPROV_API_KEY", "sk-env-secret"),
+        ];
+        for (k, v) in vars {
+            unsafe { std::env::set_var(k, v) };
+        }
+        let mut layered = Config::load_layered(project.path()).unwrap();
+        for (k, _) in vars {
+            unsafe { std::env::remove_var(k) };
+        }
+        // What a run holds in memory: env key, project value, a CLI flag.
+        assert_eq!(
+            layered.providers["envprov"].api_key.as_deref(),
+            Some("sk-env-secret")
+        );
+        assert_eq!(layered.default_agent, "project-only-agent");
+        assert_eq!(
+            layered.notify.discord_webhook.as_deref(),
+            Some("https://hook.example/secret-path")
+        );
+        layered.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
+
+        let added = make_provider("added");
+        layered.providers.insert("added".into(), added.clone());
+        Config::update_global(&mut |global| {
+            global.providers.insert("added".into(), added.clone());
+        })
+        .unwrap();
+
+        let on_disk = std::fs::read_to_string(home.join("config.toml")).unwrap();
+        assert!(on_disk.contains("[providers.added]"), "{on_disk}");
+        assert!(on_disk.contains("${WC_TEST_HOOK}"), "{on_disk}");
+        for leak in [
+            "sk-env-secret",
+            "envprov",
+            "project-only-agent",
+            "secret-path",
+            "approval_mode",
+        ] {
+            assert!(!on_disk.contains(leak), "{leak} leaked:\n{on_disk}");
+        }
+        let raw = Config::load_global_raw().unwrap();
+        assert_eq!(raw.schema_version, CONFIG_SCHEMA_VERSION);
+        assert_eq!(raw.general.approval_mode, None);
+    });
+}
+
+#[test]
+fn update_global_reports_an_unreadable_global_file() {
+    with_isolated_home(|home| {
+        std::fs::create_dir(home.join("config.toml")).unwrap();
+        assert!(Config::update_global(&mut |_| {}).is_err());
+    });
+}

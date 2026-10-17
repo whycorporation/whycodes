@@ -217,12 +217,16 @@ mod tests {
 
     #[tokio::test]
     async fn execute_failure_prefers_stderr_then_stdout() {
+        // An owned cwd: registry tests chdir into a tempdir they delete, and a
+        // shell inheriting it prints only "getcwd() failed" on stderr.
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = Some(dir.path().display().to_string());
         let stderr_cfg = PluginConfig {
             name: "se".into(),
             command: "echo out; echo err >&2; exit 1".into(),
             description: "d".into(),
             parameters: None,
-            working_dir: None,
+            working_dir: cwd.clone(),
         };
         let stderr_result = Plugin::new(stderr_cfg)
             .execute(&HashMap::new(), &PluginContext::default())
@@ -239,7 +243,7 @@ mod tests {
             command: "echo only-out; exit 1".into(),
             description: "d".into(),
             parameters: None,
-            working_dir: None,
+            working_dir: cwd.clone(),
         };
         let stdout_result = Plugin::new(stdout_cfg)
             .execute(&HashMap::new(), &PluginContext::default())

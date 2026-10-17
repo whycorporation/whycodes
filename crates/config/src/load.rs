@@ -179,6 +179,14 @@ impl Config {
     }
 
     fn read_or_seed(path: &Path) -> Result<Self> {
+        let mut cfg = Self::read_raw(path)?;
+        cfg.expand_notify_secrets();
+        Ok(cfg)
+    }
+
+    /// The file as written, schema bumped. `${VAR}` placeholders stay
+    /// unexpanded, so the schema rewrite never writes a secret's value.
+    fn read_raw(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::seeded_openrouter());
         }
@@ -190,9 +198,26 @@ impl Config {
                 provider.name = key.clone();
             }
         }
-        cfg.expand_notify_secrets();
         cfg.migrate_schema()?;
         Ok(cfg)
+    }
+
+    /// The global `config.toml` alone, as written: no project layer, no
+    /// environment overlay, no `${VAR}` expansion, nothing from CLI flags.
+    /// A missing file is the first-run seed.
+    pub fn load_global_raw() -> Result<Self> {
+        migrate_legacy_instance();
+        Self::read_raw(&Self::default_path()?)
+    }
+
+    /// Persist one change: apply `edit` to [`Self::load_global_raw`] and
+    /// save that. Callers keep their merged, in-memory config for the run
+    /// and pass the same edit here, so values from the project layer, the
+    /// environment or CLI flags never land in the global file.
+    pub fn update_global(edit: &mut dyn FnMut(&mut Config)) -> Result<()> {
+        let mut global = Self::load_global_raw()?;
+        edit(&mut global);
+        global.save()
     }
 
     /// Rewrite an older `config.toml` in place so later loads see the current
@@ -302,13 +327,18 @@ impl Config {
         }
     }
 
-    /// Persist an OpenRouter API key into the global `config.toml`.
+    /// Set an OpenRouter API key here and in the global `config.toml`.
     pub fn set_openrouter_api_key(&mut self, key: &str) -> Result<()> {
-        use crate::types::{DEFAULT_MODEL_ID, DEFAULT_PROVIDER};
         let trimmed = key.trim();
         if trimmed.is_empty() {
             return Err(toml_err("OpenRouter API key is empty".into()));
         }
+        self.put_openrouter_api_key(trimmed);
+        Self::update_global(&mut |global| global.put_openrouter_api_key(trimmed))
+    }
+
+    fn put_openrouter_api_key(&mut self, trimmed: &str) {
+        use crate::types::{DEFAULT_MODEL_ID, DEFAULT_PROVIDER};
         let entry = self
             .providers
             .entry(DEFAULT_PROVIDER.to_string())
@@ -340,13 +370,12 @@ impl Config {
                 supports_images: None,
             });
         }
-        self.save()
     }
 
     /// Remember that the first-launch OpenRouter key modal was skipped.
     pub fn mark_openrouter_key_prompt_skipped(&mut self) -> Result<()> {
         self.tui.skip_openrouter_key_prompt = true;
-        self.save()
+        Self::update_global(&mut |global| global.tui.skip_openrouter_key_prompt = true)
     }
 
     /// First-run `config.toml`: OpenRouter provider, no API key yet.

@@ -4183,8 +4183,15 @@ fn apply_local_server_choice(
             return;
         }
     };
-    config.providers.insert(server.provider.clone(), block);
-    if let Err(e) = config.save() {
+    config
+        .providers
+        .insert(server.provider.clone(), block.clone());
+    // Only the new block goes to disk; `config` also holds project and env values.
+    if let Err(e) = Config::update_global(&mut |global| {
+        global
+            .providers
+            .insert(server.provider.clone(), block.clone());
+    }) {
         tracing::warn!("could not persist provider '{}': {e}", server.provider);
         app.toasts.push(
             crate::toast::ToastKind::Warning,
@@ -4662,9 +4669,9 @@ fn apply_reasoning_effort(app: &mut TuiApp, agent: &mut Agent, config: &mut Conf
 }
 
 fn persist_session_reasoning_effort(value: &str) -> anyhow::Result<()> {
-    let mut disk = Config::load()?;
-    disk.session.reasoning_effort = Some(value.to_string());
-    disk.save()?;
+    Config::update_global(&mut |global| {
+        global.session.reasoning_effort = Some(value.to_string());
+    })?;
     Ok(())
 }
 
@@ -4696,9 +4703,7 @@ fn apply_approval_mode(
 }
 
 fn persist_general_approval_mode(mode: ApprovalMode) -> anyhow::Result<()> {
-    let mut disk = Config::load()?;
-    disk.general.approval_mode = Some(mode);
-    disk.save()?;
+    Config::update_global(&mut |global| global.general.approval_mode = Some(mode))?;
     Ok(())
 }
 

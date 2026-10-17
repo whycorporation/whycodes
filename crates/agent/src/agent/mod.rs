@@ -231,6 +231,15 @@ pub(crate) fn settle_checkpoint_rewind(
 }
 
 pub(crate) fn persist_agent_artifact(project: &std::path::Path, id: &str, body: &str) {
+    write_agent_file(project, id, "md", body);
+}
+
+/// A worker's validated structured result, next to its Markdown artifact.
+pub(crate) fn persist_agent_json(project: &std::path::Path, id: &str, value: &serde_json::Value) {
+    write_agent_file(project, id, "json", &format!("{value:#}"));
+}
+
+fn write_agent_file(project: &std::path::Path, id: &str, ext: &str, body: &str) {
     let mut id_clean = String::new();
     for c in id.chars() {
         if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -246,7 +255,7 @@ pub(crate) fn persist_agent_artifact(project: &std::path::Path, id: &str, body: 
         tracing::debug!(error = %e, "agent artifact dir");
         return;
     }
-    let path = dir.join(format!("{id}.md"));
+    let path = dir.join(format!("{id}.{ext}"));
     if let Err(e) = std::fs::write(&path, body) {
         tracing::debug!(error = %e, path = %path.display(), "agent artifact write");
     }

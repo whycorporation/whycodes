@@ -26,6 +26,9 @@ pub struct SpeculativeRead {
     pub path: PathBuf,
     pub offset: usize,
     pub limit: usize,
+    /// Whether `offset`/`limit` were in the arguments. Without them a long
+    /// source file reads as an outline, so the two kinds never match.
+    pub explicit_window: bool,
     pub handle: JoinHandle<ToolResult>,
 }
 
@@ -114,6 +117,7 @@ pub fn spawn_speculative_read(
     path: String,
     offset: usize,
     limit: usize,
+    explicit_window: bool,
     ctx: &ToolContext,
 ) -> Option<SpeculativeRead> {
     // Virtual `skill://` / `agent://` paths are not files on disk.
@@ -127,11 +131,10 @@ pub fn spawn_speculative_read(
         return None;
     }
     let tool_ctx = ctx.clone();
-    let args = json!({
-        "path": path,
-        "offset": offset,
-        "limit": limit,
-    });
+    let args = match explicit_window {
+        true => json!({ "path": path, "offset": offset, "limit": limit }),
+        false => json!({ "path": path }),
+    };
     let id_for_result = call_id.clone();
     let handle = tokio::spawn(async move {
         let tool = ReadTool::new();
@@ -145,6 +148,7 @@ pub fn spawn_speculative_read(
         path: full_path,
         offset,
         limit,
+        explicit_window,
         handle,
     })
 }
@@ -156,11 +160,16 @@ pub async fn take_matching(
     path: &str,
     offset: usize,
     limit: usize,
+    explicit_window: bool,
     working_dir: &str,
 ) -> Option<ToolResult> {
     let want = resolve_path(working_dir, path);
     let pos = jobs.iter().position(|j| {
-        j.call_id == call_id && j.path == want && j.offset == offset && j.limit == limit
+        j.call_id == call_id
+            && j.path == want
+            && j.offset == offset
+            && j.limit == limit
+            && j.explicit_window == explicit_window
     })?;
     let job = jobs.swap_remove(pos);
     match job.handle.await {
@@ -198,6 +207,11 @@ pub fn window_from_args(args: &Value) -> (usize, usize) {
     (offset, limit)
 }
 
+/// Whether final `read` arguments name a window (`offset` or `limit`).
+pub fn window_is_explicit(args: &Value) -> bool {
+    args.get("offset").is_some() || args.get("limit").is_some()
+}
+
 /// Maybe start a speculative read after a delta extended the arg buffer.
 pub fn maybe_start(
     jobs: &mut Vec<SpeculativeRead>,
@@ -209,9 +223,11 @@ pub fn maybe_start(
     if tool_name != "read" {
         return;
     }
-    if jobs.iter().any(|j| j.call_id == call_id) {
+    // `outline` changes what the tool returns; such reads are not speculated.
+    if jobs.iter().any(|j| j.call_id == call_id) || arg_buf.contains("\"outline\"") {
         return;
     }
+    let explicit_window = arg_buf.contains("\"offset\"") || arg_buf.contains("\"limit\"");
     // Also accept a complete object already in the buffer as pretty-printed JSON.
     let parsed = try_parse_read_args(arg_buf).or_else(|| {
         let v: Value = serde_json::from_str(arg_buf).ok()?;
@@ -225,7 +241,14 @@ pub fn maybe_start(
     let Some((path, offset, limit)) = parsed else {
         return;
     };
-    if let Some(job) = spawn_speculative_read(call_id.to_string(), path, offset, limit, ctx) {
+    if let Some(job) = spawn_speculative_read(
+        call_id.to_string(),
+        path,
+        offset,
+        limit,
+        explicit_window,
+        ctx,
+    ) {
         let path_display = job.path.display().to_string();
         tracing::debug!(
             id = %job.call_id,
