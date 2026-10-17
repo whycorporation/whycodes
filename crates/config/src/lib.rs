@@ -5,6 +5,7 @@
 
 mod load;
 mod merge;
+mod stream_rules;
 mod types;
 mod validate;
 
@@ -18,9 +19,12 @@ pub use types::{
     GeneralConfig, HeadlessAskMode, HookConfig, HookEvent, LspConfig, LspServerConfig,
     MagicKeywordsConfig, McpServerConfig, McpTransportKind, MemoryConfig, NotifyConfig,
     NotifyEvent, PriceConfig, QuestionToolConfig, RuntimeLspServer, SecurityConfig, SessionConfig,
-    SlopConfig, StreamRuleConfig, SwarmConfig, SystemPromptOverlays, ToolsConfig, TuiConfig,
-    WebSearchConfig, WebSearchCustomConfig, is_discord_webhook_url,
+    SlopConfig, StreamRuleConfig, StreamRuleRepeat, StreamRuleScope, SwarmConfig,
+    SystemPromptOverlays, ToolsConfig, TuiConfig, WebSearchConfig, WebSearchCustomConfig,
+    is_discord_webhook_url,
 };
+
+pub use stream_rules::{parse_rule_markdown, stream_rule_files};
 
 #[cfg(test)]
 pub(crate) use load::{

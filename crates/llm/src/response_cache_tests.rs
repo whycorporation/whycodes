@@ -298,3 +298,23 @@ fn better_semantic_prefers_higher_score() {
     );
     assert!(ResponseCache::take_semantic_hit_none_for_tests().is_none());
 }
+
+#[test]
+fn exact_key_covers_compaction_blocks() {
+    let with = |content: &str| {
+        full_req(
+            "sys",
+            vec![msg(
+                Role::Assistant,
+                MessageContent::Blocks(vec![
+                    whycodes_core::types::ContentBlock::compaction_from_raw(serde_json::json!({
+                        "type": "compaction", "content": content, "signature": "sig"
+                    }))
+                    .unwrap(),
+                ]),
+            )],
+            Vec::new(),
+        )
+    };
+    assert_ne!(exact_key(&with("a"), "m"), exact_key(&with("b"), "m"));
+}

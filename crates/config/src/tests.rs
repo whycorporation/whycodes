@@ -749,6 +749,7 @@ fn merge_with_session_and_tui_fields() {
     overlay.session.cache_warm_minutes = 30;
     overlay.session.undo_depth = 0;
     overlay.session.compaction_llm = "off".into();
+    overlay.session.compaction_method = "auto".into();
     overlay.session.model_fast = Some("flash".into());
     overlay.session.model_smol = Some("haiku".into());
     overlay.session.model_plan = Some("sonnet".into());
@@ -756,6 +757,7 @@ fn merge_with_session_and_tui_fields() {
         name: "no-leak".into(),
         pattern: "Box::leak".into(),
         hint: "don't".into(),
+        ..Default::default()
     }];
     overlay.session.model_race = "auto".into();
     overlay.session.race_after_ms = 1500;
@@ -785,6 +787,8 @@ fn merge_with_session_and_tui_fields() {
         "0 (unlimited) overrides the default"
     );
     assert_eq!(merged.session.compaction_llm, "off");
+    assert_eq!(merged.session.compaction_method, "auto");
+    assert_eq!(base.session.compaction_method, "local", "default");
     assert_eq!(merged.session.model_fast.as_deref(), Some("flash"));
     assert_eq!(merged.session.model_smol.as_deref(), Some("haiku"));
     assert_eq!(merged.session.model_plan.as_deref(), Some("sonnet"));
@@ -1436,6 +1440,35 @@ fn apply_env_overrides_provider_and_model() {
         cfg.general.project_path.as_deref(),
         Some(Path::new("/work"))
     );
+}
+
+#[test]
+fn compaction_method_env_accepts_auto_and_local_only() {
+    let _guard = lock_env();
+    let names = ["WHYCODES_COMPACTION_METHOD"];
+    let prev = clear_env(&names);
+    let mut cfg = Config::default();
+    unsafe { std::env::set_var("WHYCODES_COMPACTION_METHOD", " AUTO ") };
+    cfg.apply_env_overrides();
+    assert_eq!(cfg.session.compaction_method, "auto");
+    unsafe { std::env::set_var("WHYCODES_COMPACTION_METHOD", "native") };
+    cfg.apply_env_overrides();
+    assert_eq!(
+        cfg.session.compaction_method, "auto",
+        "unknown value ignored"
+    );
+    unsafe { std::env::set_var("WHYCODES_COMPACTION_METHOD", "local") };
+    cfg.apply_env_overrides();
+    assert_eq!(cfg.session.compaction_method, "local");
+    restore_env(&names, prev);
+
+    let parsed: Config = toml::from_str(
+        "[session]
+compaction_method = \"auto\"
+",
+    )
+    .unwrap();
+    assert_eq!(parsed.session.compaction_method, "auto");
 }
 
 #[test]

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use whycodes_core::types::ContentBlock;
+use whycodes_core::types::{ContentBlock, LlmResponse};
 use whycodes_llm::provider::ProviderRegistry;
 use whycodes_session::session::Session;
 
@@ -10,6 +10,14 @@ use super::Agent;
 
 /// Structured compact prompt (full-replace), with optional `/compact` note.
 fn build_compact_summary_prompt(transcript: &str, user_context: Option<&str>) -> String {
+    let instructions = compact_instructions(user_context);
+    format!("{instructions}\n\nConversation:\n{transcript}")
+}
+
+/// The summarizer instructions without the transcript: the body of
+/// [`build_compact_summary_prompt`], and the provider's `instructions` for a
+/// native compaction (which reads the conversation itself).
+fn compact_instructions(user_context: Option<&str>) -> String {
     let user_context_section = match user_context.map(str::trim).filter(|s| !s.is_empty()) {
         Some(context) => format!(
             "\n\n**User-provided context for this compaction:**\n{context}\n\n\
@@ -54,11 +62,58 @@ Do not invent tasks the user never requested.
 9. Optional Next Step: The single next step that directly continues the most recent work.
 
 IMPORTANT: Do NOT call or use any tools. Respond with ONLY the <summary>...</summary> \
-block as your text output.
-
-Conversation:
-{transcript}"
+block as your text output."
     )
+}
+
+/// Longest `/compact` note kept in native instructions, so the fixed prompt
+/// (with its "do not call tools" line) always fits the provider's
+/// 16,384-character `instructions` cap.
+const NATIVE_NOTE_MAX_CHARS: usize = 8_000;
+
+/// `max_tokens` of a native compaction call. It caps the whole call,
+/// thinking included, so it leaves room beyond the summary itself.
+const NATIVE_COMPACT_MAX_TOKENS: u32 = 8_192;
+
+/// [`compact_instructions`] for a native compaction, with the note capped.
+fn native_compact_instructions(user_context: Option<&str>) -> String {
+    let note: Option<String> =
+        user_context.map(|note| note.chars().take(NATIVE_NOTE_MAX_CHARS).collect());
+    compact_instructions(note.as_deref())
+}
+
+/// The compaction block of a native compaction response: `stop_reason`
+/// `"compaction"` and exactly one `compaction` block. Anything else (a
+/// truncated, refused or tool-calling summary comes back as HTTP 200 with
+/// empty content) is `None`.
+fn native_compaction_block(resp: LlmResponse) -> Option<ContentBlock> {
+    let stop_reason = resp.stop_reason;
+    let mut blocks = resp.content.into_iter();
+    match (stop_reason.as_deref(), blocks.next(), blocks.next()) {
+        (Some("compaction"), Some(block @ ContentBlock::Compaction { .. }), None) => Some(block),
+        (stop_reason, ..) => {
+            tracing::debug!(?stop_reason, "native compaction returned no block");
+            None
+        }
+    }
+}
+
+/// Transport for summary calls: bounded, with a short retry policy.
+fn summary_transport(
+    redactor: Option<Arc<whycodes_llm::Redactor>>,
+    timeout: std::time::Duration,
+) -> whycodes_llm::LlmTransport {
+    whycodes_llm::LlmTransport {
+        redactor,
+        complete_timeout: Some(timeout),
+        retry: whycodes_llm::RetryPolicy {
+            max_retries: 2,
+            initial_backoff: std::time::Duration::from_millis(200),
+            max_backoff: std::time::Duration::from_secs(3),
+            max_elapsed: std::time::Duration::from_secs(90),
+            full_jitter: true,
+        },
+    }
 }
 
 /// Share of `compaction_threshold` at which a summary of the current prefix
@@ -84,7 +139,14 @@ impl Agent {
         model: &str,
         api_key: &str,
     ) -> bool {
-        if !self.compaction_llm || api_key.is_empty() {
+        // Local-only: a native block is signed for the exact messages it was
+        // asked about, so preparing one ahead would need the provider's
+        // background swap bookkeeping. With native compaction on, the
+        // threshold pass asks the provider directly instead.
+        if !self.compaction_llm
+            || api_key.is_empty()
+            || self.native_compaction_enabled(provider_name, model, api_key)
+        {
             return false;
         }
         let Some((prefix_end, transcript)) = session.prefix_transcript_for_summary() else {
@@ -165,14 +227,77 @@ impl Agent {
         session.apply_full_replace(summary)
     }
 
+    /// Whether a compaction pass asks the provider first:
+    /// `compaction_method = "auto"`, model calls allowed (`compaction_llm`),
+    /// a key, and a model with [`whycodes_llm::capabilities::ModelCapabilities::compaction`].
+    fn native_compaction_enabled(&self, provider_name: &str, model: &str, api_key: &str) -> bool {
+        self.compaction_native
+            && self.compaction_llm
+            && !api_key.is_empty()
+            && whycodes_llm::capabilities::detect_capabilities(provider_name, model).compaction
+    }
+
+    /// Provider-native compaction: the messages before the last real user
+    /// turn go to the provider with the turn's system prompt, tools and
+    /// thinking settings; the returned block replaces them. `None` (with a
+    /// debug log) whenever that does not work out, so the caller runs
+    /// full-replace instead.
+    async fn native_compact(
+        &self,
+        session: &mut Session,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+        user_context: Option<&str>,
+    ) -> Option<whycodes_session::CompactOutcome> {
+        if !self.native_compaction_enabled(provider_name, model, api_key) {
+            return None;
+        }
+        let Some((cut, prefix)) = session.native_compaction_prefix() else {
+            tracing::debug!("no cut for native compaction; using full-replace");
+            return None;
+        };
+        let provider = self.provider_registry.get(provider_name)?;
+        let mut request = session.build_request(
+            self.step_tools(),
+            Some(NATIVE_COMPACT_MAX_TOKENS),
+            self.info.temperature,
+            Some(true),
+        );
+        request.messages = Arc::from(prefix);
+        request.use_prompt_cache = self.use_prompt_cache;
+        crate::thinking_acc::attach_thinking_request(
+            &mut request,
+            provider_name,
+            model,
+            self.info.model.as_ref(),
+            self.reasoning_effort.as_deref(),
+        );
+        let instructions = native_compact_instructions(user_context);
+        let transport =
+            summary_transport(self.secrets.clone(), std::time::Duration::from_secs(120));
+        let block = match transport
+            .compact(provider, &request, api_key, model, &instructions)
+            .await
+        {
+            Ok(resp) => native_compaction_block(resp)?,
+            Err(err) => {
+                tracing::debug!(error = %err, "native compaction failed; using full-replace");
+                return None;
+            }
+        };
+        Some(session.apply_native_compaction(cut, block))
+    }
+
     /// Full-replace compact: summarize the whole conversation,
     /// keep the last real user query + current-turn tail, replace the rest
     /// with a continuation carrier.
     ///
     /// Manual `/compact [context]` always runs this (no token threshold).
     /// Auto-compact uses the same path when over `compaction_threshold`.
-    /// Falls back to a local stub when LLM is off, the key is missing, or
-    /// sampling fails.
+    /// With `compaction_method = "auto"` and a capable model the provider's
+    /// own compaction runs first ([`Self::native_compact`]). Falls back to a
+    /// local stub when LLM is off, the key is missing, or sampling fails.
     pub async fn compact_session(
         &self,
         session: &mut Session,
@@ -190,6 +315,12 @@ impl Agent {
             return whycodes_session::CompactOutcome::default();
         }
         self.run_pre_compact_hooks(session).await;
+        if let Some(outcome) = self
+            .native_compact(session, provider_name, model, api_key, user_context)
+            .await
+        {
+            return outcome;
+        }
 
         let transcript = session.transcript_for_full_summary(0);
         let local = session.local_full_replace_summary();
@@ -252,17 +383,7 @@ async fn summarize_with_model(
             thinking: None,
             use_prompt_cache: false,
         };
-        let transport = whycodes_llm::LlmTransport {
-            redactor,
-            complete_timeout: Some(std::time::Duration::from_secs(60)),
-            retry: whycodes_llm::RetryPolicy {
-                max_retries: 2,
-                initial_backoff: std::time::Duration::from_millis(200),
-                max_backoff: std::time::Duration::from_secs(3),
-                max_elapsed: std::time::Duration::from_secs(90),
-                full_jitter: true,
-            },
-        };
+        let transport = summary_transport(redactor, std::time::Duration::from_secs(60));
         match transport.complete(provider, &request, api_key, model).await {
             Ok(resp) => {
                 let text = resp

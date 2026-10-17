@@ -278,6 +278,12 @@ pub enum Commands {
         tools: bool,
     },
 
+    /// Stream rules: list them, or test which would fire on a text
+    Rules {
+        #[command(subcommand)]
+        cmd: RulesCmd,
+    },
+
     /// Measure agent-induced code slop (ΔLOC / verbosity / erosion)
     Slop {
         /// Git base (default: merge-base with default branch, else HEAD)
@@ -499,6 +505,28 @@ pub enum ConfigCmd {
     },
     /// Show the configuration file path
     Path,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RulesCmd {
+    /// List stream rules from config and `.whycodes/rules/*.md`
+    List,
+    /// Print which stream rules would fire on TEXT (ignores `repeat`)
+    Test {
+        /// Text to match, as if the model streamed it
+        text: String,
+        /// Channel(s): text, thinking, tool_args (comma-separated; default text)
+        #[arg(long, value_delimiter = ',', value_parser = parse_stream_rule_scope)]
+        scope: Vec<whycodes_config::StreamRuleScope>,
+        /// Tool name for `tool_args`; without it only rules with no `tools` list match
+        #[arg(long)]
+        tool: Option<String>,
+    },
+}
+
+fn parse_stream_rule_scope(s: &str) -> Result<whycodes_config::StreamRuleScope, String> {
+    whycodes_config::StreamRuleScope::parse(s)
+        .ok_or_else(|| format!("unknown scope `{s}` (text, thinking, tool_args)"))
 }
 
 #[derive(Subcommand, Debug)]

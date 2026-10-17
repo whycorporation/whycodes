@@ -584,3 +584,252 @@ async fn sse_from_scripted_bytes_covers_error_pending_and_done_break() {
     assert_eq!(text, "hi");
     assert!(saw_stop);
 }
+
+/// Like [`serve_once`], but hands back the raw request (head and body).
+fn serve_capture(
+    status: &str,
+    body: &str,
+    content_type: &str,
+) -> (String, std::sync::mpsc::Receiver<String>) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let header = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let payload = format!("{header}{body}");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut raw: Vec<u8> = Vec::new();
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = stream.read(&mut buf).unwrap();
+            raw.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&raw).to_string();
+            if let Some(end) = text.find("\r\n\r\n") {
+                let len = text[..end]
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
+                if raw.len() >= end + 4 + len {
+                    tx.send(text).unwrap();
+                    break;
+                }
+            }
+            if n == 0 {
+                break;
+            }
+        }
+        stream.write_all(payload.as_bytes()).unwrap();
+    });
+    (format!("http://{addr}/v1/messages"), rx)
+}
+
+fn beta_header(raw: &str) -> Option<String> {
+    raw.lines().find_map(|l| {
+        l.to_ascii_lowercase()
+            .strip_prefix("anthropic-beta:")
+            .map(|v| v.trim().to_string())
+    })
+}
+
+fn request_json(raw: &str) -> serde_json::Value {
+    let body = &raw[raw.find("\r\n\r\n").unwrap() + 4..];
+    serde_json::from_str(body).unwrap()
+}
+
+fn compaction_raw() -> serde_json::Value {
+    json!({"type": "compaction", "content": "the summary", "signature": "EuYB"})
+}
+
+/// `[assistant: compaction block, user: next ask]`.
+fn compacted_request() -> LlmRequest {
+    let mut req = base_request();
+    req.messages = Arc::from(vec![
+        Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::compaction_from_raw(compaction_raw()).unwrap(),
+            ]),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        },
+        Message {
+            role: Role::User,
+            content: MessageContent::Text("next ask".into()),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        },
+    ]);
+    req
+}
+
+#[test]
+fn compaction_block_replays_verbatim_on_a_capable_model() {
+    let body = AnthropicProvider::new().build_body(&compacted_request(), "claude-opus-5-5");
+    assert_eq!(
+        body["messages"][0],
+        json!({"role": "assistant", "content": [compaction_raw()]})
+    );
+    assert_eq!(body["messages"][1]["role"], "user");
+}
+
+#[test]
+fn compaction_block_is_user_text_on_a_model_without_compaction() {
+    let body = AnthropicProvider::new().build_body(&compacted_request(), "claude-3-5-sonnet");
+    assert_eq!(
+        body["messages"][0],
+        json!({"role": "user", "content": [
+            {"type": "text", "text": "[Earlier conversation summary]\nthe summary"}
+        ]})
+    );
+}
+
+#[test]
+fn compaction_body_adds_the_field_and_drops_rejected_ones() {
+    let mut p = AnthropicProvider::new();
+    p.extra_body.insert("stop_sequences".into(), json!(["END"]));
+    p.extra_body
+        .insert("tool_choice".into(), json!({"type": "any"}));
+    let mut req = compacted_request();
+    req.max_tokens = Some(8192);
+    let body = p.compaction_body(&req, "claude-opus-5-5", "keep paths");
+    assert_eq!(
+        body["compaction"],
+        json!({"type": "summarize", "instructions": "keep paths"})
+    );
+    assert_eq!(body["stream"], false);
+    assert_eq!(body["max_tokens"], 8192);
+    assert!(body.get("stop_sequences").is_none());
+    assert!(body.get("tool_choice").is_none());
+    assert_eq!(body["messages"][0]["content"][0], compaction_raw());
+
+    let bare = p.compaction_body(&req, "claude-opus-5-5", "  ");
+    assert_eq!(bare["compaction"], json!({"type": "summarize"}));
+}
+
+#[tokio::test]
+async fn compact_sends_the_beta_and_parses_the_block_and_iteration_usage() {
+    use crate::provider::LlmProvider;
+    let reply = json!({
+        "content": [compaction_raw()],
+        "stop_reason": "compaction",
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "iterations": [{"type": "compaction", "input_tokens": 144, "output_tokens": 276}]
+        }
+    })
+    .to_string();
+    let (url, rx) = serve_capture("200 OK", &reply, "application/json");
+    let p = AnthropicProvider::from_base(Some(&url));
+    let resp = p
+        .compact(
+            &compacted_request(),
+            "sk-ant-api-key",
+            "claude-opus-5-5",
+            "note",
+        )
+        .await
+        .unwrap();
+    let raw = rx.recv().unwrap();
+    assert_eq!(beta_header(&raw).as_deref(), Some("compact-2026-09-04"));
+    assert_eq!(request_json(&raw)["compaction"]["type"], "summarize");
+    assert_eq!(resp.stop_reason.as_deref(), Some("compaction"));
+    assert_eq!(resp.usage.input_tokens, 144);
+    assert_eq!(resp.usage.output_tokens, 276);
+    assert!(matches!(
+        &resp.content[..],
+        [ContentBlock::Compaction { content, raw }] if content == "the summary" && *raw == compaction_raw()
+    ));
+}
+
+#[tokio::test]
+async fn oauth_compaction_joins_both_betas_and_a_bad_block_is_unknown() {
+    use crate::provider::LlmProvider;
+    let reply = json!({
+        "content": [{"type": "compaction", "signature": "no content"}],
+        "stop_reason": "compaction",
+        "usage": {"input_tokens": 3, "output_tokens": 4, "iterations": []}
+    })
+    .to_string();
+    let (url, rx) = serve_capture("200 OK", &reply, "application/json");
+    let p = AnthropicProvider::from_base(Some(&url));
+    let resp = p
+        .compact(&base_request(), "sk-ant-oat-test", "claude-opus-5-5", "")
+        .await
+        .unwrap();
+    assert_eq!(
+        beta_header(&rx.recv().unwrap()).as_deref(),
+        Some("oauth-2025-04-20,compact-2026-09-04")
+    );
+    assert!(
+        matches!(&resp.content[..], [ContentBlock::Text { text }] if text == "[unknown block]")
+    );
+    assert_eq!(
+        resp.usage.input_tokens, 3,
+        "empty iterations: top-level usage"
+    );
+}
+
+#[tokio::test]
+async fn turns_carrying_a_block_send_the_beta_and_others_do_not() {
+    use crate::provider::LlmProvider;
+    let reply = json!({"content": [], "usage": {}}).to_string();
+    let (url, rx) = serve_capture("200 OK", &reply, "application/json");
+    let p = AnthropicProvider::from_base(Some(&url));
+    p.complete(&compacted_request(), "key", "claude-opus-5-5")
+        .await
+        .unwrap();
+    assert_eq!(
+        beta_header(&rx.recv().unwrap()).as_deref(),
+        Some("compact-2026-09-04")
+    );
+
+    let (url, rx) = serve_capture("200 OK", &reply, "application/json");
+    let p = AnthropicProvider::from_base(Some(&url));
+    p.complete(&compacted_request(), "key", "claude-3-5-sonnet")
+        .await
+        .unwrap();
+    assert_eq!(beta_header(&rx.recv().unwrap()), None);
+
+    let sse = "data: {\"type\":\"message_stop\"}\n\n";
+    let (url, rx) = serve_capture("200 OK", sse, "text/event-stream");
+    let p = AnthropicProvider::from_base(Some(&url));
+    let _events = p
+        .stream(&compacted_request(), "key", "claude-opus-5-5")
+        .await
+        .unwrap();
+    assert_eq!(
+        beta_header(&rx.recv().unwrap()).as_deref(),
+        Some("compact-2026-09-04")
+    );
+}
+
+#[tokio::test]
+async fn compaction_http_error_is_an_error() {
+    use crate::provider::LlmProvider;
+    let reply = json!({"error": {"message": "compaction_block_misplaced"}}).to_string();
+    let p = AnthropicProvider::from_base(Some(&serve_once(
+        "400 Bad Request",
+        &reply,
+        "application/json",
+    )));
+    let err = p
+        .compact(&compacted_request(), "key", "claude-opus-5-5", "")
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("compaction_block_misplaced"),
+        "{err}"
+    );
+}

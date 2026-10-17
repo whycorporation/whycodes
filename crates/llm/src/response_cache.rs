@@ -309,6 +309,10 @@ fn hash_content(h: &mut FxHasher, content: &MessageContent) {
                         0x52u8.hash(h);
                         data.hash(h);
                     }
+                    ContentBlock::Compaction { raw, .. } => {
+                        0x43u8.hash(h);
+                        raw.to_string().hash(h);
+                    }
                 }
             }
         }

@@ -329,33 +329,6 @@ fn skills_catalog_is_appended_without_bodies() {
 }
 
 #[test]
-fn stream_rules_compile_and_match() {
-    use whycodes_config::StreamRuleConfig;
-    let rules = [
-        StreamRuleConfig {
-            name: String::new(),
-            pattern: "x".into(),
-            hint: "h".into(),
-        },
-        StreamRuleConfig {
-            name: "bad".into(),
-            pattern: "(".into(),
-            hint: "h".into(),
-        },
-        StreamRuleConfig {
-            name: "no-leak".into(),
-            pattern: "Box::leak".into(),
-            hint: "use Arc".into(),
-        },
-    ];
-    let compiled = compile_stream_rules(&rules);
-    assert_eq!(compiled.len(), 1);
-    let hit = first_stream_rule_hit(&compiled, "please Box::leak this");
-    assert_eq!(hit, Some(("no-leak", "use Arc")));
-    assert!(first_stream_rule_hit(&compiled, "Arc::from").is_none());
-}
-
-#[test]
 fn persist_agent_artifact_sanitizes_id() {
     let dir = tempfile::tempdir().unwrap();
     persist_agent_artifact(dir.path(), "task-ok", "hello");

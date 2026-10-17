@@ -1024,22 +1024,76 @@ Context-window errors are classified separately from 429s: the same request is
 not retried; whycodes compacts once and retries the step. From 85% of the
 compaction threshold on, the summary of everything before your latest prompt
 is prepared in the background, so the compaction at the threshold applies it
-instead of waiting for a model call. Before every step,
+instead of waiting for a model call. With `[session] compaction_method =
+"auto"` on an Anthropic model that supports on-demand compaction (a beta;
+default is `local`), whycodes asks the API to summarize everything before
+your latest prompt instead and keeps that prompt and what followed it word for
+word; if the API does not return a summary, the usual compaction runs.
+Before every step,
 old tool outputs longer than 2,048 characters are saved whole under
 `.whycodes/scratch/artifacts/<tool_call_id>.txt` and the transcript keeps
 their first 400 characters plus a `read` pointer, so the model can look the
 output up instead of running the tool again; what is left is shaken to 512
 characters when the session is still hot.
 
-Stream rules abort a draft mid-token when the assistant text matches a regex,
-then inject the hint:
+Stream rules abort a draft mid-token when the streamed output matches a
+regex, then inject the hint and retry the step. The draft is never added to
+the session.
 
 ```toml
 [[session.stream_rules]]
 name = "no-box-leak"
 pattern = "Box::leak"
 hint = "Don't use Box::leak on production paths; prefer Arc."
+
+[[session.stream_rules]]
+name = "no-rm-rf"
+pattern = 'rm\s+-rf'
+hint = "Never delete directory trees; move them aside instead."
+scope = ["tool_args"]        # text (default) | thinking | tool_args
+tools = ["bash"]             # tool_args only; empty = every tool
+repeat = "once"              # always (default) | once | { after_turns = 3 }
 ```
+
+- `scope` picks what is matched: `text` is the reply text so far, `thinking`
+  the step's thinking so far, `tool_args` each tool call's JSON arguments as
+  they stream (so a `tool_args` hit stops the call before it runs).
+- `repeat` limits how often a rule fires. `always` (the default) fires on
+  every matching draft; `once` fires at most once per session;
+  `{ after_turns = N }` fires again once N user turns have passed since its
+  last hit. Fired rules are kept on the session but not in the database, so a
+  resumed session starts fresh.
+
+A rule can also live in its own file, `.whycodes/rules/<name>.md`, with the
+pattern in YAML frontmatter and the hint as the body:
+
+```markdown
+---
+pattern: '\bunsafe\b'
+scope: [text, tool_args]
+tools: [edit, write]
+repeat: { after_turns: 5 }
+---
+Do not add `unsafe` blocks; find a safe API instead.
+```
+
+`name` defaults to the file stem. Quote the pattern with single quotes (or
+leave it bare) so backslashes stay literal. File rules are added to the
+config-table rules; a file wins over a table rule of the same name. A rule
+file without `pattern` stays an ordinary project rule, and a stream-rule file
+is still a project rule too: its body is part of the system prompt and
+`read rule://<name>` serves it.
+
+Check rules without a model:
+
+```bash
+whycodes rules list                               # every rule, its source and scope
+whycodes rules test "let x = Box::leak(v);"       # which rules fire on this text
+whycodes rules test 'rm -rf build' --scope tool_args --tool bash
+```
+
+`rules test` ignores `repeat`. Without `--tool`, `tool_args` matches only
+rules that have no `tools` list.
 
 ### Subscription login
 

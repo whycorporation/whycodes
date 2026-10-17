@@ -286,6 +286,8 @@ impl Config {
         if let Some(project) = Self::load_project_layer(project_dir) {
             config = config.merge_with(&project);
         }
+        // `.whycodes/rules/*.md` stream rules overlay the config tables.
+        config.load_stream_rule_files(project_dir);
 
         // Layer 4: environment variables
         config.apply_env_overrides();
@@ -524,6 +526,14 @@ impl Config {
         // WHYCODES_PROJECT_DIR
         if let Ok(val) = std::env::var("WHYCODES_PROJECT_DIR") {
             self.general.project_path = Some(PathBuf::from(val));
+        }
+
+        // WHYCODES_COMPACTION_METHOD — `auto` | `local`; anything else is ignored.
+        if let Ok(val) = std::env::var("WHYCODES_COMPACTION_METHOD") {
+            let val = val.trim().to_ascii_lowercase();
+            if matches!(val.as_str(), "auto" | "local") {
+                self.session.compaction_method = val;
+            }
         }
     }
 

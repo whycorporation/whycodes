@@ -14,6 +14,7 @@ pub(crate) mod lockfile;
 mod mcp;
 mod memory;
 mod provider;
+mod rules;
 mod run;
 mod serve;
 mod session;
@@ -90,6 +91,7 @@ pub(crate) async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Resul
         Commands::Import { args } => import::cmd_import(args).await,
         Commands::Stats => session::cmd_stats().await,
         Commands::Debug { json, tools } => debug::cmd_debug(*json, *tools).await,
+        Commands::Rules { cmd } => rules::cmd_rules(cli, cmd),
         Commands::Slop { base, json } => slop::cmd_slop(cli, base.as_deref(), *json).await,
         #[cfg(feature = "self-update")]
         Commands::Upgrade => upgrade::cmd_upgrade().await,
