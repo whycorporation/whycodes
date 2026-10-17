@@ -357,3 +357,46 @@ fn fast_tui_quits_and_upgrades_under_the_test_stub() {
         }
     }
 }
+
+#[test]
+fn repl_branch_and_tree_mark_print_and_switch() {
+    let mut s = whycodes_session::session::Session::new("/tmp/t".into(), "sys".into());
+    assert!(repl_branch(&mut s, "x").contains("nothing to branch"));
+    assert_eq!(repl_tree(&mut s, ""), ("No turns yet.".to_string(), false));
+    s.add_user_message("one");
+    assert!(repl_branch(&mut s, "keep").contains("keep"));
+    s.add_user_message("two");
+
+    let (out, changed) = repl_tree(&mut s, "");
+    assert!(!changed);
+    assert!(out.contains("  1  • one  [keep]"), "{out}");
+    assert!(out.contains("  2  ● two"), "{out}");
+    assert!(repl_tree(&mut s, "9").0.contains("Usage: /tree [1-2]"));
+    assert!(repl_tree(&mut s, "0").0.contains("Usage"));
+    assert!(repl_tree(&mut s, "two").0.contains("Usage"));
+    assert_eq!(
+        repl_tree(&mut s, "2"),
+        ("Already on that turn.".to_string(), false)
+    );
+
+    let (out, changed) = repl_tree(&mut s, " 1 ");
+    assert!(changed && out.contains("Switched to: one"), "{out}");
+    assert_eq!(s.messages.len(), 1);
+    assert_eq!(s.branches.len(), 2);
+}
+
+#[test]
+fn repl_switch_refuses_a_row_from_an_older_tree() {
+    let mut s = whycodes_session::session::Session::new("/tmp/t".into(), "sys".into());
+    s.add_user_message("one");
+    s.add_user_message("two");
+    let rows = s.tree_rows();
+    let mut short = whycodes_session::session::Session::new("/tmp/t".into(), "sys".into());
+    short.add_user_message("one");
+    let (out, changed) = repl_switch(&mut short, &rows[1]);
+    assert!(!changed);
+    assert!(out.starts_with("/tree: "), "{out}");
+
+    note_branch_persist(Ok(()));
+    note_branch_persist(Err(whycodes_session::SessionError::msg("disk full")));
+}
