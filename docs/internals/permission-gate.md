@@ -347,7 +347,8 @@ custom agents: `CustomAgent::permission`).
   warning. On Windows a timeout kills the shell process only (Git Bash or
   the embedded shell), not the programs it started. Selected `$HOME` subpaths stay writable inside the sandbox. It is
   not a multi-tenant boundary.
-- The HTTP domain policy applies to `webfetch`, `websearch`, GitHub tools
+- The HTTP domain policy applies to `webfetch`, `websearch` (every engine in
+  its `[websearch]` chain, including the `custom` endpoint), GitHub tools
   (verified) — not to the shell, `browser`, or MCP tools (MCP not verified).
 - File claims are advisory and only active with parallel TUI sessions or
   same-checkout swarm; shell commands and worktree-isolated workers do not

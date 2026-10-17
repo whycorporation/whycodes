@@ -144,6 +144,8 @@ pub struct Agent {
     lsp_overlay: whycodes_tools::LspSettings,
     /// `[tools.format] enabled`, re-applied to every rebuilt executor.
     format_after_write: bool,
+    /// `[websearch]`, re-applied to every rebuilt executor.
+    websearch: whycodes_tools::search::WebSearchSettings,
     /// Provider/model extras from `prompts/*.md`.
     system_prompt_overlays: SystemPromptOverlays,
     /// Active provider id for overlay lookup (`/models`, session route).
@@ -430,6 +432,7 @@ impl Agent {
             swarm_hub: None,
             lsp_overlay: whycodes_tools::LspSettings::default(),
             format_after_write: true,
+            websearch: Default::default(),
             system_prompt_overlays: SystemPromptOverlays::default(),
             route_provider: String::new(),
             route_model: String::new(),
@@ -689,6 +692,8 @@ impl Agent {
         self.format_after_write = config.tools.format.enabled;
         self.tool_executor
             .set_format_after_write(self.format_after_write);
+        self.websearch = websearch_settings_from_config(&config.websearch);
+        self.tool_executor.set_websearch(self.websearch.clone());
         self.system_prompt_overlays = config.system_prompt_overlays.clone();
         let sandbox_desc = whycodes_sandbox::describe_backend(&self.sandbox);
         let network_allow = self.network.allowlist.len();
@@ -862,8 +867,9 @@ impl Agent {
 
     /// Add messages the user sent during this turn, so the next request
     /// carries them. Called at the start of a step, after tool results.
+    /// Queued messages stay in the inbox for the next turn.
     pub(crate) fn inject_steering(&self, session: &mut Session, events: &Option<EventSink>) {
-        for content in self.steer.drain(&session.id) {
+        for content in self.steer.take_for_turn(&session.id) {
             crate::steer::add_to_session(session, content);
             crate::events::emit(
                 events,
@@ -1083,6 +1089,7 @@ impl Agent {
 
     fn apply_lsp_overlay(&self, exec: &mut ToolExecutor) {
         exec.set_format_after_write(self.format_after_write);
+        exec.set_websearch(self.websearch.clone());
         if !lsp_overlay_is_custom(&self.lsp_overlay) {
             return;
         }
@@ -1440,6 +1447,31 @@ fn lsp_overlay_from_config(cfg: &whycodes_config::LspConfig) -> whycodes_tools::
                 )
             })
             .collect(),
+    }
+}
+
+fn websearch_settings_from_config(
+    cfg: &whycodes_config::WebSearchConfig,
+) -> whycodes_tools::search::WebSearchSettings {
+    whycodes_tools::search::WebSearchSettings {
+        engine: cfg.engine.clone(),
+        fallback: cfg.fallback.clone(),
+        custom: cfg
+            .custom
+            .as_ref()
+            .map(|c| whycodes_tools::search::CustomSearchSettings {
+                endpoint: c.endpoint.clone(),
+                method: c.method.clone(),
+                query_param: c.query_param.clone(),
+                count_param: c.count_param.clone(),
+                params: c.params.clone(),
+                headers: c.headers.clone(),
+                header_env: c.header_env.clone(),
+                results_pointer: c.results_pointer.clone(),
+                title_pointer: c.title_pointer.clone(),
+                url_pointer: c.url_pointer.clone(),
+                snippet_pointer: c.snippet_pointer.clone(),
+            }),
     }
 }
 

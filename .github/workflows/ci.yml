@@ -166,7 +166,9 @@ jobs:
   test:
     name: Test (linux)
     runs-on: self-hosted
-    timeout-minutes: 25
+    # ast-tools changes shared dependency features, so the first build after a
+    # merge recompiles most of the graph; 25 min cancelled it mid-compile.
+    timeout-minutes: 40
     # Independent of coverage/build so a runner pool can run them together.
     needs: lint
     env:

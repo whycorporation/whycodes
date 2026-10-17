@@ -1619,7 +1619,19 @@ fn busy_key_action_maps_esc_quit_ctrl_c_enter_and_passthrough() {
     );
     assert_eq!(
         busy_key_action(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
-        BusyKey::WaitEnter
+        BusyKey::WaitEnter(SteerMode::NextStep)
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+        BusyKey::WaitEnter(SteerMode::Queue)
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)),
+        BusyKey::WaitEnter(SteerMode::Urgent)
+    );
+    assert_eq!(
+        busy_key_action(&KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
+        BusyKey::WaitEnter(SteerMode::NextStep)
     );
     assert_eq!(
         busy_key_action(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
@@ -9911,6 +9923,28 @@ async fn apply_idle_loop_key_covers_session_and_slash_arms() {
     assert!(app.input_buffer.is_empty());
 
     app.mode = AppMode::Normal;
+    app.input_buffer = "/queue later".into();
+    assert!(
+        !apply_idle_loop_key(
+            IdleLoopKey::SlashEnter,
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut mru,
+            &mut config,
+            dir.path(),
+            &idx,
+            &claims,
+            &mut provider,
+            &mut model,
+            &mut api_key,
+            &auth_tx,
+        )
+        .await,
+        "idle /queue is a plain prompt"
+    );
+    assert_eq!(app.input_buffer, "later");
+
     app.input_buffer = "not a slash".into();
     assert!(
         !apply_idle_loop_key(
@@ -10196,7 +10230,7 @@ fn apply_busy_key_covers_cancel_quit_ctrl_c_wait_and_passthrough() {
 
     rt.agent_busy = true;
     apply_busy_key(
-        BusyKey::WaitEnter,
+        BusyKey::WaitEnter(SteerMode::NextStep),
         &press(KeyCode::Enter),
         &mut app,
         &mut rt,
@@ -10219,7 +10253,7 @@ fn apply_busy_key_covers_cancel_quit_ctrl_c_wait_and_passthrough() {
     );
     app.input_buffer = "follow up".into();
     apply_busy_key(
-        BusyKey::WaitEnter,
+        BusyKey::WaitEnter(SteerMode::NextStep),
         &press(KeyCode::Enter),
         &mut app,
         &mut rt,
@@ -11143,6 +11177,7 @@ fn image_turn(text: &str, path: PathBuf) -> crate::app::PendingTurn {
             path,
             media_type: "image/png".into(),
         }],
+        mode: whycodes_agent::steer::SteerMode::NextStep,
     }
 }
 
@@ -11450,6 +11485,121 @@ fn apply_local_discovery_hides_servers_already_configured() {
 }
 
 #[tokio::test]
+async fn busy_enter_modes_queue_or_interrupt_the_running_turn() {
+    let (dir, idx) = temp_index();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.steer_session = "s".into();
+    rt.agent_busy = true;
+    let mut cancel_at = None;
+    let config = Config::default();
+    let mut enter = |app: &mut TuiApp, rt: &mut SessionRuntime, mode: SteerMode| {
+        apply_busy_key(
+            BusyKey::WaitEnter(mode),
+            &press(KeyCode::Enter),
+            app,
+            rt,
+            &mut cancel_at,
+            &config,
+            dir.path(),
+            &idx,
+        );
+    };
+
+    // Shift+Enter: stays queued while the turn runs.
+    app.input_buffer = "after this".into();
+    enter(&mut app, &mut rt, SteerMode::Queue);
+    assert_eq!(app.status_message, "queued for after this turn");
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    assert_eq!(app.queued_turn_count(), 1, "not handed to the turn");
+    assert!(rt.steer.drain("s").is_empty());
+
+    // `/now` overrides plain Enter and reaches the inbox as urgent.
+    app.input_buffer = "/now stop that".into();
+    enter(&mut app, &mut rt, SteerMode::NextStep);
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    assert!(rt.steer.has_urgent("s"));
+    let sent: Vec<String> = rt
+        .steer
+        .drain("s")
+        .iter()
+        .map(whycodes_agent::steer::content_text)
+        .collect();
+    assert_eq!(sent, ["stop that"]);
+    rt.steered.clear();
+
+    // `/queue` alone shows its usage and sends nothing.
+    app.input_buffer = "/queue".into();
+    enter(&mut app, &mut rt, SteerMode::NextStep);
+    assert_eq!(app.status_message, "Usage: /queue <message>");
+    assert!(app.input_buffer.is_empty());
+    assert!(app.toasts.is_empty(), "no wait toast for a usage error");
+
+    // The turn ends: the queued message runs next.
+    rt.agent_busy = false;
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    let next = app.take_pending_turn().expect("queued turn");
+    assert_eq!(next.text, "after this");
+    assert_eq!(next.mode, SteerMode::Queue);
+}
+
+#[test]
+fn agent_hub_and_worker_view_own_plain_keys_while_busy() {
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let esc = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let ctrl_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(
+        !hub_owns_key(&app, &esc),
+        "nothing open: Esc cancels the turn"
+    );
+
+    crate::agent_hub::open(&mut app);
+    assert!(hub_owns_key(&app, &esc), "Esc closes the hub");
+    assert!(
+        !hub_owns_key(&app, &ctrl_c),
+        "Ctrl+C still cancels the turn"
+    );
+    assert!(!hub_owns_key(&app, &Event::FocusGained));
+    crate::input::dismiss_dialog(&mut app);
+
+    app.open_subagent = Some("task-1".into());
+    assert!(hub_owns_key(&app, &esc), "Esc closes the worker view");
+}
+
+#[test]
+fn saves_from_the_tui_write_only_the_change_to_the_global_file() {
+    let (_lock, home) = isolate_home_fresh();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    // The run's merged config: an env API key, a project-layer value and a
+    // CLI `--approval-mode`, none of which is in the global file.
+    let mut config = Config::seeded_openrouter();
+    config.providers.get_mut("openrouter").unwrap().api_key = Some("sk-env-only".into());
+    config.default_agent = "project-agent".into();
+    config.general.approval_mode = Some(ApprovalMode::Manual);
+
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("lmstudio", &["q"]),
+    );
+    let mut agent = Agent::new(dummy_info("build"));
+    apply_approval_mode(&mut app, &mut agent, &mut config, ApprovalMode::Important);
+
+    let saved = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
+    assert!(saved.contains("[providers.lmstudio]"), "{saved}");
+    assert!(saved.contains("approval_mode = \"important\""), "{saved}");
+    for leak in ["sk-env-only", "project-agent"] {
+        assert!(!saved.contains(leak), "{leak} leaked:\n{saved}");
+    }
+    // The running session keeps its merged values.
+    assert_eq!(config.default_agent, "project-agent");
+    assert!(config.get_provider("lmstudio").is_some());
+}
+
+#[tokio::test]
 async fn branch_and_tree_slash_open_the_picker_on_the_active_leaf() {
     let mut h = SlashHarness::new();
     h.run("/tree").await;
@@ -11549,60 +11699,4 @@ async fn run_headless_tree_picker_selection_reaches_the_loop() {
         None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
     }
     assert_eq!(exit, TuiExit::Quit);
-}
-
-#[test]
-fn agent_hub_and_worker_view_own_plain_keys_while_busy() {
-    use crossterm::event::{KeyEvent, KeyModifiers};
-    let mut app = TuiApp::from_config(TuiAppConfig::default());
-    let esc = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    let ctrl_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
-    assert!(
-        !hub_owns_key(&app, &esc),
-        "nothing open: Esc cancels the turn"
-    );
-
-    crate::agent_hub::open(&mut app);
-    assert!(hub_owns_key(&app, &esc), "Esc closes the hub");
-    assert!(
-        !hub_owns_key(&app, &ctrl_c),
-        "Ctrl+C still cancels the turn"
-    );
-    assert!(!hub_owns_key(&app, &Event::FocusGained));
-    crate::input::dismiss_dialog(&mut app);
-
-    app.open_subagent = Some("task-1".into());
-    assert!(hub_owns_key(&app, &esc), "Esc closes the worker view");
-}
-
-#[test]
-fn saves_from_the_tui_write_only_the_change_to_the_global_file() {
-    let (_lock, home) = isolate_home_fresh();
-    let mut app = TuiApp::from_config(TuiAppConfig::default());
-    let mut rt = test_runtime();
-    // The run's merged config: an env API key, a project-layer value and a
-    // CLI `--approval-mode`, none of which is in the global file.
-    let mut config = Config::seeded_openrouter();
-    config.providers.get_mut("openrouter").unwrap().api_key = Some("sk-env-only".into());
-    config.default_agent = "project-agent".into();
-    config.general.approval_mode = Some(ApprovalMode::Manual);
-
-    apply_local_server_choice(
-        &mut app,
-        &mut rt,
-        &mut config,
-        &discovered("lmstudio", &["q"]),
-    );
-    let mut agent = Agent::new(dummy_info("build"));
-    apply_approval_mode(&mut app, &mut agent, &mut config, ApprovalMode::Important);
-
-    let saved = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
-    assert!(saved.contains("[providers.lmstudio]"), "{saved}");
-    assert!(saved.contains("approval_mode = \"important\""), "{saved}");
-    for leak in ["sk-env-only", "project-agent"] {
-        assert!(!saved.contains(leak), "{leak} leaked:\n{saved}");
-    }
-    // The running session keeps its merged values.
-    assert_eq!(config.default_agent, "project-agent");
-    assert!(config.get_provider("lmstudio").is_some());
 }
