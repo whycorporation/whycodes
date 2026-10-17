@@ -359,6 +359,7 @@ fn test_cli() -> Cli {
         debug: false,
         no_auto_update: true,
         prewalk: false,
+        approval_mode: None,
         no_memory: true,
     }
 }

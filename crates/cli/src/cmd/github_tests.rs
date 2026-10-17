@@ -15,6 +15,7 @@ async fn pr_stub_runs() {
         debug: false,
         no_auto_update: true,
         prewalk: false,
+        approval_mode: None,
         no_memory: true,
     };
     let (_dir, stub) = gh_stub(1);
@@ -72,6 +73,7 @@ fn test_cli() -> crate::Cli {
         debug: false,
         no_auto_update: true,
         prewalk: false,
+        approval_mode: None,
         no_memory: true,
     }
 }

@@ -1428,7 +1428,7 @@ fn force_stop_keeps_agent_on_remote_outcome() {
     assert!(!rt.agent_busy);
     assert!(cancel_at.is_none());
     assert_eq!(qrx.blocking_recv().unwrap(), Err(QuestionError::Cancelled));
-    assert_eq!(prx.blocking_recv().ok(), Some(false));
+    assert_eq!(prx.blocking_recv().ok(), Some(PermissionReply::Deny));
     assert!(
         app.messages
             .iter()
@@ -2030,6 +2030,7 @@ fn run_options_and_turn_outcome_exist() {
         provider_from_cli: true,
         model_from_cli: true,
         agent_from_cli: true,
+        approval_mode_from_cli: None,
         update_rx: None,
         inject: Default::default(),
     };
@@ -3711,7 +3712,12 @@ async fn drain_background_queues_prompter_asks() {
     assert!(!rt.pending_question_queue.is_empty());
     assert!(rt.unread);
     // Unblock the waiters so the test can finish.
-    let _ = rt.pending_perm_queue.pop_front().unwrap().reply.send(false);
+    let _ = rt
+        .pending_perm_queue
+        .pop_front()
+        .unwrap()
+        .reply
+        .send(PermissionReply::Deny);
     let _ = rt
         .pending_question_queue
         .pop_front()
@@ -3748,7 +3754,7 @@ async fn drain_prompter_queues_opens_permission_then_question() {
         app.dialogs.active()
     );
     if let Some(req) = rt.pending_perm_queue.pop_front() {
-        let _ = req.reply.send(false);
+        let _ = req.reply.send(PermissionReply::Deny);
     }
     app.dialogs.clear();
     app.mode = AppMode::Normal;
@@ -4351,7 +4357,7 @@ fn close_session_slot_busy_last_and_parked() {
     close_session_slot(&mut app, &mut rt, &mut runtimes, &mut mru, 0);
     assert_eq!(runtimes.len(), 1);
     assert_eq!(mru, vec![0], "higher parked index must shift down");
-    assert_eq!(prx.blocking_recv().ok(), Some(false));
+    assert_eq!(prx.blocking_recv().ok(), Some(PermissionReply::Deny));
     assert!(matches!(
         qrx.blocking_recv().unwrap(),
         Err(QuestionError::Cancelled)
@@ -4459,7 +4465,7 @@ fn reply_permission_allow_deny_and_queue() {
     });
     app.ask_permission("bash", "one");
     reply_permission(&mut app, &mut q, false);
-    assert!(rx1.blocking_recv().ok() == Some(false));
+    assert!(rx1.blocking_recv().ok() == Some(PermissionReply::Deny));
     assert!(matches!(
         app.dialogs.active(),
         Some(DialogKind::Permission { .. })
@@ -4506,7 +4512,7 @@ fn apply_permission_overlay_event_allow_and_non_key() {
         &mut rt,
         &press(KeyCode::Char('y'))
     ));
-    assert_eq!(rx.blocking_recv().ok(), Some(true));
+    assert_eq!(rx.blocking_recv().ok(), Some(PermissionReply::Allow));
 }
 
 #[test]
@@ -4622,7 +4628,7 @@ fn warn_suggestion_catalog_and_shutdown() {
             reply: tx,
         });
     shutdown_runtime_queues(&mut rt);
-    assert!(rx.blocking_recv().ok() == Some(false));
+    assert!(rx.blocking_recv().ok() == Some(PermissionReply::Deny));
     assert!(rt.pending_perm_queue.is_empty());
     assert!(rt.turn_join.is_none());
 }
@@ -5156,6 +5162,7 @@ fn boot_opts(dir: &std::path::Path, key: &str) -> TuiRunOptions {
         provider_from_cli: true,
         model_from_cli: true,
         agent_from_cli: true,
+        approval_mode_from_cli: None,
         update_rx: None,
         inject: Default::default(),
     }
@@ -5924,6 +5931,7 @@ async fn run_returns_quit_when_test_tui_env_set() {
         provider_from_cli: true,
         model_from_cli: true,
         agent_from_cli: true,
+        approval_mode_from_cli: None,
         update_rx: None,
         inject: Default::default(),
     };
@@ -5957,6 +5965,7 @@ async fn run_returns_upgrade_when_test_tui_env_upgrade() {
         provider_from_cli: true,
         model_from_cli: true,
         agent_from_cli: true,
+        approval_mode_from_cli: None,
         update_rx: None,
         inject: Default::default(),
     };
@@ -11506,121 +11515,6 @@ fn apply_local_discovery_hides_servers_already_configured() {
 }
 
 #[tokio::test]
-async fn busy_enter_modes_queue_or_interrupt_the_running_turn() {
-    let (dir, idx) = temp_index();
-    let mut app = TuiApp::from_config(TuiAppConfig::default());
-    let mut rt = test_runtime();
-    rt.steer_session = "s".into();
-    rt.agent_busy = true;
-    let mut cancel_at = None;
-    let config = Config::default();
-    let mut enter = |app: &mut TuiApp, rt: &mut SessionRuntime, mode: SteerMode| {
-        apply_busy_key(
-            BusyKey::WaitEnter(mode),
-            &press(KeyCode::Enter),
-            app,
-            rt,
-            &mut cancel_at,
-            &config,
-            dir.path(),
-            &idx,
-        );
-    };
-
-    // Shift+Enter: stays queued while the turn runs.
-    app.input_buffer = "after this".into();
-    enter(&mut app, &mut rt, SteerMode::Queue);
-    assert_eq!(app.status_message, "queued for after this turn");
-    steer_or_reclaim(&mut app, &mut rt, dir.path());
-    assert_eq!(app.queued_turn_count(), 1, "not handed to the turn");
-    assert!(rt.steer.drain("s").is_empty());
-
-    // `/now` overrides plain Enter and reaches the inbox as urgent.
-    app.input_buffer = "/now stop that".into();
-    enter(&mut app, &mut rt, SteerMode::NextStep);
-    steer_or_reclaim(&mut app, &mut rt, dir.path());
-    assert!(rt.steer.has_urgent("s"));
-    let sent: Vec<String> = rt
-        .steer
-        .drain("s")
-        .iter()
-        .map(whycodes_agent::steer::content_text)
-        .collect();
-    assert_eq!(sent, ["stop that"]);
-    rt.steered.clear();
-
-    // `/queue` alone shows its usage and sends nothing.
-    app.input_buffer = "/queue".into();
-    enter(&mut app, &mut rt, SteerMode::NextStep);
-    assert_eq!(app.status_message, "Usage: /queue <message>");
-    assert!(app.input_buffer.is_empty());
-    assert!(app.toasts.is_empty(), "no wait toast for a usage error");
-
-    // The turn ends: the queued message runs next.
-    rt.agent_busy = false;
-    steer_or_reclaim(&mut app, &mut rt, dir.path());
-    let next = app.take_pending_turn().expect("queued turn");
-    assert_eq!(next.text, "after this");
-    assert_eq!(next.mode, SteerMode::Queue);
-}
-
-#[test]
-fn agent_hub_and_worker_view_own_plain_keys_while_busy() {
-    use crossterm::event::{KeyEvent, KeyModifiers};
-    let mut app = TuiApp::from_config(TuiAppConfig::default());
-    let esc = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    let ctrl_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
-    assert!(
-        !hub_owns_key(&app, &esc),
-        "nothing open: Esc cancels the turn"
-    );
-
-    crate::agent_hub::open(&mut app);
-    assert!(hub_owns_key(&app, &esc), "Esc closes the hub");
-    assert!(
-        !hub_owns_key(&app, &ctrl_c),
-        "Ctrl+C still cancels the turn"
-    );
-    assert!(!hub_owns_key(&app, &Event::FocusGained));
-    crate::input::dismiss_dialog(&mut app);
-
-    app.open_subagent = Some("task-1".into());
-    assert!(hub_owns_key(&app, &esc), "Esc closes the worker view");
-}
-
-#[test]
-fn saves_from_the_tui_write_only_the_change_to_the_global_file() {
-    let (_lock, home) = isolate_home_fresh();
-    let mut app = TuiApp::from_config(TuiAppConfig::default());
-    let mut rt = test_runtime();
-    // The run's merged config: an env API key, a project-layer value and a
-    // CLI `--approval-mode`, none of which is in the global file.
-    let mut config = Config::seeded_openrouter();
-    config.providers.get_mut("openrouter").unwrap().api_key = Some("sk-env-only".into());
-    config.default_agent = "project-agent".into();
-    config.general.approval_mode = Some(ApprovalMode::Manual);
-
-    apply_local_server_choice(
-        &mut app,
-        &mut rt,
-        &mut config,
-        &discovered("lmstudio", &["q"]),
-    );
-    let mut agent = Agent::new(dummy_info("build"));
-    apply_approval_mode(&mut app, &mut agent, &mut config, ApprovalMode::Important);
-
-    let saved = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
-    assert!(saved.contains("[providers.lmstudio]"), "{saved}");
-    assert!(saved.contains("approval_mode = \"important\""), "{saved}");
-    for leak in ["sk-env-only", "project-agent"] {
-        assert!(!saved.contains(leak), "{leak} leaked:\n{saved}");
-    }
-    // The running session keeps its merged values.
-    assert_eq!(config.default_agent, "project-agent");
-    assert!(config.get_provider("lmstudio").is_some());
-}
-
-#[tokio::test]
 async fn branch_and_tree_slash_open_the_picker_on_the_active_leaf() {
     let mut h = SlashHarness::new();
     h.run("/tree").await;
@@ -11720,4 +11614,266 @@ async fn run_headless_tree_picker_selection_reaches_the_loop() {
         None => unsafe { std::env::remove_var("WHYCODES_TEST_LLM") },
     }
     assert_eq!(exit, TuiExit::Quit);
+}
+
+#[test]
+fn typed_reply_over_permission_denies_all_and_steers() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let (tx1, rx1) = tokio::sync::oneshot::channel();
+    let (tx2, rx2) = tokio::sync::oneshot::channel();
+    let (tx3, rx3) = tokio::sync::oneshot::channel();
+    for (name, tx) in [("bash", tx1), ("edit", tx2), ("write", tx3)] {
+        rt.pending_perm_queue
+            .push_back(whycodes_agent::PermissionRequest {
+                tool_name: name.into(),
+                detail: "x".into(),
+                reply: tx,
+            });
+    }
+    drop(rx3);
+    app.ask_permission("bash", "x");
+
+    // Tab moves to the prompt box; letters then type instead of answering.
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Tab)
+    ));
+    assert!(app.permission_reply_focused());
+    // An empty draft is not a reply.
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Enter)
+    ));
+    assert_eq!(rt.pending_perm_queue.len(), 3);
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Char('n'))
+    ));
+    let mut release = crossterm::event::KeyEvent::from(KeyCode::Char('n'));
+    release.kind = KeyEventKind::Release;
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Key(release)
+    ));
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Paste("o, use rg".into())
+    ));
+    assert_eq!(app.input_buffer, "no, use rg");
+    assert_eq!(rt.pending_perm_queue.len(), 3, "typing answers nothing");
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Permission { .. })
+    ));
+    assert_eq!(app.key_context, KeymapContext::Dialog);
+    assert!(!apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &Event::Resize(80, 24)
+    ));
+
+    // Esc goes back to the y/n keys without answering; Tab returns.
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Esc)
+    ));
+    assert!(!app.permission_reply_focused());
+    assert_eq!(rt.pending_perm_queue.len(), 3);
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Tab)
+    ));
+
+    assert!(apply_permission_overlay_event(
+        &mut app,
+        &mut rt,
+        &press(KeyCode::Enter)
+    ));
+    assert_eq!(rx1.blocking_recv().ok(), Some(PermissionReply::Replied));
+    assert_eq!(rx2.blocking_recv().ok(), Some(PermissionReply::Replied));
+    assert!(rt.pending_perm_queue.is_empty());
+    assert!(!app.dialogs.is_open());
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(!app.permission_reply_focus);
+    assert!(
+        app.status_message.contains("Denied 3"),
+        "{}",
+        app.status_message
+    );
+
+    // The run loop hands the reply to the running turn.
+    rt.agent_busy = true;
+    steer_or_reclaim(&mut app, &mut rt, std::path::Path::new("."));
+    let steered = rt.steer.drain(&rt.steer_session);
+    assert_eq!(steered.len(), 1);
+    assert_eq!(
+        whycodes_agent::steer::content_text(&steered[0]),
+        "no, use rg"
+    );
+}
+
+#[test]
+fn a_new_permission_prompt_opens_on_its_yes_no_keys() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.ask_permission("bash", "x");
+    app.permission_reply_focus = true;
+    app.dialogs.pop();
+    app.ask_permission("edit", "y");
+    assert!(!app.permission_reply_focused());
+}
+
+#[test]
+fn deferred_config_keeps_the_cli_approval_mode() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".whycodes")).unwrap();
+    std::fs::write(
+        dir.path().join(".whycodes/config.toml"),
+        "[general]\napproval_mode = \"manual\"\n",
+    )
+    .unwrap();
+    let mut opts = boot_opts(dir.path(), "k");
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut config = Config::default();
+    let (mut provider, mut model) = (opts.provider.clone(), opts.model.clone());
+    apply_deferred_config(&mut opts, &mut app, &mut config, &mut provider, &mut model);
+    assert_eq!(
+        app.approval_mode,
+        ApprovalMode::Manual,
+        "config wins without the flag"
+    );
+
+    opts.approval_mode_from_cli = Some(ApprovalMode::Important);
+    apply_deferred_config(&mut opts, &mut app, &mut config, &mut provider, &mut model);
+    assert_eq!(app.approval_mode, ApprovalMode::Important);
+    assert_eq!(config.general.approval_mode, Some(ApprovalMode::Important));
+    // `/mode` opens on the flag's value.
+    crate::input::open_mode_dialog(&mut app);
+    assert_eq!(
+        ApprovalMode::ALL[app.approval_picker_selected],
+        ApprovalMode::Important
+    );
+}
+
+#[test]
+fn agent_hub_and_worker_view_own_plain_keys_while_busy() {
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let esc = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let ctrl_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(
+        !hub_owns_key(&app, &esc),
+        "nothing open: Esc cancels the turn"
+    );
+
+    crate::agent_hub::open(&mut app);
+    assert!(hub_owns_key(&app, &esc), "Esc closes the hub");
+    assert!(
+        !hub_owns_key(&app, &ctrl_c),
+        "Ctrl+C still cancels the turn"
+    );
+    assert!(!hub_owns_key(&app, &Event::FocusGained));
+    crate::input::dismiss_dialog(&mut app);
+
+    app.open_subagent = Some("task-1".into());
+    assert!(hub_owns_key(&app, &esc), "Esc closes the worker view");
+}
+
+#[test]
+fn saves_from_the_tui_write_only_the_change_to_the_global_file() {
+    let (_lock, home) = isolate_home_fresh();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    // The run's merged config: an env API key, a project-layer value and a
+    // CLI `--approval-mode`, none of which is in the global file.
+    let mut config = Config::seeded_openrouter();
+    config.providers.get_mut("openrouter").unwrap().api_key = Some("sk-env-only".into());
+    config.default_agent = "project-agent".into();
+    config.general.approval_mode = Some(ApprovalMode::Manual);
+
+    apply_local_server_choice(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &discovered("lmstudio", &["q"]),
+    );
+    let mut agent = Agent::new(dummy_info("build"));
+    apply_approval_mode(&mut app, &mut agent, &mut config, ApprovalMode::Important);
+
+    let saved = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
+    assert!(saved.contains("[providers.lmstudio]"), "{saved}");
+    assert!(saved.contains("approval_mode = \"important\""), "{saved}");
+    for leak in ["sk-env-only", "project-agent"] {
+        assert!(!saved.contains(leak), "{leak} leaked:\n{saved}");
+    }
+    // The running session keeps its merged values.
+    assert_eq!(config.default_agent, "project-agent");
+    assert!(config.get_provider("lmstudio").is_some());
+}
+
+#[tokio::test]
+async fn busy_enter_modes_queue_or_interrupt_the_running_turn() {
+    let (dir, idx) = temp_index();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.steer_session = "s".into();
+    rt.agent_busy = true;
+    let mut cancel_at = None;
+    let config = Config::default();
+    let mut enter = |app: &mut TuiApp, rt: &mut SessionRuntime, mode: SteerMode| {
+        apply_busy_key(
+            BusyKey::WaitEnter(mode),
+            &press(KeyCode::Enter),
+            app,
+            rt,
+            &mut cancel_at,
+            &config,
+            dir.path(),
+            &idx,
+        );
+    };
+
+    // Shift+Enter: stays queued while the turn runs.
+    app.input_buffer = "after this".into();
+    enter(&mut app, &mut rt, SteerMode::Queue);
+    assert_eq!(app.status_message, "queued for after this turn");
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    assert_eq!(app.queued_turn_count(), 1, "not handed to the turn");
+    assert!(rt.steer.drain("s").is_empty());
+
+    // `/now` overrides plain Enter and reaches the inbox as urgent.
+    app.input_buffer = "/now stop that".into();
+    enter(&mut app, &mut rt, SteerMode::NextStep);
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    assert!(rt.steer.has_urgent("s"));
+    let sent: Vec<String> = rt
+        .steer
+        .drain("s")
+        .iter()
+        .map(whycodes_agent::steer::content_text)
+        .collect();
+    assert_eq!(sent, ["stop that"]);
+    rt.steered.clear();
+
+    // `/queue` alone shows its usage and sends nothing.
+    app.input_buffer = "/queue".into();
+    enter(&mut app, &mut rt, SteerMode::NextStep);
+    assert_eq!(app.status_message, "Usage: /queue <message>");
+    assert!(app.input_buffer.is_empty());
+    assert!(app.toasts.is_empty(), "no wait toast for a usage error");
+
+    // The turn ends: the queued message runs next.
+    rt.agent_busy = false;
+    steer_or_reclaim(&mut app, &mut rt, dir.path());
+    let next = app.take_pending_turn().expect("queued turn");
+    assert_eq!(next.text, "after this");
+    assert_eq!(next.mode, SteerMode::Queue);
 }

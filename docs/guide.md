@@ -66,6 +66,7 @@ Options (global):
       --debug                Write debug logs under the data dir
       --no-memory            Disable cross-session memory for this process
       --prewalk              Plan on the strong model, edit on the cheap one
+      --approval-mode <MODE> auto | important | manual for this run (see Permissions)
 ```
 
 Unique prefixes work like `git` / `gh`: `whycodes sess` is `session`,
@@ -1242,8 +1243,9 @@ edit, the new content and line counts for a write), computed without
 touching the file; when the edit would not apply, the prompt lists the
 arguments instead.
 
-**Approval mode** (`[general] approval_mode`, `WHYCODES_APPROVAL_MODE`, or
-`/mode` in the TUI) decides which `ask` actually prompts. The default is
+**Approval mode** (`[general] approval_mode`, `WHYCODES_APPROVAL_MODE`,
+`--approval-mode`, or `/mode` in the TUI) decides which `ask` actually
+prompts. The default is
 `auto`: an `ask` is allowed without a prompt, routine `question` calls are
 auto-answered while todos or background jobs are open, and only `deny`
 rules, catastrophic shell commands and the sandbox still stop a call.
@@ -1251,6 +1253,24 @@ rules, catastrophic shell commands and the sandbox still stop a call.
 command at or above the risk threshold, a file write outside the project).
 `manual` prompts on every `ask`. The prompt box shows the current mode on
 its bottom border.
+
+`--approval-mode <auto|important|manual>` sets the mode for one run and
+wins over the config key and the environment variable; nothing is saved.
+It also takes the aliases the config key accepts (`dontask` = `auto`,
+`ask` / `default` = `important`, `always` = `manual`). It applies to the
+TUI (`/mode` opens on it, and choosing a mode there still saves it as
+usual), `--plain`, and `run` / `generate` with text output, where a prompt
+is a stdin `y/N`. With `--format json` / `stream-json` the mode does not
+change permission asks: they follow `session.headless_ask` and
+`--approve-tools` (below). `task` / `swarm` workers follow the same mode.
+
+In the TUI, a permission prompt answers to `y`/`a` (allow) and `n`/`d`/Esc
+(deny). To say something else instead, press Tab: the keys go to the
+prompt box while the prompt stays on screen. Type a message and press
+Enter: every pending call is denied (the result reads `denied: user
+replied`) and the message goes to the running turn, which reads it right
+after those results. Tab or Esc goes back to the y/n keys without
+answering; Enter on an empty draft or a `/` command denies nothing.
 
 When a prompt would be shown, the surface decides how it is answered:
 

@@ -75,7 +75,8 @@ Command-line flags sit above all five layers for the keys they touch:
 `default_agent`, `-d/--dir` sets the project directory (and
 `general.project_path` for the session), `--no-memory` forces
 `memory.enabled = false`, `--no-auto-update` forces
-`general.auto_update = false`, and `--plain` (or `WHYCODES_PLAIN` set to
+`general.auto_update = false`, `--approval-mode <auto|important|manual>`
+replaces `general.approval_mode` (and `WHYCODES_APPROVAL_MODE`), and `--plain` (or `WHYCODES_PLAIN` set to
 anything) skips the full-screen TUI. `--approve-tools` forces
 `session.headless_ask = "allow"` for a structured run.
 
@@ -374,7 +375,7 @@ required sub-table (no serde default on the field), and its three
 | `log_level` | — | `WHYCODES_LOG_LEVEL` | Log filter (`debug`, `info,whycodes_agent=debug`, …). `RUST_LOG` wins over both; unset means `info`. |
 | `default_gcp_project` | — | — | Default Google Cloud project id. Defined and merged, but no runtime code reads it in this version. |
 | `auto_update` | `true` | `WHYCODES_AUTO_UPDATE` (`0/1`), `WHYCODES_NO_AUTO_UPDATE=1` | Check for a newer release when an interactive TUI session starts (home-screen confirm, never a silent replace). `--no-auto-update`, `CI` and benchmark runs also skip it. |
-| `approval_mode` | — | `WHYCODES_APPROVAL_MODE` | When to interrupt: `auto` (auto-allow permission `ask`, auto-pick routine questions while todos or jobs are open), `important` (prompt on questions and high-risk tools), `manual` (prompt on every question and ask). Unset means `auto`. Never overrides `deny`, catastrophic shell risk, or the sandbox. |
+| `approval_mode` | — | `WHYCODES_APPROVAL_MODE` | When to interrupt: `auto` (auto-allow permission `ask`, auto-pick routine questions while todos or jobs are open), `important` (prompt on questions and high-risk tools), `manual` (prompt on every question and ask). Unset means `auto`. `--approval-mode` overrides it for one run. Never overrides `deny`, catastrophic shell risk, or the sandbox. |
 
 ## `[swarm]`
 
