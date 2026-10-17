@@ -1,6 +1,6 @@
 # Architecture
 
-The workspace is 26 crates with one-way layering:
+The workspace is 27 crates with one-way layering:
 **foundations → services → orchestration → applications**.
 
 Allowed internal edges are allowlisted in
@@ -27,6 +27,7 @@ Two rules keep the graph acyclic:
 | | `protocol` | CI / stream-json envelopes **and** daemon protocol v1 (`SdkEvent`) |
 | | `schema` | Schema validation |
 | | `sandbox` | OS sandbox for shell commands (bubblewrap on Linux) |
+| | `shell` | Windows embedded shell (`whycodes __shell -c`): bash-compatible interpreter plus bundled coreutils, linked only into Windows builds |
 | | `lsp` | Language-server client |
 | | `skill` | Skill registry |
 | | `function` | Function-tool helpers |
@@ -51,7 +52,7 @@ Package names use the `whycodes-` prefix even when the directory is shorter
 
 | Path | What |
 |---|---|
-| `crates/` | Rust workspace (26 crates above) |
+| `crates/` | Rust workspace (27 crates above) |
 | `sdk/typescript/` | TypeScript SDK — protocol twin of `crates/sdk` |
 | `docs/` | User and contributor docs (this file, guide, know-how) |
 | `scripts/` | Installers, CI budget checks, benches |

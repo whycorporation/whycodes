@@ -34,6 +34,13 @@ allow = [
 confidence-threshold = 0.8
 unused-allowed-license = "allow"
 
+# brush-core (whycodes-shell) depends on terminfo only on Unix targets, and
+# whycodes-cli links whycodes-shell only on Windows: no shipped binary
+# contains it. Scoped to this one crate, not added to `allow`.
+[[licenses.exceptions]]
+allow = ["WTFPL"]
+crate = "terminfo"
+
 [licenses.private]
 ignore = true
 
