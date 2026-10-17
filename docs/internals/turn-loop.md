@@ -229,7 +229,7 @@ results in call order:
 - One call: `Status("Running tool …")`, speculative hit or
   `execute_with_permission`, raced against cancel.
 - All calls parallel-safe (`is_parallel_safe_tool`: not in `SERIAL_TOOLS`,
-  `crates/agent/src/tool_policy.rs` — shell, write/edit/apply_patch,
+  `crates/agent/src/tool_policy.rs` — shell, write/edit/apply_patch/ast_edit,
   git_commit, todo tools, task, swarm, bg, schedule, tool_search, worktree,
   plan, browser, question, code_mode, skill, external_directory, memory):
   speculative results are consumed first, the rest run through

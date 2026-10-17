@@ -66,7 +66,7 @@ pub(crate) fn tool_kind(name: &str) -> &'static str {
     match name {
         "read" | "list" | "repomap" | "git_diff" | "git_log" | "git_status" | "git_blame" => "read",
         "grep" | "glob" | "tool_search" => "search",
-        "edit" | "write" | "apply_patch" => "edit",
+        "edit" | "write" | "apply_patch" | "ast_edit" => "edit",
         "bash" => "execute",
         "webfetch" | "websearch" | "mcp_websearch" => "fetch",
         "plan" | "todoread" => "think",

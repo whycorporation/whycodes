@@ -15,7 +15,7 @@ path = "src/main.rs"
 # bat/two-face language pack stay opt-in (~1.7 MB) so Boot/TTFF stays low.
 default = ["self-update", "server"]
 # Everything including diagram render + extended syntax pack.
-full = ["self-update", "server", "mermaid", "extended-syntax"]
+full = ["self-update", "server", "mermaid", "extended-syntax", "ast-tools"]
 # Unicode mermaid diagrams (mermaid-text + ascii_dag). Off by default — ~0.8 MB.
 mermaid = ["whycodes-format/mermaid", "whycodes-tui/mermaid"]
 # bat/two-face extended language pack (~0.9 MB). Off by default.
@@ -31,6 +31,8 @@ onnx = ["whycodes-memory/onnx", "whycodes-tools/onnx", "whycodes-agent/onnx"]
 # storage crate always bundles — MSVC has no sqlite3.lib (LNK1181).
 # Enable for fully static Linux release artifacts / CI without libsqlite3-dev.
 bundled-sqlite = ["whycodes-storage/bundled"]
+# `ast_grep` / `ast_edit` tools (tree-sitter grammars, ~5.2 MB). Off by default.
+ast-tools = ["whycodes-tools/ast-tools"]
 
 [dependencies]
 whycodes-core = { path = "../core" }

@@ -25,7 +25,8 @@ pub struct ToolExecutor {
     /// diagnostics back into `edit` / `write` results.
     lsp: lsp::LspTool,
     /// Run the project's formatter on files `edit` / `write` change.
-    format_after_write: AtomicBool,
+    /// Shared with `ast_edit`, which formats the files it writes itself.
+    format_after_write: Arc<AtomicBool>,
 }
 
 /// Most (permissions, profile, extra) schema sets held at once. Each new
@@ -65,7 +66,7 @@ impl ToolExecutor {
             tools: FxHashMap::default(),
             defs_cache: Mutex::new(FxHashMap::default()),
             lsp: lsp::LspTool::new(),
-            format_after_write: AtomicBool::new(true),
+            format_after_write: Arc::new(AtomicBool::new(true)),
         };
 
         executor.register(Box::new(read::ReadTool::new()));
@@ -109,6 +110,13 @@ impl ToolExecutor {
         executor.register(Box::new(truncate::TruncateTool::new()));
         executor.register(Box::new(skill::SkillTool::new()));
         executor.register(Box::new(executor.lsp.clone()));
+        #[cfg(feature = "ast-tools")]
+        {
+            executor.register(Box::new(crate::file::ast_grep::AstGrepTool));
+            executor.register(Box::new(crate::file::ast_edit::AstEditTool::new(
+                Arc::clone(&executor.format_after_write),
+            )));
+        }
 
         // Alias for common model tool names
         executor.register(Box::new(todo_write::TodoWriteTool::as_todo()));
