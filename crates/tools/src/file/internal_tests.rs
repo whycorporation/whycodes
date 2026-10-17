@@ -303,6 +303,11 @@ async fn async_wrapper_delegates_sync_schemes_and_plain_paths() {
         .await
         .unwrap();
     assert!(!guide.is_error);
+    assert!(
+        guide.content.contains("`outline: false`"),
+        "{}",
+        guide.content
+    );
     for scheme in [
         "skill://", "agent://", "proc://", "rule://", "pr://", "issue://", "mcp://",
     ] {
@@ -321,4 +326,71 @@ async fn async_wrapper_delegates_sync_schemes_and_plain_paths() {
         let r = read_internal_async(url, &ctx).await.unwrap();
         assert!(r.is_error && r.content.contains(needle), "{}", r.content);
     }
+}
+
+#[test]
+fn agent_url_reads_structured_values_by_json_pointer() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy());
+    let agents = dir.path().join(".whycodes").join("agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(agents.join("abc123.md"), "summary").unwrap();
+    std::fs::write(
+        agents.join("abc123.json"),
+        r#"{"findings": [{"path": "src/a.rs", "lines": [1, 2]}], "a/b": true}"#,
+    )
+    .unwrap();
+
+    let path = read_internal("agent://abc123/findings/0/path", &ctx).unwrap();
+    assert!(!path.is_error, "{}", path.content);
+    assert_eq!(path.content, "\"src/a.rs\"");
+    let lines = read_internal("agent://abc123/findings/0/lines/", &ctx).unwrap();
+    assert_eq!(lines.content, "[\n  1,\n  2\n]");
+    let whole = read_internal("agent://abc123/", &ctx).unwrap();
+    assert!(whole.content.starts_with("{\n"), "{}", whole.content);
+    let escaped = read_internal("agent://abc123/a~1b", &ctx).unwrap();
+    assert_eq!(escaped.content, "true");
+    let md = read_internal("agent://abc123", &ctx).unwrap();
+    assert_eq!(
+        md.content, "# agent://abc123\n\nsummary",
+        "markdown read unchanged"
+    );
+    let list = read_internal("agent://", &ctx).unwrap();
+    assert_eq!(
+        list.content.matches("abc123").count(),
+        1,
+        "{}",
+        list.content
+    );
+
+    let missing = read_internal("agent://abc123/findings/9", &ctx).unwrap();
+    assert!(missing.is_error);
+    assert_eq!(
+        missing.content,
+        "No value at `/findings/9` in agent://abc123."
+    );
+    let untyped = read_internal("agent://other/x", &ctx).unwrap();
+    assert!(untyped.is_error);
+    assert!(
+        untyped.content.contains("no structured result"),
+        "{}",
+        untyped.content
+    );
+    let bad_id = read_internal("agent://../x", &ctx).unwrap();
+    assert!(bad_id.is_error);
+    assert!(
+        bad_id.content.contains("may only contain"),
+        "{}",
+        bad_id.content
+    );
+    let dotted = read_internal("agent://a.b", &ctx).unwrap();
+    assert!(
+        dotted.content.contains("may only contain"),
+        "{}",
+        dotted.content
+    );
+    std::fs::write(agents.join("broken.json"), "{nope").unwrap();
+    let broken = read_internal("agent://broken/a", &ctx).unwrap();
+    assert!(broken.is_error);
+    assert!(broken.content.contains("is not JSON"), "{}", broken.content);
 }
