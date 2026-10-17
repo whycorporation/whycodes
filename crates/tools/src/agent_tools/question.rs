@@ -13,9 +13,12 @@ use std::io::{self, Write};
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
+// Per test thread, so parallel tests cannot consume each other's lines.
 #[cfg(test)]
-static TEST_STDIN: std::sync::Mutex<std::collections::VecDeque<String>> =
-    std::sync::Mutex::new(std::collections::VecDeque::new());
+thread_local! {
+    static TEST_STDIN: std::sync::Mutex<std::collections::VecDeque<String>> =
+        const { std::sync::Mutex::new(std::collections::VecDeque::new()) };
+}
 
 /// Soft product cap (schema says “max 4 recommended”). Hard-refuse dumps.
 const MAX_QUESTIONS: usize = 8;
@@ -638,19 +641,17 @@ fn resolve_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> Questio
 }
 
 fn read_line_stdin() -> Result<String, String> {
+    // Tests never touch the real stdin: an empty queue is an error, not a
+    // read that blocks the test binary forever when stdin is inherited.
     #[cfg(test)]
-    if let Some(line) = take_test_stdin() {
-        return Ok(line);
-    }
+    return take_test_stdin().ok_or_else(|| stdin_read_error("no queued test input"));
+    #[cfg(not(test))]
     read_line_from(&mut io::stdin().lock())
 }
 
 #[cfg(test)]
 fn take_test_stdin() -> Option<String> {
-    TEST_STDIN
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .pop_front()
+    TEST_STDIN.with(|q| q.lock().unwrap_or_else(|e| e.into_inner()).pop_front())
 }
 
 fn stdin_read_error(e: impl std::fmt::Display) -> String {
