@@ -86,6 +86,8 @@ pub enum DialogKind {
     Effort,
     /// Session approval overlay (`auto` / `important` / `manual`).
     ApprovalMode,
+    /// Agent hub (`Alt+A` / `/agents`): task and swarm workers of this session.
+    Agents,
     /// Checkbox picker: which MCP / permission / hook rows to copy.
     Import,
     /// First-launch OpenRouter API-key paste box.
@@ -970,6 +972,8 @@ pub struct SubagentUi {
     pub started_at: Instant,
     pub elapsed_ms: u64,
     pub output: String,
+    /// Provider-reported input + output tokens so far (0 = unknown).
+    pub tokens: u64,
 }
 
 impl SubagentUi {
@@ -1701,6 +1705,18 @@ pub struct TuiApp {
     pub(crate) tasks_row_hits: Vec<(Rect, String)>,
     /// When set, the framed child transcript overlays the parent session.
     pub(crate) open_subagent: Option<String>,
+    /// First visible line of the framed child transcript.
+    pub(crate) subagent_view_scroll: u16,
+    /// Saved `.whycodes/agents/<id>.md` of the open finished worker.
+    pub(crate) subagent_view_file: Option<String>,
+    /// Selected row in the agent hub dialog.
+    pub(crate) agents_cursor: usize,
+    /// Worker the agent hub asked to cancel; the run loop sends it.
+    pub(crate) pending_worker_cancel: Option<String>,
+    /// Agent hub re-runs, sent as user turns once the session is idle.
+    pub(crate) pending_reruns: VecDeque<String>,
+    /// Turns go to `whycodes serve`; the hub hides cancel and re-run.
+    pub(crate) attached: bool,
     /// Alias of [`Self::tasks_row_hits`] for older click tests.
     pub(crate) subagent_strip_hit: Vec<(Rect, String)>,
 }
@@ -2007,6 +2023,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/now",
         hint: "<message> Interrupt between tool calls; unstarted calls are skipped",
+    },
+    SlashCommand {
+        name: "/agents",
+        hint: "Agent hub: view, message, cancel or re-run workers",
     },
     SlashCommand {
         name: "/tell",
@@ -2424,6 +2444,12 @@ impl TuiApp {
             tasks_hit: crate::hit_area::HitArea::default(),
             tasks_row_hits: Vec::new(),
             open_subagent: None,
+            subagent_view_scroll: 0,
+            subagent_view_file: None,
+            agents_cursor: 0,
+            pending_worker_cancel: None,
+            pending_reruns: VecDeque::new(),
+            attached: false,
             subagent_strip_hit: Vec::new(),
         }
     }
@@ -2459,7 +2485,11 @@ impl TuiApp {
                 started_at: Instant::now(),
                 elapsed_ms,
                 output,
+                tokens: 0,
             });
+        }
+        if self.open_subagent.as_deref() == Some(id.as_str()) {
+            self.load_subagent_view_file();
         }
 
         let mut found = false;
@@ -2579,13 +2609,37 @@ impl TuiApp {
     pub fn open_subagent_view(&mut self, id: &str) {
         if self.subagents.iter().any(|s| s.id == id) {
             self.open_subagent = Some(id.to_string());
+            self.subagent_view_scroll = 0;
+            self.load_subagent_view_file();
             self.mark_dirty();
         }
     }
 
     pub fn close_subagent_view(&mut self) {
         if self.open_subagent.take().is_some() {
+            self.subagent_view_file = None;
             self.mark_dirty();
+        }
+    }
+
+    /// A finished worker's view reads its saved `.whycodes/agents/<id>.md`.
+    fn load_subagent_view_file(&mut self) {
+        let finished = self
+            .open_subagent
+            .as_deref()
+            .and_then(|id| self.subagents.iter().find(|s| s.id == id))
+            .filter(|row| row.is_terminal());
+        self.subagent_view_file =
+            finished.and_then(|row| crate::agent_hub::read_artifact(&self.project_dir, &row.id));
+    }
+
+    /// Record a worker's token count from its latest event (0 = unknown).
+    pub fn set_subagent_tokens(&mut self, id: &str, tokens: u64) {
+        if tokens == 0 {
+            return;
+        }
+        if let Some(row) = self.subagents.iter_mut().find(|s| s.id == id) {
+            row.tokens = tokens;
         }
     }
 

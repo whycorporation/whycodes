@@ -327,3 +327,34 @@ async fn steer_reports_an_http_error() {
     let err = steer(&rem, "go", mode).await.unwrap_err();
     assert!(err.to_string().contains("404"), "{err}");
 }
+
+#[test]
+fn subagent_events_reach_the_agent_hub() {
+    let ev = json_to_turn_event(&serde_json::json!({
+        "type": "subagent", "id": "task-1", "kind": "explore",
+        "description": "look", "status": "running", "activity": "read a.rs",
+        "elapsed_ms": 1200
+    }));
+    match ev {
+        Some(TurnEvent::Subagent {
+            id,
+            kind,
+            status,
+            activity,
+            elapsed_ms,
+            tokens,
+            ..
+        }) => {
+            assert_eq!((id.as_str(), kind.as_str()), ("task-1", "explore"));
+            assert_eq!(
+                (status.as_str(), activity.as_str()),
+                ("running", "read a.rs")
+            );
+            assert_eq!((elapsed_ms, tokens), (1200, 0));
+        }
+        other => panic!("{other:?}"),
+    }
+    let bare = json_to_turn_event(&serde_json::json!({"type": "subagent", "id": "w"}));
+    assert!(matches!(bare, Some(TurnEvent::Subagent { kind, .. }) if kind.is_empty()));
+    assert!(json_to_turn_event(&serde_json::json!({"type": "subagent"})).is_none());
+}

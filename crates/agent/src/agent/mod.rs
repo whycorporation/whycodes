@@ -109,6 +109,8 @@ pub struct Agent {
     background: crate::background::BackgroundRegistry,
     /// User messages sent while a turn runs (read at the next step).
     steer: crate::steer::SteerInbox,
+    /// Cancel requests for running `task` / `swarm` workers (agent hub).
+    worker_cancels: crate::worker_cancel::WorkerCancels,
     /// Optional long-lived event sink (TUI) for bg completion + enqueue.
     event_sink: Option<EventSink>,
     /// Max concurrent background jobs.
@@ -407,6 +409,7 @@ impl Agent {
             swarm_worktrees: true,
             background: crate::background::BackgroundRegistry::default(),
             steer: crate::steer::SteerInbox::default(),
+            worker_cancels: crate::worker_cancel::WorkerCancels::default(),
             event_sink: None,
             max_background_jobs: crate::background::DEFAULT_MAX_BACKGROUND_JOBS,
             bash_auto_background: true,
@@ -851,6 +854,12 @@ impl Agent {
         self.steer.clone()
     }
 
+    /// Cancel registry for running workers; keep a clone before the agent
+    /// moves into the turn task.
+    pub fn worker_cancels(&self) -> crate::worker_cancel::WorkerCancels {
+        self.worker_cancels.clone()
+    }
+
     /// Add messages the user sent during this turn, so the next request
     /// carries them. Called at the start of a step, after tool results.
     /// Queued messages stay in the inbox for the next turn.
@@ -1156,7 +1165,8 @@ impl Agent {
 
     /// [`Self::with_runtime_context`] that also names the working directory.
     /// The platform and the `bash` tool's shell are always stated: on Windows
-    /// that shell is Git Bash or `cmd.exe`, and the model cannot tell which.
+    /// that shell is Git Bash, the embedded shell or `cmd.exe`, and the model
+    /// cannot tell which.
     pub fn with_runtime_context_in(
         system_prompt: &str,
         working_dir: Option<&std::path::Path>,

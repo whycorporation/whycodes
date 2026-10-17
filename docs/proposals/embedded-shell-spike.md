@@ -1,6 +1,6 @@
 # Embedded shell spike
 
-> Status: Design · Updated: 2026-10-16
+> Status: Implemented (phase B) · Updated: 2026-10-17
 
 ## Problem
 
@@ -345,6 +345,73 @@ First three concrete tasks:
   does too, `cmd.exe` does not. Any consumer that assumed CRLF?
 - Is a per-platform feature default (`embedded-shell` on for Windows only)
   acceptable for the installer scripts and the release workspace build in CI?
+
+## Implementation notes (phase B)
+
+Shipped as `crates/shell` (`whycodes-shell`), linked into `whycodes-cli` only
+on Windows (`[target.'cfg(windows)'.dependencies]`, feature `embedded-shell`,
+on by default; Cargo has no per-target default features, so on Linux and
+macOS the feature selects nothing and the resolved dependency graph is
+identical to main).
+
+- **Engine and utilities.** `brush-core` 0.5.0 plus `brush-builtins` 0.2.0
+  (bash builtins only), `uu_*`/`uucore` 0.12.0 directly (the
+  `brush-coreutils-builtins` adapter still pins `uu_* ^0.8`), `findutils`
+  0.10.0, `sed` 0.2.0 (which drags its own `uucore` 0.10), `diffutils` 0.5.0,
+  and an in-house `grep` over `grep-searcher`/`grep-regex`/`grep-printer`
+  plus `which`. All MIT or MIT/Apache, MSRV 1.88 or unset (workspace 1.91),
+  pinned with `=`. `cargo deny check licenses sources` passes with one scoped
+  exception: `terminfo` (WTFPL) is a Unix-only dependency of `brush-core`
+  and is in no shipped binary.
+- **Process model.** `whycodes __shell -c <cmd>` is dispatched in `main`
+  before clap, config or logging, so it is absent from `--help` and
+  completions. Each bundled name is a shell builtin that re-executes the
+  binary as `whycodes __shell/<name> <args>`, so pipes and redirections are
+  OS handles and a utility panic ends only that child. The agent process
+  only registers the binary (`whycodes_sandbox::set_embedded_shell`) and
+  never runs a builtin.
+- **Precedence.** The bundled set (`cat cp cut diff env find grep head ls
+  mkdir mv rm sed sort tail tee touch tr uniq wc which xargs`) resolves
+  before `PATH`; `which find` says "bundled". `find -exec` and `xargs`
+  rewrite a bundled command word to the binary, since they spawn from
+  `PATH`. Everything else comes from `PATH`.
+- **Open questions, answered.**
+  - MSYS `/c/` paths: rewritten to `C:/` for `cd`/`pushd`/`popd` and for the
+    operands of the bundled file utilities, only when the drive exists.
+    Arguments to external programs and script text (`sed '/c/d'`) are left
+    alone. `pwd` prints `C:\...`, not `/c/...`.
+  - Pipes above 4 KiB (#1359): not reproduced. 1 MiB through
+    `cat | cat | head`, `cat | grep -c` and `cat | wc -c` pass, and an early
+    reader exit (`cat Cargo.lock | head -n 1`) does not hang (e2e
+    `one_mebibyte_through_pipes`).
+  - `PATHEXT`: brush 0.5 finds `npm.cmd` but spawns the extension-less path.
+    Before the command runs, bare words that resolve to a `.cmd`/`.bat`/`.com`
+    (and not an `.exe`) are put in the shell's command hash with the full
+    name; `npm --version` works (e2e `pathext_commands_spawn`).
+  - Relative paths after `cd` (#1251): the `cd`/`pushd`/`popd` wrappers move
+    the process directory too, so `cd sub && ./x.cmd` works. A subshell that
+    changes directory leaves the process there until the next `cd`.
+  - Coverage: the crate has its own 95.0% floor in
+    `scripts/check_coverage_floors.py` (measured 97.5% on Windows), not
+    100%; the misses are utility error paths no test can provoke. The e2e
+    harness is the shell host itself, so child processes are measured.
+  - System prompt name: "the whycodes embedded shell (bash-compatible)".
+- **Known limitations.** No process substitution on Windows (`<(...)`
+  fails with "fd redirections not supported"), no `awk`, no `diff -r`. A
+  timeout kills the shell, not programs it started (same as Git Bash).
+- **Measurements** (Windows 11, x86_64-pc-windows-msvc, release profile,
+  `--features bundled-sqlite` as in the release workflow):
+  - Binary: 19,194,880 B on main, 27,683,840 B with the embedded shell
+    (+8.49 MB, inside the +6–9 MB estimate). Linux/macOS: unchanged graph.
+  - Startup, median of 30: `whycodes --version` 12.6 ms → 13.0 ms;
+    `whycodes __shell -c "echo hi"` 24.3 ms (Git Bash 33.5 ms, `cmd /C`
+    18.6 ms); `printf 'a\nb\n' | wc -l` (one utility child) 48.4 ms.
+  - Smoke run, 14 model-style commands in this repository (`git status |
+    head`, `grep -rn`, `find | sort`, `wc -l src/*.rs | tail`, `sed -n`,
+    `cargo --version && rustc --version`, `cd … && ls | grep -c`,
+    `npm --version`, `which`, `find | xargs grep -l | sort | head`, …): all
+    exit 0 with the expected output in 35–390 ms; the only failure was
+    process substitution, listed above.
 
 ## Sources
 

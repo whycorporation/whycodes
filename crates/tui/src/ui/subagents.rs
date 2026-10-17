@@ -314,8 +314,10 @@ pub fn agent_lines(app: &TuiApp, palette: &ThemePalette) -> Vec<Line<'static>> {
     lines
 }
 
-/// Fullscreen framed child transcript (subagent view).
-pub fn render_frame(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+/// Fullscreen framed child transcript (subagent view). Running: the log the
+/// worker reports after each step. Finished: its saved
+/// `.whycodes/agents/<id>.md`, else its final output. Read-only; scrolls.
+pub fn render_frame(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     let Some(id) = app.open_subagent.as_deref() else {
         return;
     };
@@ -327,7 +329,7 @@ pub fn render_frame(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &Theme
         .borders(Borders::ALL)
         .border_style(Style::default().fg(palette.accent))
         .title(format!(
-            " {} {} · {}  [q]",
+            " {} {} · {}  [↑↓ scroll · q]",
             status_glyph(&row.status, app.spinner_frame),
             row.kind,
             truncate(&row.description, 40)
@@ -338,18 +340,32 @@ pub fn render_frame(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &Theme
     frame.render_widget(block, area);
 
     let mut body = row.headline();
-    if !row.output.is_empty() {
+    let text = match app.subagent_view_file.as_deref() {
+        Some(saved) if row.is_terminal() => saved,
+        _ => row.output.as_str(),
+    };
+    if !text.is_empty() {
         body.push_str("\n\n");
-        body.push_str(&row.output);
+        body.push_str(text);
     } else if row.is_running() {
-        body.push_str("\n\n(running — output appears when the child finishes)");
+        body.push_str("\n\n(running — steps appear as the worker finishes them)");
     }
+    let max_scroll = wrapped_rows(&body, inner.width).saturating_sub(inner.height as usize);
+    app.subagent_view_scroll = app.subagent_view_scroll.min(max_scroll as u16);
     frame.render_widget(
         Paragraph::new(Text::from(body))
             .wrap(Wrap { trim: false })
+            .scroll((app.subagent_view_scroll, 0))
             .style(Style::default().fg(palette.fg)),
         inner,
     );
+}
+
+/// Rows `text` takes when wrapped at `width` columns (an estimate: word
+/// wrap can add a row per line).
+fn wrapped_rows(text: &str, width: u16) -> usize {
+    let width = usize::from(width.max(1));
+    text.lines().map(|l| l.width().div_ceil(width).max(1)).sum()
 }
 
 #[cfg(test)]

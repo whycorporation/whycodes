@@ -354,3 +354,17 @@ fn mode_commands_leave_the_message_and_return_the_mode() {
     assert_eq!(take_mode_command(&mut app), None);
     assert_eq!(app.input_buffer, "/nowhere");
 }
+
+#[test]
+fn busy_agents_opens_the_hub_mid_turn() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.input_buffer = "/agentsx".into();
+    assert!(!busy_agents(&mut app));
+    app.input_buffer = " /agents ".into();
+    assert!(busy_agents(&mut app));
+    assert!(app.input_buffer.is_empty());
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(crate::app::DialogKind::Agents)
+    ));
+}

@@ -278,6 +278,7 @@ fn turn_event_to_ci_covers_remaining_arms() {
             activity: String::new(),
             elapsed_ms: 0,
             output: String::new(),
+            tokens: 0,
         }),
         Some(CiEvent::Status { .. })
     ));

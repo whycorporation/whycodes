@@ -1032,6 +1032,7 @@ fn apply_turn_event_covers_every_variant() {
             activity: "Thinking".into(),
             elapsed_ms: 12,
             output: String::new(),
+            tokens: 0,
         },
     );
     assert!(app.subagents.iter().any(|s| s.id == "kid"));
@@ -2160,6 +2161,9 @@ async fn handle_slash_covers_local_commands() {
         "{}",
         h.app.status_message
     );
+    h.run("/agents").await;
+    assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Agents)));
+    crate::input::dismiss_dialog(&mut h.app);
     h.run("/fresh").await;
     assert!(
         h.app
@@ -11537,6 +11541,30 @@ async fn busy_enter_modes_queue_or_interrupt_the_running_turn() {
     let next = app.take_pending_turn().expect("queued turn");
     assert_eq!(next.text, "after this");
     assert_eq!(next.mode, SteerMode::Queue);
+}
+
+#[test]
+fn agent_hub_and_worker_view_own_plain_keys_while_busy() {
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let esc = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let ctrl_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(
+        !hub_owns_key(&app, &esc),
+        "nothing open: Esc cancels the turn"
+    );
+
+    crate::agent_hub::open(&mut app);
+    assert!(hub_owns_key(&app, &esc), "Esc closes the hub");
+    assert!(
+        !hub_owns_key(&app, &ctrl_c),
+        "Ctrl+C still cancels the turn"
+    );
+    assert!(!hub_owns_key(&app, &Event::FocusGained));
+    crate::input::dismiss_dialog(&mut app);
+
+    app.open_subagent = Some("task-1".into());
+    assert!(hub_owns_key(&app, &esc), "Esc closes the worker view");
 }
 
 #[test]

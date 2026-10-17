@@ -204,6 +204,17 @@ pub(super) fn busy_tell(app: &mut TuiApp, inbox: &whycodes_agent::steer::SteerIn
     true
 }
 
+/// `/agents` typed while a turn runs opens the agent hub. `false` when the
+/// draft is something else.
+pub(super) fn busy_agents(app: &mut TuiApp) -> bool {
+    if app.input_buffer.trim() != "/agents" {
+        return false;
+    }
+    consume_slash_draft(app);
+    crate::agent_hub::open(app);
+    true
+}
+
 /// Max chars inlined per `@file` (speculative context without blowing prefill).
 pub(super) const AT_FILE_MAX_CHARS: usize = 24_000;
 
@@ -389,6 +400,9 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         }
         "/tell" => {
             ctx.app.status_message = "No subagent is running".into();
+        }
+        "/agents" => {
+            crate::agent_hub::open(ctx.app);
         }
         "/fresh" => {
             ctx.agent.skip_prompt_cache_next();

@@ -314,7 +314,8 @@ messages.
 `ToolStart`, `ToolEnd`, `Usage` (once per step), `Status`, `Intent`,
 `Cancelled`, `Background` (job started / done / failed / killed),
 `EnqueuePrompt` (`schedule` goal), `Panel`, `Todos`, `Subagent` (running /
-completed / failed), `SwarmStatus`, `SwarmMessage`, `FileConflict`,
+completed / failed / cancelled; a running worker sends one before and one
+after each step's tools with its log so far and its token count), `SwarmStatus`, `SwarmMessage`, `FileConflict`,
 `FileStale`, `PermissionAsk` and `QuestionAsk` (daemon → SDK client). `emit`
 drops events silently when the receiver is gone.
 
@@ -329,6 +330,17 @@ drops events silently when the receiver is gone.
 - `ToolCallAssembler`, `Session::build_request`, usage folding;
 - steering (`with_steer`, keyed by `task-<call id>` or `worker-N`), the swarm
   mailbox (`SwarmHub`), and file claims in same-checkout swarm mode;
+- a per-worker cancel request (`with_cancel`, `Agent::worker_cancels()`,
+  `crates/agent/src/worker_cancel.rs`) under the same key. The worker
+  registers at start and leaves at the end, so a late request cannot hit a
+  later worker that reuses `worker-N`. It is read at the top of each step:
+  the worker stops with the tool results of its last step in place and
+  returns `cancelled by the user` (plus any text it wrote) as a normal tool
+  result, so the parent's `tool_use` / `tool_result` pairing holds. Status
+  `cancelled`; nothing is saved under `.whycodes/agents/`;
+- step progress (`with_progress`): `Subagent` events with status `running`,
+  the last tool call as `activity`, a log of text / calls / first result
+  lines (newest 16 000 bytes) as `output`, and input + output `tokens`;
 - a parallel/serial split equivalent to `SERIAL_TOOLS`, pre/post tool hooks,
   `subagent_stop` hooks;
 - `max_turns` (the `task` tool defaults to 15), worker model
@@ -336,9 +348,11 @@ drops events silently when the receiver is gone.
   read-only; `general` = parent minus todo / task / swarm; custom agents from
   `custom_agents.rs`).
 
-It does **not** reuse: streaming `TurnEvent`s (thinking is only logged),
-speculative reads, stream rules, the doom-loop guard, auto-compact and the
-overflow / rate-limit / fallback handling, the cancel flag, or any of the
+It does **not** reuse: streaming `TurnEvent`s (thinking is only logged; the
+UI gets the per-step `Subagent` events above), speculative reads, stream
+rules, the doom-loop guard, auto-compact and the overflow / rate-limit /
+fallback handling, the turn's cancel flag (a cancel is per worker and never
+interrupts a stream or a running tool), or any of the
 `execute_with_permission` gates. The worker's output is returned as the tool
 result, persisted under `.whycodes/agents/<id>.md`, and its usage is folded
 into the parent at the end of the batch.
