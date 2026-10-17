@@ -1164,7 +1164,8 @@ impl Agent {
 
     /// [`Self::with_runtime_context`] that also names the working directory.
     /// The platform and the `bash` tool's shell are always stated: on Windows
-    /// that shell is Git Bash or `cmd.exe`, and the model cannot tell which.
+    /// that shell is Git Bash, the embedded shell or `cmd.exe`, and the model
+    /// cannot tell which.
     pub fn with_runtime_context_in(
         system_prompt: &str,
         working_dir: Option<&std::path::Path>,
