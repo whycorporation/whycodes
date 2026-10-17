@@ -238,7 +238,9 @@ pub(crate) fn provider_discover_run(
     if save {
         let (status, changed) = save_discovered_providers(config, found);
         if changed {
-            config.save()?;
+            Config::update_global(&mut |global| {
+                save_discovered_providers(global, found);
+            })?;
         }
         if !json {
             lines.extend(status);
@@ -317,8 +319,9 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                 println!("{}", provider_updating_line(name));
             }
 
-            config.providers.insert(name.clone(), provider);
-            config.save()?;
+            Config::update_global(&mut |global| {
+                global.providers.insert(name.clone(), provider.clone());
+            })?;
             println!(
                 "{}",
                 provider_saved_line(name, provider_add_summary(api_key.is_some()))
@@ -326,7 +329,9 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
         }
         ProviderCmd::Remove { name } => {
             if config.providers.remove(name).is_some() {
-                config.save()?;
+                Config::update_global(&mut |global| {
+                    global.providers.remove(name);
+                })?;
                 println!("{}", provider_removed_line(name));
             } else {
                 eprintln!("{}", provider_not_found_line(name));
@@ -335,7 +340,7 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
         ProviderCmd::Default { name } => {
             if config.providers.contains_key(name) {
                 // Save provider name as metadata
-                config.save()?;
+                Config::update_global(&mut |_| {})?;
                 println!("{}", provider_default_set_line(name));
                 println!("{}", provider_default_use_line(name));
             } else {
@@ -381,8 +386,7 @@ pub(crate) async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
             }
         }
         ModelCmd::Default { provider, model } => {
-            let mut config = config.clone();
-            config.default_model = Some(ModelConfig {
+            let default_model = ModelConfig {
                 model_id: model.clone(),
                 provider_id: provider.clone(),
                 max_tokens: None,
@@ -392,8 +396,10 @@ pub(crate) async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
                 thinking: None,
                 supports_tools: Some(true),
                 supports_images: None,
-            });
-            config.save()?;
+            };
+            Config::update_global(&mut |global| {
+                global.default_model = Some(default_model.clone());
+            })?;
             println!("{}", model_default_set_line(provider, model));
         }
     }
