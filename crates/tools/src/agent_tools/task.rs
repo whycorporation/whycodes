@@ -44,6 +44,10 @@ impl Tool for TaskTool {
                 "max_turns": {
                     "type": "integer",
                     "description": "Maximum conversation turns for the subagent (default: 15)"
+                },
+                "output_schema": {
+                    "type": "object",
+                    "description": "JSON Schema (object) for a typed result. The subagent ends with a matching ```json block (plus a required `what_i_did_not_check` string array); it is validated, retried once if invalid, returned after the summary and readable as `read agent://<id>/<json-pointer>`. Overrides a custom agent's `output`."
                 }
             },
             "required": ["goal"]
