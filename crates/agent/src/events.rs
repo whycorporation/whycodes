@@ -88,8 +88,11 @@ pub enum TurnEvent {
         /// Live activity suffix (`Thinking`, `Running: cargo test`).
         activity: String,
         elapsed_ms: u64,
-        /// Child transcript (filled when the child finishes).
+        /// Running: the worker's log so far (text, tool calls, results).
+        /// Finished: its final output.
         output: String,
+        /// Provider-reported input + output tokens so far (0 = unknown).
+        tokens: u64,
     },
     /// A reader opened a file another agent wrote.
     FileStale {

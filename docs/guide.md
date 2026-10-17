@@ -252,6 +252,7 @@ recent sessions under it.
 | `:` | Command mode (`:theme`, `:q`, …) |
 | `Ctrl+P` / `Ctrl+M` | Provider setup / model selection |
 | `Ctrl+B` | Toggle sidebar (Files / Diag / MCP / Todos / View) |
+| `Alt+A` | Agent hub: `task` / `swarm` workers of this session (see [Agent hub](#agent-hub)) |
 | click / `t` | Fold the sticky todo panel (header chevron; finished items stay visible when expanded) |
 | `[` / `]` | Cycle sidebar tabs (scrollback focus) |
 | `Ctrl+C` | Clear the draft; cancel a running turn; otherwise ask to quit (again to confirm) |
@@ -319,7 +320,7 @@ Actions: `quit`, `force_quit`, `escape`, `submit`, `scroll_up`, `scroll_down`,
 `page_up`, `page_down`, `scroll_to_top`, `scroll_to_bottom`,
 `toggle_auto_scroll`, `clear_session`, `toggle_sidebar`, `sidebar_next_tab`,
 `sidebar_prev_tab`, `sidebar_tab_1`–`sidebar_tab_6`, `toggle_tasks`,
-`provider_dialog`, `model_dialog`, `input_home`, `input_end`, `input_left`,
+`agent_hub`, `provider_dialog`, `model_dialog`, `input_home`, `input_end`, `input_left`,
 `input_right`, `history_prev`, `history_next`, `newline`, `clear_input`,
 `kill_word_back`, `kill_word_forward`, `word_left`, `word_right`,
 `toggle_thinking`, `toggle_tool_result`, `toggle_todos`, `switch_agent`,
@@ -359,6 +360,7 @@ Both TUI and `--plain`:
 | `/fresh` | Skip the provider prompt cache on the next turn (stale cache / wedged stream) |
 | `/btw <question>` | Side question: shown once, not written to session history, no `bash`/`write` |
 | `/tell <id> <message>` | While a turn runs: message a running `task` subagent or swarm worker (`id` prefix from the subagent panel; omit it when only one runs). Read at its next step; if it finishes first, the message is appended to its result for the parent. Local sessions only |
+| `/agents` | Agent hub (same as `Alt+A`), also while a turn runs. TUI only |
 | `/context` | Context window breakdown |
 | `/cost` `/usage` | Session + last-turn token usage (credential **name** only, never the secret) |
 | `/slop` | ΔLOC / verbosity / erosion vs git base (not a test score) |
@@ -566,6 +568,31 @@ overwrite the same path.
 In **build**, high-confidence questions get an ephemeral intent hint so the
 model answers instead of over-eager edits. Set
 `session.intent_guidance = "off"` to disable.
+
+### Agent hub
+
+`Alt+A` or `/agents` opens a list of the session's `task` and `swarm`
+workers: the ones running in the current turn first, then finished ones,
+newest first. Each row shows the id prefix, the agent type, the status
+(`running` / `done` / `failed` / `cancelled`), elapsed time, tokens when the
+provider reported them, and the last activity (the running step's tool call,
+or the first line of a finished worker's output). `↑`/`↓` move; on the
+selected row:
+
+| Key | Action |
+|---|---|
+| `Enter` | Read-only view of the worker's transcript: while it runs, a log of its text, tool calls and the first line of each result, updated after every step; once finished, its saved `.whycodes/agents/<id>.md` (or the final output when nothing was saved). `↑`/`↓`, `PgUp`/`PgDn`, `g` scroll; `q` / `Esc` close |
+| `t` | Put `/tell <id> ` in the prompt, to message a running worker |
+| `k` | Cancel a running worker. It finishes its current step (the model call and its tool calls), then stops and returns `cancelled by the user` to the parent as its result, with any text it wrote before. The parent's turn goes on |
+| `r` | Re-run a finished worker: queues the user message `Re-run worker <id>: <goal>` for when the session is idle, and the parent starts a new `task` call. The UI never calls tools itself |
+| `Esc` / `q` | Close |
+
+While the hub or the transcript view is open during a turn, `Esc` closes it
+instead of cancelling the turn; `Ctrl+C` still cancels the turn.
+
+Attached to `whycodes serve` (`whycodes connect`), the hub lists the workers
+the daemon reports, without logs or token counts, and hides `k` and `r`: the
+`/api` has no per-worker cancel, and a re-run belongs to the daemon session.
 
 ### Custom subagents
 

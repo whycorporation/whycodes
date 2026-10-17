@@ -36,6 +36,7 @@ pub mod thinking_acc;
 pub mod title;
 mod tool_policy;
 pub mod tool_stream;
+pub mod worker_cancel;
 
 pub use agent::{Agent, memory_settings_from_config};
 pub use background::{BackgroundRegistry, JobSnapshot, JobStatus};

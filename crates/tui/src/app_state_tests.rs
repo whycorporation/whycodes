@@ -312,6 +312,7 @@ fn subagent_headline_and_question_clipboard() {
         started_at: Instant::now(),
         elapsed_ms: 0,
         output: String::new(),
+        tokens: 0,
     };
     let head = running.headline();
     assert!(head.contains("running"), "{head}");
@@ -327,6 +328,7 @@ fn subagent_headline_and_question_clipboard() {
         started_at: Instant::now(),
         elapsed_ms: 1500,
         output: String::new(),
+        tokens: 0,
     };
     let head = done.headline();
     assert!(head.contains("completed"), "{head}");
@@ -342,6 +344,7 @@ fn subagent_headline_and_question_clipboard() {
             started_at: Instant::now(),
             elapsed_ms: 0,
             output: String::new(),
+            tokens: 0,
         };
         let h = row.headline();
         assert!(!h.is_empty(), "{status}");
