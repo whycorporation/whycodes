@@ -170,6 +170,74 @@ pub(crate) fn undid_turn_line(n: usize) -> String {
     format!("{} Undid last turn ({n} messages left).", "↩".cyan())
 }
 
+/// `/branch [name]` in the plain REPL: mark the current point.
+pub(crate) fn repl_branch(session: &mut whycodes_session::session::Session, name: &str) -> String {
+    match session.mark_branch(name) {
+        Ok(name) => format!(
+            "{} Branch marked: {} (/tree to switch)",
+            "✓".green(),
+            name.cyan()
+        ),
+        Err(e) => format!("/branch: {e}"),
+    }
+}
+
+/// `/tree` prints the numbered tree; `/tree N` makes turn N the active leaf.
+/// Returns the output and whether the active path changed.
+pub(crate) fn repl_tree(
+    session: &mut whycodes_session::session::Session,
+    arg: &str,
+) -> (String, bool) {
+    let rows = session.tree_rows();
+    if rows.is_empty() {
+        return ("No turns yet.".to_string(), false);
+    }
+    let arg = arg.trim();
+    if arg.is_empty() {
+        let mut out = vec!["Conversation tree (● active leaf, /tree <n> to switch)".to_string()];
+        for (i, r) in rows.iter().enumerate() {
+            out.push(format!("{:>3}  {}", i + 1, r.line()));
+        }
+        return (out.join("\n"), false);
+    }
+    let Some(row) = arg
+        .parse::<usize>()
+        .ok()
+        .and_then(|n| n.checked_sub(1))
+        .and_then(|i| rows.get(i))
+    else {
+        return (format!("Usage: /tree [1-{}]", rows.len()), false);
+    };
+    repl_switch(session, row)
+}
+
+/// Make `row` the active leaf. A row from an older tree is refused.
+pub(crate) fn repl_switch(
+    session: &mut whycodes_session::session::Session,
+    row: &whycodes_session::TreeRow,
+) -> (String, bool) {
+    match session.switch_branch(row.target) {
+        Ok(true) => (format!("{} Switched to: {}", "✓".green(), row.label), true),
+        Ok(false) => ("Already on that turn.".to_string(), false),
+        Err(e) => (format!("/tree: {e}"), false),
+    }
+}
+
+/// Save after `/branch` or a `/tree` switch.
+fn persist_branch_change(session: &whycodes_session::session::Session) {
+    if let Ok(db) = open_db() {
+        note_branch_persist(session.save_to_db(&db));
+    }
+}
+
+/// A failed save is logged, not fatal: the tree is intact in memory and the
+/// next turn's save retries.
+pub(crate) fn note_branch_persist(result: whycodes_session::Result<()>) {
+    if let Err(err) = result {
+        tracing::warn!(error = %err, "failed to persist session branch");
+    }
+}
+
 pub(crate) fn redid_turn_line(n: usize) -> String {
     format!("{} Redid turn ({n} messages).", "↪".cyan())
 }
@@ -998,6 +1066,21 @@ pub(crate) async fn cmd_run(
                         println!("{}", redid_turn_line(session.messages.len()));
                     } else {
                         println!("{}", nothing_to_redo_line());
+                    }
+                    continue;
+                }
+                "/branch" => {
+                    println!("{}", repl_branch(&mut session, rest));
+                    persist_branch_change(&session);
+                    continue;
+                }
+                "/tree" => {
+                    let (out, switched) = repl_tree(&mut session, rest);
+                    println!("{out}");
+                    if switched {
+                        // Undo snapshots belong to the old path.
+                        history = whycodes_session::SessionHistory::new();
+                        persist_branch_change(&session);
                     }
                     continue;
                 }
