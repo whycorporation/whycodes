@@ -3982,6 +3982,21 @@ models = ["m1"]
     h.run("/redo").await;
     assert!(h.app.status_message.to_lowercase().contains("redid"));
 
+    // Past `undo_depth`, `/undo` says why it stops instead of dropping a
+    // turn without restoring files.
+    h.history = SessionHistory::with_depth(1);
+    h.history.push_before_turn(&h.session.messages, &project);
+    h.session.add_user_message("capped turn 1");
+    h.history.push_before_turn(&h.session.messages, &project);
+    h.session.add_user_message("capped turn 2");
+    h.run("/undo").await;
+    assert!(h.app.status_message.to_lowercase().contains("undid"));
+    h.run("/undo").await;
+    assert_eq!(
+        h.app.status_message,
+        "Nothing older to undo (undo_depth = 1)"
+    );
+
     h.app.api_context_for = Some((h.provider.clone(), h.model.clone()));
     h.run("/models").await;
     h.app.dialogs.clear();
