@@ -151,6 +151,7 @@ pub(crate) const SERIAL_TOOLS: &[&str] = &[
     "swarm",
     "bg",
     "schedule",
+    "wait",
     "tool_search",
     "worktree",
     "plan",
