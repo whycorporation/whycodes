@@ -931,3 +931,12 @@ fn home_prompt_spans_the_full_width() {
     assert_eq!(buf[(0, top)].symbol(), "╭");
     assert_eq!(buf[(99, top)].symbol(), "╮");
 }
+
+#[test]
+fn permission_reply_focus_keeps_the_prompt_caret() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.ask_permission("bash", "ls");
+    assert!(!prompt_owns_caret(&app), "y/n keys own the dialog");
+    app.permission_reply_focus = true;
+    assert!(prompt_owns_caret(&app), "typing a reply shows the caret");
+}

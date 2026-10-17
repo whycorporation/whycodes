@@ -214,6 +214,7 @@ fn cli(command: Option<Commands>) -> Cli {
         fork_session: false,
         debug: false,
         no_auto_update: false,
+        approval_mode: None,
         no_memory: false,
     }
 }
@@ -7028,4 +7029,29 @@ async fn cmd_config_get_reports_the_winning_layer() {
         .await
         .unwrap();
     }
+}
+
+#[test]
+fn approval_mode_flag_beats_config_and_env() {
+    use whycodes_core::types::ApprovalMode;
+    let home = IsolatedHome::new();
+    let prev = std::env::var_os("WHYCODES_APPROVAL_MODE");
+    unsafe { std::env::set_var("WHYCODES_APPROVAL_MODE", "manual") };
+    let mut config = Config::load_layered(home.dir.path()).unwrap();
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var("WHYCODES_APPROVAL_MODE", v),
+            None => std::env::remove_var("WHYCODES_APPROVAL_MODE"),
+        }
+    }
+    assert_eq!(config.general.approval_mode, Some(ApprovalMode::Manual));
+    // No flag: the layered value stays.
+    crate::cmd::apply_approval_mode_flag(&cli(None), &mut config);
+    assert_eq!(config.general.approval_mode, Some(ApprovalMode::Manual));
+    let mut flagged = cli(None);
+    flagged.approval_mode = Some(ApprovalMode::Auto);
+    crate::cmd::apply_approval_mode_flag(&flagged, &mut config);
+    assert_eq!(config.general.approval_mode, Some(ApprovalMode::Auto));
+    let agent = Agent::new(agent_info_for(&flagged, &config)).with_config(&config);
+    assert_eq!(agent.approval_mode(), ApprovalMode::Auto);
 }

@@ -50,7 +50,7 @@ pub use intent::{
 };
 pub use permission::{
     AutoApprovePrompter, AutoDenyPrompter, ChannelPermissionPrompter, PermissionPrompter,
-    PermissionRequest, StdinPrompter, default_prompter,
+    PermissionReply, PermissionRequest, StdinPrompter, default_prompter,
 };
 pub use question::{
     AutoAnswerPrompter, ChannelQuestionPrompter, QuestionError, QuestionPrompter, QuestionRequest,

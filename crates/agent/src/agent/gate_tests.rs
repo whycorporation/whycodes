@@ -1438,3 +1438,46 @@ async fn read_mcp_url_is_dispatched_in_process() {
         None
     );
 }
+
+struct ReplyPrompter;
+
+impl PermissionPrompter for ReplyPrompter {
+    fn ask<'a>(
+        &'a self,
+        _tool_name: &'a str,
+        _detail: &'a str,
+    ) -> crate::permission::PermissionAskFuture<'a> {
+        Box::pin(async move { false })
+    }
+
+    fn ask_reply<'a>(
+        &'a self,
+        _tool_name: &'a str,
+        _detail: &'a str,
+    ) -> crate::permission::PermissionReplyFuture<'a> {
+        Box::pin(async move { crate::permission::PermissionReply::Replied })
+    }
+}
+
+#[tokio::test]
+async fn typed_reply_denies_with_its_own_stamp_and_is_not_retried() {
+    let mut a = Agent::new(info("build")).with_permission_prompter(Arc::new(ReplyPrompter));
+    a.set_approval_mode(ApprovalMode::Manual);
+    assert!(!ReplyPrompter.ask("bash", "x").await);
+    let (session, ctx) = session_ctx(&a);
+    let result = a
+        .execute_with_permission(
+            &tc("bash", json!({"command": "rm -rf /tmp/scratch"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert!(result.is_error);
+    assert_eq!(result.content, "denied: user replied for tool 'bash'.");
+    assert!(!tool_error_is_retryable("bash", &result));
+}
