@@ -10,7 +10,9 @@ description, parameter table, profile, permission key and long guide;
     python scripts/gen_tool_docs.py --check    # exit 1 when a page is stale
 
 Regenerate after changing a tool's name, description, schema, profile or
-guide in Rust:
+guide in Rust, from a binary built with ``--features ast-tools`` (the
+catalog includes ``ast_grep`` / ``ast_edit``; the CLI test drops them in a
+default build):
 
     whycodes debug --tools --json > docs/tools/catalog.json
     python scripts/gen_tool_docs.py

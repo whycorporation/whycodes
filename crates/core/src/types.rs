@@ -820,7 +820,7 @@ impl PermissionSet {
         // 5. Category flags
         if matches!(
             tool_name,
-            "write" | "edit" | "apply_patch" | "todo_write" | "todowrite" | "todo"
+            "write" | "edit" | "apply_patch" | "ast_edit" | "todo_write" | "todowrite" | "todo"
         ) && !self.allow_file_writes
         {
             return PermissionAction::Deny;

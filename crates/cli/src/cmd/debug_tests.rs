@@ -178,18 +178,27 @@ async fn cmd_debug_tools_prints_text_and_json() {
 
 /// `docs/tools/catalog.json` is the source for the generated tool pages.
 /// Regenerate it after changing a tool's name, description, schema, profile
-/// or long guide: `whycodes debug --tools --json > docs/tools/catalog.json`
-/// then `python scripts/gen_tool_docs.py`.
+/// or long guide with a `--features ast-tools` build:
+/// `whycodes debug --tools --json > docs/tools/catalog.json` then
+/// `python scripts/gen_tool_docs.py`.
 #[test]
 fn committed_tool_catalog_matches_binary() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/tools/catalog.json");
-    let committed: serde_json::Value =
+    let mut committed: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("docs/tools/catalog.json"))
             .expect("catalog json");
+    // The committed catalog comes from a `--features ast-tools` build so the
+    // `ast_grep` / `ast_edit` pages exist; a default build lacks those two.
+    if cfg!(not(feature = "ast-tools")) {
+        committed
+            .as_array_mut()
+            .expect("catalog array")
+            .retain(|t| !t["name"].as_str().unwrap_or("").starts_with("ast_"));
+    }
     let live = serde_json::to_value(collect_tool_catalog()).unwrap();
     assert_eq!(
         committed, live,
-        "docs/tools/catalog.json is stale — run `whycodes debug --tools --json > docs/tools/catalog.json && python scripts/gen_tool_docs.py`"
+        "docs/tools/catalog.json is stale — run `whycodes debug --tools --json > docs/tools/catalog.json && python scripts/gen_tool_docs.py` with a `--features ast-tools` build"
     );
 }

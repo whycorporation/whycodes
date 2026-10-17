@@ -77,6 +77,8 @@ fn permission_detail_and_parallel_policy() {
     assert!(is_parallel_safe_tool("glob", &perms));
     assert!(is_parallel_safe_tool("repomap", &perms));
     assert!(!is_parallel_safe_tool("bash", &perms));
+    assert!(!is_parallel_safe_tool("ast_edit", &perms));
+    assert!(is_parallel_safe_tool("ast_grep", &perms));
     assert!(!is_parallel_safe_tool("write", &perms));
     assert!(!is_parallel_safe_tool("edit", &perms));
     assert!(!is_parallel_safe_tool("shell", &perms));
@@ -113,6 +115,8 @@ fn pretty_one_liner_and_absolute_path_inside_workspace() {
     }
     assert!(file_tool_path(&call("grep", json!({"path": "src"}))).is_some());
     assert!(file_tool_path(&call("apply_patch", json!({"path": "a.rs"}))).is_some());
+    assert!(file_tool_path(&call("ast_grep", json!({"path": "src"}))).is_some());
+    assert!(file_tool_path(&call("ast_edit", json!({"path": "src"}))).is_some());
     assert!(file_tool_path(&call("write", json!({"path": ""}))).is_none());
     assert!(SHELL_TOOLS.contains(&"bash"));
     let one_liner = format_permission_detail(&json!({"meta": true}));

@@ -1840,7 +1840,7 @@ enum ToolOutHint {
 
 fn tool_out_hint(name: &str, input: &serde_json::Value, result: &str) -> ToolOutHint {
     match name {
-        "git_diff" | "apply_patch" => ToolOutHint::Diff,
+        "git_diff" | "apply_patch" | "ast_edit" => ToolOutHint::Diff,
         "edit" | "write" if looks_like_diff(result) => ToolOutHint::Diff,
         "read" | "read_file" => {
             let path = input

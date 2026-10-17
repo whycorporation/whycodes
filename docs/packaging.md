@@ -143,7 +143,8 @@ This is not product telemetry: the only request is GitHub's public latest
 release API.
 
 From source, the binary lands at `target/release/whycodes`. Optional extras
-(Unicode mermaid + extra highlight languages, ~+1.7 MB):
+(Unicode mermaid + extra highlight languages, ~+1.7 MB; `ast_grep` /
+`ast_edit` structural tools, ~+5.2 MB, also alone as `--features ast-tools`):
 
 ```bash
 cargo build --release -p whycodes-cli --features full
