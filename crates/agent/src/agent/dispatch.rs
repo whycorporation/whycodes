@@ -1,12 +1,14 @@
-//! In-process tool dispatch: background jobs, tool_search, worktree, schedule, swarm, task.
+//! In-process tool dispatch: background jobs, wait, tool_search, worktree, schedule, swarm, task.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use whycodes_core::tool::ToolContext;
 use whycodes_core::types::{ToolCall, ToolResult};
 use whycodes_session::session::Session;
 use whycodes_tools::profile::ToolProfile;
 
+use crate::background::JobStatus;
 use crate::events::{EventSink, TurnEvent, emit};
 use crate::subagent::{SubagentRunner, SubagentTask};
 use crate::tool_policy::*;
@@ -181,6 +183,77 @@ impl Agent {
                 .background
                 .set_listener(Some(background_turn_listener(tx.clone()))),
             None => skip_dispatch(),
+        }
+    }
+
+    /// `wait`: block until a background job finishes, a steering message is
+    /// pending for `session_id`, or the timeout elapses. The message is not
+    /// consumed here; the turn loop drains it at the start of the next step.
+    /// Cancellation drops this future (`execute_tool_calls` races it against
+    /// the cancel flag), so nothing here outlives the turn.
+    pub(crate) async fn execute_wait_tool(&self, call: &ToolCall, session_id: &str) -> ToolResult {
+        let timeout_secs = whycodes_tools::wait::wait_timeout_secs(&call.arguments);
+        let job_id = whycodes_tools::wait::wait_job_id(&call.arguments);
+        let jobs = self.background.list();
+        if let Some(id) = job_id
+            && !jobs.iter().any(|j| j.id == id)
+        {
+            return ToolResult {
+                tool_call_id: call.id.clone(),
+                content: format!("unknown background job `{id}`"),
+                is_error: true,
+            };
+        }
+        // Jobs that had already finished when the wait began are not news;
+        // a job named by `job_id` is reported even when it finished earlier.
+        let seen_finished: Vec<String> = match job_id {
+            Some(_) => Vec::new(),
+            None => jobs
+                .iter()
+                .filter(|j| j.status != JobStatus::Running)
+                .map(|j| j.id.clone())
+                .collect(),
+        };
+        let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+        loop {
+            if self.steer.has_pending(session_id) {
+                return wait_result(
+                    call,
+                    "A message from the user is pending for this session.                      End this step: it is delivered before your next request."
+                        .into(),
+                );
+            }
+            let finished = self.background.list().into_iter().find(|j| {
+                j.status != JobStatus::Running
+                    && job_id.is_none_or(|id| j.id == id)
+                    && !seen_finished.contains(&j.id)
+            });
+            if let Some(job) = finished {
+                // Reported here; do not inject the same completion next step.
+                self.background.mark_auto_delivered(&job.id);
+                return wait_result(
+                    call,
+                    format!(
+                        "Background job `{}` finished ({}{}).
+{}",
+                        job.id,
+                        job.status.as_str(),
+                        optional_exit_suffix(job.exit_code),
+                        self.background.tail(&job.id, 8_000)
+                    ),
+                );
+            }
+            if job_id.is_none() && self.background.running_count() == 0 {
+                return wait_result(
+                    call,
+                    "Nothing to wait for: no background job is running.".into(),
+                );
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return wait_result(call, format!("Nothing happened in {timeout_secs} s."));
+            }
+            tokio::time::sleep(remaining.min(WAIT_POLL)).await;
         }
     }
 
@@ -1614,6 +1687,18 @@ pub(crate) fn mcp_read_target(call: &ToolCall) -> Option<&str> {
         .get("path")
         .and_then(|v| v.as_str())
         .and_then(|p| p.trim().strip_prefix("mcp://"))
+}
+
+/// How often `wait` looks at the job registry and the steer inbox.
+const WAIT_POLL: Duration = Duration::from_millis(250);
+
+/// Every outcome of `wait` is a normal result; only a bad `job_id` is an error.
+fn wait_result(call: &ToolCall, content: String) -> ToolResult {
+    ToolResult {
+        tool_call_id: call.id.clone(),
+        content,
+        is_error: false,
+    }
 }
 
 fn optional_exit_suffix(code: Option<i32>) -> String {
