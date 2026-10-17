@@ -199,6 +199,7 @@ fn hash_block(b: &ContentBlock, h: &mut impl Hasher) {
         ContentBlock::ToolResult { tool_use_id, .. } => tool_use_id.hash(h),
         ContentBlock::RedactedThinking { data } => data.hash(h),
         ContentBlock::Image { .. } => {}
+        ContentBlock::Compaction { content, .. } => content.hash(h),
     }
 }
 

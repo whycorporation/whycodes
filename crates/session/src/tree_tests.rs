@@ -254,6 +254,10 @@ fn every_block_kind_feeds_the_fingerprint() {
                 data: "AA==".into(),
             },
         },
+        ContentBlock::Compaction {
+            content: "summary".into(),
+            raw: serde_json::Value::Null,
+        },
     ];
     let prints: Vec<u64> = blocks
         .into_iter()
