@@ -3749,6 +3749,48 @@ fn a_worker_prompt_names_its_own_directory_and_the_project_instructions() {
     assert!(!prompt.contains(&main), "{prompt}");
 }
 
+#[test]
+fn apply_config_maps_websearch_settings() {
+    let mut config = whycodes_config::Config::default();
+    let kv = |k: &str, v: &str| std::collections::BTreeMap::from([(k.to_string(), v.to_string())]);
+    config.websearch = whycodes_config::WebSearchConfig {
+        engine: Some("custom".into()),
+        fallback: vec!["duckduckgo".into()],
+        custom: Some(whycodes_config::WebSearchCustomConfig {
+            endpoint: "https://search.example.com/api".into(),
+            method: "POST".into(),
+            query_param: "q".into(),
+            count_param: Some("n".into()),
+            params: kv("lang", "en"),
+            headers: kv("Accept", "application/json"),
+            header_env: kv("X-Api-Key", "SEARCH_API_KEY"),
+            results_pointer: "/results".into(),
+            title_pointer: "/title".into(),
+            url_pointer: "/url".into(),
+            snippet_pointer: "/snippet".into(),
+        }),
+    };
+    let mut a = test_agent();
+    a.apply_config(&config);
+    assert_eq!(a.websearch.engine.as_deref(), Some("custom"));
+    assert_eq!(a.websearch.fallback, vec!["duckduckgo".to_string()]);
+    let custom = a.websearch.custom.as_ref().unwrap();
+    assert_eq!(custom.endpoint, "https://search.example.com/api");
+    assert_eq!(custom.method, "POST");
+    assert_eq!(custom.query_param, "q");
+    assert_eq!(custom.count_param.as_deref(), Some("n"));
+    assert_eq!(custom.params["lang"], "en");
+    assert_eq!(custom.headers["Accept"], "application/json");
+    assert_eq!(custom.header_env["X-Api-Key"], "SEARCH_API_KEY");
+    assert_eq!(custom.results_pointer, "/results");
+    assert_eq!(custom.title_pointer, "/title");
+    assert_eq!(custom.url_pointer, "/url");
+    assert_eq!(custom.snippet_pointer, "/snippet");
+
+    a.apply_config(&whycodes_config::Config::default());
+    assert_eq!(a.websearch, Default::default());
+}
+
 #[cfg(windows)]
 fn wait_hang_cmd() -> &'static str {
     "ping -n 4 127.0.0.1 >NUL"
