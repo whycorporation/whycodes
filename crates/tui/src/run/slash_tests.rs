@@ -335,3 +335,22 @@ fn terminal_setup_asks_before_editing_tmux_conf() {
     apply_terminal_setup(&mut app, None);
     assert!(app.status_message.contains("No home directory"));
 }
+
+#[test]
+fn mode_commands_leave_the_message_and_return_the_mode() {
+    use whycodes_agent::steer::SteerMode;
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.input_buffer = "  /now  fix it ".into();
+    assert_eq!(take_mode_command(&mut app), Some(SteerMode::Urgent));
+    assert_eq!(app.input_buffer, "fix it");
+    assert_eq!(app.input_cursor, "fix it".len());
+    app.input_buffer = "/queue then tests".into();
+    assert_eq!(take_mode_command(&mut app), Some(SteerMode::Queue));
+    assert_eq!(app.input_buffer, "then tests");
+    app.input_buffer = "/now".into();
+    assert_eq!(take_mode_command(&mut app), Some(SteerMode::Urgent));
+    assert_eq!(app.status_message, "Usage: /now <message>");
+    app.input_buffer = "/nowhere".into();
+    assert_eq!(take_mode_command(&mut app), None);
+    assert_eq!(app.input_buffer, "/nowhere");
+}

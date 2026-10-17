@@ -24,6 +24,7 @@ use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 use whycodes_agent::agent::Agent;
 use whycodes_agent::permission::ChannelPermissionPrompter;
+use whycodes_agent::steer::SteerMode;
 use whycodes_agent::{
     CancelFlag, ChannelQuestionPrompter, QuestionError, QuestionPrompter, QuestionRequest,
     TurnEvent, TurnOpts, new_cancel_flag, request_cancel,
@@ -2629,8 +2630,23 @@ enum BusyKey {
     Esc,
     Quit,
     CtrlC,
-    WaitEnter,
+    WaitEnter(SteerMode),
     PassThrough,
+}
+
+/// Enter while a turn runs: Shift queues the message for after the turn,
+/// Ctrl interrupts between tool calls. Both need a terminal that reports
+/// modifiers on Enter (kitty keyboard protocol); `/queue` and `/now` work
+/// everywhere.
+fn enter_steer_mode(modifiers: crossterm::event::KeyModifiers) -> SteerMode {
+    use crossterm::event::KeyModifiers;
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        SteerMode::Queue
+    } else if modifiers.contains(KeyModifiers::CONTROL) {
+        SteerMode::Urgent
+    } else {
+        SteerMode::NextStep
+    }
 }
 
 fn busy_key_action(key: &crossterm::event::KeyEvent) -> BusyKey {
@@ -2650,7 +2666,7 @@ fn busy_key_action(key: &crossterm::event::KeyEvent) -> BusyKey {
         {
             BusyKey::CtrlC
         }
-        KeyCode::Enter => BusyKey::WaitEnter,
+        KeyCode::Enter => BusyKey::WaitEnter(enter_steer_mode(key.modifiers)),
         _ => BusyKey::PassThrough,
     }
 }
@@ -2719,6 +2735,10 @@ async fn apply_idle_loop_key(
             true
         }
         IdleLoopKey::SlashEnter => {
+            // Idle, `/queue` and `/now` are a plain prompt.
+            if slash::take_mode_command(app).is_some() {
+                return false;
+            }
             if let Some(text) = slash_command_from_prompt(app) {
                 consume_slash_draft(app);
                 handle_slash(
@@ -2817,13 +2837,18 @@ fn apply_busy_key(
                 file_index,
             ),
         },
-        BusyKey::WaitEnter => {
+        BusyKey::WaitEnter(mode) => {
             if slash::busy_tell(app, &rt.steer) {
                 return;
             }
+            let command = slash::take_mode_command(app);
+            let mode = command.unwrap_or(mode);
             if app.prompt_has_content() {
-                app.submit_input();
-            } else {
+                app.submit_input_with(mode);
+                if mode == SteerMode::Queue {
+                    app.status_message = "queued for after this turn".into();
+                }
+            } else if command.is_none() {
                 toast_wait_for_turn(app);
             }
         }
@@ -5291,7 +5316,7 @@ fn steer_or_reclaim(app: &mut TuiApp, rt: &mut SessionRuntime, project_dir: &std
     }
     for turn in turns {
         let content = steer_content(app, &turn, project_dir);
-        rt.steer.push(&rt.steer_session, content);
+        rt.steer.push_mode(&rt.steer_session, turn.mode, content);
         rt.steered.push_back(turn);
     }
     app.status_message = "sent to the running turn".into();
@@ -5340,9 +5365,9 @@ fn steer_remote(
     }
     for turn in turns {
         let text = expand_at_files(&turn.text, project_dir);
-        let (rem, events) = (rem.clone(), rt.event_tx.clone());
+        let (rem, events, mode) = (rem.clone(), rt.event_tx.clone(), turn.mode);
         tokio::spawn(async move {
-            if let Err(e) = crate::remote::steer(&rem, &text).await {
+            if let Err(e) = crate::remote::steer(&rem, &text, mode).await {
                 tracing::debug!(error = %e, "steer failed; queued instead");
                 if let Err(e) = events.send(TurnEvent::EnqueuePrompt { text }) {
                     tracing::debug!(error = %e, "steer fallback dropped");
