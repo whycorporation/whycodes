@@ -1,30 +1,77 @@
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
 use serde_json::json;
 
 use super::fetch::{html_to_text, http_client};
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
-pub struct WebSearchTool;
+/// Runtime `[websearch]` settings: engine order and the custom endpoint.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebSearchSettings {
+    /// `serpapi` / `duckduckgo` / `custom`. `None` keeps the default choice
+    /// (SerpAPI when `SERPAPI_API_KEY` is set, else DuckDuckGo).
+    pub engine: Option<String>,
+    /// Engines tried in order when the primary returns an error.
+    pub fallback: Vec<String>,
+    /// The `custom` engine's endpoint and JSON Pointer mapping.
+    pub custom: Option<CustomSearchSettings>,
+}
 
-impl Default for WebSearchTool {
-    fn default() -> Self {
-        Self::new()
-    }
+/// A JSON search API mapped onto results with JSON Pointers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CustomSearchSettings {
+    pub endpoint: String,
+    /// `GET` sends a query string; `POST` sends the parameters as a JSON body.
+    pub method: String,
+    pub query_param: String,
+    pub count_param: Option<String>,
+    pub params: BTreeMap<String, String>,
+    pub headers: BTreeMap<String, String>,
+    /// Header name → environment variable holding its value.
+    pub header_env: BTreeMap<String, String>,
+    pub results_pointer: String,
+    pub title_pointer: String,
+    pub url_pointer: String,
+    pub snippet_pointer: String,
+}
+
+/// Timeout for one custom-endpoint request.
+const CUSTOM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+#[derive(Clone, Default)]
+pub struct WebSearchTool {
+    settings: Arc<Mutex<Arc<WebSearchSettings>>>,
 }
 
 impl WebSearchTool {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Replace the engine settings. Clones of this tool share them.
+    pub fn set_settings(&self, settings: WebSearchSettings) {
+        *lock_settings(&self.settings) = Arc::new(settings);
+    }
+
+    fn settings(&self) -> Arc<WebSearchSettings> {
+        Arc::clone(&lock_settings(&self.settings))
     }
 }
+
+fn lock_settings(m: &Mutex<Arc<WebSearchSettings>>) -> MutexGuard<'_, Arc<WebSearchSettings>> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl Tool for WebSearchTool {
     fn name(&self) -> &str {
         "websearch"
     }
 
     fn description(&self) -> &str {
-        "Search the web and return result snippets. Requires SERPAPI_API_KEY for best results \
-         (falls back to DuckDuckGo HTML). \
+        "Search the web and return result snippets. The engine comes from `[websearch]` config; \
+         by default SerpAPI when SERPAPI_API_KEY is set, else DuckDuckGo HTML. \
          For 'latest version' questions: do not pin the query to a past calendar year \
          (e.g. avoid '2024'/'2025'); search 'Nuxt latest release' or fetch canonical APIs \
          via webfetch (npm registry, GitHub Releases, official docs)."
@@ -64,15 +111,219 @@ impl Tool for WebSearchTool {
                 };
             }
 
-            // Try SerpAPI first
-            match std::env::var("SERPAPI_API_KEY") {
-                Ok(api_key) => return serpapi_search(ctx, query, num_results, &api_key).await,
-                Err(err) => note_no_serpapi(&err),
+            let settings = self.settings();
+            let chain = engine_chain(&settings);
+            let mut failures: Vec<(&str, String)> = Vec::new();
+            for engine in &chain {
+                let out = run_engine(ctx, &settings, engine, query, num_results).await;
+                if !out.is_error {
+                    return out;
+                }
+                failures.push((engine, out.content));
             }
-
-            ddg_search(ctx, query, num_results).await
+            search_failed(&failures)
         })
     }
+}
+
+/// Primary engine then each fallback, without repeats.
+fn engine_chain(settings: &WebSearchSettings) -> Vec<String> {
+    let primary = match settings.engine.as_deref() {
+        Some(name) => name.trim().to_ascii_lowercase(),
+        None => default_engine(),
+    };
+    let mut chain = vec![primary];
+    for name in &settings.fallback {
+        let name = name.trim().to_ascii_lowercase();
+        if !chain.contains(&name) {
+            chain.push(name);
+        }
+    }
+    chain
+}
+
+fn default_engine() -> String {
+    match std::env::var("SERPAPI_API_KEY") {
+        Ok(_) => "serpapi".to_string(),
+        Err(err) => {
+            note_no_serpapi(&err);
+            "duckduckgo".to_string()
+        }
+    }
+}
+
+async fn run_engine(
+    ctx: &ToolContext,
+    settings: &WebSearchSettings,
+    engine: &str,
+    query: &str,
+    num_results: u64,
+) -> ToolResult {
+    match engine {
+        "serpapi" => match std::env::var("SERPAPI_API_KEY") {
+            Ok(api_key) => serpapi_search(ctx, query, num_results, &api_key).await,
+            Err(err) => search_blocked(&format!("SERPAPI_API_KEY is unavailable ({err}).")),
+        },
+        "duckduckgo" => ddg_search(ctx, query, num_results).await,
+        "custom" => match &settings.custom {
+            Some(custom) => custom_search(ctx, custom, query, num_results).await,
+            None => search_blocked(
+                "engine `custom` needs a `[websearch.custom]` table with an `endpoint`.",
+            ),
+        },
+        other => search_blocked(&format!(
+            "unknown websearch engine `{other}` (expected serpapi, duckduckgo or custom)."
+        )),
+    }
+}
+
+/// One engine's error as-is; several engines' errors one per line.
+fn search_failed(failures: &[(&str, String)]) -> ToolResult {
+    let content = match failures {
+        [(_, only)] => only.clone(),
+        _ => {
+            let lines: Vec<String> = failures.iter().map(|(e, m)| format!("{e}: {m}")).collect();
+            format!("All websearch engines failed:\n{}", lines.join("\n"))
+        }
+    };
+    search_blocked(&content)
+}
+
+async fn custom_search(
+    ctx: &ToolContext,
+    custom: &CustomSearchSettings,
+    query: &str,
+    num_results: u64,
+) -> ToolResult {
+    // The policy message echoes the URL it checked: never hand it a query string.
+    let bare = endpoint_without_query(&custom.endpoint);
+    match ctx.network.check_url(bare) {
+        Ok(()) => note_search_url_ok(),
+        Err(msg) => return search_blocked(&msg),
+    }
+    let request = match custom_request(custom, query, num_results) {
+        Ok(request) => request,
+        Err(msg) => return search_blocked(&msg),
+    };
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(e) => return search_request_error(&e.without_url().to_string()),
+    };
+    let status = response.status();
+    if !status.is_success() {
+        return search_blocked(&format!(
+            "Custom search endpoint `{bare}` returned HTTP {}.",
+            status.as_u16()
+        ));
+    }
+    match response.json::<serde_json::Value>().await {
+        Ok(data) => custom_results(custom, &data, num_results as usize),
+        Err(e) => search_parse_error(&e.without_url().to_string()),
+    }
+}
+
+fn endpoint_without_query(endpoint: &str) -> &str {
+    endpoint.split(['?', '#']).next().unwrap_or(endpoint)
+}
+
+fn custom_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .user_agent(concat!("whycodes-websearch/", env!("CARGO_PKG_VERSION")))
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(CUSTOM_TIMEOUT)
+}
+
+/// No fallback to a default client: it would follow redirects.
+fn custom_client(
+    built: Result<reqwest::Client, reqwest::Error>,
+) -> Result<reqwest::Client, String> {
+    built.map_err(|e| format!("Could not build the custom search client: {e}"))
+}
+
+fn custom_request(
+    custom: &CustomSearchSettings,
+    query: &str,
+    num_results: u64,
+) -> Result<reqwest::RequestBuilder, String> {
+    let client = custom_client(custom_client_builder().build())?;
+    let post = match custom.method.trim().to_ascii_uppercase().as_str() {
+        "GET" => false,
+        "POST" => true,
+        other => {
+            return Err(format!(
+                "websearch.custom.method `{other}` is not supported (use GET or POST)."
+            ));
+        }
+    };
+    let mut request = if post {
+        let mut body = serde_json::Map::new();
+        for (k, v) in &custom.params {
+            body.insert(k.clone(), json!(v));
+        }
+        body.insert(custom.query_param.clone(), json!(query));
+        if let Some(count) = &custom.count_param {
+            body.insert(count.clone(), json!(num_results));
+        }
+        client.post(&custom.endpoint).json(&body)
+    } else {
+        let mut pairs: Vec<(String, String)> = custom.params.clone().into_iter().collect();
+        pairs.push((custom.query_param.clone(), query.to_string()));
+        if let Some(count) = &custom.count_param {
+            pairs.push((count.clone(), num_results.to_string()));
+        }
+        client.get(&custom.endpoint).query(&pairs)
+    };
+    for (name, value) in &custom.headers {
+        request = request.header(name, value);
+    }
+    for (name, var) in &custom.header_env {
+        match std::env::var(var) {
+            Ok(value) => request = request.header(name, value),
+            Err(err) => {
+                return Err(format!(
+                    "Header `{name}` reads env var `{var}`, which is unavailable ({err})."
+                ));
+            }
+        }
+    }
+    Ok(request)
+}
+
+fn custom_results(
+    custom: &CustomSearchSettings,
+    data: &serde_json::Value,
+    num_results: usize,
+) -> ToolResult {
+    let Some(items) = data
+        .pointer(&custom.results_pointer)
+        .and_then(|v| v.as_array())
+    else {
+        return search_blocked(&format!(
+            "results_pointer `{}` does not point at an array in the response.",
+            custom.results_pointer
+        ));
+    };
+    let mapped: Vec<serde_json::Value> = items
+        .iter()
+        .filter_map(|item| {
+            let title = item.pointer(&custom.title_pointer)?.as_str()?;
+            let link = item.pointer(&custom.url_pointer)?.as_str()?;
+            let snippet = item
+                .pointer(&custom.snippet_pointer)
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Some(json!({"title": title, "link": link, "snippet": snippet}))
+        })
+        .take(num_results)
+        .collect();
+    if mapped.is_empty() && !items.is_empty() {
+        return search_blocked(&format!(
+            "No result has a string at title_pointer `{}` and url_pointer `{}`.",
+            custom.title_pointer, custom.url_pointer
+        ));
+    }
+    organic_results(&json!({ "organic_results": mapped }))
 }
 
 fn note_no_serpapi(_err: &std::env::VarError) {}
@@ -90,16 +341,17 @@ async fn serpapi_search(
         api_key,
         num_results
     );
-    match ctx.network.check_url(&url) {
+    // The URL carries the API key: keep it out of policy and error messages.
+    match ctx.network.check_url(endpoint_without_query(&url)) {
         Ok(()) => note_search_url_ok(),
         Err(msg) => return search_blocked(&msg),
     }
     match http_client().get(&url).send().await {
         Ok(response) => match response.json::<serde_json::Value>().await {
             Ok(data) => organic_results(&data),
-            Err(e) => search_parse_error(&e.to_string()),
+            Err(e) => search_parse_error(&e.without_url().to_string()),
         },
-        Err(e) => search_request_error(&e.to_string()),
+        Err(e) => search_request_error(&e.without_url().to_string()),
     }
 }
 

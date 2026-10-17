@@ -4,7 +4,7 @@
 //! This module owns the user-facing `Config` tree.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use whycodes_core::network::{self, NetworkPolicy};
@@ -129,6 +129,10 @@ pub struct Config {
     /// Code-slop tripwires (`whycodes slop` / `/slop`). Not a training objective.
     #[serde(default)]
     pub slop: SlopConfig,
+
+    /// `websearch` engine choice, fallback order, and the custom endpoint.
+    #[serde(default)]
+    pub websearch: WebSearchConfig,
 
     /// Extra system-prompt text loaded from `prompts/*.md` (not stored in TOML).
     #[serde(default, skip)]
@@ -958,6 +962,7 @@ impl Default for Config {
             automation: AutomationConfig::default(),
             notify: NotifyConfig::default(),
             slop: SlopConfig::default(),
+            websearch: WebSearchConfig::default(),
             system_prompt_overlays: SystemPromptOverlays::default(),
         }
     }
@@ -1805,6 +1810,127 @@ impl NotifyConfig {
         }
         merged
     }
+}
+
+/// `[websearch]` — which engine the `websearch` tool queries.
+///
+/// ```toml
+/// [websearch]
+/// engine = "custom"          # serpapi | duckduckgo | custom
+/// fallback = ["duckduckgo"]  # tried in order when the primary fails
+/// [websearch.custom]
+/// endpoint = "https://search.example.com/api"
+/// header_env = { "X-Api-Key" = "SEARCH_API_KEY" }
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebSearchConfig {
+    /// `serpapi`, `duckduckgo` or `custom`. Omitted = SerpAPI when
+    /// `SERPAPI_API_KEY` is set, else DuckDuckGo (the behaviour before this key).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    /// Engines tried in order when the primary returns an error.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback: Vec<String>,
+    /// The `custom` engine. A layer that sets this table replaces the whole table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom: Option<WebSearchCustomConfig>,
+}
+
+impl WebSearchConfig {
+    /// Remove what a project layer may not set: the `custom` table (its
+    /// endpoint, headers and `header_env` could send env secrets to a host the
+    /// repository chose) and `custom` as `engine` or in `fallback`. Returns
+    /// the dropped keys.
+    pub(crate) fn strip_project_only_keys(&mut self) -> Vec<&'static str> {
+        let mut dropped = Vec::new();
+        if self.custom.take().is_some() {
+            dropped.push("websearch.custom");
+        }
+        if self.engine.as_deref().is_some_and(is_custom_engine) {
+            self.engine = None;
+            dropped.push("websearch.engine = \"custom\"");
+        }
+        let before = self.fallback.len();
+        self.fallback.retain(|e| !is_custom_engine(e));
+        if self.fallback.len() != before {
+            dropped.push("\"custom\" in websearch.fallback");
+        }
+        dropped
+    }
+
+    pub(crate) fn merge_with(&self, other: &WebSearchConfig) -> WebSearchConfig {
+        let mut merged = self.clone();
+        if other.engine.is_some() {
+            merged.engine = other.engine.clone();
+        }
+        if !other.fallback.is_empty() {
+            merged.fallback = other.fallback.clone();
+        }
+        if other.custom.is_some() {
+            merged.custom = other.custom.clone();
+        }
+        merged
+    }
+}
+
+fn is_custom_engine(name: &str) -> bool {
+    name.trim().eq_ignore_ascii_case("custom")
+}
+
+/// `[websearch.custom]` — a JSON search API mapped with JSON Pointers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebSearchCustomConfig {
+    /// Request URL. The network allowlist applies to its host.
+    pub endpoint: String,
+    /// `GET` (query string) or `POST` (JSON body). Default `GET`.
+    #[serde(default = "default_websearch_method")]
+    pub method: String,
+    /// Parameter that carries the query. Default `q`.
+    #[serde(default = "default_websearch_query_param")]
+    pub query_param: String,
+    /// Parameter that carries the result count. Omitted = not sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count_param: Option<String>,
+    /// Extra static parameters sent with every request.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
+    /// Static request headers.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    /// Header name → environment variable that holds its value (never stored).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub header_env: BTreeMap<String, String>,
+    /// JSON Pointer to the result array. Default `/results`.
+    #[serde(default = "default_websearch_results_pointer")]
+    pub results_pointer: String,
+    /// JSON Pointer (inside one result) to its title. Default `/title`.
+    #[serde(default = "default_websearch_title_pointer")]
+    pub title_pointer: String,
+    /// JSON Pointer (inside one result) to its URL. Default `/url`.
+    #[serde(default = "default_websearch_url_pointer")]
+    pub url_pointer: String,
+    /// JSON Pointer (inside one result) to its snippet. Default `/snippet`.
+    #[serde(default = "default_websearch_snippet_pointer")]
+    pub snippet_pointer: String,
+}
+
+pub(crate) fn default_websearch_method() -> String {
+    "GET".to_string()
+}
+pub(crate) fn default_websearch_query_param() -> String {
+    "q".to_string()
+}
+pub(crate) fn default_websearch_results_pointer() -> String {
+    "/results".to_string()
+}
+pub(crate) fn default_websearch_title_pointer() -> String {
+    "/title".to_string()
+}
+pub(crate) fn default_websearch_url_pointer() -> String {
+    "/url".to_string()
+}
+pub(crate) fn default_websearch_snippet_pointer() -> String {
+    "/snippet".to_string()
 }
 
 /// Lifecycle events that can fire a session notification.
