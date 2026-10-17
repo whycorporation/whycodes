@@ -158,7 +158,9 @@ fn tool_guide(name: &str) -> Option<&'static str> {
              declarations page as usual.\n\n\
              Internal URLs (a bare scheme lists what it can read):\n\
              - `skill://<name>` — a skill body.\n\
-             - `agent://<id>` — a finished task/swarm artifact; `agent://tools/<name>` this guide set.\n\
+             - `agent://<id>` — a finished task/swarm artifact; `agent://<id>/<json-pointer>` one\n\
+             value of its structured result (e.g. `agent://task-1/findings/0/path`);\n\
+             `agent://tools/<name>` this guide set.\n\
              - `proc://<job-id>` — the stored log of a background shell job\n\
              (`.whycodes/scratch/<id>.log`); `bg` lists live jobs.\n\
              - `rule://<name>` — a project rule file (`.whycodes/rules/*.md`, `.cursor/rules/*.mdc`,\n\
@@ -215,6 +217,9 @@ fn read_agent(id: &str, ctx: &ToolContext) -> ToolResult {
     }
     if id.is_empty() {
         return list_agent_artifacts(&dir);
+    }
+    if let Some((id, pointer)) = id.split_once('/') {
+        return read_agent_value(&dir, id, pointer);
     }
     if !valid_id(id) {
         return err("agent:// id may only contain letters, digits, '-' and '_'.");
@@ -413,6 +418,33 @@ fn list_rules(project: &Path, rules: &[(String, PathBuf)]) -> ToolResult {
         out.push_str(&format!("- {stem} — {}\n", rule_label(path, project)));
     }
     ok(&out)
+}
+
+/// `agent://<id>/<json-pointer>`: one value of a worker's structured result
+/// (`<id>.json`), pretty-printed. An empty pointer gives the whole result.
+fn read_agent_value(dir: &std::path::Path, id: &str, pointer: &str) -> ToolResult {
+    if !valid_id(id) {
+        return err("agent:// id may only contain letters, digits, '-' and '_'.");
+    }
+    let Ok(raw) = std::fs::read_to_string(dir.join(format!("{id}.json"))) else {
+        return err(&format!(
+            "agent://{id} has no structured result; only a task with an output schema writes `.whycodes/agents/{id}.json`."
+        ));
+    };
+    let value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => return err(&format!("agent://{id} structured result is not JSON: {e}")),
+    };
+    let pointer = pointer.trim_end_matches('/');
+    let found = if pointer.is_empty() {
+        Some(&value)
+    } else {
+        value.pointer(&format!("/{pointer}"))
+    };
+    match found {
+        Some(v) => ok(&format!("{v:#}")),
+        None => err(&format!("No value at `/{pointer}` in agent://{id}.")),
+    }
 }
 
 fn list_agent_artifacts(dir: &std::path::Path) -> ToolResult {

@@ -28,6 +28,7 @@ impl Agent {
             context,
             tools,
             max_turns,
+            output_schema: None,
         };
 
         let runner = SubagentRunner::new(
