@@ -6713,3 +6713,41 @@ fn discovered_vllm() -> whycodes_llm::LocalServer {
         models: Vec::new(),
     }
 }
+
+fn tree_app() -> TuiApp {
+    let mut s = whycodes_session::session::Session::new("/tmp/t".into(), "sys".into());
+    s.add_user_message("one");
+    s.add_user_message("two");
+    s.add_user_message("three");
+    let mut a = app();
+    a.tree_rows = s.tree_rows();
+    a.tree_selected = 2;
+    open_dialog(&mut a, DialogKind::Tree);
+    a
+}
+
+#[test]
+fn tree_picker_moves_and_confirms_by_key_and_mouse() {
+    let mut a = tree_app();
+    handle_event(&mut a, key(KeyCode::Up));
+    handle_event(&mut a, key(KeyCode::Up));
+    assert_eq!(a.tree_selected, 0);
+    move_in_dialog_to(&mut a, &DialogKind::Tree, 99);
+    assert_eq!(a.tree_selected, 2);
+    move_in_dialog_to(&mut a, &DialogKind::Tree, 1);
+    handle_event(&mut a, key(KeyCode::Enter));
+    assert_eq!(a.pending_tree_target, Some(a.tree_rows[1].target));
+    assert!(!a.dialogs.is_open());
+
+    let mut a = tree_app();
+    click_list_row(&mut a, 8, 3);
+    assert_eq!(a.tree_selected, 0);
+    assert_eq!(a.pending_tree_target, Some(a.tree_rows[0].target));
+
+    // An empty picker neither moves nor confirms.
+    let mut a = app();
+    move_in_dialog_to(&mut a, &DialogKind::Tree, 3);
+    confirm_dialog(&mut a, &DialogKind::Tree);
+    assert_eq!(a.tree_selected, 0);
+    assert!(a.pending_tree_target.is_none());
+}

@@ -1912,6 +1912,10 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                         app.effort_picker_selected = idx;
                         confirm_dialog(app, active);
                     }
+                    DialogKind::Tree => {
+                        app.tree_selected = idx;
+                        confirm_dialog(app, active);
+                    }
                     DialogKind::ApprovalMode => {
                         app.approval_picker_selected = idx;
                         confirm_dialog(app, active);
@@ -2256,6 +2260,12 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
             let len = effort_levels(app).len();
             if len > 0 {
                 app.effort_picker_selected = idx.min(len - 1);
+            }
+        }
+        DialogKind::Tree => {
+            let len = app.tree_rows.len();
+            if len > 0 {
+                app.tree_selected = idx.min(len - 1);
             }
         }
         DialogKind::ApprovalMode => {
@@ -2639,6 +2649,11 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.pending_effort = Some(level.as_str().to_string());
             }
         }
+        DialogKind::Tree => {
+            if let Some(row) = app.tree_rows.get(app.tree_selected) {
+                app.pending_tree_target = Some(row.target);
+            }
+        }
         DialogKind::ApprovalMode => {
             if let Some(mode) = whycodes_core::types::ApprovalMode::ALL
                 .get(app.approval_picker_selected)
@@ -2894,6 +2909,9 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
         DialogKind::Effort => {
             app.effort_picker_selected =
                 move_selection(app.effort_picker_selected, effort_levels(app).len(), delta);
+        }
+        DialogKind::Tree => {
+            app.tree_selected = move_selection(app.tree_selected, app.tree_rows.len(), delta);
         }
         DialogKind::ApprovalMode => {
             app.approval_picker_selected = move_selection(

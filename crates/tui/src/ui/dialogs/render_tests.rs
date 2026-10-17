@@ -843,6 +843,21 @@ fn render_dispatches_all_dialog_kinds() {
     assert!(app.dialog_list_hit.is_some());
     assert!(text.contains("current"), "{text}");
 
+    // Conversation tree picker
+    app.dialogs.clear();
+    let mut s = whycodes_session::session::Session::new("/tmp/t".into(), "sys".into());
+    s.add_user_message("first turn");
+    s.mark_branch("keep").unwrap();
+    s.add_user_message("second turn");
+    app.tree_rows = s.tree_rows();
+    app.tree_selected = 9;
+    app.dialogs.push(DialogKind::Tree);
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    assert!(app.dialog_list_hit.is_some());
+    assert!(text.contains("Conversation tree"), "{text}");
+    assert!(text.contains("first turn  [keep]"), "{text}");
+    assert!(text.contains("● second turn"), "{text}");
+
     // Live sessions dashboard
     app.dialogs.clear();
     app.sessions_rows = vec![SessionDashboardRow {
