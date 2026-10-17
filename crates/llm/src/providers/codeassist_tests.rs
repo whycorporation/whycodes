@@ -1229,3 +1229,21 @@ async fn complete_candidates_without_parts_are_empty() {
         .unwrap();
     assert!(resp.content.is_empty(), "{resp:?}");
 }
+
+#[test]
+fn inner_request_sends_a_compaction_block_as_text() {
+    let request = empty_request(vec![message(
+        Role::Assistant,
+        MessageContent::Blocks(vec![
+            whycodes_core::types::ContentBlock::compaction_from_raw(serde_json::json!({
+                "type": "compaction", "content": "the summary", "signature": "sig"
+            }))
+            .unwrap(),
+        ]),
+    )]);
+    let inner = build_inner_request(&request);
+    assert_eq!(
+        inner["contents"][0]["parts"][0]["text"],
+        "[Earlier conversation summary]\nthe summary"
+    );
+}

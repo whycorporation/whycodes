@@ -397,6 +397,7 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
             | Commands::Import { .. }
             | Commands::Stats
             | Commands::Debug { .. }
+            | Commands::Rules { .. }
             | Commands::Slop { .. }
             | Commands::Completions { .. } => false,
         },

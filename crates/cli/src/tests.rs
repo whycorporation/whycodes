@@ -2315,14 +2315,30 @@ async fn dispatch_offline_commands() {
     )
     .await;
     assert!(err.is_err(), "{err:?}");
-    dispatch_command(
-        &Commands::Completions {
-            shell: clap_complete::Shell::Bash,
-        },
-        &c,
-    )
-    .await
-    .unwrap();
+}
+
+/// Building the whole clap command tree for completions needs more than a
+/// test thread's 2 MB stack in debug and coverage builds; the binary runs it
+/// on the main thread.
+#[test]
+fn dispatch_completions_on_a_large_stack() {
+    let worker = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            let _home = IsolatedHome::new();
+            let c = cli(None);
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            rt.block_on(dispatch_command(
+                &Commands::Completions {
+                    shell: clap_complete::Shell::Bash,
+                },
+                &c,
+            ))
+        })
+        .unwrap();
+    worker.join().unwrap().unwrap();
 }
 
 #[tokio::test]

@@ -35,6 +35,28 @@ pub trait LlmProvider: Send + Sync {
         api_key: &'a str,
         model: &'a str,
     ) -> ProviderStreamFuture<'a>;
+
+    /// Provider-native compaction: summarize `request.messages` on the
+    /// provider's side and return its compaction block (Anthropic on-demand
+    /// compaction: `stop_reason` `"compaction"` and one
+    /// `ContentBlock::Compaction`). `instructions` replaces the provider's
+    /// own summarization prompt when non-empty. Providers without such a
+    /// call return an error; callers gate on
+    /// [`crate::capabilities::ModelCapabilities::compaction`] first.
+    fn compact<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+        _instructions: &'a str,
+    ) -> ProviderResponseFuture<'a> {
+        let name = self.name().to_string();
+        Box::pin(async move {
+            Err(whycodes_core::Error::llm(format!(
+                "{name} has no native compaction"
+            )))
+        })
+    }
 }
 
 /// Registry of available LLM providers

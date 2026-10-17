@@ -63,6 +63,9 @@ pub struct Agent {
     compaction_threshold: usize,
     /// `"auto"` = LLM summary on compact (full-replace); `"off"` = local stub.
     compaction_llm: bool,
+    /// `[session] compaction_method = "auto"`: try the provider's own
+    /// compaction before full-replace when the model has it.
+    compaction_native: bool,
     /// Tools schema sent to the model (`core` = smaller TTFT).
     tool_profile: ToolProfile,
     /// When false, Anthropic bodies skip cache_control markers.
@@ -101,8 +104,8 @@ pub struct Agent {
     /// The strong route and cheap target of the last prewalk hand-off; later
     /// turns start on it until `/prewalk restart`.
     prewalk_handoff: Mutex<Option<prewalk::PrewalkHandoff>>,
-    /// Compiled stream-interrupt rules (name, regex, hint).
-    stream_rules: Vec<(String, regex::Regex, String)>,
+    /// Compiled stream-interrupt rules.
+    stream_rules: Vec<crate::stream_rules::StreamRule>,
     /// Parallel multi-agent swarm (config-driven).
     swarm_enabled: bool,
     swarm_max_agents: usize,
@@ -265,39 +268,6 @@ fn write_agent_file(project: &std::path::Path, id: &str, ext: &str, body: &str) 
     }
 }
 
-fn compile_stream_rules(
-    rules: &[whycodes_config::StreamRuleConfig],
-) -> Vec<(String, regex::Regex, String)> {
-    let mut out = Vec::new();
-    for rule in rules {
-        let name = rule.name.trim();
-        let pattern = rule.pattern.trim();
-        let hint = rule.hint.trim();
-        if name.is_empty() || pattern.is_empty() || hint.is_empty() {
-            continue;
-        }
-        match regex::Regex::new(pattern) {
-            Ok(re) => out.push((name.to_string(), re, hint.to_string())),
-            Err(e) => {
-                tracing::warn!(name, pattern, error = %e, "invalid stream rule regex");
-            }
-        }
-    }
-    out
-}
-
-pub(crate) fn first_stream_rule_hit<'a>(
-    rules: &'a [(String, regex::Regex, String)],
-    text: &str,
-) -> Option<(&'a str, &'a str)> {
-    for (name, re, hint) in rules {
-        if re.is_match(text) {
-            return Some((name.as_str(), hint.as_str()));
-        }
-    }
-    None
-}
-
 fn append_skills_catalog(system_prompt: &str, project_path: &std::path::Path) -> String {
     // `load_project` is infallible today (unreadable skill dirs are skipped).
     let catalog = catalog_from_load(whycodes_skill::SkillRegistry::load_project(project_path));
@@ -419,6 +389,7 @@ impl Agent {
             // Match config default when `with_config` is not used.
             compaction_threshold: 150_000,
             compaction_llm: true,
+            compaction_native: false,
             tool_profile: ToolProfile::Core,
             use_prompt_cache: true,
             model_fast: None,
@@ -652,6 +623,11 @@ impl Agent {
                 .as_str(),
             "off" | "false" | "0" | "none" | "local"
         );
+        self.compaction_native = config
+            .session
+            .compaction_method
+            .trim()
+            .eq_ignore_ascii_case("auto");
         self.tool_profile = ToolProfile::parse(&config.session.tool_profile);
         self.use_prompt_cache = !matches!(
             config
@@ -691,7 +667,7 @@ impl Agent {
         self.model_smol = config.session.model_smol.clone();
         self.model_plan = config.session.model_plan.clone();
         self.prewalk = config.session.prewalk.unwrap_or(false);
-        self.stream_rules = compile_stream_rules(&config.session.stream_rules);
+        self.stream_rules = crate::stream_rules::compile(&config.session.stream_rules);
         self.swarm_enabled = config.swarm.enabled;
         self.swarm_max_agents = config
             .swarm

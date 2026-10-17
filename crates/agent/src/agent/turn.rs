@@ -9,12 +9,12 @@ use whycodes_core::types::{ContentBlock, StreamEvent, ToolResult};
 use whycodes_session::session::Session;
 
 use crate::events::{TurnEvent, TurnOpts, emit, is_cancelled, wait_until_cancelled};
+use crate::stream_rules::StreamChannel;
 use crate::tool_stream::ToolCallAssembler;
 
 use super::{
     Agent, DOOM_LOOP_THRESHOLD, MAX_CONSECUTIVE_COMPACT_FAILURES, append_request_user_suffix,
-    append_turn_context, first_stream_rule_hit, settle_checkpoint_rewind, tool_call_signature,
-    would_doom_loop,
+    append_turn_context, settle_checkpoint_rewind, tool_call_signature, would_doom_loop,
 };
 
 impl Agent {
@@ -97,6 +97,11 @@ impl Agent {
             events,
             cancel,
         } = opts;
+        session.stream_rules.begin_turn();
+        let watch_tool_args = self.stream_rules.iter().any(|r| {
+            r.scopes
+                .contains(&whycodes_config::StreamRuleScope::ToolArgs)
+        });
         // Trivial chit-chat: omit tools entirely (huge prefill savings).
         // Only on short single-user sessions — once tools were used, keep them.
         let last_user = session
@@ -362,6 +367,7 @@ impl Agent {
             }
 
             let mut accumulated_text = String::new();
+            let mut accumulated_thinking = String::new();
             let mut thinking_acc = crate::thinking_acc::ThinkingAccumulator::new();
             let mut turn_usage = whycodes_core::types::Usage::default();
             let mut assembler = ToolCallAssembler::new();
@@ -566,18 +572,15 @@ impl Agent {
                         }
                         emit(&events, TurnEvent::TextDelta(text.clone()));
                         accumulated_text.push_str(&text);
-                        let hit = first_stream_rule_hit(&self.stream_rules, &accumulated_text);
-                        if let Some((name, hint)) = hit {
-                            apply_stream_rule_hit(
-                                &mut speculative_reads,
-                                &events,
-                                session,
-                                name,
-                                hint,
-                                &mut stream_rule_retry,
-                            );
-                        }
-                        if stream_rule_retry {
+                        if check_stream_rules(
+                            &self.stream_rules,
+                            StreamChannel::Text,
+                            &accumulated_text,
+                            &mut speculative_reads,
+                            &events,
+                            session,
+                        ) {
+                            stream_rule_retry = true;
                             break;
                         }
                     }
@@ -586,6 +589,18 @@ impl Agent {
                         // Defer ToolStart until after argument fragments are
                         // merged — OpenAI streams send null/empty args first.
                         assembler.on_tool_use(id, name, input);
+                        if watch_tool_args
+                            && check_tool_args_rules(
+                                &self.stream_rules,
+                                &assembler,
+                                &mut speculative_reads,
+                                &events,
+                                session,
+                            )
+                        {
+                            stream_rule_retry = true;
+                            break;
+                        }
                         // Complete objects (Anthropic non-streamed) can start I/O now.
                         maybe_start_speculative(&mut speculative_reads, &assembler, &tool_ctx);
                     }
@@ -594,6 +609,18 @@ impl Agent {
                         input_json_delta,
                     } => {
                         assembler.on_tool_use_delta(&id, &input_json_delta);
+                        if watch_tool_args
+                            && check_tool_args_rules(
+                                &self.stream_rules,
+                                &assembler,
+                                &mut speculative_reads,
+                                &events,
+                                session,
+                            )
+                        {
+                            stream_rule_retry = true;
+                            break;
+                        }
                         // Path often closes mid-stream — start `read` I/O early.
                         maybe_start_speculative(&mut speculative_reads, &assembler, &tool_ctx);
                     }
@@ -607,6 +634,18 @@ impl Agent {
                         thinking_acc.push_text(&text);
                         emit(&events, TurnEvent::ThinkingDelta(text.clone()));
                         tracing::trace!(n = text.len(), "thinking delta");
+                        accumulated_thinking.push_str(&text);
+                        if check_stream_rules(
+                            &self.stream_rules,
+                            StreamChannel::Thinking,
+                            &accumulated_thinking,
+                            &mut speculative_reads,
+                            &events,
+                            session,
+                        ) {
+                            stream_rule_retry = true;
+                            break;
+                        }
                     }
                     StreamEvent::ThinkingDelta { text } => {
                         if text.is_empty() {
@@ -618,6 +657,18 @@ impl Agent {
                         thinking_acc.push_text(&text);
                         emit(&events, TurnEvent::ThinkingDelta(text.clone()));
                         tracing::trace!(n = text.len(), "thinking delta");
+                        accumulated_thinking.push_str(&text);
+                        if check_stream_rules(
+                            &self.stream_rules,
+                            StreamChannel::Thinking,
+                            &accumulated_thinking,
+                            &mut speculative_reads,
+                            &events,
+                            session,
+                        ) {
+                            stream_rule_retry = true;
+                            break;
+                        }
                     }
                     StreamEvent::ThinkingSignature { signature } => {
                         thinking_acc.push_signature(&signature);
@@ -1086,25 +1137,55 @@ fn maybe_start_speculative(
 
 fn skip_event() {}
 
-fn apply_stream_rule_hit(
+/// Match `text` on `channel` against the stream rules. On a hit: abort
+/// speculative reads, record the hit for `repeat`, and inject the hint. The
+/// caller then discards the draft and retries the step.
+fn check_stream_rules(
+    rules: &[crate::stream_rules::StreamRule],
+    channel: StreamChannel<'_>,
+    text: &str,
     speculative_reads: &mut Vec<crate::speculative_read::SpeculativeRead>,
     events: &Option<crate::events::EventSink>,
     session: &mut whycodes_session::Session,
-    name: &str,
-    hint: &str,
-    stream_rule_retry: &mut bool,
-) {
+) -> bool {
+    let Some(rule) = crate::stream_rules::first_hit(rules, channel, text, &session.stream_rules)
+    else {
+        return false;
+    };
+    let (name, hint) = (rule.name.as_str(), rule.hint.as_str());
     crate::speculative_read::abort_all(speculative_reads);
     emit(
         events,
         TurnEvent::Status(format!("Stream rule `{name}` interrupted the draft")),
     );
+    session.stream_rules.record(name);
     session.add_user_message(&format!(
         "<whycodes_rule name=\"{name}\">\n{hint}\n\
          The previous draft was discarded. Continue without violating this rule.\n\
          </whycodes_rule>"
     ));
-    *stream_rule_retry = true;
+    true
+}
+
+/// [`check_stream_rules`] on the arguments of the tool call that just streamed.
+fn check_tool_args_rules(
+    rules: &[crate::stream_rules::StreamRule],
+    assembler: &ToolCallAssembler,
+    speculative_reads: &mut Vec<crate::speculative_read::SpeculativeRead>,
+    events: &Option<crate::events::EventSink>,
+    session: &mut whycodes_session::Session,
+) -> bool {
+    let Some((_, tool, args)) = assembler.last_updated() else {
+        return false;
+    };
+    check_stream_rules(
+        rules,
+        StreamChannel::ToolArgs(&tool),
+        &args,
+        speculative_reads,
+        events,
+        session,
+    )
 }
 
 fn transcript_has_tool_work(messages: &[whycodes_core::types::Message]) -> bool {
