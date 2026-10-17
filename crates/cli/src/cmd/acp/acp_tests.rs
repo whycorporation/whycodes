@@ -358,6 +358,7 @@ fn test_cli() -> Cli {
         fork_session: false,
         debug: false,
         no_auto_update: true,
+        prewalk: false,
         no_memory: true,
     }
 }

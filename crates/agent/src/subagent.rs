@@ -91,6 +91,8 @@ pub struct SubagentRunner {
     risk_threshold: RiskThreshold,
     /// Redacts outgoing requests and restores placeholders in tool input.
     secrets: Option<Arc<whycodes_llm::Redactor>>,
+    /// Prewalk: `provider/model` to switch to after the first edit.
+    prewalk: Option<(String, String)>,
 }
 
 impl SubagentRunner {
@@ -124,7 +126,14 @@ impl SubagentRunner {
             hooks: Vec::new(),
             risk_threshold: RiskThreshold::default(),
             secrets: whycodes_llm::secrets::installed(),
+            prewalk: None,
         }
+    }
+
+    /// Hand off to `target` after the first edit (custom agent `prewalk: true`).
+    pub fn with_prewalk(mut self, target: Option<(String, String)>) -> Self {
+        self.prewalk = target;
+        self
     }
 
     /// Use `redactor` instead of the process default.
@@ -444,7 +453,7 @@ impl SubagentRunner {
             swarm_hub: self.swarm_hub.clone(),
         };
 
-        let provider = self.provider_registry.get(provider_name).ok_or_else(|| {
+        let mut provider = self.provider_registry.get(provider_name).ok_or_else(|| {
             whycodes_core::Error::llm(format!(
                 "Unknown provider: {}. Available: anthropic, openai, google, google-antigravity",
                 provider_name
@@ -454,6 +463,8 @@ impl SubagentRunner {
         let mut turn_count = 0;
         let mut final_text = String::new();
         let mut total_usage = whycodes_core::types::Usage::default();
+        let mut model = model.to_string();
+        let mut handoff = self.prewalk.clone();
 
         loop {
             turn_count += 1;
@@ -498,7 +509,7 @@ impl SubagentRunner {
 
             let mut event_stream = whycodes_llm::default_transport()
                 .with_redactor(self.secrets.clone())
-                .stream(provider, &request, api_key, model)
+                .stream(provider, &request, api_key, &model)
                 .await?;
 
             while let Some(event) = event_stream.next().await {
@@ -619,6 +630,24 @@ impl SubagentRunner {
             };
 
             session.add_tool_results(results);
+
+            // Prewalk: the first edit is done; the rest runs on the cheap model.
+            let dir = std::path::Path::new(&tool_ctx.working_dir);
+            let edited = tool_calls
+                .iter()
+                .any(|tc| crate::agent::prewalk::is_mutating_call(tc, dir));
+            if let Some((p, m)) = handoff.take_if(|_| edited) {
+                match self.provider_registry.get(&p) {
+                    Some(next) => {
+                        tracing::info!(agent = %self.info.name, to = %format!("{p}/{m}"), "prewalk hand-off");
+                        provider = next;
+                        model = m;
+                    }
+                    None => {
+                        tracing::debug!(provider = %p, "prewalk: provider not registered, staying")
+                    }
+                }
+            }
         }
 
         if let Some((inbox, key)) = &self.steer {

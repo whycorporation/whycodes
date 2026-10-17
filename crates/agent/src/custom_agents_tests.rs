@@ -16,6 +16,8 @@ fn sample(model: Option<&str>) -> CustomAgent {
         tools: None,
         disallowed_tools: Vec::new(),
         model: model.map(str::to_string),
+        prewalk: false,
+
         output: None,
         path: PathBuf::from("rev.md"),
     }
@@ -213,6 +215,57 @@ fn route_honours_model_field() {
     assert_eq!(
         sample(Some("other-model")).route("p", "big", worker()),
         ("p".to_string(), "other-model".to_string())
+    );
+}
+
+#[test]
+fn prewalk_frontmatter_starts_strong_and_hands_off_to_the_worker() {
+    let on = parse(
+        "---
+description: d
+prewalk: True
+---
+body
+",
+        Path::new("pw.md"),
+    )
+    .unwrap();
+    assert!(on.prewalk);
+    let off = parse(
+        "---
+description: d
+prewalk: no
+---
+",
+        Path::new("x.md"),
+    )
+    .unwrap();
+    assert!(!off.prewalk);
+    assert!(!sample(None).prewalk, "off by default");
+
+    let worker = || ("p".to_string(), "small".to_string());
+    let big = || ("p".to_string(), "big".to_string());
+    assert_eq!(
+        sample(None).prewalk_route("p", "big", worker()),
+        (worker(), None),
+        "without prewalk the route is unchanged"
+    );
+    let mut agent = sample(None);
+    agent.prewalk = true;
+    assert_eq!(
+        agent.prewalk_route("p", "big", worker()),
+        (big(), Some(worker()))
+    );
+    agent.model = Some("xai/grok-4".into());
+    assert_eq!(
+        agent.prewalk_route("p", "big", worker()),
+        (("xai".to_string(), "grok-4".to_string()), Some(worker()))
+    );
+    agent.model = None;
+    assert_eq!(
+        agent.prewalk_route("p", "big", big()),
+        (big(), None),
+        "no cheaper worker model: stay on the strong one"
     );
 }
 

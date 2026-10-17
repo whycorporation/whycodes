@@ -14,6 +14,7 @@ async fn pr_stub_runs() {
         fork_session: false,
         debug: false,
         no_auto_update: true,
+        prewalk: false,
         no_memory: true,
     };
     let (_dir, stub) = gh_stub(1);
@@ -70,6 +71,7 @@ fn test_cli() -> crate::Cli {
         fork_session: false,
         debug: false,
         no_auto_update: true,
+        prewalk: false,
         no_memory: true,
     }
 }

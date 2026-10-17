@@ -71,7 +71,12 @@ Computed once before the step loop:
 - `skip_prompt_cache_once` is swapped to `false`; a `/fresh` sets it so the
   next step bypasses provider prompt cache and the local response cache.
 - `routing::resolve_agent_model`: the `plan` agent uses `session.model_plan`
-  when set; everything else keeps the session route.
+  when set; everything else keeps the session route. With `session.prewalk`
+  every agent takes that `plan` route (the strong model).
+- `prewalk_resume` (`crates/agent/src/agent/prewalk.rs`): when an earlier
+  turn handed off from this same strong route, the turn's `fallback` slot
+  starts on that cheap target, with `Status("Prewalk: continuing on …")`.
+  `/prewalk restart` (`Agent::prewalk_restart`) clears it.
 - `tools_free_chat`: the user text is a trivial seed
   (`title::is_trivial_title_seed`), the session has at most one user message,
   and the transcript has no tool work. Then the request carries no tool
@@ -151,7 +156,7 @@ partner (`session.model_race`, `race_after_ms`). Open failures are classified
 |---|---|
 | `ContextOverflow` (first time this turn) | `compact_session`, `Status("Context overflow — compacting and retrying this step…")`, restart step |
 | `RateLimited` | `failover_api_key` picks the next named credential for the same provider; sticky credential updated; restart step |
-| any `retryable()` kind | `next_fallback` walks `session.fallback_models`; the chosen target sticks for the rest of the turn; restart step |
+| any `retryable()` kind | `next_fallback` walks `session.fallback_models` from the slot's next index (0 after a prewalk hand-off); the chosen target sticks for the rest of the turn; restart step |
 | otherwise | the turn returns `Err(e)` |
 
 Transport-level retry/backoff is inside `whycodes-llm`: [retry.md](retry.md).
@@ -250,6 +255,18 @@ everything else to `ToolExecutor::execute`. The other internal `read` URLs
 (`skill://`, `agent://`, `proc://`, `rule://`, `pr://`, `issue://`) resolve
 inside the tool (`crates/tools/src/file/internal.rs`).
 
+Prewalk hand-off: after a batch has run, and only while the `fallback` slot
+is empty, `prewalk_target` checks the batch for a mutating call
+(`prewalk::is_mutating_call`: `edit`, `write`, `apply_patch`, `ast_edit`, or
+`bash` that `whycodes_command_risk::assess` does not rate `Safe`). The call
+itself already ran on the strong model. The cheap target
+(`routing::resolve_worker_model` with `session.model_smol`) goes into the same
+`fallback` slot a failed open would use, so every later step of the turn uses
+it, and is remembered for later turns. It emits
+`Status("Prewalk: handing off to <provider/model> after the plan")`. No
+cheaper sibling, an unregistered provider, or no key (`Agent::target_key`, the
+same lookup as `next_fallback`) keeps the strong model with a debug log.
+
 If the batch returns `Err` (cancel), `close_unanswered_calls` appends an error
 result `Tool not run: the turn was stopped before this call finished.` for
 every call in the batch so the next request is not rejected by strict
@@ -316,7 +333,10 @@ drops events silently when the receiver is gone.
 - `max_turns` (the `task` tool defaults to 15), worker model
   `session.model_smol`, per-type permission profiles (`explore` / `scout`
   read-only; `general` = parent minus todo / task / swarm; custom agents from
-  `custom_agents.rs`).
+  `custom_agents.rs`). A custom agent with `prewalk: true`
+  (`CustomAgent::prewalk_route`) starts on the strong route and
+  `run_turn_inner` switches to the worker model after the first step whose
+  calls include a mutating one (`with_prewalk`).
 
 It does **not** reuse: streaming `TurnEvent`s (thinking is only logged),
 speculative reads, stream rules, the doom-loop guard, auto-compact and the
@@ -355,6 +375,7 @@ written back to the parent session.
 | `[session] fallback_models` | config | `provider/model` list tried when a stream fails to open |
 | `[session] model_plan` | config | Route used while the `plan` agent is active |
 | `[session] model_smol` | config | Model for `task` / `swarm` workers |
+| `[session] prewalk`, `--prewalk`, `WHYCODES_PREWALK` | config / CLI / env | Plan on the strong model, hand the turn to the cheap one after the first edit |
 | `[session] reasoning_effort` | config | Passed to `attach_thinking_request` |
 | `[session] intent_guidance` | config | `auto` (default) / `off` / `always`: posture injection and tool authorization |
 | `[session.magic_keywords] enabled`, `ultrathink`, `orchestrate` | config | Keyword notices; `ultrathink` also raises thinking effort |
