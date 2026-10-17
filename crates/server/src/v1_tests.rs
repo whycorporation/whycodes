@@ -96,6 +96,7 @@ fn maps_every_wire_event() {
             activity: String::new(),
             elapsed_ms: 0,
             output: String::new(),
+            tokens: 0,
         })
         .is_none()
     );

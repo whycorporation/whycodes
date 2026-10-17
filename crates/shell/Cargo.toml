@@ -1,0 +1,101 @@
+[package]
+name = "whycodes-shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Embedded bash-compatible shell and coreutils for Windows hosts without Git Bash"
+
+# Exact pins: the shell engine is a Windows "Preview" tier upstream, and the
+# utilities are matched to one uucore line (0.12) where a release allows it.
+# findutils 0.10 and sed 0.2 still pull their own older uucore; see
+# docs/proposals/embedded-shell-spike.md "Implementation notes".
+[dependencies]
+brush-core = "=0.5.0"
+brush-builtins = { version = "=0.2.0", default-features = false, features = [
+    "builtin.alias",
+    "builtin.break",
+    "builtin.builtin",
+    "builtin.caller",
+    "builtin.cd",
+    "builtin.colon",
+    "builtin.command",
+    "builtin.continue",
+    "builtin.declare",
+    "builtin.dirs",
+    "builtin.dot",
+    "builtin.echo",
+    "builtin.enable",
+    "builtin.eval",
+    "builtin.exec",
+    "builtin.exit",
+    "builtin.export",
+    "builtin.false",
+    "builtin.getopts",
+    "builtin.hash",
+    "builtin.help",
+    "builtin.kill",
+    "builtin.let",
+    "builtin.mapfile",
+    "builtin.popd",
+    "builtin.printf",
+    "builtin.pushd",
+    "builtin.pwd",
+    "builtin.read",
+    "builtin.return",
+    "builtin.set",
+    "builtin.shift",
+    "builtin.shopt",
+    "builtin.test",
+    "builtin.times",
+    "builtin.trap",
+    "builtin.true",
+    "builtin.type",
+    "builtin.ulimit",
+    "builtin.umask",
+    "builtin.unalias",
+    "builtin.unset",
+    "builtin.wait",
+] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+clap.workspace = true
+grep-searcher.workspace = true
+grep-regex.workspace = true
+grep-printer = { version = "=0.3.1", default-features = false }
+globset = "=0.4.20"
+walkdir = "=2.5.0"
+uucore = "=0.12.0"
+uu_cat = "=0.12.0"
+uu_cp = "=0.12.0"
+uu_cut = "=0.12.0"
+uu_env = "=0.12.0"
+uu_head = "=0.12.0"
+uu_ls = "=0.12.0"
+uu_mkdir = "=0.12.0"
+uu_mv = "=0.12.0"
+uu_rm = "=0.12.0"
+uu_sort = "=0.12.0"
+uu_tail = "=0.12.0"
+uu_tee = "=0.12.0"
+uu_touch = "=0.12.0"
+uu_tr = "=0.12.0"
+uu_uniq = "=0.12.0"
+uu_wc = "=0.12.0"
+findutils = "=0.10.0"
+sed = "=0.2.0"
+# sed 0.2 is built on uucore 0.10; only to set its utility-name mode.
+uucore_sed = { package = "uucore", version = "=0.10.0" }
+tracing.workspace = true
+diffutils = "=0.5.0"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"
+harness = false
+
+[lints]
+workspace = true

@@ -38,12 +38,32 @@ mod cmd;
 pub(crate) use cmd::*;
 
 fn main() -> anyhow::Result<()> {
+    // `whycodes __shell -c <cmd>` (the bash tool's fallback on Windows) and
+    // its bundled utilities: before clap, config and logging, so a command
+    // costs one process start. Never reached from tests (they call
+    // `dispatch_process`), which keeps test binaries off the shell path.
+    #[cfg(all(windows, feature = "embedded-shell"))]
+    embedded_shell();
     // Floor path for Boot/TTFF (`whycodes --version` / `-V`):
     // never build a Tokio runtime, never run clap, never touch config/logging.
     if try_print_version_fast() {
         return Ok(());
     }
     dispatch_process(std::env::args_os().skip(1))
+}
+
+/// Run an embedded-shell invocation and exit, or register this binary as
+/// the `bash` tool's fallback shell for the rest of the process.
+#[cfg(all(windows, feature = "embedded-shell"))]
+fn embedded_shell() {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if let Some(code) = whycodes_shell::dispatch(&args) {
+        std::process::exit(code);
+    }
+    match std::env::current_exe() {
+        Ok(exe) => whycodes_sandbox::set_embedded_shell(exe),
+        Err(err) => eprintln!("whycodes: embedded shell unavailable: {err}"),
+    }
 }
 
 /// Same path as `main` after the version fast-path. Argv is injected so
