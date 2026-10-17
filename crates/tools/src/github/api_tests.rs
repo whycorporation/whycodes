@@ -433,11 +433,52 @@ fn gh_hosts_file_token_from_disk_missing_file_is_none() {
     restore_var("GH_CONFIG_DIR", prev_dir);
 }
 
+/// Stub `gh` that prints `stub-gh-token` for `gh auth token`.
+fn gh_token_stub() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_gh_token_stub(dir.path());
+    (dir, path)
+}
+
+#[cfg(windows)]
+fn write_gh_token_stub(dir: &Path) -> PathBuf {
+    let path = dir.join("gh.cmd");
+    std::fs::write(&path, "@echo stub-gh-token\r\n").unwrap();
+    path
+}
+
+#[cfg(not(windows))]
+fn write_gh_token_stub(dir: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("gh");
+    std::fs::write(&path, "#!/bin/sh\necho stub-gh-token\n").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
 #[test]
-fn gh_auth_cli_probe_does_not_panic() {
-    if let Some(token) = gh_auth_token_from_cli() {
-        assert!(!token.is_empty());
-    }
+fn gh_auth_cli_reads_token_from_stub() {
+    let (_dir, stub) = gh_token_stub();
+    let _gh = TestGhGuard::set(Some(stub));
+    assert_eq!(gh_auth_token_from_cli().as_deref(), Some("stub-gh-token"));
+}
+
+/// A test that would spawn the real `gh` from PATH fails loudly instead.
+#[test]
+#[should_panic(expected = "real `gh`")]
+fn real_gh_is_refused_in_tests() {
+    let _cleared = TestGhGuard::set(None);
+    gh_program();
+}
+
+#[test]
+fn missing_gh_stub_does_not_fall_back_to_installed_gh() {
+    let dir = tempfile::tempdir().unwrap();
+    let _gh = TestGhGuard::set(Some(dir.path().join("no-gh")));
+    assert!(fallback_gh_paths(true).is_empty());
+    assert_eq!(fallback_gh_paths(false), well_known_gh_paths());
+    assert!(gh_auth_token_from_cli().is_none());
+    assert_eq!(real_gh(false), PathBuf::from("gh"));
 }
 
 #[test]
@@ -507,7 +548,9 @@ fn assert_github_auth_test_tokens() {
         Some("from-hosts")
     );
     assert_eq!(git_credential_token_with(true).as_deref(), Some("from-git"));
-    let _ = gh_auth_token_with(false);
+    let (_dir, stub) = gh_token_stub();
+    let _gh = TestGhGuard::set(Some(stub));
+    assert_eq!(gh_auth_token_with(false).as_deref(), Some("stub-gh-token"));
     let _ = gh_hosts_file_token_with(false);
     let _ = git_credential_token_with(false);
 }

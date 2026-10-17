@@ -854,7 +854,7 @@
   },
   {
     "name": "read",
-    "description": "Read a text file (line-numbered) or an internal URL: skill://, agent://, proc://, rule://, pr://, issue://, mcp:// (a bare scheme lists). Long notes: `read agent://tools/read`.",
+    "description": "Read a text file (line-numbered; a long source file returns its declaration outline first) or an internal URL: skill://, agent://, proc://, rule://, pr://, issue://, mcp:// (a bare scheme lists). Long notes: `read agent://tools/read`.",
     "parameters": {
       "properties": {
         "limit": {
@@ -864,6 +864,10 @@
         "offset": {
           "description": "1-based line to start from (default: 1)",
           "type": "integer"
+        },
+        "outline": {
+          "description": "Declaration outline instead of lines. Default: on for source files over 400 lines read without offset/limit; false forces lines, true outlines any size",
+          "type": "boolean"
         },
         "path": {
           "description": "File path (relative to project root or absolute), or an internal URL: skill://<name>, agent://<id>, proc://<job-id>, rule://<name>, pr://<number>[/diff], issue://<number>, mcp://<server>/<uri>",
@@ -877,7 +881,7 @@
     },
     "profile": "core",
     "aliasOf": null,
-    "guide": "Read a text file with line numbers. Prefer project-relative paths.\n\nInternal URLs (a bare scheme lists what it can read):\n- `skill://<name>` — a skill body.\n- `agent://<id>` — a finished task/swarm artifact; `agent://tools/<name>` this guide set.\n- `proc://<job-id>` — the stored log of a background shell job\n(`.whycodes/scratch/<id>.log`); `bg` lists live jobs.\n- `rule://<name>` — a project rule file (`.whycodes/rules/*.md`, `.cursor/rules/*.mdc`,\n`.clinerules/*.md`, `.github/instructions/*.md`).\n- `pr://<number>` / `pr://<number>/diff` — a pull request of the `origin` GitHub\nremote (metadata and body, or the diff); `pr://` lists the open ones (first page).\n- `issue://<number>` — an issue of the same remote; `issue://` lists the open ones.\nGitHub reads use the same token discovery and network allowlist as `github_pr`.\n- `mcp://<server>/<uri>` — an MCP resource; `mcp://<server>` lists that server's\nresources, `mcp://` the connected servers.\n\nA `.ipynb` reads as its cells: `# %% [code] cell:N` before each source,\noutputs summarized in one `# out:` line. `edit` / `write` take that text."
+    "guide": "Read a text file with line numbers. Prefer project-relative paths.\n\nOutline: a source file over 400 lines read without `offset`/`limit` returns its\ndeclaration lines (fn/struct/class/impl/headings, indentation kept) with line\nnumbers and content tags, then `[file has N lines; showing its outline. ...]`.\nThe tags work with `edit`. Read a range next with `offset`/`limit`.\n`outline: false` always pages; `outline: true` outlines a file of any length.\nExtensions repomap does not map, files over 512 KB, or files with no\ndeclarations page as usual.\n\nInternal URLs (a bare scheme lists what it can read):\n- `skill://<name>` — a skill body.\n- `agent://<id>` — a finished task/swarm artifact; `agent://<id>/<json-pointer>` one\nvalue of its structured result (e.g. `agent://task-1/findings/0/path`);\n`agent://tools/<name>` this guide set.\n- `proc://<job-id>` — the stored log of a background shell job\n(`.whycodes/scratch/<id>.log`); `bg` lists live jobs.\n- `rule://<name>` — a project rule file (`.whycodes/rules/*.md`, `.cursor/rules/*.mdc`,\n`.clinerules/*.md`, `.github/instructions/*.md`).\n- `pr://<number>` / `pr://<number>/diff` — a pull request of the `origin` GitHub\nremote (metadata and body, or the diff); `pr://` lists the open ones (first page).\n- `issue://<number>` — an issue of the same remote; `issue://` lists the open ones.\nGitHub reads use the same token discovery and network allowlist as `github_pr`.\n- `mcp://<server>/<uri>` — an MCP resource; `mcp://<server>` lists that server's\nresources, `mcp://` the connected servers.\n\nA `.ipynb` reads as its cells: `# %% [code] cell:N` before each source,\noutputs summarized in one `# out:` line. `edit` / `write` take that text."
   },
   {
     "name": "repomap",
@@ -1103,6 +1107,10 @@
         "max_turns": {
           "description": "Maximum conversation turns for the subagent (default: 15)",
           "type": "integer"
+        },
+        "output_schema": {
+          "description": "JSON Schema (object) for a typed result. The subagent ends with a matching ```json block (plus a required `what_i_did_not_check` string array); it is validated, retried once if invalid, returned after the summary and readable as `read agent://<id>/<json-pointer>`. Overrides a custom agent's `output`.",
+          "type": "object"
         },
         "subagent_type": {
           "description": "general (default), explore, scout, or a name from the system prompt's `# Custom agents` list",

@@ -70,16 +70,25 @@ pub(crate) fn gh_status_ok(status: Result<std::process::ExitStatus, std::io::Err
     matches!(status, Ok(s) if s.success())
 }
 
-/// GitHub CLI binary. Production always uses `gh`. Tests may point this at a
-/// stub on the current thread so success and spawn-failure arms run without a
-/// real `gh` install (and without leaking the override to other tests).
+/// GitHub CLI binary. Production always uses `gh` from `PATH`. Tests must
+/// point this at a stub on the current thread (`TestGhGuard`): a test build
+/// that would run the real `gh` panics instead, because `gh pr create` /
+/// `gh issue list` act on the developer's real account and repository.
 pub(crate) fn gh_program() -> String {
     #[cfg(test)]
-    {
-        if let Some(path) = TEST_GH.with(|slot| slot.borrow().clone()) {
-            return path;
-        }
+    if let Some(path) = TEST_GH.with(|slot| slot.borrow().clone()) {
+        return path;
     }
+    real_gh(cfg!(test))
+}
+
+/// The real `gh` from `PATH`. `refuse` is `cfg!(test)`: a test that reaches
+/// here has no stub and would act on the developer's GitHub account.
+fn real_gh(refuse: bool) -> String {
+    assert!(
+        !refuse,
+        "test ran the real `gh` from PATH; stub it with TestGhGuard"
+    );
     "gh".into()
 }
 
@@ -89,11 +98,11 @@ std::thread_local! {
 }
 
 #[cfg(test)]
-struct TestGhGuard(Option<String>);
+pub(crate) struct TestGhGuard(Option<String>);
 
 #[cfg(test)]
 impl TestGhGuard {
-    fn set(program: Option<String>) -> Self {
+    pub(crate) fn set(program: Option<String>) -> Self {
         let prev = TEST_GH.with(|slot| slot.replace(program));
         Self(prev)
     }
