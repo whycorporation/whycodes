@@ -273,6 +273,8 @@ impl Config {
         if let Some(project) = Self::load_project_layer(project_dir) {
             config = config.merge_with(&project);
         }
+        // `.whycodes/rules/*.md` stream rules overlay the config tables.
+        config.load_stream_rule_files(project_dir);
 
         // Layer 4: environment variables
         config.apply_env_overrides();
