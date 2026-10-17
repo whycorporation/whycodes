@@ -267,6 +267,32 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 info.modal,
             );
         }
+        crate::app::DialogKind::Tree => {
+            let items: Vec<SelectItem> = app
+                .tree_rows
+                .iter()
+                .map(|r| SelectItem::new(r.line()))
+                .collect();
+            let selected = app.tree_selected.min(items.len().saturating_sub(1));
+            let info = render_select(
+                frame,
+                " Conversation tree  ·  ● active  ·  Enter continues from a turn ",
+                &items,
+                selected,
+                "No turns yet.",
+                palette,
+                mouse,
+            );
+            app.apply_select_paint(
+                info.close_hit,
+                info.list_area,
+                info.scrollbar_hit,
+                info.scroll_start,
+                info.visible,
+                info.total,
+                info.modal,
+            );
+        }
         crate::app::DialogKind::ApprovalMode => {
             let items: Vec<SelectItem> = whycodes_core::types::ApprovalMode::ALL
                 .iter()

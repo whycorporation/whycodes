@@ -89,12 +89,34 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
         ",
     )?;
 
+    // Conversation branches (`/branch`, `/tree`). Each stored branch is a
+    // full root-to-leaf copy kept apart from `messages`, so `messages` stays
+    // the active path that every reader (an older binary included) loads.
+    conn.execute_batch(BRANCH_TABLES)?;
+
     for table in FTS_TABLES {
         create_fts(conn, table, "fts5")?;
     }
 
     Ok(())
 }
+
+/// Branch storage, see the call site in [`run_migrations`].
+const BRANCH_TABLES: &str = "
+        CREATE TABLE IF NOT EXISTS session_branches (
+            session_id TEXT NOT NULL,
+            ord        INTEGER NOT NULL,
+            name       TEXT,
+            PRIMARY KEY (session_id, ord)
+        );
+        CREATE TABLE IF NOT EXISTS branch_messages (
+            session_id TEXT NOT NULL,
+            ord        INTEGER NOT NULL,
+            seq        INTEGER NOT NULL,
+            content    TEXT NOT NULL,
+            PRIMARY KEY (session_id, ord, seq)
+        );
+        ";
 
 /// Record tables with an FTS5 candidate index on their `text` column.
 pub(crate) const FTS_TABLES: [&str; 3] = ["memories", "code_chunks", "session_chunks"];
@@ -218,6 +240,8 @@ mod tests {
         run_migrations(&conn).unwrap();
         assert!(column_exists(&conn, "memories", "embedding").unwrap());
         assert!(table_exists(&conn, "memories").unwrap());
+        assert!(table_exists(&conn, "session_branches").unwrap());
+        assert!(table_exists(&conn, "branch_messages").unwrap());
     }
 
     fn fts_hits(conn: &Connection, table: &str, word: &str) -> i64 {
