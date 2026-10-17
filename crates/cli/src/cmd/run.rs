@@ -324,6 +324,13 @@ pub(crate) fn nothing_to_undo_line() -> String {
     format!("{} Nothing to undo.", "ℹ".cyan())
 }
 
+pub(crate) fn nothing_older_to_undo_line(depth: usize) -> String {
+    format!(
+        "{} Nothing older to undo (undo_depth = {depth}).",
+        "ℹ".cyan()
+    )
+}
+
 pub(crate) fn nothing_to_redo_line() -> String {
     format!("{} Nothing to redo.", "ℹ".cyan())
 }
@@ -682,7 +689,7 @@ pub(crate) async fn cmd_run(
     );
     let mut session = whycodes_session::session::Session::new(project_dir.clone(), system_prompt);
     maybe_session_auto_index(&project_dir, &config);
-    let mut history = whycodes_session::SessionHistory::new();
+    let mut history = whycodes_session::SessionHistory::with_depth(config.session.undo_depth);
     let mut provider = provider;
     let mut model = model;
     let mut show_thinking = false;
@@ -887,7 +894,7 @@ pub(crate) async fn cmd_run(
                     continue;
                 }
                 "/new" | "/clear" => {
-                    history = whycodes_session::SessionHistory::new();
+                    history.clear();
                     session = whycodes_session::session::Session::new(
                         project_dir.clone(),
                         with_project_memory(
@@ -976,6 +983,8 @@ pub(crate) async fn cmd_run(
                     if let Some(msgs) = history.undo(&session.messages, &project_dir) {
                         session.set_messages(msgs);
                         println!("{}", undid_turn_line(session.messages.len()));
+                    } else if let Some(depth) = history.exhausted_depth() {
+                        println!("{}", nothing_older_to_undo_line(depth));
                     } else if session.undo_last_turn() > 0 {
                         println!("{}", undid_turn_line(session.messages.len()));
                     } else {
@@ -1153,7 +1162,7 @@ pub(crate) async fn cmd_run(
                     };
                     match resume_session_into(&mut session, &want, false) {
                         Ok(true) => {
-                            history = whycodes_session::SessionHistory::new();
+                            history.clear();
                             println!(
                                 "{}",
                                 resumed_line(&session.title, &session.id, session.messages.len())

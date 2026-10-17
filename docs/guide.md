@@ -353,7 +353,7 @@ Both TUI and `--plain`:
 | `/security-review` | Security-focused review of changes |
 | `/commit` | Draft (and optionally create) a git commit |
 | `/diff` | Git status + `diff --stat` |
-| `/undo` | Undo the last turn and restore files via git |
+| `/undo` | Undo the last turn and restore files via git. Steps back up to `[session] undo_depth` turns (default 50); past that it says "Nothing older to undo (undo_depth = N)" |
 | `/redo` | Redo the last undone turn |
 | `/share` `/export` | Export the session and print its local share URL |
 | `/compact [context]` `/summarize` | Compact the conversation (LLM full-replace; optional note of what to keep) |
@@ -860,6 +860,8 @@ theme = "default_dark"
 [session]
 auto_title = true
 # title_model = "anthropic/claude-haiku-4-5-20251001"
+# Turns /undo can step back (oldest drop first); 0 = unlimited.
+# undo_depth = 50
 
 [mcp_servers.filesystem]
 command = "npx"
