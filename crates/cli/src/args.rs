@@ -7,6 +7,7 @@ use crate::{VERSION_LONG, parse_output_format};
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use whycodes_core::types::ApprovalMode;
 use whycodes_protocol::OutputFormat;
 
 /// Drop "Did you mean" when two or more names are equally close (#70).
@@ -101,6 +102,23 @@ pub struct Cli {
     /// Skip the home-screen "update available?" prompt for this process
     #[arg(long = "no-auto-update", global = true)]
     pub no_auto_update: bool,
+
+    /// Approval preset for this run: auto, important or manual (overrides `[general] approval_mode` and WHYCODES_APPROVAL_MODE)
+    #[arg(
+        long = "approval-mode",
+        global = true,
+        value_name = "MODE",
+        value_parser = parse_approval_mode
+    )]
+    pub approval_mode: Option<ApprovalMode>,
+}
+
+/// `--approval-mode` value: the names `/mode` and `[general] approval_mode`
+/// accept, aliases included.
+pub(crate) fn parse_approval_mode(raw: &str) -> Result<ApprovalMode, String> {
+    ApprovalMode::parse(raw).ok_or_else(|| {
+        format!("unknown approval mode `{raw}` (expected auto, important or manual)")
+    })
 }
 
 #[derive(Subcommand, Debug)]

@@ -1576,6 +1576,9 @@ pub struct TuiApp {
     pub(crate) approval_picker_selected: usize,
     /// Session approval overlay (default auto).
     pub(crate) approval_mode: ApprovalMode,
+    /// Tab over an open permission prompt: keys edit the prompt box, and
+    /// Enter denies the pending asks and sends the text to the running turn.
+    pub(crate) permission_reply_focus: bool,
     /// Agent switch from the picker dialog (prompt footer click / `/agent`).
     pub(crate) pending_agent: Option<String>,
     /// `/tree` rows (built from the session when the picker opens).
@@ -2399,6 +2402,7 @@ impl TuiApp {
             pending_approval_mode: None,
             approval_picker_selected: 0,
             approval_mode: ApprovalMode::Auto,
+            permission_reply_focus: false,
             pending_agent: None,
             tree_rows: Vec::new(),
             tree_selected: 0,
@@ -3036,6 +3040,12 @@ impl TuiApp {
     }
 
     /// True while any modal owns the screen (dialog stack or Help overlay).
+    /// The prompt box owns the keys over an open permission prompt.
+    pub fn permission_reply_focused(&self) -> bool {
+        self.permission_reply_focus
+            && matches!(self.dialogs.active(), Some(DialogKind::Permission { .. }))
+    }
+
     pub fn modal_is_open(&self) -> bool {
         self.dialogs.is_open()
             || self.mode == AppMode::Help
@@ -3668,6 +3678,8 @@ impl TuiApp {
 
     /// Open a permission dialog for tool approval.
     pub fn ask_permission(&mut self, tool_name: impl Into<String>, detail: impl Into<String>) {
+        // Each prompt opens on its y/n keys; Tab moves to the prompt box.
+        self.permission_reply_focus = false;
         self.mode = AppMode::Dialog;
         self.key_context = KeymapContext::Dialog;
         self.current_agent_state = AgentState::WaitingForPermission;
