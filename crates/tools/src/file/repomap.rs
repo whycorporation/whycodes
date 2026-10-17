@@ -217,13 +217,37 @@ struct FileBlock {
     sigs: Vec<String>,
 }
 
-fn file_block_from(path: &Path, rel: String) -> Option<FileBlock> {
-    let text = read_repomap_text(path)?;
-    let ext = path
-        .extension()
+fn file_ext(path: &Path) -> String {
+    path.extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+}
+
+/// Declaration lines of one source file for `read`'s outline: the file's
+/// line count and every `(1-based line, raw line)` repomap would keep.
+/// `None` when repomap does not map this file (extension, size, binary, UTF-8).
+pub(super) fn file_outline(path: &Path) -> Option<(usize, Vec<(usize, String)>)> {
+    if !is_source_path(path) {
+        return None;
+    }
+    // A `?` here is an expansion line coverage misses.
+    #[allow(clippy::question_mark)]
+    let text = match read_repomap_text(path) {
+        Some(text) => text,
+        None => return None,
+    };
+    let ext = file_ext(path);
+    let entries = signature_lines(&text, &ext)
+        .into_iter()
+        .map(|(i, line)| (i + 1, line.to_string()))
+        .collect();
+    Some((text.lines().count(), entries))
+}
+
+fn file_block_from(path: &Path, rel: String) -> Option<FileBlock> {
+    let text = read_repomap_text(path)?;
+    let ext = file_ext(path);
     let sigs = extract_signatures(&text, &ext);
     if sigs.is_empty() {
         None
@@ -302,26 +326,31 @@ fn rank_key(rel: &str) -> (u8, &str) {
 }
 
 fn extract_signatures(text: &str, ext: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        if out.len() >= MAX_SIGS_PER_FILE {
-            break;
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty()
-            || trimmed.starts_with("//")
-            || (trimmed.starts_with('#') && ext != "md")
-        {
-            continue;
-        }
-        if trimmed.starts_with("/*") || trimmed.starts_with("*") {
-            continue;
-        }
-        if is_signature_line(trimmed, ext) {
-            out.push(truncate_sig(trimmed));
-        }
+    signature_lines(text, ext)
+        .into_iter()
+        .take(MAX_SIGS_PER_FILE)
+        .map(|(_, line)| truncate_sig(line.trim()))
+        .collect()
+}
+
+/// `(0-based index, raw line)` of every declaration-like line.
+fn signature_lines<'a>(text: &'a str, ext: &str) -> Vec<(usize, &'a str)> {
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| is_declaration_text(line.trim(), ext))
+        .collect()
+}
+
+fn is_declaration_text(trimmed: &str, ext: &str) -> bool {
+    if trimmed.is_empty()
+        || trimmed.starts_with("//")
+        || (trimmed.starts_with('#') && ext != "md")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with('*')
+    {
+        return false;
     }
-    out
+    is_signature_line(trimmed, ext)
 }
 
 fn is_signature_line(line: &str, ext: &str) -> bool {

@@ -38,6 +38,17 @@ whether it exists, the data dir, and the `WHYCODES_*` variables it saw.
 `whycodes config show` / `get <key>` / `set <key> <value>` read and write
 the global file only (no project or environment layer).
 
+**WhyCodes writes only the keys you change, to the global file.** Saving a
+setting from a running session (the first-launch OpenRouter key modal,
+picking a discovered local server, `/mode`, the reasoning-effort picker,
+`/import`, `config set`, `provider add|remove|discover --save`,
+`model default`, `mcp add|remove`) re-reads the global `config.toml` as
+written, applies that one change and writes it back. Values that came from
+the project file, environment variables (`WHYCODES_*`, `<PROVIDER>_API_KEY`
+and the other key variables) or command-line flags stay in memory for the
+run and never land in the global file; `${VAR}` placeholders in `[notify]`
+stay unexpanded on disk.
+
 ## Layers
 
 Lowest to highest precedence, from `Config::load_layered`:

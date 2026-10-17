@@ -270,7 +270,11 @@ impl Agent {
         tool_ctx: &ToolContext,
         speculative: &mut Vec<crate::speculative_read::SpeculativeRead>,
     ) -> Option<ToolResult> {
-        if tc.name != "read" || speculative.is_empty() || self.read_has_hooks() {
+        if tc.name != "read"
+            || speculative.is_empty()
+            || self.read_has_hooks()
+            || tc.arguments.get("outline").is_some()
+        {
             return None;
         }
         let path = tc.arguments.get("path")?.as_str()?;
@@ -281,6 +285,7 @@ impl Agent {
             path,
             offset,
             limit,
+            crate::speculative_read::window_is_explicit(&tc.arguments),
             &tool_ctx.working_dir,
         )
         .await?;
