@@ -292,6 +292,7 @@ fn turn_events_have_stable_api_payloads() {
             activity: "Thinking".into(),
             elapsed_ms: 9,
             output: "out".into(),
+            tokens: 0,
         }),
         Some(serde_json::json!({
             "type": "subagent",

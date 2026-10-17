@@ -216,6 +216,17 @@ pub fn json_to_turn_event(v: &serde_json::Value) -> Option<TurnEvent> {
         "enqueue_prompt" => TurnEvent::EnqueuePrompt {
             text: v.get("text")?.as_str()?.to_string(),
         },
+        // Lists daemon workers in the agent hub (no log or tokens on /api).
+        "subagent" => TurnEvent::Subagent {
+            id: v.get("id")?.as_str()?.to_string(),
+            kind: str_field(v, "kind"),
+            description: str_field(v, "description"),
+            status: str_field(v, "status"),
+            activity: str_field(v, "activity"),
+            elapsed_ms: v.get("elapsed_ms").and_then(|n| n.as_u64()).unwrap_or(0),
+            output: String::new(),
+            tokens: 0,
+        },
         "usage" => return None,
         "error" => TurnEvent::Status(format!(
             "error:{}",
@@ -226,6 +237,13 @@ pub fn json_to_turn_event(v: &serde_json::Value) -> Option<TurnEvent> {
         "done" => return None,
         _ => return None,
     })
+}
+
+fn str_field(v: &serde_json::Value, key: &str) -> String {
+    v.get(key)
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 #[cfg(test)]

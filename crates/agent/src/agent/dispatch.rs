@@ -915,6 +915,7 @@ impl Agent {
         let panel = self.panel_sink();
         let hub = hub.clone();
         let steer = self.steer.clone();
+        let cancels = self.worker_cancels.clone();
         let question_prompter = Arc::clone(&self.question_prompter);
         let approval_mode = self.approval_mode;
         let risk_threshold = self.risk_threshold;
@@ -957,6 +958,7 @@ impl Agent {
             let panel = panel.clone();
             let hub = hub.clone();
             let steer = steer.clone();
+            let cancels = cancels.clone();
             let question_prompter = Arc::clone(&question_prompter);
             let hooks = hooks.clone();
             let secrets = secrets.clone();
@@ -1149,6 +1151,13 @@ impl Agent {
                         .with_panel(panel.clone())
                         .with_swarm_hub(Some(hub.clone()))
                         .with_steer(steer.clone(), worker_id.clone())
+                        .with_cancel(cancels, worker_id.clone())
+                        .with_progress(
+                            events_tx.clone(),
+                            worker_id.clone(),
+                            spec.subagent_type.clone(),
+                            spec.goal.clone(),
+                        )
                         .with_identity(worker_id.clone(), label.clone())
                         .with_question_prompter(question_prompter)
                         .with_approval_mode(approval_mode)
@@ -1170,6 +1179,7 @@ impl Agent {
                         activity: "Thinking".into(),
                         elapsed_ms: 0,
                         output: String::new(),
+                        tokens: 0,
                     }) {
                         Ok(()) => skip_dispatch(),
                         Err(e) => {
@@ -1183,6 +1193,7 @@ impl Agent {
                 let secs = t0.elapsed().as_secs_f64();
                 claims.release_agent(&worker_id);
 
+                let status = worker_status(&result);
                 let (success, body, worker_usage) = (result.success, result.output, result.usage);
                 if success {
                     persist_agent_artifact(&project_path, &worker_id, &body);
@@ -1192,10 +1203,11 @@ impl Agent {
                         id: worker_id.clone(),
                         kind: spec.subagent_type.clone(),
                         description: spec.goal.clone(),
-                        status: if success { "completed" } else { "failed" }.into(),
+                        status: status.into(),
                         activity: String::new(),
                         elapsed_ms: (secs * 1000.0) as u64,
                         output: body.clone(),
+                        tokens: worker_usage.input_tokens + worker_usage.output_tokens,
                     }) {
                         Ok(()) => skip_dispatch(),
                         Err(e) => {
@@ -1490,7 +1502,14 @@ impl Agent {
         .with_risk_threshold(self.risk_threshold)
         .with_redactor(self.secrets.clone())
         .with_hooks(self.hooks.clone())
-        .with_steer(self.steer.clone(), format!("task-{}", call.id));
+        .with_steer(self.steer.clone(), format!("task-{}", call.id))
+        .with_cancel(self.worker_cancels.clone(), format!("task-{}", call.id))
+        .with_progress(
+            events.cloned(),
+            format!("task-{}", call.id),
+            subagent_type,
+            goal.clone(),
+        );
 
         let child_id = format!("task-{}", call.id);
         let started = std::time::Instant::now();
@@ -1504,6 +1523,7 @@ impl Agent {
                 activity: "Thinking".into(),
                 elapsed_ms: 0,
                 output: String::new(),
+                tokens: 0,
             },
         );
 
@@ -1524,11 +1544,7 @@ impl Agent {
                 result.usage.input_tokens, result.usage.output_tokens
             )
         };
-        let status = if result.success {
-            "completed"
-        } else {
-            "failed"
-        };
+        let status = worker_status(&result);
         emit(
             &events.cloned(),
             TurnEvent::Subagent {
@@ -1539,6 +1555,7 @@ impl Agent {
                 activity: String::new(),
                 elapsed_ms: started.elapsed().as_millis() as u64,
                 output: result.output.clone(),
+                tokens: result.usage.input_tokens + result.usage.output_tokens,
             },
         );
         if result.success {
@@ -1553,6 +1570,8 @@ impl Agent {
                     result.duration.as_secs_f64(),
                     result.output
                 )
+            } else if result.cancelled {
+                format!("Subagent ({subagent_type}) {}{usage_note}", result.output)
             } else {
                 format!(
                     "Subagent ({}) finished with errors:\n\n{}{usage_note}",
@@ -1561,6 +1580,17 @@ impl Agent {
             },
             is_error: !result.success,
         }
+    }
+}
+
+/// `completed` / `cancelled` / `failed` for a finished worker's event.
+fn worker_status(result: &crate::subagent::SubagentResult) -> &'static str {
+    if result.success {
+        "completed"
+    } else if result.cancelled {
+        "cancelled"
+    } else {
+        "failed"
     }
 }
 

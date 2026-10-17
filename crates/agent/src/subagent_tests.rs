@@ -1040,3 +1040,227 @@ async fn worker_restores_secret_placeholders_before_the_gate() {
         .await;
     assert!(!plain.is_error, "{}", plain.content);
 }
+
+// ---------------------------------------------------------------------------
+// Agent hub: cancel a running worker, step progress events.
+// ---------------------------------------------------------------------------
+
+/// Cancels `key` in `cancels` when the worker calls it, like a user pressing
+/// `k` in the agent hub while the worker's step runs.
+struct StopperTool {
+    cancels: crate::worker_cancel::WorkerCancels,
+    key: &'static str,
+}
+
+impl whycodes_core::Tool for StopperTool {
+    fn name(&self) -> &str {
+        "stopper"
+    }
+    fn description(&self) -> &str {
+        "cancels the worker"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn execute<'a>(
+        &'a self,
+        _args: serde_json::Value,
+        _ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        assert!(self.cancels.cancel(self.key), "the worker is registered");
+        Box::pin(async {
+            whycodes_core::types::ToolResult {
+                tool_call_id: String::new(),
+                content: "stopping\nsecond line".into(),
+                is_error: false,
+            }
+        })
+    }
+}
+
+pub(crate) fn stopper_executor(
+    cancels: crate::worker_cancel::WorkerCancels,
+    key: &'static str,
+) -> ToolExecutor {
+    let mut exec = ToolExecutor::new();
+    exec.register(Box::new(StopperTool { cancels, key }));
+    exec
+}
+
+#[test]
+fn stopper_tool_describes_itself() {
+    let exec = stopper_executor(crate::worker_cancel::WorkerCancels::default(), "x");
+    let defs = exec.get_definitions(&PermissionSet::default());
+    let stopper = defs.iter().find(|d| d.name == "stopper").unwrap();
+    assert_eq!(stopper.description, "cancels the worker");
+    assert_eq!(stopper.parameters["type"], "object");
+}
+
+#[tokio::test]
+async fn cancel_stops_the_worker_at_its_next_step_with_a_cancelled_result() {
+    let cancels = crate::worker_cancel::WorkerCancels::default();
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        [
+            whycodes_llm::ScriptedStep::Text("looking first".into()),
+            whycodes_llm::ScriptedStep::Usage {
+                input_tokens: 5,
+                output_tokens: 3,
+            },
+            whycodes_llm::ScriptedStep::ToolCall {
+                id: "s1".into(),
+                name: "stopper".into(),
+                input: serde_json::json!({"path": "src/lib.rs\nmore"}),
+            },
+        ],
+    )));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let runner = SubagentRunner::new(
+        Arc::new(registry),
+        Arc::new(stopper_executor(cancels.clone(), "task-c")),
+        make_info(),
+        std::env::temp_dir(),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    )
+    .with_cancel(cancels.clone(), "task-c")
+    .with_progress(Some(tx), "task-c", "general", "find the bug");
+    let result = runner
+        .run(
+            SubagentTask {
+                goal: "find the bug".into(),
+                context: None,
+                tools: None,
+                max_turns: 10,
+            },
+            "script",
+            "m",
+            "k",
+        )
+        .await;
+    assert!(result.cancelled, "{result:?}");
+    assert!(!result.success);
+    assert!(
+        result.output.starts_with(CANCELLED_BY_USER),
+        "{}",
+        result.output
+    );
+    assert!(result.output.contains("looking first"), "{}", result.output);
+    assert_eq!(result.usage.input_tokens, 5, "one step ran");
+    assert!(!cancels.cancel("task-c"), "the worker left the registry");
+
+    let mut events = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        events.push(ev);
+    }
+    assert_eq!(events.len(), 2, "before and after the step's tools");
+    let crate::events::TurnEvent::Subagent {
+        id,
+        kind,
+        description,
+        status,
+        activity,
+        output,
+        tokens,
+        ..
+    } = &events[1]
+    else {
+        panic!("{events:?}");
+    };
+    assert_eq!(
+        (id.as_str(), kind.as_str(), description.as_str()),
+        ("task-c", "general", "find the bug")
+    );
+    assert_eq!(status, "running");
+    assert_eq!(activity, "stopper src/lib.rs");
+    assert_eq!(
+        output,
+        "looking first\n→ stopper src/lib.rs\n  ✓ stopping\n"
+    );
+    assert_eq!(*tokens, 8);
+}
+
+#[tokio::test]
+async fn progress_to_a_closed_listener_does_not_stop_the_worker() {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "script",
+        [
+            vec![whycodes_llm::ScriptedStep::ToolCall {
+                id: "r1".into(),
+                name: "nope".into(),
+                input: serde_json::json!({}),
+            }],
+            vec![whycodes_llm::ScriptedStep::Text("done".into())],
+        ],
+    )));
+    let runner = SubagentRunner::new(
+        Arc::new(registry),
+        Arc::new(ToolExecutor::new()),
+        make_info(),
+        std::env::temp_dir(),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    )
+    .with_progress(Some(tx), "task-p", "general", "goal");
+    let task = SubagentTask {
+        goal: "goal".into(),
+        context: None,
+        tools: None,
+        max_turns: 3,
+    };
+    let result = runner.run(task, "script", "m", "k").await;
+    assert!(result.success, "{result:?}");
+    assert!(!result.cancelled);
+    assert_eq!(result.output, "done");
+
+    let silent = make_runner().with_progress(None, "x", "y", "z");
+    assert!(silent.progress.is_none());
+}
+
+#[test]
+fn worker_log_helpers_label_calls_and_keep_the_tail() {
+    let call = |name: &str, args| whycodes_core::types::ToolCall {
+        id: "c".into(),
+        name: name.into(),
+        arguments: args,
+    };
+    assert_eq!(tool_activity(&call("list", serde_json::json!({}))), "list");
+    assert_eq!(
+        tool_activity(&call(
+            "bash",
+            serde_json::json!({"command": "  cargo test  "})
+        )),
+        "bash cargo test"
+    );
+
+    let mut log = String::new();
+    push_step_log(
+        &mut log,
+        "  ",
+        &[call("glob", serde_json::json!({"pattern": "*.rs"}))],
+    );
+    push_results_log(
+        &mut log,
+        &[whycodes_core::types::ToolResult {
+            tool_call_id: "c".into(),
+            content: "no matches".into(),
+            is_error: true,
+        }],
+    );
+    assert_eq!(log, "→ glob *.rs\n  ✗ no matches\n");
+
+    let mut long = "é".repeat(MAX_WORKER_LOG);
+    cap_log(&mut long);
+    assert!(long.starts_with('…'), "older bytes dropped");
+    assert!(long.len() <= MAX_WORKER_LOG + '…'.len_utf8());
+
+    assert_eq!(cancelled_output("  "), CANCELLED_BY_USER);
+    assert_eq!(
+        cancelled_output("half"),
+        format!("{CANCELLED_BY_USER}\n\nOutput before the cancel:\nhalf")
+    );
+}

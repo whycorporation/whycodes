@@ -1628,6 +1628,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let mut config = chrome.config;
     let missing_key = chrome.missing_key;
     let remote = opts.remote.clone();
+    app.attached = remote.is_some();
     let mut provider = opts.provider.clone();
     let mut model = opts.model.clone();
     let mut api_key = opts.api_key.clone();
@@ -2058,6 +2059,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 &file_index,
             );
 
+            // Agent hub: cancel a worker now; a re-run waits for an idle session.
+            crate::agent_hub::send_pending_cancel(&mut app, &rt.worker_cancels);
+            crate::agent_hub::send_pending_rerun(&mut app, rt.agent_busy);
+
             // Drain scheduled /loop prompts when idle (no pending manual submit).
             queue_auto_prompt_if_idle(&mut app, rt.agent_busy);
 
@@ -2306,7 +2311,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     // While busy: Esc cancels (draft preserved). Typing, scroll,
                     // and focus still work so the user can queue thoughts.
                     // Permission / question overlays own Esc/Enter — do not steal them.
-                    let overlay_owns_keys = dialog_overlay_owns_keys(app.dialogs.active());
+                    let overlay_owns_keys =
+                        dialog_overlay_owns_keys(app.dialogs.active()) || hub_owns_key(&app, &ev);
                     if rt.agent_busy
                         && !overlay_owns_keys
                         && let Event::Key(key) = &ev
@@ -2818,7 +2824,7 @@ fn apply_busy_key(
             ),
         },
         BusyKey::WaitEnter => {
-            if slash::busy_tell(app, &rt.steer) {
+            if slash::busy_tell(app, &rt.steer) || slash::busy_agents(app) {
                 return;
             }
             if app.prompt_has_content() {
@@ -2839,6 +2845,20 @@ fn toast_wait_for_turn(app: &mut TuiApp) {
         crate::toast::ToastKind::Info,
         "Wait for turn or Esc to cancel",
     );
+}
+
+/// While a turn runs, the agent hub and the worker view read their own keys
+/// (Esc closes them instead of cancelling the turn). Ctrl chords still reach
+/// the turn, so Ctrl+C cancels as usual.
+fn hub_owns_key(app: &TuiApp, ev: &Event) -> bool {
+    let Event::Key(key) = ev else {
+        return false;
+    };
+    let open =
+        app.open_subagent.is_some() || matches!(app.dialogs.active(), Some(DialogKind::Agents));
+    open && !key
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::CONTROL)
 }
 
 fn dialog_overlay_owns_keys(active: Option<&DialogKind>) -> bool {
@@ -4938,6 +4958,7 @@ fn spawn_local_turn(
     let prep_config = config.clone();
 
     rt.steer = rt.agent.steer_inbox();
+    rt.worker_cancels = rt.agent.worker_cancels();
     rt.steer_session = rt.session.id.clone();
     rt.steered.clear();
     let (ag, sess) = take_turn_owner(rt, project_dir);
@@ -5535,7 +5556,9 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             activity,
             elapsed_ms,
             output,
+            tokens,
         } => {
+            let key = id.clone();
             app.upsert_subagent(crate::app::SubagentUpdate {
                 id,
                 kind,
@@ -5545,6 +5568,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
                 elapsed_ms,
                 output,
             });
+            app.set_subagent_tokens(&key, tokens);
         }
         TurnEvent::SwarmMessage { from, to, text } => {
             app.toasts.push(
