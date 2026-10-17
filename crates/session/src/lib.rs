@@ -7,6 +7,7 @@ pub mod search;
 pub mod session;
 pub mod stream_rules;
 pub mod title;
+pub mod tree;
 
 pub use edit_stats::EditStats;
 pub use error::{Result, SessionError};
@@ -20,6 +21,7 @@ pub use session::{
 };
 pub use stream_rules::StreamRuleLedger;
 pub use title::{TitleSource, default_title, heuristic_title, sanitize_title};
+pub use tree::{Branch, BranchError, TreeRow, TreeTarget};
 
 #[cfg(test)]
 mod tests {

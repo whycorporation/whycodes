@@ -73,6 +73,18 @@ pub(super) fn oauth_unavailable_hint(names: Vec<String>) -> String {
     }
 }
 
+/// `/tree`: fill the picker from the session, cursor on the active leaf.
+pub(super) fn open_tree_picker(app: &mut TuiApp, session: &Session) {
+    let rows = session.tree_rows();
+    if rows.is_empty() {
+        app.status_message = "No turns yet".into();
+        return;
+    }
+    app.tree_selected = rows.iter().position(|r| r.active_leaf).unwrap_or(0);
+    app.tree_rows = rows;
+    crate::input::open_dialog(app, DialogKind::Tree);
+}
+
 pub(super) enum LoopSlash {
     Stop,
     Queue { n: usize, prompt: String },
@@ -325,6 +337,17 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 .push(crate::toast::ToastKind::Success, "New session");
         }
         "/fork" => fork_session_in_place(ctx.app, ctx.session, rest),
+        "/branch" => match ctx.session.mark_branch(rest) {
+            Ok(name) => {
+                persist_session_best_effort(ctx.session, "branch");
+                ctx.app.toasts.push(
+                    crate::toast::ToastKind::Success,
+                    format!("Branch marked · {name} · /tree to switch"),
+                );
+            }
+            Err(e) => ctx.app.status_message = format!("/branch: {e}"),
+        },
+        "/tree" => open_tree_picker(ctx.app, ctx.session),
         "/rename" => {
             let name = rest.trim();
             if name.is_empty() {
