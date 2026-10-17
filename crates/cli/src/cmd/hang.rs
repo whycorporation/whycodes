@@ -39,6 +39,7 @@ pub(crate) fn is_short_command(cli: &crate::Cli) -> bool {
             | Commands::Import { .. }
             | Commands::Stats
             | Commands::Debug { .. }
+            | Commands::Rules { .. }
             | Commands::Slop { .. }
             | Commands::Completions { .. }
             | Commands::Generate { .. }

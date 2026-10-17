@@ -1470,6 +1470,113 @@ pub struct StreamRuleConfig {
     pub pattern: String,
     #[serde(default)]
     pub hint: String,
+    /// What the pattern is matched against. Empty = `["text"]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope: Vec<StreamRuleScope>,
+    /// `tool_args` scope only: tool names the rule watches. Empty = every tool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    /// How often the rule may fire. Default `always` (every matching draft).
+    #[serde(default, skip_serializing_if = "StreamRuleRepeat::is_always")]
+    pub repeat: StreamRuleRepeat,
+}
+
+impl StreamRuleConfig {
+    /// `scope`, or `["text"]` when unset.
+    pub fn scopes(&self) -> Vec<StreamRuleScope> {
+        if self.scope.is_empty() {
+            vec![StreamRuleScope::Text]
+        } else {
+            self.scope.clone()
+        }
+    }
+}
+
+/// Streamed channel a stream rule watches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamRuleScope {
+    /// Assistant reply text.
+    Text,
+    /// Accumulated thinking text of the step.
+    Thinking,
+    /// Each tool call's JSON arguments as they stream.
+    ToolArgs,
+}
+
+impl StreamRuleScope {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "text" => Some(Self::Text),
+            "thinking" => Some(Self::Thinking),
+            "tool_args" => Some(Self::ToolArgs),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Thinking => "thinking",
+            Self::ToolArgs => "tool_args",
+        }
+    }
+}
+
+/// `repeat = "once" | "always" | { after_turns = N }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamRuleRepeat {
+    /// Fire at most once per session.
+    Once,
+    /// Fire on every match.
+    #[default]
+    Always,
+    /// Fire again once N user turns have passed since the last hit.
+    AfterTurns(u32),
+}
+
+impl StreamRuleRepeat {
+    pub fn is_always(&self) -> bool {
+        *self == Self::Always
+    }
+
+    /// `once`, `always`, `after_turns = N`, `{ after_turns: N }`, or a bare `N`.
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s
+            .trim()
+            .trim_start_matches('{')
+            .trim_end_matches('}')
+            .trim();
+        match s.to_ascii_lowercase().as_str() {
+            "once" => return Some(Self::Once),
+            "always" => return Some(Self::Always),
+            _ => {}
+        }
+        let n = match s.split_once([':', '=']) {
+            Some((k, v)) if k.trim() == "after_turns" => v,
+            Some(_) => return None,
+            None => s,
+        };
+        n.trim().parse().ok().map(Self::AfterTurns)
+    }
+
+    /// Whether a rule last fired at `last` may fire on user turn `turn`.
+    pub fn allows(self, last: Option<u64>, turn: u64) -> bool {
+        match (self, last) {
+            (_, None) | (Self::Always, _) => true,
+            (Self::Once, Some(_)) => false,
+            (Self::AfterTurns(n), Some(t)) => turn.saturating_sub(t) >= u64::from(n),
+        }
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            Self::Once => "once".into(),
+            Self::Always => "always".into(),
+            Self::AfterTurns(n) => format!("after_turns={n}"),
+        }
+    }
 }
 
 /// Per-turn hidden notices when the user writes a magic keyword in prose.
