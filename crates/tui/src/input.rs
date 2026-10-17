@@ -2534,6 +2534,9 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
             ConfirmAction::ImportSettings => {
                 app.pending_import = true;
             }
+            ConfirmAction::TerminalSetup => {
+                app.pending_terminal_setup = true;
+            }
         },
         DialogKind::Import => {
             if app.import_picker.any_checked() {

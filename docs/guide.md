@@ -282,9 +282,39 @@ Keys: `ctrl` / `alt` / `shift` joined with `+` or `-`, then a character or
 `pageup`, `pagedown`, `up` / `down` / `left` / `right`, `f1`–`f24`. A plain
 character (no Ctrl/Alt) only applies outside the prompt, so typing is never
 captured. Dialogs (approvals, pickers) keep their fixed keys, and the session
-keys handled before the keymap (`Ctrl+O`, `Ctrl+N`, `Ctrl+Tab`,
+keys handled before the keymap (`Ctrl+O`, `Ctrl+N`, `Ctrl+T` when idle, `Ctrl+Tab`,
 `Ctrl+PgUp/PgDn`) cannot be rebound. Unknown keys or actions are logged and
 skipped.
+
+`/keys` lists every active binding (custom ones marked `*`) and flags
+conflicts: two config keys that spell the same chord (`ctrl+k` and `ctrl-k`),
+chords a terminal only sends with the kitty keyboard protocol when the
+startup probe did not find it (`shift+enter`, `ctrl+enter`, `ctrl+tab`,
+`ctrl+m`, `ctrl+.`, `ctrl+shift+<letter>`), chords the OS or terminal keeps
+(`cmd+…` / `super+…`, Windows Terminal `ctrl+shift+t/w/n/p`, the tmux prefix
+`ctrl+b` inside tmux), and the session keys above. When a configured
+binding conflicts, the status line says so once at startup; it says it
+again only when the set of conflicts changes (a hash is kept in
+`key-conflicts.hash` in the data directory).
+
+`/terminal-setup` reports whether the kitty keyboard protocol is on, whether
+the TUI runs inside tmux, and which of these `~/.tmux.conf` lines are
+missing:
+
+```
+set -s extended-keys on
+set -as terminal-features 'xterm*:extkeys'
+set -g allow-passthrough on
+set -g focus-events on
+```
+
+It appends the missing ones only after you answer `y` in the dialog, copies
+the file to `~/.tmux.conf.bak` first, and says "already configured" on a
+second run. A line that already sets one of these options, to any value,
+counts as configured. Reload with `tmux source-file ~/.tmux.conf`. In
+WezTerm without the protocol it prints `config.enable_kitty_keyboard = true`
+for you to add to `~/.wezterm.lua`; it never edits that file. On Windows the
+console reports every modifier, so these chords work without the protocol.
 
 Actions: `quit`, `force_quit`, `escape`, `submit`, `scroll_up`, `scroll_down`,
 `page_up`, `page_down`, `scroll_to_top`, `scroll_to_bottom`,
@@ -347,6 +377,8 @@ Both TUI and `--plain`:
 | `/tools` | List tools for the current agent |
 | `/info` `/details` | Session details: model, context, token usage, and lines added/removed by this session's `write`/`edit`/`apply_patch` results (approximate: block counts, not a minimal diff) |
 | `/doctor` | Environment / config diagnostics |
+| `/terminal-setup` | TUI: what this terminal delivers (kitty keyboard protocol, tmux, its config) and, inside tmux, an offer to add the missing settings to `~/.tmux.conf` |
+| `/keys` | TUI: active key bindings (defaults and `[tui.key_bindings]`) and the ones that cannot work in this terminal |
 
 When a step reads far less from the provider's prompt cache than the step
 before (the cache TTL ran out, the prompt prefix changed, or the model
