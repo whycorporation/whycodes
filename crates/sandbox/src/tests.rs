@@ -3,7 +3,7 @@
 //! Host-dependent branches in this file must not fail CI.
 
 use super::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
 
@@ -95,24 +95,30 @@ fn windows_host_shell_prefers_git_bash_then_cmd() {
     let picked = crate::host::resolve_windows_host_shell(
         None,
         Some(git.clone()),
+        None,
         Some(r"C:\Windows\System32\cmd.exe"),
     );
     assert_eq!(picked.program, git.to_string_lossy());
     assert_eq!(picked.args_prefix, ["-c"]);
     assert!(picked.warning.is_none());
 
-    let cmd =
-        crate::host::resolve_windows_host_shell(None, None, Some(r"C:\Windows\System32\cmd.exe"));
+    let cmd = crate::host::resolve_windows_host_shell(
+        None,
+        None,
+        None,
+        Some(r"C:\Windows\System32\cmd.exe"),
+    );
     assert!(cmd.program.to_ascii_lowercase().contains("cmd"));
     assert_eq!(cmd.args_prefix, ["/C"]);
     assert!(cmd.warning.as_deref().unwrap_or("").contains("Git Bash"));
 
-    let default_cmd = crate::host::resolve_windows_host_shell(None, None, Some(""));
+    let default_cmd = crate::host::resolve_windows_host_shell(None, None, None, Some(""));
     assert_eq!(default_cmd.program, "cmd.exe");
 
     let overridden = crate::host::resolve_windows_host_shell(
         Some(r"C:\bin\pwsh.exe"),
         Some(git.clone()),
+        None,
         Some("cmd.exe"),
     );
     assert!(overridden.program.to_ascii_lowercase().contains("pwsh"));
@@ -124,9 +130,55 @@ fn windows_host_shell_prefers_git_bash_then_cmd() {
     let wsl_override = crate::host::resolve_windows_host_shell(
         Some(r"C:\Windows\System32\bash.exe"),
         Some(git),
+        None,
         Some("cmd.exe"),
     );
     assert!(wsl_override.program.to_ascii_lowercase().contains("git"));
+}
+
+#[test]
+fn windows_host_shell_order_is_override_git_bash_embedded_cmd() {
+    let git = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
+    let exe = PathBuf::from(r"C:\Users\me\bin\whycodes.exe");
+    let cmd = Some(r"C:\Windows\System32\cmd.exe");
+    let pick = |over: Option<&str>, bash: Option<PathBuf>, embedded: Option<&Path>| {
+        crate::host::resolve_windows_host_shell(over, bash, embedded, cmd)
+    };
+
+    let overridden = pick(Some(r"C:\bin\pwsh.exe"), Some(git.clone()), Some(&exe));
+    assert!(overridden.program.ends_with("pwsh.exe"));
+
+    let bash = pick(None, Some(git.clone()), Some(&exe));
+    assert_eq!(bash.program, git.to_string_lossy());
+
+    let embedded = pick(None, None, Some(&exe));
+    assert_eq!(embedded.program, exe.to_string_lossy());
+    assert_eq!(embedded.args_prefix, ["__shell", "-c"]);
+    assert!(embedded.warning.is_none());
+
+    let fallback = pick(None, None, None);
+    assert!(fallback.program.ends_with("cmd.exe"));
+    assert!(fallback.warning.is_some());
+}
+
+#[test]
+fn embedded_shell_registration_and_display_name() {
+    let exe = std::env::temp_dir().join("whycodes-embedded-test.exe");
+    crate::set_embedded_shell(exe.clone());
+    crate::set_embedded_shell(PathBuf::from("second-call-is-ignored"));
+    assert_eq!(crate::embedded_shell(), Some(exe.as_path()));
+
+    let program = exe.to_string_lossy();
+    assert_eq!(
+        crate::host::shell_display_name(&program, Some(&exe)),
+        crate::EMBEDDED_SHELL_NAME
+    );
+    assert!(crate::EMBEDDED_SHELL_NAME.contains("bash-compatible"));
+    assert_eq!(
+        crate::host::shell_display_name(r"C:\Git\bin\bash.exe", Some(&exe)),
+        "bash.exe"
+    );
+    assert_eq!(crate::host::shell_display_name("bash", None), "bash");
 }
 
 #[test]

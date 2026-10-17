@@ -11,11 +11,19 @@ name = "whycodes"
 path = "src/main.rs"
 
 [features]
-# Default ship: agent + TUI + upgrade + serve. Mermaid diagrams and the
-# bat/two-face language pack stay opt-in (~1.7 MB) so Boot/TTFF stays low.
-default = ["self-update", "server"]
+# Default ship: agent + TUI + upgrade + serve (+ the Windows embedded shell).
+# Mermaid diagrams and the bat/two-face language pack stay opt-in (~1.7 MB)
+# so Boot/TTFF stays low.
+default = ["self-update", "server", "embedded-shell"]
 # Everything including diagram render + extended syntax pack.
-full = ["self-update", "server", "mermaid", "extended-syntax", "ast-tools"]
+full = ["self-update", "server", "embedded-shell", "mermaid", "extended-syntax", "ast-tools"]
+# Windows only: `whycodes __shell -c`, a bash-compatible shell with bundled
+# coreutils that the `bash` tool uses when no Git Bash is installed (before
+# falling back to cmd.exe). Cargo has no per-target default features, so the
+# feature is on everywhere but its crates are `cfg(windows)` dependencies:
+# on Linux and macOS it links nothing and the binary does not change.
+# `--no-default-features` (plus the others) opts a Windows build out.
+embedded-shell = ["dep:whycodes-shell", "dep:whycodes-sandbox"]
 # Unicode mermaid diagrams (mermaid-text + ascii_dag). Off by default — ~0.8 MB.
 mermaid = ["whycodes-format/mermaid", "whycodes-tui/mermaid"]
 # bat/two-face extended language pack (~0.9 MB). Off by default.
@@ -74,6 +82,10 @@ sha2 = { version = "0.11", optional = true }
 flate2 = { version = "1", optional = true }
 tar = { version = "0.4", optional = true }
 zip = { version = "9", default-features = false, features = ["deflate"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+whycodes-shell = { path = "../shell", optional = true }
+whycodes-sandbox = { path = "../sandbox", optional = true }
 
 [dev-dependencies]
 whycodes-sdk = { path = "../sdk" }

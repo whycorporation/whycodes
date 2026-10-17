@@ -54,8 +54,31 @@ pub struct SubagentResult {
     pub duration: std::time::Duration,
     /// Provider-reported token usage across all subagent LLM steps (fold into parent).
     pub usage: whycodes_core::types::Usage,
+    /// The user cancelled the worker (agent hub); `output` says so.
+    pub cancelled: bool,
     /// Structured result when the task had an `output_schema`.
     pub structured: Option<Structured>,
+}
+
+/// Result text of a worker the user cancelled.
+pub const CANCELLED_BY_USER: &str = "cancelled by the user";
+
+/// Longest worker log carried on a progress event; older lines drop first.
+const MAX_WORKER_LOG: usize = 16_000;
+
+/// Where a worker reports its steps (parent TUI agent hub).
+struct WorkerProgress {
+    events: crate::events::EventSink,
+    id: String,
+    kind: String,
+    description: String,
+}
+
+/// What the worker loop produced.
+struct LoopOutput {
+    text: String,
+    usage: whycodes_core::types::Usage,
+    cancelled: bool,
 }
 
 /// Runner that executes a subagent task by creating a fresh session and
@@ -82,6 +105,10 @@ pub struct SubagentRunner {
     swarm_hub: Option<whycodes_core::SwarmHub>,
     /// The parent's steering inbox and this subagent's key in it (`/tell`).
     steer: Option<(crate::steer::SteerInbox, String)>,
+    /// Cancel registry and this worker's key in it (agent hub `k`).
+    cancel: Option<(crate::worker_cancel::WorkerCancels, String)>,
+    /// Step reports for the parent UI.
+    progress: Option<WorkerProgress>,
     question_prompter: Arc<dyn QuestionPrompter>,
     approval_mode: ApprovalMode,
     /// Parent config hooks: tool hooks run here too, plus `subagent_stop`.
@@ -119,6 +146,8 @@ impl SubagentRunner {
             panel: None,
             swarm_hub: None,
             steer: None,
+            cancel: None,
+            progress: None,
             question_prompter: default_question_prompter(),
             approval_mode: ApprovalMode::Auto,
             hooks: Vec::new(),
@@ -170,6 +199,35 @@ impl SubagentRunner {
     /// Read messages the user addresses to `key` (`/tell <key> …`) at each step.
     pub fn with_steer(mut self, inbox: crate::steer::SteerInbox, key: impl Into<String>) -> Self {
         self.steer = Some((inbox, key.into()));
+        self
+    }
+
+    /// Stop at the next step once the UI cancels `key` in `cancels`.
+    pub fn with_cancel(
+        mut self,
+        cancels: crate::worker_cancel::WorkerCancels,
+        key: impl Into<String>,
+    ) -> Self {
+        self.cancel = Some((cancels, key.into()));
+        self
+    }
+
+    /// Send a `running` [`crate::events::TurnEvent::Subagent`] with the log so
+    /// far after each step, so the parent UI can show live activity.
+    pub fn with_progress(
+        mut self,
+        events: Option<crate::events::EventSink>,
+        id: impl Into<String>,
+        kind: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        let (id, kind, description) = (id.into(), kind.into(), description.into());
+        self.progress = events.map(|events| WorkerProgress {
+            events,
+            id,
+            kind,
+            description,
+        });
         self
     }
 
@@ -270,6 +328,9 @@ impl SubagentRunner {
         let mut session = Session::new(self.project_path.clone(), system_prompt);
         session.add_user_message(&user_message);
 
+        if let Some((cancels, key)) = &self.cancel {
+            cancels.register(key);
+        }
         // Execute the conversation loop — reuse the same run_turn logic as Agent
         let output = self
             .run_turn_inner(
@@ -281,16 +342,30 @@ impl SubagentRunner {
                 &permission,
             )
             .await;
+        if let Some((cancels, key)) = &self.cancel {
+            cancels.finish(key);
+        }
 
         let mut structured = None;
         let output = match (output, &task.output_schema) {
-            (Ok((text, usage)), Some(schema)) => {
+            (Ok(out), Some(schema)) if !out.cancelled => {
                 let route = (provider_name, model, api_key);
                 let (text, usage, s) = self
-                    .structured_result(&mut session, schema, text, usage, route, &permission)
+                    .structured_result(
+                        &mut session,
+                        schema,
+                        out.text,
+                        out.usage,
+                        route,
+                        &permission,
+                    )
                     .await;
                 structured = Some(s);
-                Ok((text, usage))
+                Ok(LoopOutput {
+                    text,
+                    usage,
+                    cancelled: false,
+                })
             }
             (other, _) => other,
         };
@@ -298,12 +373,17 @@ impl SubagentRunner {
         let duration = start.elapsed();
 
         let result = match output {
-            Ok((text, usage)) => SubagentResult {
+            Ok(out) => SubagentResult {
                 goal: task.goal,
-                output: text,
-                success: true,
+                output: if out.cancelled {
+                    cancelled_output(&out.text)
+                } else {
+                    out.text
+                },
+                success: !out.cancelled,
                 duration,
-                usage,
+                usage: out.usage,
+                cancelled: out.cancelled,
                 structured,
             },
             Err(e) => SubagentResult {
@@ -312,6 +392,7 @@ impl SubagentRunner {
                 success: false,
                 duration,
                 usage: whycodes_core::types::Usage::default(),
+                cancelled: false,
                 structured: None,
             },
         };
@@ -346,7 +427,7 @@ impl SubagentRunner {
             .run_turn_inner(session, provider_name, model, api_key, 1, permission)
             .await;
         let (retry, retry_usage) = match retry {
-            Ok(r) => r,
+            Ok(r) => (r.text, r.usage),
             Err(e) => {
                 let mut errors = errors;
                 errors.push(format!("retry failed: {e}"));
@@ -408,7 +489,8 @@ impl SubagentRunner {
 
     /// Internal turn loop — mirrors `Agent::run_turn` but accepts an overridden
     /// PermissionSet so that subagents can have a restricted tool set.
-    /// Returns (final text, aggregated provider usage).
+    /// Returns the final text, aggregated provider usage, and whether the
+    /// user cancelled it.
     async fn run_turn_inner(
         &self,
         session: &mut Session,
@@ -417,7 +499,7 @@ impl SubagentRunner {
         api_key: &str,
         max_turns: usize,
         permission: &PermissionSet,
-    ) -> whycodes_core::Result<(String, whycodes_core::types::Usage)> {
+    ) -> whycodes_core::Result<LoopOutput> {
         use futures::StreamExt;
         use whycodes_core::types::{ContentBlock, StreamEvent};
 
@@ -454,8 +536,17 @@ impl SubagentRunner {
         let mut turn_count = 0;
         let mut final_text = String::new();
         let mut total_usage = whycodes_core::types::Usage::default();
+        let started = Instant::now();
+        let mut log = String::new();
+        let mut cancelled = false;
 
         loop {
+            // A cancel takes effect between steps: the last step's tool calls
+            // all have their results, and the parent gets a normal result.
+            if self.cancel_requested() {
+                cancelled = true;
+                break;
+            }
             turn_count += 1;
             if turn_count > max_turns {
                 return Err(whycodes_core::Error::Agent(format!(
@@ -580,6 +671,9 @@ impl SubagentRunner {
             if tool_calls.is_empty() {
                 break;
             }
+            push_step_log(&mut log, &accumulated_text, &tool_calls);
+            let activity = tool_calls.last().map(tool_activity).unwrap_or_default();
+            self.report(started, &activity, &log, &total_usage);
 
             // Parallelize independent reads; keep mutators/serial tools sequential.
             let results = if tool_calls.len() > 1
@@ -619,13 +713,51 @@ impl SubagentRunner {
                 results
             };
 
+            push_results_log(&mut log, &results);
+            self.report(started, &activity, &log, &total_usage);
             session.add_tool_results(results);
         }
 
         if let Some((inbox, key)) = &self.steer {
             final_text.push_str(&unread_tell_note(inbox.drain(key)));
         }
-        Ok((final_text, total_usage))
+        Ok(LoopOutput {
+            text: final_text,
+            usage: total_usage,
+            cancelled,
+        })
+    }
+
+    fn cancel_requested(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|(cancels, key)| cancels.is_cancelled(key))
+    }
+
+    /// One `running` progress event; a closed listener is only logged.
+    fn report(
+        &self,
+        started: Instant,
+        activity: &str,
+        log: &str,
+        usage: &whycodes_core::types::Usage,
+    ) {
+        let Some(p) = &self.progress else {
+            return;
+        };
+        let event = crate::events::TurnEvent::Subagent {
+            id: p.id.clone(),
+            kind: p.kind.clone(),
+            description: p.description.clone(),
+            status: "running".into(),
+            activity: activity.to_string(),
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            output: log.to_string(),
+            tokens: usage.input_tokens + usage.output_tokens,
+        };
+        if let Err(e) = p.events.send(event) {
+            tracing::debug!(error = %e, "subagent progress event dropped");
+        }
     }
 
     async fn execute_tool_call(
@@ -851,6 +983,87 @@ pub(crate) fn default_memory() -> MemorySettings {
     MemorySettings::default()
 }
 
+/// Result text for a cancelled worker, keeping what it wrote before.
+fn cancelled_output(partial: &str) -> String {
+    let partial = partial.trim();
+    if partial.is_empty() {
+        return CANCELLED_BY_USER.to_string();
+    }
+    format!("{CANCELLED_BY_USER}\n\nOutput before the cancel:\n{partial}")
+}
+
+/// Short label for a tool call: its name plus the main argument.
+fn tool_activity(tc: &whycodes_core::types::ToolCall) -> String {
+    let keys = [
+        "path",
+        "file_path",
+        "command",
+        "pattern",
+        "query",
+        "url",
+        "goal",
+    ];
+    let arg = keys
+        .iter()
+        .find_map(|k| tc.arguments.get(*k).and_then(|v| v.as_str()))
+        .unwrap_or("");
+    let arg: String = arg
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(60)
+        .collect();
+    if arg.is_empty() {
+        tc.name.clone()
+    } else {
+        format!("{} {arg}", tc.name)
+    }
+}
+
+/// Append a step's text and tool calls to the worker log.
+fn push_step_log(log: &mut String, text: &str, calls: &[whycodes_core::types::ToolCall]) {
+    let text = text.trim();
+    if !text.is_empty() {
+        log.push_str(text);
+        log.push('\n');
+    }
+    for tc in calls {
+        log.push_str(&format!("→ {}\n", tool_activity(tc)));
+    }
+    cap_log(log);
+}
+
+/// Append each tool result's first line to the worker log.
+fn push_results_log(log: &mut String, results: &[whycodes_core::types::ToolResult]) {
+    for r in results {
+        let mark = if r.is_error { "✗" } else { "✓" };
+        let first: String = r
+            .content
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(100)
+            .collect();
+        log.push_str(&format!("  {mark} {first}\n"));
+    }
+    cap_log(log);
+}
+
+/// Keep the newest [`MAX_WORKER_LOG`] bytes of the log.
+fn cap_log(log: &mut String) {
+    if log.len() <= MAX_WORKER_LOG {
+        return;
+    }
+    let mut cut = log.len() - MAX_WORKER_LOG;
+    while !log.is_char_boundary(cut) {
+        cut += 1;
+    }
+    log.replace_range(..cut, "…");
+}
+
 /// Messages addressed to a subagent that finished before reading them, so
 /// the parent still sees them in the result; empty when there are none.
 fn unread_tell_note(unread: Vec<whycodes_core::types::MessageContent>) -> String {
@@ -911,4 +1124,4 @@ fn inject_subagent_memory(
 
 #[cfg(test)]
 #[path = "subagent_tests.rs"]
-mod tests;
+pub(crate) mod tests;
