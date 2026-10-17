@@ -48,6 +48,7 @@ fn core_defers_specialized_tools() {
         "shell",
         "swarm",
         "swarm_msg",
+        "wait",
     ] {
         assert!(
             !ToolProfile::Core.includes(name),

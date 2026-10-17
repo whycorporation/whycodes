@@ -77,6 +77,7 @@ fn permission_detail_and_parallel_policy() {
     assert!(is_parallel_safe_tool("glob", &perms));
     assert!(is_parallel_safe_tool("repomap", &perms));
     assert!(!is_parallel_safe_tool("bash", &perms));
+    assert!(!is_parallel_safe_tool("wait", &perms));
     assert!(!is_parallel_safe_tool("write", &perms));
     assert!(!is_parallel_safe_tool("edit", &perms));
     assert!(!is_parallel_safe_tool("shell", &perms));
