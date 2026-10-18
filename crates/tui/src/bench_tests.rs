@@ -1,10 +1,43 @@
 use super::*;
+use crate::tests::EnvVarGuard;
+
+/// Exclusive use of the bench globals for one test.
+///
+/// The counters, `ENABLED` and the `WHYCODES_BENCH*` variables are process
+/// state shared with every headless `run()` test (those call `record_draw`
+/// and `config_from_env`). Holding `ENV_LOCK` serializes them all. On drop —
+/// also when an assert fails — the variables come back and recording is
+/// switched off; a leaked `WHYCODES_BENCH` would turn every later `run()`
+/// into a splash-and-quit benchmark run.
+struct BenchSandbox {
+    _bench: EnvVarGuard,
+    _duration: EnvVarGuard,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl BenchSandbox {
+    fn new() -> Self {
+        let lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        Self {
+            _bench: EnvVarGuard::remove("WHYCODES_BENCH"),
+            _duration: EnvVarGuard::remove("WHYCODES_BENCH_DURATION_MS"),
+            _lock: lock,
+        }
+    }
+}
+
+impl Drop for BenchSandbox {
+    /// Runs before the fields drop, so `ENV_LOCK` is still held.
+    fn drop(&mut self) {
+        ENABLED.store(false, Ordering::Relaxed);
+    }
+}
 
 /// The counters are global, so every test that mutates them lives in this
-/// single case. Parallel libtest workers would otherwise race on the
-/// atomics (seen as a macOS-only flake on CI).
+/// single case and holds the sandbox lock.
 #[test]
 fn counters_record_the_first_frame_and_the_total() {
+    let _sandbox = BenchSandbox::new();
     ENABLED.store(true, Ordering::Relaxed);
     DRAWS.store(0, Ordering::Relaxed);
     FIRST_FRAME_NANOS.store(0, Ordering::Relaxed);
@@ -71,33 +104,19 @@ fn json_is_parseable_and_carries_every_field() {
 fn benchmarking_is_off_without_the_environment_variable() {
     // The variable is not set in the test environment, so this is the
     // normal path: no config, and the loop pays nothing.
-    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let prev = std::env::var_os("WHYCODES_BENCH");
-    let prev_dur = std::env::var_os("WHYCODES_BENCH_DURATION_MS");
-    unsafe {
-        std::env::remove_var("WHYCODES_BENCH");
-        std::env::remove_var("WHYCODES_BENCH_DURATION_MS");
-    }
+    let _sandbox = BenchSandbox::new();
     assert!(config_from_env().is_none());
-    unsafe {
-        std::env::set_var("WHYCODES_BENCH", "");
-    }
+    let _empty = EnvVarGuard::set("WHYCODES_BENCH", "");
     assert!(config_from_env().is_none());
-    restore_env("WHYCODES_BENCH", prev);
-    restore_env("WHYCODES_BENCH_DURATION_MS", prev_dur);
 }
 
 #[test]
 fn config_from_env_writes_results() {
-    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let prev = std::env::var_os("WHYCODES_BENCH");
-    let prev_dur = std::env::var_os("WHYCODES_BENCH_DURATION_MS");
+    let _sandbox = BenchSandbox::new();
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("bench.json");
-    unsafe {
-        std::env::set_var("WHYCODES_BENCH", &out);
-        std::env::set_var("WHYCODES_BENCH_DURATION_MS", "not-a-number");
-    }
+    let _bench = EnvVarGuard::set("WHYCODES_BENCH", &out);
+    let _duration = EnvVarGuard::set("WHYCODES_BENCH_DURATION_MS", "not-a-number");
     let cfg = config_from_env().expect("path is set");
     assert_eq!(cfg.output, out);
     assert_eq!(cfg.duration, Duration::ZERO);
@@ -115,16 +134,4 @@ fn config_from_env_writes_results() {
         output: dir.path().join("missing").join("out.json"),
         duration: Duration::ZERO,
     });
-    ENABLED.store(false, Ordering::Relaxed);
-    restore_env("WHYCODES_BENCH", prev);
-    restore_env("WHYCODES_BENCH_DURATION_MS", prev_dur);
-}
-
-fn restore_env(key: &str, prev: Option<std::ffi::OsString>) {
-    unsafe {
-        match prev {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
-        }
-    }
 }

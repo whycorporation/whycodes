@@ -14,7 +14,7 @@ use whycodes_core::types::{
 /// WHYCODES_PROVIDER, …) so parallel test threads cannot interfere.
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn lock_env() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -3301,4 +3301,33 @@ fn whycodes_agent_is_primary_and_writes_only_config() {
         back.get_agent("whycodes").unwrap().permission.rules,
         p.rules
     );
+}
+
+#[test]
+fn set_dotted_writes_the_global_file_under_whycodes_home() {
+    with_isolated_home(|home| {
+        let project = home.join("proj");
+        let written = Config::set_dotted(&project, crate::ConfigTarget::Global, "log_level", "x")
+            .unwrap_err();
+        assert!(
+            written.to_string().contains("unknown config key"),
+            "{written}"
+        );
+        let path = Config::set_dotted(
+            &project,
+            crate::ConfigTarget::Global,
+            "general.log_level",
+            "debug",
+        )
+        .unwrap();
+        assert_eq!(path, home.join("config.toml"));
+        assert_eq!(
+            Config::load_global_raw()
+                .unwrap()
+                .general
+                .log_level
+                .as_deref(),
+            Some("debug")
+        );
+    });
 }

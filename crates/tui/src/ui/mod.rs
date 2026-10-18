@@ -30,3 +30,7 @@ mod tests;
 #[cfg(test)]
 #[path = "stream_bench_tests.rs"]
 mod stream_bench_tests;
+
+#[cfg(test)]
+#[path = "readme_demo_tests.rs"]
+mod readme_demo_tests;

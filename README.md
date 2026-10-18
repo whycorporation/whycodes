@@ -27,7 +27,7 @@ idle-efficient TUI, and a workflow that is not tied to any single model
 provider.
 
 <p align="center">
-  <img src="assets/tui-home.svg" alt="The whycodes TUI home screen" width="820">
+  <img src="assets/tui-demo.svg" alt="The whycodes TUI: a prompt goes from the home screen to a finished turn with search, edit and test runs" width="820">
 </p>
 
 ## Highlights
