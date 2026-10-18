@@ -3331,3 +3331,40 @@ fn set_dotted_writes_the_global_file_under_whycodes_home() {
         );
     });
 }
+
+#[test]
+fn project_overlay_without_default_agent_keeps_the_global_one() {
+    with_isolated_home(|home| {
+        std::fs::write(home.join("config.toml"), "default_agent = \"plan\"\n").unwrap();
+        let proj = home.join("proj");
+        std::fs::create_dir_all(proj.join(".whycodes")).unwrap();
+        let overlay = proj.join(".whycodes/config.toml");
+
+        std::fs::write(&overlay, "[general]\nlog_level = \"debug\"\n").unwrap();
+        let cfg = Config::load_layered(&proj).unwrap();
+        assert_eq!(cfg.default_agent, "plan");
+        assert_eq!(cfg.general.log_level.as_deref(), Some("debug"));
+
+        // Naming the built-in default still overrides the global choice.
+        std::fs::write(&overlay, "default_agent = \"build\"\n").unwrap();
+        assert_eq!(Config::load_layered(&proj).unwrap().default_agent, "build");
+    });
+}
+
+#[test]
+fn project_set_of_another_key_leaves_the_global_default_agent() {
+    with_isolated_home(|home| {
+        std::fs::write(home.join("config.toml"), "default_agent = \"plan\"\n").unwrap();
+        let proj = home.join("proj");
+        Config::set_dotted(
+            &proj,
+            crate::ConfigTarget::Project,
+            "general.log_level",
+            "debug",
+        )
+        .unwrap();
+        let written = std::fs::read_to_string(proj.join(".whycodes/config.toml")).unwrap();
+        assert!(!written.contains("default_agent"), "{written}");
+        assert_eq!(Config::load_layered(&proj).unwrap().default_agent, "plan");
+    });
+}
