@@ -93,7 +93,8 @@ whycodes` (Homebrew). Интерактивные сессии TUI проверя
 `--no-auto-update`, чтобы пропустить запрос. Скрипты установки сверяют
 артефакты релиза с опубликованным `SHA256SUMS`. Скачиваемые бинарники и
 инструкции по удалению:
-[docs/packaging.md](docs/packaging.md).
+[docs/packaging.md](docs/packaging.md). Как подписываются бинарники для
+Windows: [Code signing policy](docs/code-signing-policy.md).
 
 Конфиг и сессии лежат в `~/.whycodes` (`%USERPROFILE%\.whycodes` в Windows)
 или в `$WHYCODES_HOME`, если переменная задана. **0.6.5** перенесла их из
@@ -185,6 +186,7 @@ TUI рисует только при изменениях, поэтому сес
 | [docs/coverage.md](docs/coverage.md) | Измерение покрытия строк |
 | [docs/budgets.md](docs/budgets.md) | Бюджеты качества CI |
 | [docs/packaging.md](docs/packaging.md) | Homebrew, установщики, счётчики загрузок релиза |
+| [docs/code-signing-policy.md](docs/code-signing-policy.md) | Code signing policy (политика подписи кода) |
 
 ## Участие
 

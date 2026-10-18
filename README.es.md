@@ -98,7 +98,8 @@ pantalla de inicio antes de instalar. Pasa `--no-auto-update` para omitir
 el aviso. Los scripts de instalación verifican los artefactos de la
 versión contra el `SHA256SUMS` publicado. Binarios descargables e
 instrucciones de desinstalación:
-[docs/packaging.md](docs/packaging.md).
+[docs/packaging.md](docs/packaging.md). Cómo se firman los binarios de
+Windows: [Code signing policy](docs/code-signing-policy.md).
 
 La configuración y las sesiones viven en `~/.whycodes`
 (`%USERPROFILE%\.whycodes` en Windows), o en `$WHYCODES_HOME` si está
@@ -194,6 +195,7 @@ en 100% de cobertura de líneas de código de producción — véase
 | [docs/coverage.md](docs/coverage.md) | Medir cobertura de líneas |
 | [docs/budgets.md](docs/budgets.md) | Presupuestos de calidad de CI |
 | [docs/packaging.md](docs/packaging.md) | Homebrew, instaladores, recuentos de descargas |
+| [docs/code-signing-policy.md](docs/code-signing-policy.md) | Code signing policy (política de firma de código) |
 
 ## Contribuir
 
