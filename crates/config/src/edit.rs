@@ -89,6 +89,7 @@ pub(crate) fn set_dotted_in(
         ),
         ConfigTarget::Project => {
             let mut overlay = layer.clone();
+            crate::load::clear_unset_default_agent(&mut overlay, &text);
             if !overlay.websearch.strip_project_only_keys().is_empty()
                 && path.first().is_some_and(|seg| seg == "websearch")
             {

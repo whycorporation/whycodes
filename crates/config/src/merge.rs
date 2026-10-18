@@ -2,7 +2,7 @@
 
 use crate::types::{
     BashConfig, Config, FormatConfig, MagicKeywordsConfig, QuestionToolConfig, SlopConfig,
-    ToolsConfig, default_agent, default_auto_background_after_secs, default_auto_index_chunks,
+    ToolsConfig, default_auto_background_after_secs, default_auto_index_chunks,
     default_auto_index_files, default_code_min_score, default_code_top_k, default_compaction_llm,
     default_compaction_method, default_compaction_threshold, default_consolidate_max,
     default_intent_guidance, default_max_background_jobs, default_max_tokens,
@@ -135,11 +135,9 @@ impl Config {
     }
 
     fn merge_defaults(&mut self, other: &Config) {
-        // Default agent (non-empty override wins)
-        if other.default_agent != default_agent() || !other.default_agent.is_empty() {
-            // only override if explicitly set (not the default value from
-            // deserialization). Since we can't tell, always take other's value
-            // when merging (other is the higher-priority layer).
+        // Default agent: a non-empty value wins. A project layer that does not
+        // set the key carries an empty one (`clear_unset_default_agent`).
+        if !other.default_agent.is_empty() {
             self.default_agent = other.default_agent.clone();
         }
 

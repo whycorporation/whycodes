@@ -8,10 +8,7 @@ How the `whycodes` agent changes configuration.
 2. Pick the layer. User-wide intent: the global file (default). "For this
    project only": `--project` (`.whycodes/config.toml`). When an env
    variable or the project file wins, a global change will not take effect:
-   say so. Known quirk: any project overlay resets `default_agent` to
-   `build`, so a global `default_agent` is shadowed whenever an overlay
-   exists. Check `config get default_agent` (it names the winning layer)
-   and use `--project` in that case.
+   say so. Check `config get <key>` first: it names the winning layer.
 3. Say which file you will write, then write it with
    `whycodes config set <dotted> <value> [--project]`. The value is a TOML
    literal (bool, number, array, inline table), else a string. It writes
