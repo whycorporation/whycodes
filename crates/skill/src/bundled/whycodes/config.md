@@ -12,18 +12,23 @@ Layers, lowest to highest: built-in defaults, global file, project file,
 `WHYCODES_*` environment variables, `slop.toml`. Command-line flags
 (`-P`, `-m`, `-a`, `--no-memory`, `--approval-mode`, ...) win for that run
 only. Maps (`providers`, `mcp_servers`, `permission`, ...) merge per key;
-most lists are replaced by a non-empty higher layer; `agents` append by new
-name only (built-in agents cannot be redefined). Booleans that default to
+most lists are replaced by a non-empty higher layer; `agents` append new
+names, and for an existing name a higher layer overrides only `model`,
+`temperature` and `top_p` (prompt and tools stay from the lower layer). Any
+project overlay resets `default_agent` to `build` (known quirk; topic
+`repair`). Booleans that default to
 `true` can only be turned off by a higher layer. A global file that fails to
 parse is an error; a broken project file is skipped with a warning.
 
 Inspect, never guess:
 - `whycodes config path`: the global file.
 - `whycodes config get <dotted> [--json]`: one value and the layer that set
-  it (`overriddenBy`: default / global / project / env).
+  it (`overriddenBy`: default / global / project / env); `--json` values are
+  typed.
 - `whycodes config keys [prefix] [--json]`: leaf keys, effective values,
   winning layer.
 - `whycodes config show`: the TOML; secrets print as `<redacted>`.
+  `get`, `keys` and `show` print `${VAR}` placeholders as names.
 - `whycodes debug --json`: paths, whether the config exists, data dir, which
   `WHYCODES_*` and key variables are set (names only, never values).
 - `/doctor` in the TUI: the same facts for the running session. You cannot

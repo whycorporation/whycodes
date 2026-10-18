@@ -24,7 +24,10 @@ Custom subagents: Markdown with frontmatter (`name`, `description`, `tools`,
 the body is the system prompt. Extra `[[agents]]` entries in config add new
 names (`mode = "primary" | "subagent" | "all"`, a `[agents.permission]`
 table with `allow_file_writes`, `allow_network`, `allow_shell`, optional
-`allowed_tools`, `denied_tools`, `rules`).
+`allowed_tools`, `denied_tools`, `rules`). For an existing name (built-in
+or lower layer) a higher layer overrides only `model`, `temperature` and
+`top_p`; description, prompt and tools stay, and `config set` refuses those
+as "would have no effect".
 
 Finished workers write `.whycodes/agents/<id>.md`, readable as
 `read agent://<id>`; `Alt+A` or `/agents` opens the agent hub.
