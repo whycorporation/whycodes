@@ -14,9 +14,9 @@ Layers, lowest to highest: built-in defaults, global file, project file,
 only. Maps (`providers`, `mcp_servers`, `permission`, ...) merge per key;
 most lists are replaced by a non-empty higher layer; `agents` append new
 names, and for an existing name a higher layer overrides only `model`,
-`temperature` and `top_p` (prompt and tools stay from the lower layer). Any
-project overlay resets `default_agent` to `build` (known quirk; topic
-`repair`). Booleans that default to
+`temperature` and `top_p` (prompt and tools stay from the lower layer). A
+project overlay changes `default_agent` only when it sets the key. Booleans
+that default to
 `true` can only be turned off by a higher layer. A global file that fails to
 parse is an error; a broken project file is skipped with a warning.
 

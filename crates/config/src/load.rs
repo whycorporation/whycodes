@@ -103,6 +103,7 @@ pub(crate) fn parse_project_text(
     path: &Path,
 ) -> std::result::Result<Config, toml::de::Error> {
     let mut project = toml::from_str::<Config>(content)?;
+    clear_unset_default_agent(&mut project, content);
     if project.schema_version < CONFIG_SCHEMA_VERSION {
         project.schema_version = CONFIG_SCHEMA_VERSION;
     }
@@ -111,6 +112,15 @@ pub(crate) fn parse_project_text(
         tracing::warn!("{msg}");
     }
     Ok(project)
+}
+
+/// A project file without `default_agent` leaves it empty, so merging keeps
+/// the lower layer's choice instead of the serde default (`build`).
+pub(crate) fn clear_unset_default_agent(project: &mut Config, content: &str) {
+    let table = toml::from_str::<toml::Table>(content).unwrap_or_default();
+    if !table.contains_key("default_agent") {
+        project.default_agent.clear();
+    }
 }
 
 fn warn_project_config(kind: &str, path: &Path, e: impl std::fmt::Display) {
