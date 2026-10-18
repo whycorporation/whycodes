@@ -598,6 +598,7 @@ overwrite the same path.
 | `build` | primary | Full-access coding (default) |
 | `plan` | primary | Read-only planning |
 | `ask` | primary | Read-only Q&A |
+| `whycodes` | primary | WhyCodes itself: explains it, repairs its config |
 | `general` | subagent | Multi-step tasks |
 | `explore` | subagent | Fast read-only codebase search |
 | `scout` | subagent | External docs and dependency research |
@@ -605,6 +606,30 @@ overwrite the same path.
 In **build**, high-confidence questions get an ephemeral intent hint so the
 model answers instead of over-eager edits. Set
 `session.intent_guidance = "off"` to disable.
+
+### The `whycodes` agent
+
+`whycodes` answers questions about WhyCodes itself (where a setting comes
+from, why a tool is missing, how skills reach the prompt) and changes its
+configuration. Start it with `whycodes -a whycodes`, `/agent whycodes` or
+`Ctrl+T`; one-shot: `whycodes -a whycodes generate "Where is config.toml
+and what is default_agent?"`. It uses the session model.
+
+Its prompt is short: rules plus a topic index of the bundled `whycodes`
+skill. Manuals load on demand, one topic at a time, with `read
+skill://whycodes/<topic>` (topics: `overview`, `config`, `agents`, `tools`,
+`providers`, `skills`, `memory`, `mcp-lsp`, `permissions-hooks`,
+`session-tui`, `repair`); `read skill://whycodes` prints the index. It
+reads live values with `whycodes config get` / `config keys` / `debug
+--json` and changes them with `whycodes config set` (`--project` for
+`.whycodes/config.toml`), naming the file before it writes.
+
+Its permissions keep it off your project: `write` and `edit` are denied
+everywhere except the project `.whycodes/` directory (relative paths) and
+the global `config.toml`; `apply_patch`, `task`, `swarm` and network tools
+are not available; `bash` runs only `whycodes config …` and `whycodes
+debug …`. A `write(<glob>)` rule in your `[permission]` that is more
+specific than `**` still applies, as for any agent.
 
 ### Agent hub
 
@@ -1073,6 +1098,9 @@ Switching `/models` rebuilds the session system prompt.
 Skills are listed in the system prompt by **name and description only**. The
 body is loaded with `read skill://<name>` or `skill` (`action=load`). Project
 trees: `.skills/*.skill.md`, `.whycodes/skills/`, `.claude/skills/*/SKILL.md`.
+The bundled `whycodes` skill (the product manual, split into topics read as
+`skill://whycodes/<topic>`) is always loadable but is not listed in that
+catalog; the [`whycodes` agent](#the-whycodes-agent) carries its index.
 
 Finished `task` / `swarm` workers also write `.whycodes/agents/<id>.md`,
 readable as `read agent://<id>` (`read agent://` lists them).
