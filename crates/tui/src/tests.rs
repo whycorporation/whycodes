@@ -8,6 +8,38 @@ use crate::ui::file_suggest::FileSuggestState;
 use std::str::FromStr;
 use whycodes_index::WorkspaceIndex;
 
+/// Sets (or removes) one env var and puts the previous value back on drop,
+/// including when the test panics. A test that restores by hand after its
+/// asserts leaks the value on failure, and every later test in the binary
+/// then runs with it. Callers hold [`crate::ENV_LOCK`].
+pub(crate) struct EnvVarGuard {
+    key: &'static str,
+    prev: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    pub(crate) fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let prev = std::env::var_os(key);
+        unsafe { std::env::set_var(key, value) };
+        Self { key, prev }
+    }
+
+    pub(crate) fn remove(key: &'static str) -> Self {
+        let prev = std::env::var_os(key);
+        unsafe { std::env::remove_var(key) };
+        Self { key, prev }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match self.prev.take() {
+            Some(v) => unsafe { std::env::set_var(self.key, v) },
+            None => unsafe { std::env::remove_var(self.key) },
+        }
+    }
+}
+
 /// Picker over a real index: activate → fuzzy → drill down → accept.
 /// Skipped by `scripts/coverage.sh` (notify-timing flake under llvm-cov).
 /// Lives here so the skipped body does not count against `file_suggest.rs`.
