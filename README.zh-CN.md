@@ -85,7 +85,8 @@ cargo build --release -p whycodes-cli
 whycodes`（Homebrew）。交互式 TUI 会话会检查 GitHub 上的新版本，并在主
 屏幕安装前提示。传入 `--no-auto-update` 可跳过提示。安装脚本会对照已发布
 的 `SHA256SUMS` 校验发行产物。可下载二进制与卸载说明见
-[docs/packaging.md](docs/packaging.md)。
+[docs/packaging.md](docs/packaging.md)。Windows 发行二进制的签名方式见
+[Code signing policy](docs/code-signing-policy.md)。
 
 配置和会话位于 `~/.whycodes`（Windows 上为 `%USERPROFILE%\.whycodes`），
 若设置了 `$WHYCODES_HOME` 则位于该目录。**0.6.5** 将其从 0.6.4 及更早版本
@@ -175,6 +176,7 @@ TUI 仅在有变化时绘制，空闲会话不会重绘。恢复一个 3000 条�
 | [docs/coverage.md](docs/coverage.md) | 测量行覆盖率 |
 | [docs/budgets.md](docs/budgets.md) | CI 质量预算 |
 | [docs/packaging.md](docs/packaging.md) | Homebrew、安装器、发行下载次数 |
+| [docs/code-signing-policy.md](docs/code-signing-policy.md) | Code signing policy（代码签名政策） |
 
 ## 贡献
 

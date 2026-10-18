@@ -11,7 +11,8 @@
     The downloaded archive is verified against the release's SHA256SUMS before
     anything is written to the install directory. The install directory is
     added to the current user's PATH when it is missing, so `whycodes` works
-    in this session and in new terminals without extra setup.
+    in this session and in new terminals without extra setup. The script says
+    so before changing PATH and prints how to undo it (scripts/uninstall.ps1).
 #>
 
 [CmdletBinding()]
@@ -51,6 +52,8 @@ function Add-UserPath([string]$dir) {
     } else {
         $new = "$current;$dir"
     }
+    # Announce the system change before making it.
+    Write-Host "Adding $dir to your user PATH"
     [Environment]::SetEnvironmentVariable('PATH', $new, 'User')
     return $true
 }
@@ -145,6 +148,8 @@ try {
         Broadcast-Environment
         Write-Host "Added $InstallDir to your user PATH"
         Write-Host "This terminal can already run 'whycodes'. New terminals pick it up automatically."
+        Write-Host "To undo, run the uninstaller; it removes the binary and this PATH entry:"
+        Write-Host "    irm https://raw.githubusercontent.com/$Repo/main/scripts/uninstall.ps1 | iex"
     } else {
         Write-Host "$InstallDir is already on your user PATH"
     }

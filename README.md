@@ -94,7 +94,8 @@ release and ask on the home screen before installing. Pass `--no-auto-update`
 to skip the prompt. The install scripts verify
 release artifacts against the published `SHA256SUMS`. Downloadable binaries
 and uninstall instructions:
-[docs/packaging.md](docs/packaging.md).
+[docs/packaging.md](docs/packaging.md). How Windows release binaries are
+signed: [Code signing policy](docs/code-signing-policy.md).
 
 Config and sessions live in `~/.whycodes` (`%USERPROFILE%\.whycodes` on
 Windows), or `$WHYCODES_HOME` when set. **0.6.5** moved them out of the
@@ -190,6 +191,7 @@ coverage — see [docs/coverage.md](docs/coverage.md).
 | [docs/coverage.md](docs/coverage.md) | Measuring line coverage |
 | [docs/budgets.md](docs/budgets.md) | CI quality budgets |
 | [docs/packaging.md](docs/packaging.md) | Homebrew, installers, release download counts |
+| [docs/code-signing-policy.md](docs/code-signing-policy.md) | Code signing policy |
 
 ## Contributing
 

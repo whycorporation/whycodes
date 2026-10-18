@@ -3,10 +3,14 @@
 //! Release artifacts should report more than the crate version so installers
 //! and bug reports can pin an exact build. Missing `.git` (source tarball,
 //! some CI checkouts) falls back to `unknown` rather than failing the build.
+//!
+//! Windows targets also get a VERSIONINFO resource (product name, version,
+//! copyright) in `whycodes.exe`: code signing checks the product name and
+//! version against the file metadata, and Explorer shows it under Details.
 
 use std::process::Command;
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let hash = git_short_hash().unwrap_or_else(|| "unknown".into());
     let date = build_date_utc();
 
@@ -17,6 +21,27 @@ fn main() {
     println!("cargo:rerun-if-changed=../../.git/HEAD");
     println!("cargo:rerun-if-changed=../../.git/refs/heads/main");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+
+    // The target OS, not the host's: a cross build for Windows embeds the
+    // resource, a Linux/macOS target never does.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        windows_version_resource()?;
+    }
+    Ok(())
+}
+
+/// Embed VERSIONINFO into `whycodes.exe`. FileVersion/ProductVersion (string
+/// and numeric) default to `CARGO_PKG_VERSION`; the names are set explicitly
+/// because the package is `whycodes-cli` but the product is `whycodes`.
+fn windows_version_resource() -> std::io::Result<()> {
+    let mut res = winresource::WindowsResource::new();
+    res.set("ProductName", "whycodes")
+        .set("FileDescription", "whycodes")
+        .set("CompanyName", "whycorporation")
+        .set("LegalCopyright", "Copyright (c) 2026 whycorporation")
+        .set("OriginalFilename", "whycodes.exe")
+        .set("InternalName", "whycodes");
+    res.compile()
 }
 
 fn git_short_hash() -> Option<String> {

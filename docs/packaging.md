@@ -119,7 +119,9 @@ The scripts verify the download against the release `SHA256SUMS`.
 `install.sh` prints a PATH hint when `$HOME/.local/bin` is missing from
 `PATH`. `install.ps1` adds `%LOCALAPPDATA%\Programs\whycodes` to the
 current user's PATH (and this session) so `whycodes` works immediately
-without WSL. `WHYCODES_INSTALL_DIR` overrides the Unix location;
+without WSL; it prints `Adding <dir> to your user PATH` before the change
+and the `uninstall.ps1` command that undoes it. `WHYCODES_INSTALL_DIR`
+overrides the Unix location;
 `install.ps1 -InstallDir` overrides the Windows location. Installers and
 Homebrew ship only the `whycodes` binary. Public releases need no GitHub
 token; `GITHUB_TOKEN` / `GH_TOKEN` remain an optional fallback if you
@@ -130,9 +132,10 @@ point the scripts at a private fork.
 `brew uninstall whycodes` instead.
 
 The binaries are unsigned, so macOS Gatekeeper and Windows SmartScreen will
-warn on first run. `whycodes upgrade` replaces the running binary with the
-newest release (checksum verified) and leaves the existing one in place if
-anything fails — except Homebrew installs, which it will not touch.
+warn on first run. Windows signing is being set up under the
+[Code signing policy](code-signing-policy.md). `whycodes upgrade` replaces
+the running binary with the newest release (checksum verified) and leaves
+the existing one in place if anything fails — except Homebrew installs, which it will not touch.
 
 Interactive TUI sessions also check GitHub for a newer release and offer a
 home-screen confirm (`SHA256SUMS` on accept, no Homebrew prefix — those

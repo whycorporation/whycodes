@@ -92,5 +92,10 @@ whycodes-sdk = { path = "../sdk" }
 whycodes-storage = { path = "../storage", features = ["test-util"] }
 tempfile.workspace = true
 
+# Windows VERSIONINFO resource (build.rs, only when the target OS is windows).
+# Unconditional so a non-Windows host cross-building for Windows still has it.
+[build-dependencies]
+winresource = { version = "0.1", default-features = false }
+
 [lints]
 workspace = true
