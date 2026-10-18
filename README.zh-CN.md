@@ -25,7 +25,7 @@ WhyCodes 可读写并编辑文件、运行命令、搜索工作区，并通过�
 原生体积、空闲时高效的 TUI，以及不绑定任何单一模型供应商的工作流。
 
 <p align="center">
-  <img src="assets/tui-home.svg" alt="whycodes TUI 主屏幕" width="820">
+  <img src="assets/tui-demo.svg" alt="whycodes TUI：从主屏幕到完成一次包含搜索、编辑和测试的对话" width="820">
 </p>
 
 ## 亮点

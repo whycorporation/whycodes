@@ -27,7 +27,7 @@ WhyCodes читает, пишет и правит файлы, запускает
 не привязанный к одному поставщику моделей.
 
 <p align="center">
-  <img src="assets/tui-home.svg" alt="Главный экран TUI whycodes" width="820">
+  <img src="assets/tui-demo.svg" alt="TUI whycodes: от главного экрана до завершённого хода с поиском, правкой и тестами" width="820">
 </p>
 
 ## Особенности
