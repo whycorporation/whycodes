@@ -64,7 +64,7 @@ the same, and it writes the project overlay the same way.
 
 Lowest to highest precedence, from `Config::load_layered`:
 
-1. Built-in defaults (`Config::default()`: six built-in agents, all
+1. Built-in defaults (`Config::default()`: seven built-in agents, all
    `default_*` functions below).
 2. Global `config.toml` (`~/.whycodes/config.toml`, or
    `$WHYCODES_HOME/config.toml`). Created on first run if missing. A file
@@ -355,8 +355,8 @@ secret fields are expanded from the environment after load.
 
 ## `[[agents]]`
 
-The six built-in agents (`build`, `plan`, `ask`, `explore`, `general`,
-`scout`) always exist. A file entry is appended only when its `name` is
+The seven built-in agents (`build`, `plan`, `ask`, `whycodes`, `explore`,
+`general`, `scout`) always exist. A file entry is appended only when its `name` is
 new; an existing name is not overridden. `[agents.permission]` is a
 required sub-table (no serde default on the field), and its three
 `allow_*` booleans are required inside it.
@@ -374,7 +374,7 @@ required sub-table (no serde default on the field), and its three
 | `permission.allowed_paths` | — | — | Paths the agent may touch. In this version it only contributes to the tool-registry cache key; it is not enforced as a path gate. |
 | `permission.rules` | `{}` | — | Per-agent `tool or pattern = allow|ask|deny`; wins over the global `[permission]` map for the same key. |
 | `model` | — | — | Table with the `[models.<key>]` fields. In this version only its `thinking` flag is consulted (to enable or disable extended thinking on the request); the route stays the session provider/model. Unset means detect by capability. |
-| `system_prompt` | — | — | Inline system prompt. Unset loads the built-in prompt for the six default agents, or none. |
+| `system_prompt` | — | — | Inline system prompt. Unset loads the built-in prompt for the seven default agents, or none. |
 | `temperature` | — | — | Sampling temperature sent with this agent's requests. Unset sends none. |
 | `top_p` | — | — | Nucleus sampling. Defined, but no runtime code reads it in this version. |
 

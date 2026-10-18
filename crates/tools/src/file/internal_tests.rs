@@ -15,6 +15,28 @@ fn skill_url_rejects_bad_names() {
     assert!(r.is_error);
     let r = read_internal("skill://a/b", &ctx).unwrap();
     assert!(r.is_error);
+    assert!(r.content.contains("has no topics"), "{}", r.content);
+}
+
+#[test]
+fn skill_url_serves_every_bundled_topic() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy());
+    let index = read_internal("skill://whycodes/", &ctx).unwrap();
+    assert!(!index.is_error, "{}", index.content);
+    for topic in whycodes_skill::bundled::WHYCODES_TOPICS {
+        assert!(index.content.contains(topic.name), "{}", index.content);
+        let r = read_internal(&format!("skill://whycodes/{}", topic.name), &ctx).unwrap();
+        assert!(!r.is_error, "{}", r.content);
+        assert!(r.content.contains(topic.body), "{}", topic.name);
+    }
+    let unknown = read_internal("skill://whycodes/nope", &ctx).unwrap();
+    assert!(unknown.is_error);
+    assert!(
+        unknown.content.contains("Unknown topic"),
+        "{}",
+        unknown.content
+    );
 }
 
 #[test]

@@ -30,7 +30,32 @@ async fn list_and_load_use_project_working_dir() {
     let empty_ctx = ToolContext::new(empty_dir.path().to_string_lossy());
     let none = tool.execute(json!({"action": "list"}), &empty_ctx).await;
     assert!(!none.is_error, "{}", none.content);
-    assert!(none.content.contains("No skills found"), "{}", none.content);
+    // Only the bundled manual is left.
+    assert!(
+        none.content.contains("Available skills (1)"),
+        "{}",
+        none.content
+    );
+    assert!(none.content.contains("whycodes"), "{}", none.content);
+    let topic = tool
+        .execute(
+            json!({"action": "load", "name": "whycodes/agents"}),
+            &empty_ctx,
+        )
+        .await;
+    assert!(!topic.is_error, "{}", topic.content);
+    assert!(
+        topic.content.starts_with("# skill://whycodes/agents"),
+        "{}",
+        topic.content
+    );
+    let bad_topic = tool
+        .execute(
+            json!({"action": "load", "name": "whycodes/nope"}),
+            &empty_ctx,
+        )
+        .await;
+    assert!(bad_topic.is_error, "{}", bad_topic.content);
 
     let bad = tool.execute(json!({"action": "nope"}), &ctx).await;
     assert!(bad.is_error, "{}", bad.content);

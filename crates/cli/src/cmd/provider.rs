@@ -253,10 +253,6 @@ fn empty_provider_lines() -> Vec<String> {
     provider_none_lines(&whycodes_llm::ProviderRegistry::default().names().join(", "))
 }
 
-pub(crate) fn no_agents_configured_line() -> &'static str {
-    "  (no agents configured)"
-}
-
 pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
     let mut config = Config::load_or_create()?;
 
@@ -432,7 +428,9 @@ pub(crate) async fn cmd_plugins(cli: &Cli, cmd: Option<&PluginsCmd>) -> anyhow::
 }
 
 pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
-    let config = Config::load_or_create()?;
+    // A saved file lists the built-in agents it was written with; merge onto
+    // the defaults so agents added since (e.g. `whycodes`) are listed too.
+    let config = Config::default().merge_with(&Config::load_or_create()?);
 
     match name {
         Some(name) => {
@@ -471,9 +469,6 @@ pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
                     default_marker,
                     agent.description
                 );
-            }
-            if config.agents.is_empty() {
-                println!("{}", no_agents_configured_line());
             }
         }
     }

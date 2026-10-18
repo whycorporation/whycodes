@@ -84,7 +84,8 @@ impl SkillRegistry {
         Ok(registry)
     }
 
-    /// Project skills plus the user-global `$CONFIG/skills` tree.
+    /// Project skills, the user-global `$CONFIG/skills` tree, then the
+    /// bundled skills (see [`crate::bundled`]).
     pub fn load_for_project(project: &Path) -> crate::error::Result<Self> {
         let mut registry = Self::load_project(project)?;
         let global = global_skills_dir();
@@ -92,7 +93,16 @@ impl SkillRegistry {
             registry.load_from_dir(&global)?;
             load_skill_md_tree(&mut registry, &global);
         }
+        registry.add_bundled();
         Ok(registry)
+    }
+
+    /// Append the skills compiled into the binary unless a project or user
+    /// skill already took the name.
+    pub fn add_bundled(&mut self) {
+        if self.get(crate::bundled::WHYCODES_SKILL).is_none() {
+            self.skills.push(crate::bundled::whycodes_skill());
+        }
     }
 
     /// Compact catalog for the system prompt: names and descriptions only.
@@ -384,7 +394,9 @@ description = "d"
         let loaded = SkillRegistry::load();
         std::env::set_current_dir(prev_cwd).unwrap();
         restore_home(prev_home);
-        assert!(loaded.unwrap().skills.is_empty());
+        // Only the bundled manual remains.
+        let names: Vec<String> = loaded.unwrap().skills.into_iter().map(|s| s.name).collect();
+        assert_eq!(names, ["whycodes"]);
     }
 
     #[test]
@@ -486,6 +498,25 @@ description = "d"
         let loaded = SkillRegistry::load_for_project(project.path()).unwrap();
         restore_home(prev);
         assert!(loaded.get("global-skill").is_some());
+        // The bundled manual comes last and is not part of the prompt catalog.
+        assert_eq!(loaded.skills.last().unwrap().name, "whycodes");
+        let catalog_only = SkillRegistry::load_project(project.path()).unwrap();
+        assert!(catalog_only.get("whycodes").is_none());
+    }
+
+    #[test]
+    fn add_bundled_keeps_a_user_skill_of_the_same_name() {
+        let mut reg = SkillRegistry::new();
+        reg.skills.push(Skill {
+            name: "whycodes".into(),
+            description: "mine".into(),
+            prompt: "MINE".into(),
+            tools_allowed: Vec::new(),
+            file_patterns: Vec::new(),
+        });
+        reg.add_bundled();
+        assert_eq!(reg.skills.len(), 1);
+        assert_eq!(reg.skills[0].prompt, "MINE");
     }
 
     #[test]
