@@ -3,15 +3,10 @@
 </p>
 
 <p align="center">
-  <a href="https://olud.ai/tool/whycodes.html"><img src="https://olud.ai/badge.php?tool=whycodes" alt="olud.ai"></a>
   <a href="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml"><img src="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/whycorporation/whycodes/releases"><img src="https://img.shields.io/github/v/release/whycorporation/whycodes" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://discord.gg/H2KsKYEdT8"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord WhyCodes"></a>
-  <a href="https://t.me/whycodesai"><img src="https://img.shields.io/badge/Telegram-whycodesai-26A5E4?logo=telegram&logoColor=white" alt="Telegram WhyCodes"></a>
-  <a href="https://x.com/whycodesai"><img src="https://img.shields.io/badge/X-@whycodesai-black" alt="Подписаться на @whycodesai в X"></a>
-  <a href="https://www.youtube.com/@whycodesai"><img src="https://img.shields.io/badge/YouTube-@whycodesai-FF0000?logo=youtube&logoColor=white" alt="YouTube WhyCodes"></a>
-  <a href="https://github.com/sponsors/whycorporation"><img src="https://img.shields.io/badge/sponsor-whycorporation-ea4aaa" alt="Спонсировать WhyCodes"></a>
 </p>
 
 <p align="center">
@@ -30,21 +25,36 @@ WhyCodes читает, пишет и правит файлы, запускает
   <img src="assets/tui-demo.svg" alt="TUI whycodes: от главного экрана до завершённого хода с поиском, правкой и тестами" width="820">
 </p>
 
+## Почему WhyCodes
+
+- **Запускается мгновенно.** `whycodes --version` отвечает за 1.4 ms на Linux.
+- **Ничего не тратит в простое.** TUI рисует только при изменениях: сессия
+  в простое отрисовывает 0 кадров в секунду.
+- **Остаётся компактным.** Десять сессий в простое занимают вместе 41.9 MB,
+  около 3.1 MB на каждую дополнительную; восстановленная сессия из 3000
+  сообщений занимает 34.7 MB.
+- **Работает с выбранной вами моделью.** Облачные API, локальный сервер
+  моделей или любой OpenAI-совместимый endpoint — переключение на каждый
+  запуск или прямо посреди сессии.
+
+Замерено на одной машине; метод и оговорки в разделе
+[Производительность](#производительность).
+
 ## Особенности
 
-- **Один нативный бинарник.** Нет обязательных runtime-зависимостей. Поиск
-  выполняется в процессе (`ripgrep` не нужен); опциональные интеграции ОС,
-  например Linux bubblewrap, усиливают песочницу, когда доступны.
+- **Один нативный бинарник.** Больше ничего устанавливать не нужно: поиск
+  выполняется в процессе, а в Windows команды работают без WSL (через Git
+  for Windows, если он установлен, иначе во встроенной bash-совместимой
+  оболочке).
 - **Кроссплатформенность.** Один и тот же процесс на Linux, macOS и Windows.
-  Linux запускается на каждом изменении CI; задания Windows и macOS доступны
-  через мульти-ОС матрицу CI.
 - **Любой поставщик.** Anthropic, OpenAI, Google, GitHub Copilot, Groq, xAI,
-  DeepSeek, Ollama, OpenRouter, Mistral, Together или любой OpenAI-совместимый
-  endpoint — с API-ключом или входом по подписке (`whycodes auth login`).
+  DeepSeek, Ollama, OpenRouter, Mistral, Together, локальные серверы, такие
+  как LM Studio, vLLM и llama.cpp, или любой OpenAI-совместимый endpoint.
 - **Под ваш проект.** Загружает инструкции проекта из `AGENTS.md` и
   подключается к существующим MCP-инструментам и языковым серверам по LSP.
-- **Помнит вашу работу.** Сохраняемые сессии, память между сессиями
-  (`MEMORY.md`, семантический recall) и опциональный индекс кода.
+- **Помнит вашу работу.** Сохраняемые сессии, которые можно ветвить и
+  возобновлять, память между сессиями (`MEMORY.md`, семантический recall)
+  и опциональный индекс кода.
 
 ## Установка
 
@@ -70,14 +80,19 @@ brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
 brew install whycorporation/whycodes/whycodes
 ```
 
+<details>
+<summary>Homebrew сообщает, что tap не доверенный</summary>
+
 Homebrew 6+ отклоняет недоверенные сторонние tap. Полностью квалифицированная
-установка доверяет только этой formula. Если tap уже добавлен и вы увидели
-эту ошибку:
+установка выше доверяет только этой formula. Если tap уже добавлен и вы
+увидели эту ошибку:
 
 ```bash
 brew trust --formula whycorporation/whycodes/whycodes
 brew install whycodes
 ```
+
+</details>
 
 ### Из исходников
 
@@ -89,21 +104,28 @@ cargo build --release -p whycodes-cli
 
 Обновление: `whycodes upgrade` (установка скриптом / cargo) или `brew upgrade
 whycodes` (Homebrew). Интерактивные сессии TUI проверяют GitHub на новую
-версию и спрашивают на главном экране перед установкой. Передайте
-`--no-auto-update`, чтобы пропустить запрос. Скрипты установки сверяют
+версию и спрашивают на главном экране перед установкой; передайте
+`--no-auto-update`, чтобы пропустить проверку. Скрипты установки сверяют
 артефакты релиза с опубликованным `SHA256SUMS`. Скачиваемые бинарники и
 инструкции по удалению:
 [docs/packaging.md](docs/packaging.md). Как подписываются бинарники для
 Windows: [Code signing policy](docs/code-signing-policy.md).
 
 Конфиг и сессии лежат в `~/.whycodes` (`%USERPROFILE%\.whycodes` в Windows)
-или в `$WHYCODES_HOME`, если переменная задана. **0.6.5** перенесла их из
-платформенного каталога, который использовали 0.6.4 и раньше
+или в `$WHYCODES_HOME`, если переменная задана.
+
+<details>
+<summary>Обновление с 0.6.4 и более ранних версий</summary>
+
+0.6.5 перенесла конфиг и сессии из платформенного каталога, который
+использовался раньше
 (`~/.config/whycodes` или `~/.config/com.whycorporation.whycodes` в Linux,
 `~/Library/Application Support/com.whycorporation.whycodes` в macOS,
 `%APPDATA%\whycorporation\whycodes` в Windows). Первый запуск копирует
 `config.toml`, `auth.json` и `whycodes.db`, если новый каталог пуст, и
 оставляет старые файлы на месте.
+
+</details>
 
 <details>
 <summary>Дополнения оболочки</summary>
@@ -125,7 +147,14 @@ whycodes -d ./my-project                            # интерактивный
 whycodes generate "Explain main.rs" -d ./my-project # одноразовый запуск
 whycodes generate "Summarize the last commit" --format json
 whycodes --continue                                 # продолжить последнюю сессию
-whycodes -P openai -m gpt-4o generate "Refactor this module"
+whycodes -P openai -m gpt-5 generate "Refactor this module"
+```
+
+Нет API-ключа? Запустите модель локально:
+
+```bash
+whycodes -P ollama -m qwen2.5-coder               # Ollama
+whycodes provider discover --save                 # находит LM Studio, vLLM, llama.cpp
 ```
 
 OAuth-вход по подписке (`whycodes auth login <provider>`) доступен только
@@ -139,12 +168,14 @@ OAuth-вход по подписке (`whycodes auth login <provider>`) дост
 
 | | |
 |---|---|
-| **Агенты** | Основные: `build` (полный доступ), `plan` и `ask` (только чтение); субагенты `general`, `explore` и `scout` через инструмент `task`; параллельные воркеры в git worktree через `swarm` |
-| **Инструменты** | Правка/патч файлов, поиск в процессе, shell, git и GitHub, веб-загрузка/поиск, браузер на CDP, фоновые задачи, планирование и список дел |
-| **Сессии** | Сохраняются по проекту; возобновление через `--continue` / `--resume`, импорт транскриптов из других агентских CLI, обмен через локальный сервер |
+| **Агенты** | `build` (полный доступ), `plan` и `ask` (только чтение), а также `whycodes`, который объясняет и чинит собственный конфиг; субагенты `general`, `explore` и `scout` через инструмент `task`, по желанию возвращающие типизированный результат; параллельные воркеры в git worktree через `swarm`, за которыми можно следить и которыми можно управлять из хаба агентов (`/agents`) |
+| **Модели** | Prewalk планирует ход на сильной модели и передаёт правки более дешёвой; смена поставщика или модели на каждый запуск или посреди сессии (`/models`); опциональное нативное сжатие контекста на стороне поставщика для Anthropic |
+| **Инструменты** | Правка/патч файлов, Jupyter-ноутбуки как ячейки, поиск в процессе, shell, git и GitHub, веб-загрузка/поиск, браузер на CDP, фоновые задачи с `wait`, планирование и список дел; `ast_grep` / `ast_edit` в сборках с feature `ast-tools` |
+| **Сессии** | Сохраняются по проекту; возобновление через `--continue` / `--resume`, ветвление и возврат к прежним ходам через `/branch` и `/tree`, импорт транскриптов из других агентских CLI, обмен через локальный сервер |
+| **Управление** | Поставить сообщение в очередь после хода (`/queue`) или прервать между вызовами инструментов (`/now`); правила потока, прерывающие модель, когда её вывод совпадает (`whycodes rules`) |
 | **Память** | Редактируемый человеком `MEMORY.md`, семантические факты с эмбеддингами, опциональный RAG-индекс кода — всё по проекту, всё опционально |
-| **Headless / CI** | `generate` с `--format json` или `stream-json` (NDJSON), несколько промптов параллельно, ненулевой код выхода при ошибке |
-| **Безопасность** | Разрешения по инструменту, анализ риска shell-команд, опциональная ОС-песочница (bubblewrap), HTTP-белый список доменов и хуки инструментов |
+| **Headless / CI** | `generate` с `--format json` или `stream-json` (NDJSON), несколько промптов параллельно, ненулевой код выхода при ошибке; `whycodes slop` сообщает ΔLOC / многословность / эрозию по diff |
+| **Безопасность** | Пресеты подтверждений (`--approval-mode auto\|important\|manual`), разрешения по инструменту, анализ риска shell-команд, опциональная ОС-песочница (bubblewrap), HTTP-белый список доменов и хуки инструментов |
 | **Расширяемость** | MCP-серверы (stdio и HTTP), языковые серверы LSP, навыки, shell-плагины, свои slash-команды, темы |
 | **Встраивание** | SDK на Rust и TypeScript поверх протокола демона v1 (`whycodes serve`) |
 
@@ -168,17 +199,21 @@ TUI рисует только при изменениях, поэтому сес
 до октябрьской работы над памятью было 216 MB. Harness первого кадра
 измеряет одну отрисовку заставки, а не полный главный экран.
 
-Покрытие строк рабочей области **98.7%** (Linux x86_64, 2026-10-10). CI
-падает ниже 98.5%; двадцать четыре crate держат 100% покрытия строк
-продакшен-кода — см. [docs/coverage.md](docs/coverage.md).
+CI падает при покрытии строк рабочей области ниже 98.5% и держит двадцать
+четыре crate на 100% покрытия строк продакшен-кода — см.
+[docs/coverage.md](docs/coverage.md).
 
 ## Документация
 
 | Документ | О чём |
 |---|---|
 | [docs/guide.md](docs/guide.md) | Использование: CLI, TUI, агенты, инструменты, конфиг, SDK |
+| [docs/tools/](docs/tools/README.md) | По странице на каждый встроенный инструмент |
+| [docs/config.md](docs/config.md) | Все ключи конфига со значениями по умолчанию и переменными окружения |
+| [docs/providers.md](docs/providers.md) | Каталог поставщиков: особенности, аутентификация, работа с моделями |
 | [docs/auth.md](docs/auth.md) | API-ключи, OAuth, импорт учётных данных |
 | [docs/architecture.md](docs/architecture.md) | Карта crate и слои |
+| [docs/internals/](docs/internals/) | Цикл хода, шлюз разрешений, сжатие контекста, кэш промптов, повторы, MCP |
 | [docs/roadmap.md](docs/roadmap.md) | Текущий фокус и отложенная работа |
 | [docs/knowhow.md](docs/knowhow.md) | Добытые потом баги (TUI, tty, тихие выходы) |
 | [docs/tui-term-matrix.md](docs/tui-term-matrix.md) | Ручная проверка TUI на Alacritty / Kitty / VTE |
@@ -199,20 +234,23 @@ TUI рисует только при изменениях, поэтому сес
 
 ## Сообщество
 
-Те же ссылки, что на [why.codes](https://why.codes):
+<p>
+  <a href="https://discord.gg/H2KsKYEdT8"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord WhyCodes"></a>
+  <a href="https://t.me/whycodesai"><img src="https://img.shields.io/badge/Telegram-whycodesai-26A5E4?logo=telegram&logoColor=white" alt="Telegram WhyCodes"></a>
+  <a href="https://x.com/whycodesai"><img src="https://img.shields.io/badge/X-@whycodesai-black" alt="Подписаться на @whycodesai в X"></a>
+  <a href="https://www.youtube.com/@whycodesai"><img src="https://img.shields.io/badge/YouTube-@whycodesai-FF0000?logo=youtube&logoColor=white" alt="YouTube WhyCodes"></a>
+  <a href="https://olud.ai/tool/whycodes.html"><img src="https://olud.ai/badge.php?tool=whycodes" alt="olud.ai"></a>
+</p>
 
-- [GitHub](https://github.com/whycorporation/whycodes)
-- [Discord](https://discord.gg/H2KsKYEdT8)
-- [Telegram](https://t.me/whycodesai)
-- [X @whycodesai](https://x.com/whycodesai)
-- [YouTube](https://www.youtube.com/@whycodesai)
-- [Спонсор](https://github.com/sponsors/whycorporation)
+Сайт: [why.codes](https://why.codes).
 
 ## Спонсоры
 
 WhyCodes разрабатывается независимо и нуждается в финансировании, чтобы
 продолжать выпускать версии. Спонсируйте проект на
 [GitHub Sponsors](https://github.com/sponsors/whycorporation).
+
+<a href="https://github.com/sponsors/whycorporation"><img src="https://img.shields.io/badge/sponsor-whycorporation-ea4aaa" alt="Спонсировать WhyCodes"></a>
 
 ## История звёзд
 
@@ -228,4 +266,4 @@ WhyCodes разрабатывается независимо и нуждаетс
 
 ## Лицензия
 
-[MIT](LICENSE) · [why.codes](https://why.codes) · [GitHub](https://github.com/whycorporation/whycodes) · [Discord](https://discord.gg/H2KsKYEdT8) · [Telegram](https://t.me/whycodesai) · [X @whycodesai](https://x.com/whycodesai) · [YouTube](https://www.youtube.com/@whycodesai) · [Спонсор](https://github.com/sponsors/whycorporation)
+[MIT](LICENSE)
