@@ -85,10 +85,45 @@ names or the token store holds: `provider`, `authKind` (`api_key` |
 a stored login `expiry`, `validatedAt` and `stale` (not renewed for over a
 week). Never a secret. The text output is unchanged.
 
-`whycodes config get <key>` prints the value and the layer that set it,
-`debug  (from: global)`; `--json` prints `{ "key", "value",
-"overriddenBy" }` with `overriddenBy` one of `default`, `global`,
-`project`, `env` (the same layers `-d`/`--dir` resolves at startup).
+`whycodes config` reads and writes any key by its dotted path over the
+config tree: `default_agent`, `session.tool_profile`, `memory.auto_inject`,
+`agents.build.model`, `mcp_servers.<name>.command`. A segment after a list
+picks an entry by `name` (`agents.build`) or index (`hooks.0`); quote a
+segment with a dot in it (`models."gpt-4.1"`). `log_level` and
+`project_path` still work as short forms of `general.log_level` and
+`general.project_path`.
+
+- `config get <key> [--json]` prints the effective value and the layer that
+  set it, `debug  (from: global)`; a table prints as TOML. `--json` prints
+  `{ "key", "value", "overriddenBy" }` with the value in its TOML type and
+  `overriddenBy` one of `default`, `global`, `project`, `env` (the same
+  layers `-d`/`--dir` resolves at startup).
+- `config keys [prefix] [--json]` lists every leaf key (under `prefix`) with
+  its effective value and winning layer.
+- `config set <key> <value> [--project]` writes only that key, to the
+  global `config.toml` or, with `--project`, to `<project>/.whycodes/config.toml`.
+  The value is a TOML literal (`true`, `3`, `["a"]`,
+  `{ provider_id = "x", model_id = "y" }`); anything else is a string.
+  Comments and the other keys in the file stay as they were. The edit is
+  refused, and the file left byte-for-byte unchanged, when the value has the
+  wrong type, the key is unknown, the merged config would gain a validation
+  error (`default_agent` naming no agent, `slop.verbosity` out of range,
+  half a Telegram pair, …), the merge would keep a lower layer's value
+  (the prompt or tools of a built-in agent; its `model`, `temperature` and
+  `top_p` can be set), or `--project` names a key the project layer may not
+  set (`websearch.custom`, `custom` as engine or fallback). The first write
+  to an existing file copies it to `<file>.bak`; later writes keep that
+  backup. The confirmation names the file it wrote. A global edit is checked
+  against the defaults and the global file alone; a project overlay may
+  still override it in that project (`config get` names the winning layer).
+- `config show` prints the global file; `config path` prints its location.
+
+Secrets print as `<redacted>` in `get`, `keys` and `show`: any key whose
+last part is or ends in `api_key`, `apikey`, `token`, `secret`, `password`,
+`webhook`, `webhook_url` or `authorization`, `key` under `providers`, and
+every value in a `headers` table. A whole `${VAR}` reference is a name, not
+a secret, and prints as written. Setting a secret works; its confirmation
+does not echo the value.
 
 `whycodes serve` writes `.whycodes/serve.lock` (pid, port). A second
 invoke on a TTY offers takeover; stale locks (dead PID, 24h, clock skew)

@@ -84,6 +84,35 @@ pub(crate) fn fold_tmp_cleanup(
     }
 }
 
+/// A global `config.toml` text as a [`Config`]. A `[providers.foo]` table
+/// without `name` takes the key as its name.
+pub(crate) fn parse_global_text(content: &str) -> Result<Config> {
+    let mut cfg: Config = toml::from_str(content).map_err(|e| toml_err(e.to_string()))?;
+    for (key, provider) in &mut cfg.providers {
+        if provider.name.is_empty() {
+            provider.name = key.clone();
+        }
+    }
+    Ok(cfg)
+}
+
+/// A project overlay text as the layer `load_layered` merges: schema bumped,
+/// and the keys a project may not set dropped (with a warning).
+pub(crate) fn parse_project_text(
+    content: &str,
+    path: &Path,
+) -> std::result::Result<Config, toml::de::Error> {
+    let mut project = toml::from_str::<Config>(content)?;
+    if project.schema_version < CONFIG_SCHEMA_VERSION {
+        project.schema_version = CONFIG_SCHEMA_VERSION;
+    }
+    let dropped = project.websearch.strip_project_only_keys();
+    if let Some(msg) = project_websearch_warning(path, &dropped) {
+        tracing::warn!("{msg}");
+    }
+    Ok(project)
+}
+
 fn warn_project_config(kind: &str, path: &Path, e: impl std::fmt::Display) {
     let msg = format!("Failed to {kind} project config at {}: {e}", path.display());
     tracing::warn!("{msg}");
@@ -191,13 +220,7 @@ impl Config {
             return Ok(Self::seeded_openrouter());
         }
         let content = std::fs::read_to_string(path)?;
-        let mut cfg: Config = toml::from_str(&content).map_err(|e| toml_err(e.to_string()))?;
-        // When a table is keyed `[providers.foo]` but omits `name`, use the key.
-        for (key, provider) in &mut cfg.providers {
-            if provider.name.is_empty() {
-                provider.name = key.clone();
-            }
-        }
+        let mut cfg = parse_global_text(&content)?;
         cfg.migrate_schema()?;
         Ok(cfg)
     }
@@ -301,22 +324,13 @@ impl Config {
     /// parsed but not merged. `None` when the file is absent, unreadable or
     /// malformed (the last two are logged, as the layered load does).
     pub fn load_project_layer(project_dir: &Path) -> Option<Self> {
-        let project_config_path = whycodes_core::project_dir(project_dir).join("config.toml");
+        let project_config_path = Self::project_config_path(project_dir);
         if !project_config_path.exists() {
             return None;
         }
         match std::fs::read_to_string(&project_config_path) {
-            Ok(content) => match toml::from_str::<Config>(&content) {
-                Ok(mut project) => {
-                    if project.schema_version < CONFIG_SCHEMA_VERSION {
-                        project.schema_version = CONFIG_SCHEMA_VERSION;
-                    }
-                    let dropped = project.websearch.strip_project_only_keys();
-                    if let Some(msg) = project_websearch_warning(&project_config_path, &dropped) {
-                        tracing::warn!("{msg}");
-                    }
-                    Some(project)
-                }
+            Ok(content) => match parse_project_text(&content, &project_config_path) {
+                Ok(project) => Some(project),
                 Err(e) => {
                     warn_project_config("parse", &project_config_path, e);
                     None

@@ -3,6 +3,8 @@
 //! Leaf types (`Message`, `Tool`, sandbox policy) live in `whycodes-core`.
 //! This crate owns the user-facing `Config` tree and I/O.
 
+pub mod dotted;
+mod edit;
 mod load;
 mod merge;
 mod stream_rules;
@@ -24,6 +26,7 @@ pub use types::{
     is_discord_webhook_url,
 };
 
+pub use edit::ConfigTarget;
 pub use stream_rules::{parse_rule_markdown, stream_rule_files};
 
 #[cfg(test)]
