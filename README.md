@@ -3,15 +3,10 @@
 </p>
 
 <p align="center">
-  <a href="https://olud.ai/tool/whycodes.html"><img src="https://olud.ai/badge.php?tool=whycodes" alt="olud.ai"></a>
   <a href="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml"><img src="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/whycorporation/whycodes/releases"><img src="https://img.shields.io/github/v/release/whycorporation/whycodes" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://discord.gg/H2KsKYEdT8"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Join the WhyCodes Discord"></a>
-  <a href="https://t.me/whycodesai"><img src="https://img.shields.io/badge/Telegram-whycodesai-26A5E4?logo=telegram&logoColor=white" alt="WhyCodes on Telegram"></a>
-  <a href="https://x.com/whycodesai"><img src="https://img.shields.io/badge/X-@whycodesai-black" alt="Follow @whycodesai on X"></a>
-  <a href="https://www.youtube.com/@whycodesai"><img src="https://img.shields.io/badge/YouTube-@whycodesai-FF0000?logo=youtube&logoColor=white" alt="WhyCodes on YouTube"></a>
-  <a href="https://github.com/sponsors/whycorporation"><img src="https://img.shields.io/badge/sponsor-whycorporation-ea4aaa" alt="Sponsor WhyCodes"></a>
 </p>
 
 <p align="center">
@@ -30,24 +25,31 @@ provider.
   <img src="assets/tui-demo.svg" alt="The whycodes TUI: a prompt goes from the home screen to a finished turn with search, edit and test runs" width="820">
 </p>
 
+## Why WhyCodes
+
+- **Starts instantly.** `whycodes --version` returns in 1.4 ms on Linux.
+- **Costs nothing while idle.** The TUI paints only when something changes:
+  an idle session draws 0 frames per second.
+- **Stays small.** Ten idle sessions share 41.9 MB, about 3.1 MB for each
+  extra one; a resumed 3000-message session holds 34.7 MB.
+- **Works with the model you choose.** Hosted APIs, a local model server, or
+  any OpenAI-compatible endpoint — switch per run or mid-session.
+
+Measured on one machine; method and caveats under [Performance](#performance).
+
 ## Highlights
 
-- **One native binary.** No runtime dependencies to install or run it. Search
-  is in-process (`ripgrep` not needed); optional OS integrations such as Linux
-  bubblewrap strengthen sandboxing when available. On Windows the `bash` tool
-  runs commands through Git for Windows when it is installed; without it,
-  commands run in an embedded bash-compatible shell with bundled coreutils,
-  `grep`, `find`, `sed` and `diff`.
-- **Cross-platform.** The same workflow on Linux, macOS and Windows. Linux
-  runs on every CI change; Windows and macOS jobs are available through the
-  multi-OS CI matrix.
+- **One native binary.** Nothing else to install: search runs in-process, and
+  on Windows commands run without WSL (through Git for Windows when present,
+  otherwise an embedded bash-compatible shell).
+- **Cross-platform.** The same workflow on Linux, macOS and Windows.
 - **Any provider.** Anthropic, OpenAI, Google, GitHub Copilot, Groq, xAI,
-  DeepSeek, Ollama, OpenRouter, Mistral, Together, or any OpenAI-compatible
-  endpoint — with an API key or a subscription login (`whycodes auth login`).
+  DeepSeek, Ollama, OpenRouter, Mistral, Together, local servers such as
+  LM Studio, vLLM and llama.cpp, or any OpenAI-compatible endpoint.
 - **Fits your project.** Loads project instructions from `AGENTS.md` and
   connects to existing MCP tools and language servers over LSP.
-- **Remembers your work.** Persisted sessions, cross-session memory
-  (`MEMORY.md`, semantic recall) and an optional code index.
+- **Remembers your work.** Persisted sessions you can branch and resume,
+  cross-session memory (`MEMORY.md`, semantic recall) and an optional code index.
 
 ## Installation
 
@@ -72,13 +74,18 @@ brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
 brew install whycorporation/whycodes/whycodes
 ```
 
+<details>
+<summary>Homebrew says the tap is untrusted</summary>
+
 Homebrew 6+ refuses untrusted third-party taps. The fully-qualified install
-trusts only this formula. If you already tapped and saw that error:
+above trusts only this formula. If you already tapped and saw that error:
 
 ```bash
 brew trust --formula whycorporation/whycodes/whycodes
 brew install whycodes
 ```
+
+</details>
 
 ### From source
 
@@ -90,21 +97,26 @@ cargo build --release -p whycodes-cli
 
 Update with `whycodes upgrade` (script / cargo installs) or `brew upgrade
 whycodes` (Homebrew). Interactive TUI sessions check GitHub for a newer
-release and ask on the home screen before installing. Pass `--no-auto-update`
-to skip the prompt. The install scripts verify
-release artifacts against the published `SHA256SUMS`. Downloadable binaries
-and uninstall instructions:
-[docs/packaging.md](docs/packaging.md). How Windows release binaries are
-signed: [Code signing policy](docs/code-signing-policy.md).
+release and ask on the home screen before installing; pass
+`--no-auto-update` to skip the check. The install scripts verify release
+artifacts against the published `SHA256SUMS`. Downloadable binaries and
+uninstall instructions: [docs/packaging.md](docs/packaging.md). How Windows
+release binaries are signed: [Code signing policy](docs/code-signing-policy.md).
 
 Config and sessions live in `~/.whycodes` (`%USERPROFILE%\.whycodes` on
-Windows), or `$WHYCODES_HOME` when set. **0.6.5** moved them out of the
-platform directory used by 0.6.4 and earlier
+Windows), or `$WHYCODES_HOME` when set.
+
+<details>
+<summary>Upgrading from 0.6.4 or earlier</summary>
+
+0.6.5 moved config and sessions out of the platform directory used before
 (`~/.config/whycodes` or `~/.config/com.whycorporation.whycodes` on Linux,
 `~/Library/Application Support/com.whycorporation.whycodes` on macOS,
 `%APPDATA%\whycorporation\whycodes` on Windows). The first launch copies
 `config.toml`, `auth.json`, and `whycodes.db` across when the new directory
 is empty, and leaves the old files in place.
+
+</details>
 
 <details>
 <summary>Shell completions</summary>
@@ -126,7 +138,14 @@ whycodes -d ./my-project                            # interactive TUI
 whycodes generate "Explain main.rs" -d ./my-project # one-shot
 whycodes generate "Summarize the last commit" --format json
 whycodes --continue                                 # resume last session
-whycodes -P openai -m gpt-4o generate "Refactor this module"
+whycodes -P openai -m gpt-5 generate "Refactor this module"
+```
+
+No API key? Run a model locally:
+
+```bash
+whycodes -P ollama -m qwen2.5-coder               # Ollama
+whycodes provider discover --save                 # finds LM Studio, vLLM, llama.cpp
 ```
 
 Subscription OAuth login (`whycodes auth login <provider>`) is available
@@ -140,12 +159,14 @@ configuration — is in **[docs/guide.md](docs/guide.md)**.
 
 | | |
 |---|---|
-| **Agents** | `build` (full access), `plan` and `ask` (read-only) as primary agents; `general`, `explore` and `scout` subagents via the `task` tool; parallel workers in git worktrees via `swarm` |
-| **Tools** | File edit/patch, in-process search, shell, git and GitHub, web fetch/search, a CDP-driven browser, background jobs, scheduling and to-do tracking |
-| **Sessions** | Persisted per project; resume with `--continue` / `--resume`, import transcripts from other agent CLIs, share over the local server |
+| **Agents** | `build` (full access), `plan` and `ask` (read-only), and `whycodes`, which explains and repairs its own config; `general`, `explore` and `scout` subagents via the `task` tool, optionally returning a typed result; parallel workers in git worktrees via `swarm`, watched and steered from the agent hub (`/agents`) |
+| **Models** | Prewalk plans a turn on a strong model and hands the edits to a cheaper one; switch provider or model per run or mid-session (`/models`); opt-in provider-native compaction for Anthropic |
+| **Tools** | File edit/patch, Jupyter notebooks as cells, in-process search, shell, git and GitHub, web fetch/search, a CDP-driven browser, background jobs with `wait`, scheduling and to-do tracking; `ast_grep` / `ast_edit` in builds with the `ast-tools` feature |
+| **Sessions** | Persisted per project; resume with `--continue` / `--resume`, branch and revisit earlier turns with `/branch` and `/tree`, import transcripts from other agent CLIs, share over the local server |
+| **Steering** | Queue a message for after the turn (`/queue`) or interrupt between tool calls (`/now`); stream rules that interrupt the model when its output matches (`whycodes rules`) |
 | **Memory** | Human-editable `MEMORY.md`, semantic facts with embeddings, optional code RAG index — all per project, all optional |
 | **Headless / CI** | `generate` with `--format json` or `stream-json` (NDJSON), multiple prompts run concurrently, non-zero exit on failure; `whycodes slop` reports ΔLOC / verbosity / erosion on the diff |
-| **Safety** | Permission gates per tool, shell command risk analysis, an optional OS sandbox (bubblewrap), HTTP domain allowlists and tool hooks |
+| **Safety** | Approval presets (`--approval-mode auto\|important\|manual`), permission gates per tool, shell command risk analysis, an optional OS sandbox (bubblewrap), HTTP domain allowlists and tool hooks |
 | **Extensibility** | MCP servers (stdio and HTTP), LSP language servers, skills, shell plugins, custom slash commands, themes |
 | **Embedding** | Rust and TypeScript SDKs over daemon protocol v1 (`whycodes serve`) |
 
@@ -169,9 +190,8 @@ nothing. A resumed 3000-message transcript holds 34.7 MB, down from
 216 MB before the October memory work. The first-frame harness times one
 splash paint, not the full home screen.
 
-Workspace line coverage is **98.7%** (Linux x86_64, 2026-10-10). CI fails
-below 98.5%, with twenty-four crates held at 100% production-code line
-coverage — see [docs/coverage.md](docs/coverage.md).
+CI fails below 98.5% workspace line coverage and holds twenty-four crates
+at 100% production-code line coverage — see [docs/coverage.md](docs/coverage.md).
 
 ## Documentation
 
@@ -204,19 +224,22 @@ issues.
 
 ## Community
 
-Same links as [why.codes](https://why.codes):
+<p>
+  <a href="https://discord.gg/H2KsKYEdT8"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Join the WhyCodes Discord"></a>
+  <a href="https://t.me/whycodesai"><img src="https://img.shields.io/badge/Telegram-whycodesai-26A5E4?logo=telegram&logoColor=white" alt="WhyCodes on Telegram"></a>
+  <a href="https://x.com/whycodesai"><img src="https://img.shields.io/badge/X-@whycodesai-black" alt="Follow @whycodesai on X"></a>
+  <a href="https://www.youtube.com/@whycodesai"><img src="https://img.shields.io/badge/YouTube-@whycodesai-FF0000?logo=youtube&logoColor=white" alt="WhyCodes on YouTube"></a>
+  <a href="https://olud.ai/tool/whycodes.html"><img src="https://olud.ai/badge.php?tool=whycodes" alt="olud.ai"></a>
+</p>
 
-- [GitHub](https://github.com/whycorporation/whycodes)
-- [Discord](https://discord.gg/H2KsKYEdT8)
-- [Telegram](https://t.me/whycodesai)
-- [X @whycodesai](https://x.com/whycodesai)
-- [YouTube](https://www.youtube.com/@whycodesai)
-- [Sponsor](https://github.com/sponsors/whycorporation)
+Website: [why.codes](https://why.codes).
 
 ## Sponsors
 
 WhyCodes is independently developed and needs funding to keep shipping.
 Sponsor the project on [GitHub Sponsors](https://github.com/sponsors/whycorporation).
+
+<a href="https://github.com/sponsors/whycorporation"><img src="https://img.shields.io/badge/sponsor-whycorporation-ea4aaa" alt="Sponsor WhyCodes"></a>
 
 ## Star History
 
@@ -232,4 +255,4 @@ Sponsor the project on [GitHub Sponsors](https://github.com/sponsors/whycorporat
 
 ## License
 
-[MIT](LICENSE) · [why.codes](https://why.codes) · [GitHub](https://github.com/whycorporation/whycodes) · [Discord](https://discord.gg/H2KsKYEdT8) · [Telegram](https://t.me/whycodesai) · [X @whycodesai](https://x.com/whycodesai) · [YouTube](https://www.youtube.com/@whycodesai) · [Sponsor](https://github.com/sponsors/whycorporation)
+[MIT](LICENSE)
