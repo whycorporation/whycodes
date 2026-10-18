@@ -701,6 +701,7 @@ fn spawn_capture_missing_program_is_io_error() {
         working_dir: PathBuf::from("/tmp"),
         backend: Backend::Host,
         warning: None,
+        env: Vec::new(),
     });
     assert!(matches!(err, Err(SandboxError::Io(_))));
 }

@@ -90,15 +90,20 @@ pub fn create_worktree(
     })
 }
 
+/// The worker's own scratch files (`$WHYCODES_SCRATCH`) never merge back.
+const SCRATCH_PREFIX: &str = ".whycodes/scratch/";
+
 /// List paths changed in the worktree relative to its index/HEAD (tracked + untracked).
 ///
-/// Returns repo-relative paths (forward slashes when possible).
+/// Returns repo-relative paths (forward slashes when possible), without the
+/// worktree's scratch dir.
 pub fn changed_relative_paths(worktree: &Path) -> Result<Vec<String>, String> {
     let out = git_ok(worktree, &["status", "--porcelain", "-uall"])
         .ok_or_else(|| "git status failed in worktree".to_string())?;
     let mut paths = Vec::new();
     for line in out.lines() {
         if let Some(path) = porcelain_path(line)
+            && !path.starts_with(SCRATCH_PREFIX)
             && !paths.iter().any(|p| p == &path)
         {
             paths.push(path);

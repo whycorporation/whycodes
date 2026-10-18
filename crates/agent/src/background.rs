@@ -387,6 +387,7 @@ impl BackgroundRegistry {
         let program = prepared.program.clone();
         let args = prepared.args.clone();
         let cwd = prepared.working_dir.clone();
+        let env = prepared.env.clone();
         let warning = prepared.warning.clone();
 
         tokio::spawn(async move {
@@ -398,6 +399,7 @@ impl BackgroundRegistry {
                 program,
                 args,
                 cwd,
+                env,
                 warning,
                 kill_flag,
             )
@@ -461,6 +463,7 @@ async fn run_background_job(
     program: String,
     args: Vec<String>,
     cwd: PathBuf,
+    env: Vec<(String, std::ffi::OsString)>,
     warning: Option<String>,
     kill_flag: Arc<AtomicBool>,
 ) {
@@ -475,6 +478,7 @@ async fn run_background_job(
     let mut cmd = tokio::process::Command::new(&program);
     cmd.args(&args)
         .current_dir(&cwd)
+        .envs(env)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

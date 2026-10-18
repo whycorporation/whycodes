@@ -28,6 +28,9 @@ pub struct PreparedCommand {
     pub working_dir: PathBuf,
     pub backend: Backend,
     pub warning: Option<String>,
+    /// Extra variables for the child (`WHYCODES_SCRATCH`), set by
+    /// [`prepare_with`]. Every spawner applies them.
+    pub env: Vec<(String, std::ffi::OsString)>,
 }
 
 #[derive(Debug)]
@@ -126,6 +129,15 @@ pub fn prepare_with(
     request: &SandboxRequest,
     bwrap_available: bool,
 ) -> Result<PreparedCommand, SandboxError> {
+    let mut prepared = prepare_backend(request, bwrap_available)?;
+    prepared.env = crate::scratch::scratch_env(&request.working_dir);
+    Ok(prepared)
+}
+
+fn prepare_backend(
+    request: &SandboxRequest,
+    bwrap_available: bool,
+) -> Result<PreparedCommand, SandboxError> {
     let cwd = resolve_working_dir(&request.working_dir)?;
 
     match request.settings.mode {
@@ -207,6 +219,7 @@ pub(crate) fn spawn_capture_timeout(
     let mut cmd = Command::new(&prepared.program);
     cmd.args(&prepared.args)
         .current_dir(&prepared.working_dir)
+        .envs(prepared.env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

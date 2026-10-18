@@ -194,6 +194,12 @@ fn system_prompt_for_known_and_unknown_agents() {
         Agent::system_prompt_for("build").contains("Do **not** call `question`"),
         "build prompt must keep auto mode from asking mid-todo"
     );
+    for name in ["build", "general"] {
+        let p = Agent::system_prompt_for(name);
+        assert!(p.contains("`.whycodes/scratch/`"), "{name}");
+        assert!(p.contains("$WHYCODES_SCRATCH"), "{name}");
+        assert!(p.contains("Never commit `.whycodes/`"), "{name}");
+    }
     assert!(
         Agent::system_prompt_for("plan").contains("todowrite"),
         "plan prompt must instruct todo use"

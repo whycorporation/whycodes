@@ -124,6 +124,7 @@ pub(crate) fn prepare_bwrap_bin(
         working_dir: cwd,
         backend: Backend::Bubblewrap,
         warning: None,
+        env: Vec::new(),
     })
 }
 

@@ -32,6 +32,11 @@ Rules of authorization:
 - Be concise. Explain reasoning for complex changes.
 - Follow the user's code style and project conventions (AGENTS.md).
 
+## Scratch files
+Files meant to be read again or shown to the user (downloads to inspect, fixtures, re-runnable scripts)
+go under `.whycodes/scratch/` (`$WHYCODES_SCRATCH` in the shell). Truly throwaway intermediates stay in the
+OS temp dir. A path the user names wins. Never commit `.whycodes/`.
+
 ## Time-sensitive facts
 Trust the Environment date in context. For latest package versions or docs, do not pin websearch queries to a past year; prefer canonical sources via webfetch (npm registry JSON, GitHub Releases, official docs, llm.txt).
 

@@ -388,6 +388,7 @@ async fn run_background_job_spawn_failed_and_warning() {
         "/no/such/whycodes-bg-bin".into(),
         vec![],
         std::env::temp_dir(),
+        vec![],
         Some("host fallback".into()),
         Arc::new(AtomicBool::new(false)),
     )
@@ -466,6 +467,7 @@ async fn run_background_job_aborts_pipe_tasks() {
         "echo".into(),
         vec!["ok".into()],
         std::env::temp_dir(),
+        vec![],
         None,
         Arc::new(AtomicBool::new(false)),
     )
@@ -785,6 +787,7 @@ async fn a_repeated_sandbox_warning_reaches_one_job_only() {
             "/no/such/whycodes-bg-bin".into(),
             vec![],
             std::env::temp_dir(),
+            vec![],
             Some(warning.into()),
             Arc::new(AtomicBool::new(false)),
         )
@@ -793,4 +796,26 @@ async fn a_repeated_sandbox_warning_reaches_one_job_only() {
     }
     assert!(outputs[0].contains(warning), "{outputs:?}");
     assert!(!outputs[1].contains(warning), "{outputs:?}");
+}
+
+#[tokio::test]
+async fn background_job_sees_whycodes_scratch() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundRegistry::new(4);
+    // Git Bash / the embedded shell expand `$VAR`; `cmd.exe` expands `%VAR%`.
+    let id = reg
+        .start_shell_auto(
+            "echo \"$WHYCODES_SCRATCH\" %WHYCODES_SCRATCH%",
+            dir.path().to_path_buf(),
+            SandboxSettings::off(),
+            None,
+        )
+        .expect("start");
+    assert_eq!(
+        reg.wait_until_idle(&id, Duration::from_secs(10)).await,
+        JobStatus::Done
+    );
+    let out = reg.read(&id, 10_000).expect("read");
+    let want = whycodes_core::project_scratch_dir(&std::path::absolute(dir.path()).unwrap());
+    assert!(out.contains(&*want.to_string_lossy()), "{out}");
 }

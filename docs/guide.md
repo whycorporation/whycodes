@@ -1429,6 +1429,28 @@ prompting on every build). An obfuscated command can defeat a static
 parser, which is why the catastrophic tier checks paths. This layer is
 defence in depth, not a sandbox — the OS sandbox is the second lock.
 
+### Scratch directory
+
+`.whycodes/scratch/` in the project holds files the agent keeps for later:
+background job logs (`<job-id>.log`), long tool outputs moved out of the
+transcript (`artifacts/`), and files the agent writes to read again or to
+show you (a download to inspect, a fixture, a script to re-run). Build and
+test intermediates stay in the OS temp dir: `TMPDIR`, `TMP` and `TEMP` are
+never changed. A path you name always wins over the scratch dir.
+
+Every command the `bash` tool starts — foreground, background or
+auto-detached, on every sandbox backend and shell — gets
+`WHYCODES_SCRATCH`, the absolute path of the scratch dir of its working
+directory. The directory is created just before the command runs; a `swarm`
+worker in its own git worktree gets that worktree's scratch dir, and files under it are not merged back into the project.
+
+The first command in a project per WhyCodes process prunes the scratch dir
+in the background: entries untouched for 7 days go first (a directory
+counts as touched when anything inside it is), then the oldest entries until
+the rest fits in 1 GiB. Symlinks are removed as links, never followed.
+Nothing outside `.whycodes/scratch/` is deleted. Keep `.whycodes/` out of
+version control (add it to `.gitignore`).
+
 ### Shell OS sandbox
 
 Default `security.sandbox = "workspace"`. On Linux this uses
