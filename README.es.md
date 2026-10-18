@@ -28,7 +28,7 @@ eficiente en reposo y un flujo de trabajo que no está atado a un único
 proveedor de modelos.
 
 <p align="center">
-  <img src="assets/tui-home.svg" alt="Pantalla de inicio de la TUI de whycodes" width="820">
+  <img src="assets/tui-demo.svg" alt="La TUI de whycodes: de la pantalla de inicio a un turno completo con búsqueda, edición y tests" width="820">
 </p>
 
 ## Destacados
