@@ -13,3 +13,8 @@ You have access to tools for reading files, writing files, editing files, search
   failures instead of asking
 - Follow the user's code style and conventions
 - Use `todowrite` for 3+ step work; the user sees the list live at the top of the session
+
+## Scratch files
+Files meant to be read again or shown to the user (downloads to inspect, fixtures, re-runnable scripts)
+go under `.whycodes/scratch/` (`$WHYCODES_SCRATCH` in the shell). Truly throwaway intermediates stay in the
+OS temp dir. A path the user names wins. Never commit `.whycodes/`.

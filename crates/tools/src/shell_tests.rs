@@ -149,3 +149,54 @@ async fn sandbox_error_from_file_as_working_dir() {
         out.content
     );
 }
+
+/// Prints `$WHYCODES_SCRATCH`.
+#[cfg(windows)]
+fn print_scratch_command() -> &'static str {
+    // Git Bash / the embedded shell expand `$VAR`; `cmd.exe` expands `%VAR%`.
+    "echo \"$WHYCODES_SCRATCH\" %WHYCODES_SCRATCH%"
+}
+
+#[cfg(not(windows))]
+fn print_scratch_command() -> &'static str {
+    "echo \"$WHYCODES_SCRATCH\""
+}
+
+async fn scratch_seen_from(working_dir: &std::path::Path) -> (String, std::path::PathBuf) {
+    let ctx = ToolContext::new(working_dir.to_string_lossy().into_owned());
+    let out = ShellTool::new()
+        .execute(
+            json!({"command": print_scratch_command(), "timeout": 10}),
+            &ctx,
+        )
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    let want = whycodes_core::project_scratch_dir(&std::path::absolute(working_dir).unwrap());
+    (out.content, want)
+}
+
+#[tokio::test]
+async fn bash_exports_the_project_scratch_dir() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let (out, want) = scratch_seen_from(dir.path()).await;
+    assert!(out.contains(&*want.to_string_lossy()), "{out}");
+    assert!(want.is_dir(), "created before the command runs");
+}
+
+#[tokio::test]
+async fn swarm_worktree_gets_its_own_scratch_dir() {
+    let dir = tempfile::TempDir::new().unwrap();
+    // A swarm worker runs with its worktree as the working dir.
+    let worktree = dir
+        .path()
+        .join(".whycodes")
+        .join("swarm")
+        .join("run-1")
+        .join("w1");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let (out, want) = scratch_seen_from(&worktree).await;
+    assert!(want.starts_with(&worktree));
+    assert!(out.contains(&*want.to_string_lossy()), "{out}");
+    let parent = whycodes_core::project_scratch_dir(dir.path());
+    assert!(!out.trim().ends_with(&*parent.to_string_lossy()), "{out}");
+}

@@ -50,6 +50,7 @@ pub fn prepare_host(
         working_dir,
         backend: Backend::Host,
         warning: merge_warnings(warning, invocation.warning),
+        env: Vec::new(),
     }
 }
 

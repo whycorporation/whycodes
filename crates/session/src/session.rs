@@ -3742,6 +3742,7 @@ mod tests {
     #[test]
     fn default_prompt_is_nonempty() {
         assert!(!default_system_prompt().trim().is_empty());
+        assert!(default_system_prompt().contains("`.whycodes/scratch/`"));
     }
 
     #[test]

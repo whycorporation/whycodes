@@ -203,8 +203,12 @@ fn changed_relative_paths_skips_short_and_parses_rename() {
             .unwrap()
             .success()
     );
+    let scratch = wt.path.join(".whycodes").join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    std::fs::write(scratch.join("notes.txt"), "worker scratch").unwrap();
     let paths = changed_relative_paths(&wt.path).expect("status");
     assert!(paths.iter().any(|p| p.contains("renamed")), "{paths:?}");
+    assert!(!paths.iter().any(|p| p.contains("scratch")), "{paths:?}");
     remove_worktree(&wt).ok();
 }
 

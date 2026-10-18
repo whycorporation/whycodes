@@ -273,6 +273,23 @@ everything else to `ToolExecutor::execute`. The other internal `read` URLs
 (`skill://`, `agent://`, `proc://`, `rule://`, `pr://`, `issue://`) resolve
 inside the tool (`crates/tools/src/file/internal.rs`).
 
+Shell environment: `whycodes_sandbox::prepare_with` (`policy.rs`) is the
+one place that builds a shell command, for the foreground `bash` tool and
+for background / auto-background jobs (`background.rs`). It sets
+`PreparedCommand::env` to `WHYCODES_SCRATCH` = absolute
+`project_scratch_dir(working_dir)` (`scratch.rs`), creating the dir first
+when the working dir exists (a failure is a debug log; the command still
+runs). `spawn_capture_timeout` and `run_background_job` apply it; bubblewrap
+passes the environment through and binds the working dir read-write, and
+the Windows embedded shell is a child process that inherits it. The first
+call per scratch dir in a process spawns a thread that prunes it: entries
+whose newest mtime (recursive, symlinks not followed) is older than
+`SCRATCH_MAX_AGE` (7 days), then oldest first while the total exceeds
+`SCRATCH_MAX_BYTES` (1 GiB). Swarm workers run with their worktree as the
+working dir, so they get that worktree's scratch;
+`swarm_worktree::changed_relative_paths` leaves `.whycodes/scratch/` out of
+the merge.
+
 Prewalk hand-off: after a batch has run, and only while the `fallback` slot
 is empty, `prewalk_target` checks the batch for a mutating call
 (`prewalk::is_mutating_call`: `edit`, `write`, `apply_patch`, `ast_edit`, or
@@ -437,6 +454,7 @@ written back to the parent session.
 - `crates/agent/src/thinking_acc.rs` — thinking block accumulation and harmony-leak scan.
 - `crates/agent/src/steer.rs` — `SteerInbox`.
 - `crates/agent/src/background.rs` — `BackgroundRegistry`, auto-detach, completion delivery.
+- `crates/sandbox/src/scratch.rs` — `WHYCODES_SCRATCH` for every shell command; scratch dir pruning.
 - `crates/agent/src/intent.rs` — intent classification, posture suffix, `authorize_tool`.
 - `crates/agent/src/magic_keywords.rs` — `ultrathink` / `orchestrate` detection.
 - `crates/agent/src/routing.rs` — plan / worker / fast model routing.
