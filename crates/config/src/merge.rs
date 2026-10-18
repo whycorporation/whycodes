@@ -112,10 +112,24 @@ impl Config {
     }
 
     fn merge_agents(&mut self, other: &Config) {
-        // Agents: append unique (by name)
+        // Agents: append unique (by name). A same-name agent in the higher
+        // layer only overrides the per-agent model settings it sets; the
+        // rest stays with the lower layer, so a stale copy of a built-in
+        // agent in an old `config.toml` cannot pin its prompt or tools.
         for agent in &other.agents {
-            if !self.agents.iter().any(|a| a.name == agent.name) {
-                self.agents.push(agent.clone());
+            match self.agents.iter_mut().find(|a| a.name == agent.name) {
+                Some(existing) => {
+                    if agent.model.is_some() {
+                        existing.model = agent.model.clone();
+                    }
+                    if agent.temperature.is_some() {
+                        existing.temperature = agent.temperature;
+                    }
+                    if agent.top_p.is_some() {
+                        existing.top_p = agent.top_p;
+                    }
+                }
+                None => self.agents.push(agent.clone()),
             }
         }
     }

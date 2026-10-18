@@ -26,7 +26,10 @@ lower one when it differs from the built-in default; maps (`providers`,
 `models`, `mcp_servers`, `lsp.servers`, `permission`, `commands`,
 `tui.agent_colors`) merge per key; lists replace when the higher layer's
 list is non-empty (`hooks`, `security.network_*`, `session.stream_rules`,
-`tools.disabled_tools`, `notify.on`); `agents` append by unique name.
+`tools.disabled_tools`, `notify.on`); `agents` append by unique name,
+and an agent the lower layer already has takes only `model`, `temperature`
+and `top_p` from the higher one (an old file's copy of a built-in agent
+cannot pin its prompt or tools).
 Booleans that default to `true` (`memory.enabled`, `session.auto_title`,
 `session.preconnect`, `general.auto_update`, `swarm.enabled`, …) can only be
 turned off by a higher layer, and `tui.show_sidebar` can only be turned on.
@@ -35,19 +38,27 @@ Environment variables are applied after both files.
 **Printing the resolved path.** `whycodes config path` prints the global
 file; `whycodes debug` (or `whycodes debug --json`) prints the config path,
 whether it exists, the data dir, and the `WHYCODES_*` variables it saw.
-`whycodes config show` / `get <key>` / `set <key> <value>` read and write
-the global file only (no project or environment layer).
+`whycodes config show` prints the global file with secrets redacted.
+`whycodes config get <dotted.key>` and `whycodes config keys [prefix]` read
+the merged tree and name the layer each value came from. `whycodes config
+set <dotted.key> <value>` writes one key to the global file, or with
+`--project` to `.whycodes/config.toml`, after checking the edited file still
+loads, the merged config gains no validation error and the value takes
+effect; otherwise the file is left unchanged. See the guide's config
+command section for key syntax, redaction and the `.bak` backup.
 
 **WhyCodes writes only the keys you change, to the global file.** Saving a
 setting from a running session (the first-launch OpenRouter key modal,
 picking a discovered local server, `/mode`, the reasoning-effort picker,
-`/import`, `config set`, `provider add|remove|discover --save`,
+`/import`, `provider add|remove|discover --save`,
 `model default`, `mcp add|remove`) re-reads the global `config.toml` as
 written, applies that one change and writes it back. Values that came from
 the project file, environment variables (`WHYCODES_*`, `<PROVIDER>_API_KEY`
 and the other key variables) or command-line flags stay in memory for the
 run and never land in the global file; `${VAR}` placeholders in `[notify]`
-stay unexpanded on disk.
+stay unexpanded on disk. `config set` goes further: it edits the file's
+text, so comments, key order and keys it did not touch stay byte-for-byte
+the same, and it writes the project overlay the same way.
 
 ## Layers
 

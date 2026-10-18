@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::cmd::auth::auth_expiry_label;
-use crate::cmd::config::{get_config_value, set_config_value};
 use crate::cmd::debug::should_auto_update_with_env;
 use whycodes_agent::agent::Agent;
 use whycodes_core::types::{ModelConfig, ProviderConfig};
@@ -885,27 +884,6 @@ fn turn_event_to_ci_maps_all_variants() {
 }
 
 #[test]
-fn get_and_set_config_value_roundtrip() {
-    let mut config = Config::default();
-    assert_eq!(
-        get_config_value(&config, "default_agent"),
-        Some("build".into())
-    );
-    assert_eq!(get_config_value(&config, "bogus"), None);
-
-    set_config_value(&mut config, "default_agent", "plan").unwrap();
-    assert_eq!(config.default_agent, "plan");
-    set_config_value(&mut config, "project_path", "/tmp/proj").unwrap();
-    assert_eq!(
-        config.general.project_path.as_deref(),
-        Some(std::path::Path::new("/tmp/proj"))
-    );
-    set_config_value(&mut config, "log_level", "debug").unwrap();
-    assert_eq!(config.general.log_level.as_deref(), Some("debug"));
-    assert!(set_config_value(&mut config, "bogus", "x").is_err());
-}
-
-#[test]
 fn auth_expiry_labels() {
     use whycodes_auth::token::ProviderAuth;
     let auth = |token: whycodes_auth::token::OAuthToken| ProviderAuth {
@@ -1254,17 +1232,6 @@ fn turn_event_to_ci_remaining_variants() {
         Some(CiEvent::Status {
             message: "intent:k conf=1.00".into()
         })
-    );
-}
-
-#[test]
-fn get_config_value_project_path() {
-    let mut config = Config::default();
-    assert_eq!(get_config_value(&config, "project_path"), None);
-    config.general.project_path = Some(PathBuf::from("/tmp/p"));
-    assert_eq!(
-        get_config_value(&config, "project_path"),
-        Some("/tmp/p".into())
     );
 }
 
@@ -4755,6 +4722,7 @@ async fn cmd_config_set_and_get_unknown() {
         &ConfigCmd::Set {
             key: "log_level".into(),
             value: "debug".into(),
+            project: false,
         },
     )
     .await
@@ -5794,6 +5762,7 @@ async fn cmd_config_path_and_project_path_roundtrip() {
         &ConfigCmd::Set {
             key: "project_path".into(),
             value: "/tmp/proj".into(),
+            project: false,
         },
     )
     .await
@@ -5812,6 +5781,7 @@ async fn cmd_config_path_and_project_path_roundtrip() {
         &ConfigCmd::Set {
             key: "default_agent".into(),
             value: "plan".into(),
+            project: false,
         },
     )
     .await
@@ -5821,6 +5791,7 @@ async fn cmd_config_path_and_project_path_roundtrip() {
         &ConfigCmd::Set {
             key: "nope".into(),
             value: "x".into(),
+            project: false,
         },
     )
     .await;
@@ -7018,25 +6989,32 @@ async fn cmd_config_get_reports_the_winning_layer() {
         &ConfigCmd::Set {
             key: "log_level".into(),
             value: "debug".into(),
+            project: false,
         },
     )
     .await
     .unwrap();
     let global = Config::load_or_create().unwrap();
+    let resolve = |layers: &[(&'static str, Config)], key: &str| {
+        let layers = crate::cmd::config::layer_values(layers).unwrap();
+        let path = whycodes_config::dotted::parse_key(key).unwrap();
+        crate::cmd::config::resolve_config_value(&layers, &path)
+            .map(|(value, layer)| (whycodes_config::dotted::render(&value), layer))
+    };
     let layers = crate::cmd::config::config_layers(&global, &project);
     assert_eq!(
-        crate::cmd::config::resolve_config_value(&layers, "default_agent"),
+        resolve(&layers, "default_agent"),
         Some(("explore".into(), "project"))
     );
     assert_eq!(
-        crate::cmd::config::resolve_config_value(&layers, "log_level"),
+        resolve(&layers, "general.log_level"),
         Some(("debug".into(), "global"))
     );
     unsafe { std::env::set_var("WHYCODES_LOG_LEVEL", "trace") };
     let layers = crate::cmd::config::config_layers(&global, &project);
     unsafe { std::env::remove_var("WHYCODES_LOG_LEVEL") };
     assert_eq!(
-        crate::cmd::config::resolve_config_value(&layers, "log_level"),
+        resolve(&layers, "general.log_level"),
         Some(("trace".into(), "env"))
     );
     for json in [false, true] {
@@ -7084,4 +7062,94 @@ fn approval_mode_flag_beats_config_and_env() {
     assert_eq!(config.general.approval_mode, Some(ApprovalMode::Auto));
     let agent = Agent::new(agent_info_for(&flagged, &config)).with_config(&config);
     assert_eq!(agent.approval_mode(), ApprovalMode::Auto);
+}
+
+#[tokio::test]
+async fn cmd_config_dotted_set_get_keys_and_project_overlay() {
+    let home = IsolatedHome::new();
+    let project = home.path().join("proj");
+    std::fs::create_dir_all(&project).unwrap();
+    let run = |cmd: ConfigCmd| {
+        let project = project.clone();
+        async move { cmd_config(&project, &cmd).await }
+    };
+    let set = |key: &str, value: &str, project: bool| ConfigCmd::Set {
+        key: key.into(),
+        value: value.into(),
+        project,
+    };
+    run(set("session.tool_profile", "full", false))
+        .await
+        .unwrap();
+    run(set("memory.auto_inject", "false", true)).await.unwrap();
+    run(set("providers.openrouter.api_key", "sk-or-secret", false))
+        .await
+        .unwrap();
+    // Refused writes leave both files as they were.
+    let global_file = Config::default_path().unwrap();
+    let global_before = std::fs::read_to_string(&global_file).unwrap();
+    for (key, value, project) in [
+        ("default_agent", "nope", false),
+        ("memory.auto_inject", "maybe", true),
+        (
+            "websearch.custom",
+            "{ endpoint = \"https://x.example\" }",
+            true,
+        ),
+    ] {
+        assert!(run(set(key, value, project)).await.is_err(), "{key}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(&global_file).unwrap(),
+        global_before
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.join(".whycodes/config.toml")).unwrap(),
+        "[memory]\nauto_inject = false\n"
+    );
+    let global = Config::load_global_raw().unwrap();
+    assert_eq!(global.session.tool_profile, "full");
+    assert!(
+        global.memory.auto_inject,
+        "project value leaked into global"
+    );
+
+    let layers =
+        crate::cmd::config::layer_values(&crate::cmd::config::config_layers(&global, &project))
+            .unwrap();
+    let rows = crate::cmd::config::config_keys(&layers, Some("providers")).unwrap();
+    let token = rows
+        .iter()
+        .find(|(key, _, _)| key == "providers.openrouter.api_key")
+        .unwrap();
+    assert_eq!(token.1.as_str(), Some(whycodes_config::dotted::REDACTED));
+    assert_eq!(token.2, "global");
+    let rows = crate::cmd::config::config_keys(&layers, Some("memory")).unwrap();
+    let inject = rows
+        .iter()
+        .find(|(key, _, _)| key == "memory.auto_inject")
+        .unwrap();
+    assert_eq!((inject.1.as_bool(), inject.2), (Some(false), "project"));
+
+    for json in [false, true] {
+        run(ConfigCmd::Keys {
+            prefix: Some("memory".into()),
+            json,
+        })
+        .await
+        .unwrap();
+        run(ConfigCmd::Get {
+            key: "providers.openrouter.api_key".into(),
+            json,
+        })
+        .await
+        .unwrap();
+    }
+    run(ConfigCmd::Keys {
+        prefix: None,
+        json: false,
+    })
+    .await
+    .unwrap();
+    run(ConfigCmd::Show).await.unwrap();
 }

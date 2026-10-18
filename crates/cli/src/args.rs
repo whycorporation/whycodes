@@ -508,22 +508,33 @@ pub enum PluginsCmd {
 #[derive(Subcommand, Debug)]
 #[command(infer_subcommands = true)]
 pub enum ConfigCmd {
-    /// Show current configuration
+    /// Show the global configuration (secrets redacted)
     Show,
-    /// Get a specific configuration value and which layer set it
+    /// Get a value by dotted key and which layer set it (secrets redacted)
     Get {
-        /// Configuration key (dot-separated, e.g. "default_agent")
+        /// Dotted key, e.g. "default_agent", "session.tool_profile", "agents.build.model"
         key: String,
         /// Machine-readable: `{ "key", "value", "overriddenBy" }`
         #[arg(long)]
         json: bool,
     },
-    /// Set a configuration value
+    /// Set one dotted key; validated before the file is written
     Set {
-        /// Configuration key
+        /// Dotted key, e.g. "session.tool_profile"
         key: String,
-        /// Value to set
+        /// TOML literal (true, 3, [..], { .. }); anything else is a string
         value: String,
+        /// Write the project overlay (`.whycodes/config.toml`) instead of the global file
+        #[arg(long)]
+        project: bool,
+    },
+    /// List dotted leaf keys with their effective value and winning layer
+    Keys {
+        /// Only keys under this dotted prefix
+        prefix: Option<String>,
+        /// Machine-readable: a list of `{ "key", "value", "overriddenBy" }`
+        #[arg(long)]
+        json: bool,
     },
     /// Show the configuration file path
     Path,
