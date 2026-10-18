@@ -1,4 +1,5 @@
 use super::*;
+use crate::tests::EnvVarGuard;
 
 thread_local! {
     static HEADLESS_EVENTS: std::cell::RefCell<Option<VecDeque<Event>>> =
@@ -75,8 +76,24 @@ fn with_inject(mut opts: TuiRunOptions) -> TuiRunOptions {
     opts
 }
 
+/// Upper bound for one scripted headless run. A run that never reaches its
+/// quit (a leaked env var, a request that is never sent) must fail the test
+/// instead of holding `ENV_LOCK` until CI cancels the job.
+const HEADLESS_RUN_TIMEOUT: Duration = Duration::from_secs(120);
+
 async fn run_injected(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
-    super::run(with_inject(opts)).await
+    tokio::time::timeout(HEADLESS_RUN_TIMEOUT, super::run(with_inject(opts)))
+        .await
+        .expect("headless run did not finish within HEADLESS_RUN_TIMEOUT")
+}
+
+/// Join a one-shot mock HTTP server task, bounded: if the code under test
+/// never connects, `accept()` would otherwise wait forever.
+async fn join_mock_server(server: tokio::task::JoinHandle<()>) {
+    tokio::time::timeout(Duration::from_secs(30), server)
+        .await
+        .expect("mock server was never contacted")
+        .expect("mock server task");
 }
 
 #[test]
@@ -1359,14 +1376,9 @@ async fn fill_oauth_credential_skips_set_key_and_non_oauth() {
 #[test]
 fn enable_keyboard_enhancement_skips_when_bench_set() {
     let _home = isolate_home();
-    let prev = std::env::var_os("WHYCODES_BENCH");
-    unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
+    let _bench = EnvVarGuard::set("WHYCODES_BENCH", "1");
     let mut out = Vec::new();
     assert!(!enable_keyboard_enhancement(&mut out, Some((80, 24))));
-    match prev {
-        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
-        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
-    }
 }
 
 #[test]
@@ -2913,7 +2925,7 @@ async fn spawn_model_context_fetch_sends_window_from_live_http() {
         .await
         .ok()
         .flatten();
-    let _ = server.await;
+    join_mock_server(server).await;
     assert_eq!(got, Some(("acme".into(), "m1".into(), 128_000)));
 }
 
@@ -7034,14 +7046,10 @@ fn bind_agent_prompters_attaches_channels() {
 #[test]
 fn enable_keyboard_enhancement_skips_bench() {
     let _lock = isolate_home_lock();
-    let prev = std::env::var_os("WHYCODES_BENCH");
-    unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
+    let bench = EnvVarGuard::set("WHYCODES_BENCH", "1");
     let mut out = Vec::new();
     assert!(!enable_keyboard_enhancement(&mut out, Some((80, 24))));
-    match prev {
-        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
-        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
-    }
+    drop(bench);
 
     let mut out = Vec::new();
     assert!(
@@ -8196,47 +8204,25 @@ async fn run_headless_slash_help_then_quit_command() {
 async fn run_headless_bench_stops_after_first_frame() {
     let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
-    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
-    let prev_bench = std::env::var_os("WHYCODES_BENCH");
-    let prev_dur = std::env::var_os("WHYCODES_BENCH_DURATION_MS");
     let out = dir.path().join("bench.json");
-    unsafe {
-        std::env::remove_var("WHYCODES_TEST_TUI");
-        std::env::set_var("WHYCODES_BENCH", &out);
-        std::env::set_var("WHYCODES_BENCH_DURATION_MS", "0");
-    }
+    let _stub = EnvVarGuard::remove("WHYCODES_TEST_TUI");
+    let _bench = EnvVarGuard::set("WHYCODES_BENCH", &out);
+    let _duration = EnvVarGuard::set("WHYCODES_BENCH_DURATION_MS", "0");
     set_headless_events(Some(std::collections::VecDeque::from([press(
         KeyCode::Char('a'),
     )])));
     let exit = run_injected(boot_opts(dir.path(), "")).await.unwrap();
-    match prev_stub {
-        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
-        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
-    }
-    match prev_bench {
-        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
-        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
-    }
-    match prev_dur {
-        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH_DURATION_MS", v) },
-        None => unsafe { std::env::remove_var("WHYCODES_BENCH_DURATION_MS") },
-    }
     assert_eq!(exit, TuiExit::Quit);
 }
 
 #[test]
 fn maybe_offer_import_skips_when_bench_env_set() {
     let _home = IsolatedImportHome::new();
-    let prev = std::env::var_os("WHYCODES_BENCH");
-    unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
+    let _bench = EnvVarGuard::set("WHYCODES_BENCH", "1");
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     maybe_offer_import(&mut app);
     assert!(!app.import_prompted);
     assert!(!app.dialogs.is_open());
-    match prev {
-        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
-        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
-    }
 }
 
 #[test]
@@ -9781,7 +9767,7 @@ async fn run_headless_remote_turn_ok_then_quits() {
         "sid-ok",
     ));
     let exit = run_injected(opts).await.unwrap();
-    let _ = server.await;
+    join_mock_server(server).await;
     match prev_stub {
         Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
         None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
