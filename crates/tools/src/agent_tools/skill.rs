@@ -65,6 +65,9 @@ impl Tool for SkillTool {
                             is_error: true,
                         };
                     }
+                    if let Some((skill, topic)) = name.split_once('/') {
+                        return loaded_topic(whycodes_skill::bundled::render_topic(skill, topic));
+                    }
                     loaded_skill(take_skill_registry(load_skill_registry(project)), name)
                 }
                 _ => ToolResult {
@@ -158,6 +161,19 @@ fn loaded_skill(result: Result<SkillRegistry, ToolResult>, name: &str) -> ToolRe
             },
         },
         Err(e) => e,
+    }
+}
+
+/// `name=<skill>/<topic>`: one topic of a bundled skill.
+fn loaded_topic(rendered: Result<String, String>) -> ToolResult {
+    let (content, is_error) = match rendered {
+        Ok(body) => (body, false),
+        Err(e) => (e, true),
+    };
+    ToolResult {
+        tool_call_id: String::new(),
+        content,
+        is_error,
     }
 }
 

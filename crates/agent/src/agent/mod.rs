@@ -281,6 +281,33 @@ fn append_skills_catalog(system_prompt: &str, project_path: &std::path::Path) ->
     format!("{system_prompt}\n\n{catalog}")
 }
 
+/// Name of the built-in operator agent (see `prompts/whycodes.txt`).
+pub const WHYCODES_AGENT: &str = "whycodes";
+
+/// `prompts/whycodes.txt` plus the bundled manual's topic index. Topic
+/// bodies stay out of the prompt; the agent loads them with `read`.
+fn whycodes_prompt() -> String {
+    format!(
+        "{}\n\n{}",
+        include_str!("../../prompts/whycodes.txt").trim_end(),
+        whycodes_skill::bundled::whycodes_catalog_markdown()
+    )
+}
+
+/// The `whycodes` agent's static rules (config defaults) deny every write
+/// except the project `.whycodes/` overlay; the global `config.toml` path
+/// depends on `WHYCODES_HOME`, so its allow rule is added at runtime.
+pub(crate) fn allow_config_file_write(
+    permission: &mut whycodes_core::types::PermissionSet,
+    config_file: &std::path::Path,
+) {
+    let path = config_file.to_string_lossy().replace('\\', "/");
+    permission.rules.insert(
+        format!("write({path})"),
+        whycodes_core::types::PermissionAction::Allow,
+    );
+}
+
 fn append_custom_agents_catalog(system_prompt: &str, project_path: &std::path::Path) -> String {
     let catalog = crate::custom_agents::catalog_markdown(&crate::custom_agents::load(project_path));
     if catalog.is_empty() {
@@ -607,6 +634,12 @@ impl Agent {
         registry.register_from_config(config);
         self.provider_registry = Arc::new(registry);
         self.info.permission = config.effective_permission(&self.info.permission);
+        if self.info.name == WHYCODES_AGENT {
+            allow_config_file_write(
+                &mut self.info.permission,
+                &whycodes_core::paths::config_file(),
+            );
+        }
         self.risk_threshold = config
             .security
             .bash_risk_threshold
@@ -1177,6 +1210,7 @@ impl Agent {
             "build" => include_str!("../../prompts/build.txt").to_string(),
             "plan" => include_str!("../../prompts/plan.txt").to_string(),
             "ask" => include_str!("../../prompts/ask.txt").to_string(),
+            WHYCODES_AGENT => whycodes_prompt(),
             "explore" => include_str!("../../prompts/explore.txt").to_string(),
             "general" => include_str!("../../prompts/general.txt").to_string(),
             "scout" => include_str!("../../prompts/explore.txt").to_string(),

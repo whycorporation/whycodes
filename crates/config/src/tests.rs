@@ -14,7 +14,7 @@ use whycodes_core::types::{
 /// WHYCODES_PROVIDER, …) so parallel test threads cannot interfere.
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn lock_env() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -79,7 +79,7 @@ fn test_default_config() {
 }
 
 fn assert_default_session(cfg: &Config) {
-    assert_eq!(cfg.agents.len(), 6, "default config should have 6 agents");
+    assert_eq!(cfg.agents.len(), 7, "default config should have 7 agents");
     assert_eq!(cfg.default_agent, "build");
     assert!(cfg.default_model.is_none());
     assert!(cfg.providers.is_empty());
@@ -96,9 +96,10 @@ fn assert_default_session(cfg: &Config) {
 }
 
 fn assert_default_agents(cfg: &Config) {
-    // Primary: build / plan / ask; subagents: general / explore / scout
+    // Primary: build / plan / ask / whycodes; subagents: general / explore / scout
     let names: Vec<&str> = cfg.agents.iter().map(|a| a.name.as_str()).collect();
     assert!(names.contains(&"build"));
+    assert!(names.contains(&"whycodes"));
     assert!(names.contains(&"plan"));
     assert!(names.contains(&"ask"));
     assert!(names.contains(&"explore"));
@@ -237,7 +238,7 @@ fn test_config_load_save_tempfile() {
     let loaded: Config = toml::from_str(&content).expect("deserialize");
     let _ = std::fs::remove_file(&path);
 
-    assert_eq!(loaded.agents.len(), 6);
+    assert_eq!(loaded.agents.len(), 7);
     assert_eq!(loaded.providers.len(), 1);
     assert_eq!(loaded.providers["openai"].name, "openai");
 }
@@ -3251,5 +3252,82 @@ fn update_global_reports_an_unreadable_global_file() {
     with_isolated_home(|home| {
         std::fs::create_dir(home.join("config.toml")).unwrap();
         assert!(Config::update_global(&mut |_| {}).is_err());
+    });
+}
+
+#[test]
+fn whycodes_agent_is_primary_and_writes_only_config() {
+    use whycodes_core::types::{AgentMode, PermissionAction};
+    let cfg = Config::default();
+    let why = cfg.get_agent("whycodes").expect("whycodes agent");
+    assert_eq!(why.mode, AgentMode::Primary);
+    assert!(why.model.is_none(), "inherits the session model");
+    assert!(
+        why.system_prompt.is_none(),
+        "prompt comes from prompts/whycodes.txt"
+    );
+    let p = &why.permission;
+    assert!(!p.allow_network);
+    assert_eq!(p.action_for("apply_patch"), PermissionAction::Deny);
+    assert_eq!(p.action_for("webfetch"), PermissionAction::Deny);
+    assert_eq!(p.action_for("write"), PermissionAction::Allow);
+    assert_eq!(
+        p.action_for_path("write", "src/main.rs"),
+        Some(PermissionAction::Deny)
+    );
+    assert_eq!(
+        p.action_for_path("edit", "/etc/hosts"),
+        Some(PermissionAction::Deny)
+    );
+    assert_eq!(
+        p.action_for_path("edit", ".whycodes/config.toml"),
+        Some(PermissionAction::Allow)
+    );
+    assert_eq!(
+        p.action_for_shell("rm -rf src"),
+        Some(PermissionAction::Deny)
+    );
+    assert_eq!(
+        p.action_for_shell("whycodes config set session.tool_profile full --project"),
+        Some(PermissionAction::Allow)
+    );
+    assert_eq!(
+        p.action_for_shell("whycodes debug --json"),
+        Some(PermissionAction::Allow)
+    );
+    // Survives a save/load round trip of the whole tree.
+    let back: Config = toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+    assert_eq!(
+        back.get_agent("whycodes").unwrap().permission.rules,
+        p.rules
+    );
+}
+
+#[test]
+fn set_dotted_writes_the_global_file_under_whycodes_home() {
+    with_isolated_home(|home| {
+        let project = home.join("proj");
+        let written = Config::set_dotted(&project, crate::ConfigTarget::Global, "log_level", "x")
+            .unwrap_err();
+        assert!(
+            written.to_string().contains("unknown config key"),
+            "{written}"
+        );
+        let path = Config::set_dotted(
+            &project,
+            crate::ConfigTarget::Global,
+            "general.log_level",
+            "debug",
+        )
+        .unwrap();
+        assert_eq!(path, home.join("config.toml"));
+        assert_eq!(
+            Config::load_global_raw()
+                .unwrap()
+                .general
+                .log_level
+                .as_deref(),
+            Some("debug")
+        );
     });
 }

@@ -8,13 +8,26 @@ impl Config {
     ///
     /// Checks required fields and emits warnings for common misconfigurations.
     pub fn validate(&self) -> Result<()> {
+        report_issues(self.collect_issues())
+    }
+
+    /// The issues [`Self::validate`] fails on (localhost `base_url` notes
+    /// are only warnings), without logging them.
+    pub fn validation_errors(&self) -> Vec<String> {
+        self.collect_issues()
+            .into_iter()
+            .filter(|i| !is_warning_only(i))
+            .collect()
+    }
+
+    fn collect_issues(&self) -> Vec<String> {
         let mut issues: Vec<String> = Vec::new();
         self.collect_provider_issues(&mut issues);
         self.collect_notify_issues(&mut issues);
         self.collect_slop_issues(&mut issues);
         self.collect_session_issues(&mut issues);
         self.collect_agent_issues(&mut issues);
-        report_issues(issues)
+        issues
     }
 
     fn collect_provider_issues(&self, issues: &mut Vec<String>) {
@@ -181,6 +194,10 @@ impl Config {
     }
 }
 
+fn is_warning_only(issue: &str) -> bool {
+    issue.contains("localhost") || issue.contains("127.0.0.1")
+}
+
 fn report_issues(issues: Vec<String>) -> Result<()> {
     // Report issues
     if issues.is_empty() {
@@ -188,17 +205,14 @@ fn report_issues(issues: Vec<String>) -> Result<()> {
         Ok(())
     } else {
         for issue in &issues {
-            if issue.contains("localhost") || issue.contains("127.0.0.1") {
+            if is_warning_only(issue) {
                 tracing::warn!("{}", issue);
             } else {
                 tracing::warn!("Config issue: {}", issue);
             }
         }
         // Return the first real error if any; otherwise it's just warnings
-        let errors: Vec<&String> = issues
-            .iter()
-            .filter(|i| !i.contains("localhost") && !i.contains("127.0.0.1"))
-            .collect();
+        let errors: Vec<&String> = issues.iter().filter(|i| !is_warning_only(i)).collect();
 
         if errors.is_empty() {
             // Only localhost warnings — still ok

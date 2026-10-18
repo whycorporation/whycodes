@@ -833,6 +833,59 @@ impl Default for Config {
             top_p: None,
         };
 
+        // WhyCodes: primary operator agent for WhyCodes itself. Path rules
+        // deny every write except the project `.whycodes/` overlay (the
+        // agent adds the resolved global `config.toml` at runtime); shell
+        // rules allow only `whycodes config …` / `whycodes debug …`.
+        let whycodes_agent = AgentInfo {
+            name: "whycodes".to_string(),
+            description: "WhyCodes operator — explains WhyCodes and repairs its config; never writes project source.".to_string(),
+            mode: AgentMode::Primary,
+            permission: PermissionSet {
+                allowed_tools: Some(vec![
+                    "read".to_string(),
+                    "grep".to_string(),
+                    "glob".to_string(),
+                    "list".to_string(),
+                    "write".to_string(),
+                    "edit".to_string(),
+                    "bash".to_string(),
+                    "skill".to_string(),
+                    "question".to_string(),
+                ]),
+                denied_tools: Some(vec![
+                    "apply_patch".to_string(),
+                    "ast_edit".to_string(),
+                    "todowrite".to_string(),
+                    "todo".to_string(),
+                    "git_commit".to_string(),
+                    "task".to_string(),
+                    "swarm".to_string(),
+                ]),
+                allow_file_writes: true,
+                allow_network: false,
+                allow_shell: true,
+                allowed_paths: None,
+                rules: HashMap::from([
+                    ("write(**)".to_string(), PermissionAction::Deny),
+                    ("write(.whycodes/**)".to_string(), PermissionAction::Allow),
+                    ("bash(*)".to_string(), PermissionAction::Deny),
+                    (
+                        "bash(whycodes config *)".to_string(),
+                        PermissionAction::Allow,
+                    ),
+                    (
+                        "bash(whycodes debug *)".to_string(),
+                        PermissionAction::Allow,
+                    ),
+                ]),
+            },
+            model: None,
+            system_prompt: None, // prompts/whycodes.txt
+            temperature: None,
+            top_p: None,
+        };
+
         // Explore: subagent — fast read-only codebase search
         let explore_agent = AgentInfo {
             name: "explore".to_string(),
@@ -939,6 +992,7 @@ impl Default for Config {
                 build_agent,
                 plan_agent,
                 ask_agent,
+                whycodes_agent,
                 explore_agent,
                 general_agent,
                 scout_agent,

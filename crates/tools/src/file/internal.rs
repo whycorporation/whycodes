@@ -198,9 +198,15 @@ fn tool_guide(name: &str) -> Option<&'static str> {
 }
 
 fn read_skill(name: &str, ctx: &ToolContext) -> ToolResult {
-    let name = name.trim().trim_start_matches('/');
-    if name.is_empty() || name.contains('/') || name.contains("..") {
+    let name = name.trim().trim_matches('/');
+    if name.is_empty() || name.contains("..") {
         return err("skill:// requires a skill name (e.g. skill://demo).");
+    }
+    if let Some((skill, topic)) = name.split_once('/') {
+        return match whycodes_skill::bundled::render_topic(skill, topic) {
+            Ok(body) => ok(&body),
+            Err(e) => err(&e),
+        };
     }
     let project = std::path::Path::new(&ctx.working_dir);
     skill_body(take_skill_registry(load_skill_registry(project)), name)

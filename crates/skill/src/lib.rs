@@ -1,3 +1,4 @@
+pub mod bundled;
 pub mod error;
 pub mod plugin;
 pub mod registry;

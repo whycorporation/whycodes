@@ -1648,3 +1648,85 @@ async fn urgent_message_skips_the_rest_of_a_sequential_batch() {
     assert_eq!(ended, ["c1", "c2", "c3"]);
     assert!(inbox.has_urgent(&session.id), "the turn loop delivers it");
 }
+
+#[tokio::test]
+async fn whycodes_agent_writes_config_but_not_project_source() {
+    let config = whycodes_config::Config::default();
+    let mut info = config.get_agent("whycodes").unwrap().clone();
+    let home = tempfile::tempdir().unwrap();
+    let global = home.path().join("config.toml");
+    crate::agent::allow_config_file_write(&mut info.permission, &global);
+    let asks = Arc::new(CountingDenyPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut agent = Agent::new(info).with_permission_prompter(asks.clone());
+    agent.set_approval_mode(ApprovalMode::Manual);
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(project.path().join("src")).unwrap();
+    std::fs::write(project.path().join("src/lib.rs"), "a").unwrap();
+    let session = Session::new(project.path().to_path_buf(), "test".into());
+    let ctx = agent.tool_context(&session);
+    let run = |call: ToolCall| {
+        let agent = &agent;
+        let session = &session;
+        let ctx = &ctx;
+        async move {
+            agent
+                .execute_with_permission(&call, session, ctx, "script", "m", "k", None, None)
+                .await
+        }
+    };
+
+    for call in [
+        tc("write", json!({"path": "src/lib.rs", "content": "b"})),
+        tc(
+            "edit",
+            json!({"path": "src/lib.rs", "old_string": "a", "new_string": "b"}),
+        ),
+        tc("write", json!({"path": "Cargo.toml", "content": "b"})),
+    ] {
+        let denied = run(call).await;
+        assert!(denied.is_error, "{denied:?}");
+        assert!(denied.content.contains("path rule"), "{}", denied.content);
+    }
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/lib.rs")).unwrap(),
+        "a"
+    );
+    let patch = run(tc("apply_patch", json!({"patch": "*** Begin Patch"}))).await;
+    assert!(patch.is_error, "{patch:?}");
+
+    let overlay = run(tc(
+        "write",
+        json!({"path": ".whycodes/config.toml", "content": "default_agent = \"build\"\n"}),
+    ))
+    .await;
+    assert!(!overlay.is_error, "{}", overlay.content);
+    assert!(project.path().join(".whycodes/config.toml").is_file());
+
+    let global_path = global.to_string_lossy().replace('\\', "/");
+    let written = run(tc(
+        "write",
+        json!({"path": global_path, "content": "default_agent = \"build\"\n"}),
+    ))
+    .await;
+    assert!(!written.is_error, "{}", written.content);
+    assert!(global.is_file());
+    assert_eq!(asks.asks.load(Ordering::SeqCst), 0);
+
+    let shell = run(tc("bash", json!({"command": "echo hi"}))).await;
+    assert!(shell.is_error, "{shell:?}");
+    assert!(
+        shell.content.contains("Permission denied"),
+        "{}",
+        shell.content
+    );
+    let perms = &agent.info.permission;
+    for allowed in ["whycodes config get default_agent", "whycodes debug --json"] {
+        assert_eq!(
+            perms.action_for_shell(allowed),
+            Some(PermissionAction::Allow),
+            "{allowed}"
+        );
+    }
+}

@@ -4167,3 +4167,48 @@ async fn custom_agent_output_key_types_task_and_swarm_workers() {
         report.content
     );
 }
+
+#[test]
+fn whycodes_prompt_is_small_and_carries_only_the_topic_index() {
+    let prompt = Agent::system_prompt_for(WHYCODES_AGENT);
+    assert!(prompt.starts_with("You are WhyCodes in **whycodes** mode"));
+    assert!(prompt.contains("skill://whycodes/<topic>"));
+    // ~2k tokens: prompts/whycodes.txt plus the skill catalog markdown.
+    assert!(prompt.len() < 8 * 1024, "{} bytes", prompt.len());
+    for topic in whycodes_skill::bundled::WHYCODES_TOPICS {
+        assert!(
+            prompt.contains(&format!("`{}`", topic.name)),
+            "{}",
+            topic.name
+        );
+        assert!(
+            !prompt.contains(topic.body.trim()),
+            "{} inlined",
+            topic.name
+        );
+        // No topic's heading either: bodies load only through `read`.
+        let heading = topic.body.lines().next().unwrap();
+        assert!(!prompt.contains(heading), "{heading}");
+    }
+    let config = whycodes_config::Config::default();
+    let info = config.get_agent(WHYCODES_AGENT).unwrap().clone();
+    assert!(info.system_prompt.is_none());
+    assert!(Agent::new(info).system_prompt().starts_with(&prompt));
+}
+
+#[test]
+fn whycodes_agent_gets_the_global_config_write_rule() {
+    let config = whycodes_config::Config::default();
+    let info = config.get_agent(WHYCODES_AGENT).unwrap().clone();
+    let agent = Agent::new(info).with_config(&config);
+    let file = whycodes_core::paths::config_file()
+        .to_string_lossy()
+        .replace('\\', "/");
+    assert_eq!(
+        agent.info.permission.action_for_path("write", &file),
+        Some(whycodes_core::types::PermissionAction::Allow)
+    );
+    // Other agents do not get the rule.
+    let build = Agent::new(config.get_agent("build").unwrap().clone()).with_config(&config);
+    assert_eq!(build.info.permission.action_for_path("write", &file), None);
+}
