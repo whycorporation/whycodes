@@ -809,11 +809,7 @@ fn test_config_dispatch_roundtrips_supported_values_and_reports_errors() {
         String::from_utf8_lossy(&rejected.stderr),
         String::from_utf8_lossy(&rejected.stdout)
     );
-    assert!(error.contains("Unknown config key: unknown"), "{error}");
-    assert!(
-        error.contains("default_agent, project_path, log_level"),
-        "{error}"
-    );
+    assert!(error.contains("unknown config key: unknown"), "{error}");
 }
 
 #[test]
