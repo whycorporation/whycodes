@@ -188,6 +188,9 @@ impl Agent {
         let mut compact_paused = false;
         let mut overflow_retries: u32 = 0;
         let mut harmony_retries: u32 = 0;
+        // Mid-stream drop retry (`stream_retry_secs`): first drop + count.
+        let mut stream_drop_t0: Option<Instant> = None;
+        let mut stream_drops: usize = 0;
         let mut api_key = api_key.to_string();
         // Set once the primary fails to open, or at the prewalk hand-off;
         // sticks for the rest of this turn. The index is the next
@@ -560,7 +563,36 @@ impl Agent {
                                 "error": e.to_string(),
                             })),
                         );
-                        return Err(e);
+                        let first_drop = *stream_drop_t0.get_or_insert_with(Instant::now);
+                        let Some(delay) =
+                            stream_retry_delay(self.stream_retry, first_drop, stream_drops, &e)
+                        else {
+                            return Err(e);
+                        };
+                        stream_drops += 1;
+                        emit(
+                            &events,
+                            TurnEvent::Status(format!(
+                                "Stream dropped ({}) — retrying this step…",
+                                whycodes_llm::classify(&e).kind
+                            )),
+                        );
+                        tracing::warn!(
+                            attempt = stream_drops,
+                            delay_ms = delay.as_millis() as u64,
+                            error = %e,
+                            "mid-stream drop; retrying step"
+                        );
+                        tokio::select! {
+                            biased;
+                            _ = wait_until_cancelled(&cancel) => {
+                                emit(&events, TurnEvent::Cancelled);
+                                return Err(whycodes_core::Error::Agent("Cancelled".into()));
+                            }
+                            _ = tokio::time::sleep(delay) => {}
+                        }
+                        stream_rule_retry = true;
+                        break;
                     }
                 };
 
@@ -1136,6 +1168,24 @@ fn maybe_start_speculative(
 }
 
 fn skip_event() {}
+
+/// Backoff before re-sending a step whose stream failed with `err`, or `None`
+/// to fail the turn: retry is off (`window` zero), the error is not
+/// transient, or `window` has passed since `first_drop`. `drops` is the
+/// number of retries already spent in this turn.
+fn stream_retry_delay(
+    window: std::time::Duration,
+    first_drop: Instant,
+    drops: usize,
+    err: &whycodes_core::Error,
+) -> Option<std::time::Duration> {
+    let remaining = window.checked_sub(first_drop.elapsed())?;
+    if remaining.is_zero() || !whycodes_llm::classify(err).retryable {
+        return None;
+    }
+    let backoff = whycodes_llm::RetryPolicy::default().backoff_for_attempt(drops + 1);
+    Some(backoff.min(remaining))
+}
 
 /// Match `text` on `channel` against the stream rules. On a hit: abort
 /// speculative reads, record the hit for `repeat`, and inject the hint. The

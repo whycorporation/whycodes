@@ -161,6 +161,12 @@ impl Config {
                 self.session.race_after_ms
             ));
         }
+        if self.session.stream_retry_secs > 600 {
+            issues.push(format!(
+                "session.stream_retry_secs is {} (>600s). A dropped stream will be retried for a long time.",
+                self.session.stream_retry_secs
+            ));
+        }
         let rc = self.session.response_cache.trim().to_ascii_lowercase();
         if !matches!(
             rc.as_str(),

@@ -143,8 +143,11 @@ Three paths discard the current draft and run the step again (`turn.rs:445-628`)
 - Harmony protocol leak detected after the stream ends (`harmony_leak`,
   `:634-656`): draft discarded, up to 2 retries, then `Err`.
 
-Any other mid-stream error returns `Err` immediately (`:495-509`) — no
-transport retry, no fallback. Cancellation persists what was streamed so far
+Any other mid-stream error returns `Err` immediately — no transport retry,
+no fallback — unless `session.stream_retry_secs` is non-zero and the error
+classifies as retryable: then the draft is discarded and the step re-sent
+after backoff (cancellable), until that many seconds have passed since the
+first drop of the turn (`stream_retry_delay` in `turn.rs`). Cancellation persists what was streamed so far
 (`:448-461`) and returns `Cancelled`.
 
 ### 5. Autocompact circuit breaker
@@ -216,7 +219,8 @@ of that step executed.
 - No cooldown-based revert to the primary model: `fallback` lives for one
   `run_turn_steps` call; there is no health record, timer or probe across
   turns. Every new user turn starts on the primary and may fail over again.
-- No retry of mid-stream drops (no resume, no re-open with the partial text).
+- No resume of mid-stream drops: with `stream_retry_secs` the step is re-sent
+  from scratch; the partial text is never continued. Off by default.
 - No cross-step retry budget: each open gets the full policy again.
 - No proactive rate limiting in the agent path: `RateLimiter`
   (`crates/llm/src/rate_limit.rs:396-480`) exists but has no caller outside
@@ -235,6 +239,7 @@ of that step executed.
 | `[providers.<id>] api_key`, `<PROVIDER>_API_KEY` | config / env | keys for cross-provider fallback entries |
 | `compaction_threshold`, `compaction_llm` | `[session]` | govern the compact-and-retry outcome and the breaker |
 | `[[session.stream_rules]] name / pattern / hint` | `[session]`, compiled at `mod.rs:661`, `compile_stream_rules` `mod.rs:247-265` | regex abort-and-retry of a draft |
+| `stream_retry_secs` (default `0` = off) | `[session]`; `Agent::stream_retry` | re-send a step after a transient mid-stream drop, within this window |
 | `model_race`, `race_after_ms` (default `off`, 800) | `[session]`, `types.rs:1364-1372` | first-token race (not a retry) |
 | `whycodes auth login <provider>` | CLI | registers an OAuth source so a 401 may refresh once |
 

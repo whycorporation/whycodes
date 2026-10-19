@@ -75,6 +75,9 @@ pub struct Agent {
     /// First-token race: `off` / `auto` / `provider/model`.
     model_race: String,
     race_after: std::time::Duration,
+    /// `[session] stream_retry_secs`: window for re-sending a step whose
+    /// stream dropped mid-response. Zero = off.
+    stream_retry: std::time::Duration,
     /// `[session] fallback_models`: `provider/model` tried when a stream fails to open.
     fallback_models: Vec<String>,
     /// Config `api_key` per provider, for fallback targets on another provider.
@@ -426,6 +429,7 @@ impl Agent {
             model_fast: None,
             model_race: "off".into(),
             race_after: std::time::Duration::from_millis(800),
+            stream_retry: std::time::Duration::ZERO,
             fallback_models: Vec::new(),
             fallback_config_keys: std::collections::HashMap::new(),
             response_cache: true,
@@ -681,6 +685,7 @@ impl Agent {
         self.model_race = config.session.model_race.clone();
         self.price_overrides = price_overrides_from_config(&config.pricing);
         self.race_after = std::time::Duration::from_millis(config.session.race_after_ms);
+        self.stream_retry = std::time::Duration::from_secs(config.session.stream_retry_secs);
         self.fallback_models = config.session.fallback_models.clone();
         self.fallback_config_keys = config
             .providers

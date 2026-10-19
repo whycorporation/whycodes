@@ -229,6 +229,9 @@ impl Config {
         if other.session.race_after_ms != default_race_after_ms() {
             self.session.race_after_ms = other.session.race_after_ms;
         }
+        if other.session.stream_retry_secs != 0 {
+            self.session.stream_retry_secs = other.session.stream_retry_secs;
+        }
         if other.session.response_cache != default_response_cache() {
             self.session.response_cache = other.session.response_cache.clone();
         }

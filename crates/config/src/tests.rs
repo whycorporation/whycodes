@@ -763,6 +763,7 @@ fn merge_with_session_and_tui_fields() {
     }];
     overlay.session.model_race = "auto".into();
     overlay.session.race_after_ms = 1500;
+    overlay.session.stream_retry_secs = 45;
     overlay.session.response_cache = "off".into();
     overlay.session.preconnect = false;
     overlay.session.intent_guidance = "off".into();
@@ -808,6 +809,7 @@ fn merge_with_session_and_tui_fields() {
     assert_eq!(merged.session.stream_rules[0].name, "no-leak");
     assert_eq!(merged.session.model_race, "auto");
     assert_eq!(merged.session.race_after_ms, 1500);
+    assert_eq!(merged.session.stream_retry_secs, 45);
     assert_eq!(merged.session.response_cache, "off");
     assert!(!merged.session.preconnect);
     assert!(
@@ -1395,6 +1397,14 @@ fn validate_long_race_after_ms_fails() {
     let mut cfg = Config::default();
     cfg.session.race_after_ms = 31_000;
     assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn validate_long_stream_retry_secs_fails() {
+    let mut cfg = Config::default();
+    cfg.session.stream_retry_secs = 601;
+    let err = cfg.validate().unwrap_err();
+    assert!(err.to_string().contains("stream_retry_secs"), "{err}");
 }
 
 // ── apply_env_overrides ─────────────────────────────────────────────
