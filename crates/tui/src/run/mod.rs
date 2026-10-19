@@ -14,9 +14,10 @@ use crossterm::event::{
     MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
+use crossterm::style::Print;
 use crossterm::terminal::{
     BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
-    disable_raw_mode, enable_raw_mode, size as term_size, supports_keyboard_enhancement,
+    SetTitle, disable_raw_mode, enable_raw_mode, size as term_size, supports_keyboard_enhancement,
 };
 use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
@@ -1011,6 +1012,7 @@ impl LoopTerm {
                 // Hide + CSI ?2026 before the cell dump. ratatui only hides
                 // the cursor *after* flush, so a FocusGained full redraw
                 // otherwise walks the hardware caret down every row.
+                sync_window_title(t.backend_mut(), app);
                 begin_cell_dump(t.backend_mut());
                 let result = draw_into(t, app);
                 end_cell_dump(t.backend_mut());
@@ -1087,6 +1089,41 @@ fn log_resize_failed(kind: &str, e: impl std::fmt::Display) {
 /// of every draw — during streaming (~25 fps) the prompt caret visibly
 /// strobes. Hosts that ignore `?2026` still get `Hide` ahead of the cell
 /// writes, so the anti-sweep behaviour is unchanged.
+/// XTWINOPS title stack: save the shell's title on entry, restore it on
+/// exit. Hosts without a title stack ignore both; Windows also restores the
+/// console title directly (`windows_console`).
+const TITLE_PUSH: &str = "[22;0t";
+const TITLE_POP: &str = "[23;0t";
+
+/// Terminal window / tab title: `whycodes · <session title>`, or `whycodes`
+/// while the session still has its placeholder name.
+fn window_title(session_title: &str, project_dir: &std::path::Path) -> String {
+    let title = whycodes_session::title::sanitize_title(session_title);
+    if title.is_empty() || whycodes_session::title::looks_like_default_title(&title, project_dir) {
+        return "whycodes".into();
+    }
+    format!("whycodes · {title}")
+}
+
+/// Own write so a failed mouse/paste teardown cannot skip the title restore.
+fn pop_title(out: &mut impl Write) {
+    if let Err(e) = execute!(out, Print(TITLE_POP)) {
+        tracing::debug!(error = %e, "restore terminal title failed");
+    }
+}
+
+/// Set the terminal title when the session title changed since the last frame.
+fn sync_window_title(out: &mut impl Write, app: &mut TuiApp) {
+    if app.window_title_for.as_deref() == Some(app.session_title.as_str()) {
+        return;
+    }
+    let title = window_title(&app.session_title, &app.project_dir);
+    if let Err(e) = execute!(out, SetTitle(&title)) {
+        tracing::debug!(error = %e, "set terminal title failed");
+    }
+    app.window_title_for = Some(app.session_title.clone());
+}
+
 fn begin_cell_dump(out: &mut impl Write) {
     if let Err(e) = execute!(out, BeginSynchronizedUpdate, Hide) {
         tracing::debug!(error = %e, "begin cell dump failed");
@@ -1290,6 +1327,7 @@ fn restore_terminal_on(out: &mut impl Write) {
         SetCursorStyle::DefaultUserShape,
         crossterm::cursor::Show
     );
+    pop_title(out);
     windows_console::restore_windows_console();
 }
 
@@ -1390,7 +1428,7 @@ fn enter_raw_and_alt(
              Run inside a real terminal, or use `whycodes --plain`."
         )
     })?;
-    execute!(out, EnterAlternateScreen, Hide).map_err(|e| {
+    execute!(out, EnterAlternateScreen, Print(TITLE_PUSH), Hide).map_err(|e| {
         let _ = disable_raw_mode();
         whycodes_core::logging::emit(
             "whycodes_tui",
@@ -1445,6 +1483,7 @@ fn restore_live_backend(out: &mut impl Write, keyboard_enhanced: bool) {
         LeaveAlternateScreen,
         SetCursorStyle::DefaultUserShape
     );
+    pop_title(out);
     windows_console::restore_windows_console();
 }
 
