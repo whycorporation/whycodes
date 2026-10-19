@@ -12,7 +12,8 @@ use crate::types::{
     default_prompt_suggestions, default_race_after_ms, default_response_cache,
     default_retain_every_n, default_retain_max_facts, default_risk_threshold,
     default_sandbox_fallback, default_sandbox_mode, default_session_min_score,
-    default_session_top_k, default_swarm_max_agents, default_tool_profile, default_undo_depth,
+    default_session_top_k, default_stream_retry_secs, default_swarm_max_agents,
+    default_tool_profile, default_undo_depth,
 };
 use whycodes_core::types::PermissionSet;
 
@@ -229,7 +230,7 @@ impl Config {
         if other.session.race_after_ms != default_race_after_ms() {
             self.session.race_after_ms = other.session.race_after_ms;
         }
-        if other.session.stream_retry_secs != 0 {
+        if other.session.stream_retry_secs != default_stream_retry_secs() {
             self.session.stream_retry_secs = other.session.stream_retry_secs;
         }
         if other.session.response_cache != default_response_cache() {

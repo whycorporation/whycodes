@@ -76,7 +76,7 @@ pub struct Agent {
     model_race: String,
     race_after: std::time::Duration,
     /// `[session] stream_retry_secs`: window for re-sending a step whose
-    /// stream dropped mid-response. Zero = off.
+    /// stream dropped mid-response (default 60s). Zero = off.
     stream_retry: std::time::Duration,
     /// `[session] fallback_models`: `provider/model` tried when a stream fails to open.
     fallback_models: Vec<String>,
@@ -429,7 +429,7 @@ impl Agent {
             model_fast: None,
             model_race: "off".into(),
             race_after: std::time::Duration::from_millis(800),
-            stream_retry: std::time::Duration::ZERO,
+            stream_retry: std::time::Duration::from_secs(60),
             fallback_models: Vec::new(),
             fallback_config_keys: std::collections::HashMap::new(),
             response_cache: true,

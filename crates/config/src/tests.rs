@@ -88,6 +88,7 @@ fn assert_default_session(cfg: &Config) {
     assert_eq!(cfg.session.intent_guidance, "auto");
     assert_eq!(cfg.session.model_race, "off");
     assert_eq!(cfg.session.race_after_ms, 800);
+    assert_eq!(cfg.session.stream_retry_secs, 60);
     assert_eq!(cfg.session.response_cache, "auto");
     assert!(cfg.session.magic_keywords.enabled);
     assert!(cfg.session.magic_keywords.ultrathink);
@@ -810,6 +811,13 @@ fn merge_with_session_and_tui_fields() {
     assert_eq!(merged.session.model_race, "auto");
     assert_eq!(merged.session.race_after_ms, 1500);
     assert_eq!(merged.session.stream_retry_secs, 45);
+    let mut off = Config::default();
+    off.session.stream_retry_secs = 0;
+    assert_eq!(
+        merged.merge_with(&off).session.stream_retry_secs,
+        0,
+        "an explicit 0 turns retry off"
+    );
     assert_eq!(merged.session.response_cache, "off");
     assert!(!merged.session.preconnect);
     assert!(

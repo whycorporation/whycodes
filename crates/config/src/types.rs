@@ -1458,8 +1458,8 @@ pub struct SessionConfig {
     pub fallback_models: Vec<String>,
     /// Re-send a step whose stream drops mid-response (network, timeout,
     /// 5xx, truncated body) for up to this many seconds after the first
-    /// drop. The partial draft is discarded. `0` (default) turns it off.
-    #[serde(default)]
+    /// drop. The partial draft is discarded. Default 60; `0` turns it off.
+    #[serde(default = "default_stream_retry_secs")]
     pub stream_retry_secs: u64,
     /// Process-local text-only response cache: `auto` (default) or `off`.
     #[serde(default = "default_response_cache")]
@@ -1697,7 +1697,7 @@ impl Default for SessionConfig {
             model_race: default_model_race(),
             race_after_ms: default_race_after_ms(),
             fallback_models: Vec::new(),
-            stream_retry_secs: 0,
+            stream_retry_secs: default_stream_retry_secs(),
             response_cache: default_response_cache(),
             preconnect: true,
             intent_guidance: default_intent_guidance(),
@@ -1733,6 +1733,10 @@ pub(crate) fn default_model_race() -> String {
 
 pub(crate) fn default_race_after_ms() -> u64 {
     800
+}
+
+pub(crate) fn default_stream_retry_secs() -> u64 {
+    60
 }
 
 pub(crate) fn default_undo_depth() -> usize {
