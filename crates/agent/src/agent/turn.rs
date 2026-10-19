@@ -577,12 +577,8 @@ impl Agent {
                                 whycodes_llm::classify(&e).kind
                             )),
                         );
-                        tracing::warn!(
-                            attempt = stream_drops,
-                            delay_ms = delay.as_millis() as u64,
-                            error = %e,
-                            "mid-stream drop; retrying step"
-                        );
+                        let delay_ms = delay.as_millis() as u64;
+                        tracing::warn!(stream_drops, delay_ms, error = %e, "stream drop retry");
                         tokio::select! {
                             biased;
                             _ = wait_until_cancelled(&cancel) => {
