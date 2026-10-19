@@ -206,6 +206,8 @@ pub fn classify_message(raw: &str) -> ClassifiedError {
         || lower.contains("connection reset")
         || lower.contains("connection closed")
         || lower.contains("broken pipe")
+        || lower.contains("error decoding response body")
+        || lower.contains("unexpected eof")
         || lower.contains("network unreachable")
         || lower.contains("name or service not known")
         || lower.contains("dns error")

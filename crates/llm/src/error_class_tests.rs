@@ -26,6 +26,15 @@ fn classifies_network() {
 }
 
 #[test]
+fn truncated_stream_body_is_network() {
+    let c = classify_message(
+        "LLM error: Stream: error decoding response body: error reading a body from connection: unexpected EOF during chunk size line",
+    );
+    assert_eq!(c.kind, ErrorKind::Network);
+    assert!(c.retryable);
+}
+
+#[test]
 fn auth_403_surfaces_the_provider_reason() {
     let c = classify_message(
         "LLM error: Code Assist onboardUser (403 Forbidden): account lacks region X",

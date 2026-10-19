@@ -3106,3 +3106,163 @@ async fn stream_rule_watches_streamed_tool_arg_deltas() {
     assert!(out.contains("no tool"), "{out}");
     assert_eq!(hint_messages(&session), 1);
 }
+
+/// First stream drops after a partial token with a truncated body; later
+/// streams finish.
+struct DropOnceProvider {
+    calls: std::sync::atomic::AtomicU32,
+}
+
+impl whycodes_llm::LlmProvider for DropOnceProvider {
+    fn name(&self) -> &str {
+        "drop-once"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::llm("unused")) })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move {
+            if n == 0 {
+                Ok(Box::pin(async_stream::stream! {
+                    yield Ok(whycodes_core::types::StreamEvent::TextDelta {
+                        text: "partial drop".into(),
+                    });
+                    yield Err(whycodes_core::Error::llm(
+                        "Stream: error decoding response body: unexpected EOF during chunk size line",
+                    ));
+                })
+                    as whycodes_llm::provider::ProviderEventStream)
+            } else {
+                Ok(Box::pin(async_stream::stream! {
+                    yield Ok(whycodes_core::types::StreamEvent::TextDelta {
+                        text: "after drop".into(),
+                    });
+                })
+                    as whycodes_llm::provider::ProviderEventStream)
+            }
+        })
+    }
+}
+
+fn drop_once_agent(window: std::time::Duration) -> Agent {
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(DropOnceProvider {
+        calls: std::sync::atomic::AtomicU32::new(0),
+    }));
+    let mut agent = Agent::new(info("build")).with_provider_registry(registry);
+    agent.stream_retry = window;
+    agent
+}
+
+#[tokio::test]
+async fn mid_stream_drop_retries_step_when_enabled() {
+    let agent = drop_once_agent(std::time::Duration::from_secs(30));
+    let mut session = session_user("please explain rust ownership");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "drop-once",
+                model: "drop-once-retry-unique",
+                api_key: "k",
+                max_turns: Some(2),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await
+        .expect("retry after mid-stream drop");
+    assert!(out.contains("after drop"), "{out}");
+    assert!(!out.contains("partial drop"), "draft discarded: {out}");
+    let status = drain_status(&mut rx);
+    assert!(
+        status.iter().any(|s| s.contains("Stream dropped")),
+        "{status:?}"
+    );
+}
+
+#[tokio::test]
+async fn mid_stream_drop_fails_turn_when_disabled() {
+    let agent = drop_once_agent(std::time::Duration::ZERO);
+    let mut session = session_user("please explain rust ownership");
+    let err = agent
+        .run_turn(
+            &mut session,
+            "drop-once",
+            "drop-once-off-unique",
+            "k",
+            Some(2),
+        )
+        .await
+        .expect_err("stream retry is off");
+    assert!(err.to_string().contains("unexpected EOF"), "{err}");
+}
+
+#[test]
+fn stream_retry_delay_respects_window_and_kind() {
+    let drop = whycodes_core::Error::llm("Stream: error decoding response body: unexpected EOF");
+    let window = std::time::Duration::from_secs(60);
+    let now = Instant::now();
+    let d = stream_retry_delay(window, now, 0, &drop).expect("transient drop retries");
+    assert!(d <= std::time::Duration::from_millis(500), "{d:?}");
+    assert!(stream_retry_delay(std::time::Duration::ZERO, now, 0, &drop).is_none());
+    let fatal = whycodes_core::Error::llm("HTTP 400 bad request");
+    assert!(stream_retry_delay(window, now, 0, &fatal).is_none());
+    let long_ago = now - std::time::Duration::from_secs(120);
+    assert!(stream_retry_delay(window, long_ago, 3, &drop).is_none());
+}
+
+#[tokio::test]
+async fn cancel_during_stream_retry_backoff() {
+    let agent = drop_once_agent(std::time::Duration::from_secs(30));
+    let mut session = session_user("please explain rust ownership");
+    let cancel = crate::events::new_cancel_flag();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle = {
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            agent
+                .run_turn_with_events(
+                    &mut session,
+                    TurnOpts {
+                        provider_name: "drop-once",
+                        model: "drop-once-cancel-unique",
+                        api_key: "k",
+                        max_turns: Some(2),
+                        events: Some(tx),
+                        cancel: Some(cancel),
+                    },
+                )
+                .await
+                .map_err(|e| e.to_string())
+        })
+    };
+    while let Some(ev) = rx.recv().await {
+        if matches!(&ev, TurnEvent::Status(s) if s.contains("Stream dropped")) {
+            break;
+        }
+    }
+    crate::events::request_cancel(&cancel);
+    let err = handle.await.expect("join");
+    assert!(
+        err.as_ref()
+            .err()
+            .is_some_and(|e| e.to_lowercase().contains("cancel")),
+        "{err:?}"
+    );
+}
