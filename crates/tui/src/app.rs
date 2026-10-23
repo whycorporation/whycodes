@@ -1646,6 +1646,8 @@ pub struct TuiApp {
     pub(crate) intent_kind: Option<String>,
     /// Current session display title (auto or manual).
     pub(crate) session_title: String,
+    /// `session_title` the terminal window title was last set from.
+    pub(crate) window_title_for: Option<String>,
     /// Short project name (basename) for the top status strip.
     pub(crate) project_label: String,
     /// Absolute working directory (bottom bar; click-to-copy target).
@@ -2439,6 +2441,7 @@ impl TuiApp {
             intent_badge: None,
             intent_kind: None,
             session_title: String::new(),
+            window_title_for: None,
             project_label: String::from("."),
             project_dir: PathBuf::from("."),
             git_branch: None,

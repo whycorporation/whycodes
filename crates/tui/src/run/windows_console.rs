@@ -55,9 +55,13 @@ mod imp {
         fn GetConsoleMode(handle: *mut core::ffi::c_void, mode: *mut u32) -> i32;
         fn SetConsoleMode(handle: *mut core::ffi::c_void, mode: u32) -> i32;
         fn GetStdHandle(n_std_handle: i32) -> *mut core::ffi::c_void;
+        fn GetConsoleTitleW(title: *mut u16, size: u32) -> u32;
+        fn SetConsoleTitleW(title: *const u16) -> i32;
     }
 
     static SAVED_OUTPUT_CP: Mutex<Option<u32>> = Mutex::new(None);
+    /// Console title before the TUI set its own (NUL-terminated UTF-16).
+    static SAVED_TITLE: Mutex<Option<Vec<u16>>> = Mutex::new(None);
 
     fn saved_lock() -> std::sync::MutexGuard<'static, Option<u32>> {
         SAVED_OUTPUT_CP.lock().unwrap_or_else(|e| e.into_inner())
@@ -68,6 +72,7 @@ mod imp {
             return;
         };
         save_and_set_utf8();
+        save_title();
         let vt_ok = enable_vt(handle);
         let stdout_vt = std_output_handle().map(enable_vt).unwrap_or(false);
         whycodes_core::logging::emit(
@@ -83,6 +88,7 @@ mod imp {
     }
 
     pub(super) fn restore() {
+        restore_title();
         let prev = saved_lock().take();
         let Some(cp) = prev else {
             return;
@@ -90,6 +96,31 @@ mod imp {
         let ok = unsafe { SetConsoleOutputCP(cp) };
         if ok == 0 {
             tracing::debug!(cp, "restore console output code page failed");
+        }
+    }
+
+    fn save_title() {
+        let mut saved = SAVED_TITLE.lock().unwrap_or_else(|e| e.into_inner());
+        if saved.is_some() {
+            return;
+        }
+        let mut buf = vec![0u16; 1024];
+        let n = unsafe { GetConsoleTitleW(buf.as_mut_ptr(), buf.len() as u32) } as usize;
+        if n == 0 || n >= buf.len() {
+            return;
+        }
+        buf.truncate(n);
+        buf.push(0);
+        *saved = Some(buf);
+    }
+
+    fn restore_title() {
+        let prev = SAVED_TITLE.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let Some(title) = prev else {
+            return;
+        };
+        if unsafe { SetConsoleTitleW(title.as_ptr()) } == 0 {
+            tracing::debug!("restore console title failed");
         }
     }
 
