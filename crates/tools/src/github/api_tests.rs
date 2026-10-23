@@ -453,7 +453,27 @@ fn write_gh_token_stub(dir: &Path) -> PathBuf {
     let path = dir.join("gh");
     std::fs::write(&path, "#!/bin/sh\necho stub-gh-token\n").unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    wait_until_executable(&path);
     path
+}
+
+/// A child forked by another test thread while the stub was open for writing
+/// keeps that fd until it execs, so exec'ing the stub right away can fail with
+/// ETXTBSY. Retry until one exec succeeds; after that no writer remains.
+#[cfg(not(windows))]
+fn wait_until_executable(path: &Path) {
+    for _ in 0..100 {
+        match Command::new(path).stdout(Stdio::null()).status() {
+            Err(e) if e.raw_os_error() == Some(26) => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            other => {
+                other.expect("run gh stub");
+                return;
+            }
+        }
+    }
+    panic!("gh stub stayed busy (ETXTBSY)");
 }
 
 #[test]
@@ -516,6 +536,8 @@ fn git_credential_fill_parses_password_from_helper() {
 
 #[test]
 fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
+    // Held for the whole test: other tests set WHYCODES_TEST_SKIP_GH_AUTH.
+    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = set_github_auth_test_env();
     assert_github_auth_test_tokens();
     assert_github_spawn_and_wait_helpers();
@@ -523,7 +545,6 @@ fn github_auth_dispatch_helpers_cover_test_and_live_arms() {
 }
 
 fn set_github_auth_test_env() -> [Option<std::ffi::OsString>; 5] {
-    let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = [
         std::env::var_os("WHYCODES_TEST_SKIP_GH_AUTH"),
         std::env::var_os("WHYCODES_TEST_GH_AUTH_TOKEN"),
