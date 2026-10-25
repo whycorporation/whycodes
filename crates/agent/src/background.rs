@@ -385,10 +385,9 @@ impl BackgroundRegistry {
             Err(e) => return Err(e),
         };
 
-        let id = format!("bg-{}", self.inner.next_id.fetch_add(1, Ordering::SeqCst));
+        let (id, log) = claim_job_log(&self.inner.next_id, &prepared.working_dir);
         let label = nonempty_or_truncated(label, command);
         let kill_flag = Arc::new(AtomicBool::new(false));
-        let log = ensure_scratch_log(&prepared.working_dir, &id);
 
         let job = Arc::new(Mutex::new(JobInner {
             id: id.clone(),
@@ -688,17 +687,26 @@ impl ScratchLog {
     }
 }
 
-fn ensure_scratch_log(working_dir: &Path, id: &str) -> Option<ScratchLog> {
+/// Takes the next job id whose log this call creates itself. Two sessions in
+/// one project share `.whycodes/scratch/`: an id another one already logs
+/// under is skipped instead of truncating its log.
+fn claim_job_log(next_id: &AtomicU64, working_dir: &Path) -> (String, Option<ScratchLog>) {
     let dir = whycodes_core::project_scratch_dir(working_dir);
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        tracing::debug!(error = %e, "background scratch dir skipped");
-        return None;
-    }
-    match std::fs::File::create(dir.join(format!("{id}.log"))) {
-        Ok(file) => Some(ScratchLog { file, len: 0 }),
-        Err(e) => {
-            tracing::debug!(error = %e, "background scratch log skipped");
-            None
+    loop {
+        let id = format!("bg-{}", next_id.fetch_add(1, Ordering::SeqCst));
+        let opened = std::fs::create_dir_all(&dir).and_then(|()| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dir.join(format!("{id}.log")))
+        });
+        match opened {
+            Ok(file) => return (id, Some(ScratchLog { file, len: 0 })),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && dir.is_dir() => continue,
+            Err(e) => {
+                tracing::debug!(error = %e, "background scratch log skipped");
+                return (id, None);
+            }
         }
     }
 }
