@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
@@ -230,9 +230,20 @@ pub(crate) fn spawn_capture_timeout(
         return Ok(child.wait_with_output()?);
     };
     let mut child = child;
+    // Windows has no process groups: a Job Object lets the timeout reach the
+    // shell's children too.
+    #[cfg(windows)]
+    let tree = {
+        use std::os::windows::io::AsRawHandle;
+        crate::ProcessTree::adopt(child.as_raw_handle())
+    };
     match wait_child_timeout(&mut child, limit)? {
         WaitResult::Done(output) => Ok(output),
         WaitResult::TimedOut(secs) => {
+            #[cfg(windows)]
+            if let Some(tree) = &tree {
+                tree.kill();
+            }
             kill_process_group(&mut child);
             ignore_io(child.wait(), "wait after timeout kill");
             Err(SandboxError::TimedOut(secs))
@@ -245,55 +256,90 @@ pub(crate) enum WaitResult {
     TimedOut(u64),
 }
 
+/// After the shell exits, keep reading its pipes this long. A process it left
+/// running (`server &`) holds them open, and EOF would never come.
+const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(2);
+
+const PIPE_HELD_NOTE: &[u8] =
+    b"\n[stopped reading output: a process this command started still holds it open]\n";
+
+/// Bytes read so far, shared with the reader thread.
+#[derive(Clone, Default)]
+pub(crate) struct SharedBuf(pub(crate) Arc<Mutex<Vec<u8>>>);
+
+impl SharedBuf {
+    pub(crate) fn take(&self) -> Vec<u8> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+impl std::io::Write for SharedBuf {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let mut buf = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        buf.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A pipe drained on its own thread; `done` fires at EOF.
+struct PipeReader {
+    buf: SharedBuf,
+    done: mpsc::Receiver<()>,
+}
+
+type Pipe = Box<dyn std::io::Read + Send>;
+
+fn boxed_pipe<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> Option<Pipe> {
+    pipe.map(|p| Box::new(p) as Pipe)
+}
+
+/// Not generic over the pipe type: the coverage summary counts lines per
+/// instantiation, and stdout/stderr would each miss a branch.
+fn spawn_pipe_reader(pipe: Option<Pipe>, what: &'static str) -> Option<PipeReader> {
+    let mut pipe = pipe?;
+    let buf = SharedBuf::default();
+    let mut sink = buf.clone();
+    let (tx, done) = mpsc::channel();
+    std::thread::spawn(move || {
+        ignore_io(std::io::copy(&mut pipe, &mut sink).map(drop), what);
+        if tx.send(()).is_err() {
+            tracing::debug!("{what} receiver dropped");
+        }
+    });
+    Some(PipeReader { buf, done })
+}
+
+/// The bytes read by `deadline`, and whether the pipe reached EOF.
+fn finish_pipe(reader: Option<PipeReader>, deadline: Instant) -> (Vec<u8>, bool) {
+    let Some(reader) = reader else {
+        return (Vec::new(), true);
+    };
+    let wait = deadline.saturating_duration_since(Instant::now());
+    let closed = reader.done.recv_timeout(wait).is_ok();
+    (reader.buf.take(), closed)
+}
+
 pub(crate) fn wait_child_timeout(
     child: &mut Child,
     limit: Duration,
 ) -> Result<WaitResult, SandboxError> {
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let (tx_out, rx_out) = mpsc::channel();
-    let (tx_err, rx_err) = mpsc::channel();
-    let has_out = stdout.is_some();
-    let has_err = stderr.is_some();
-    if let Some(mut out) = stdout {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            ignore_io(
-                std::io::Read::read_to_end(&mut out, &mut buf),
-                "drain stdout",
-            );
-            if tx_out.send(buf).is_err() {
-                tracing::debug!("stdout receiver dropped");
-            }
-        });
-    }
-    if let Some(mut err) = stderr {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            ignore_io(
-                std::io::Read::read_to_end(&mut err, &mut buf),
-                "drain stderr",
-            );
-            if tx_err.send(buf).is_err() {
-                tracing::debug!("stderr receiver dropped");
-            }
-        });
-    }
+    let out = spawn_pipe_reader(boxed_pipe(child.stdout.take()), "drain stdout");
+    let err = spawn_pipe_reader(boxed_pipe(child.stderr.take()), "drain stderr");
 
     let deadline = Instant::now() + limit;
     loop {
         match child.try_wait()? {
             Some(status) => {
-                let stdout = if has_out {
-                    rx_out.recv().unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                let stderr = if has_err {
-                    rx_err.recv().unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
+                let drain_until = Instant::now() + PIPE_DRAIN_GRACE;
+                let (stdout, out_closed) = finish_pipe(out, drain_until);
+                let (mut stderr, err_closed) = finish_pipe(err, drain_until);
+                if !(out_closed && err_closed) {
+                    stderr.extend_from_slice(PIPE_HELD_NOTE);
+                }
                 return Ok(WaitResult::Done(Output {
                     status,
                     stdout,

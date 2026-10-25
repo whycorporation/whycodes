@@ -802,6 +802,74 @@ fn wait_child_timeout_without_pipes_and_kill_unused_pid() {
     crate::kill_pid_group(u32::MAX);
 }
 
+#[cfg(unix)]
+#[test]
+fn run_timeout_does_not_wait_for_a_process_left_holding_the_pipe() {
+    // The shell exits at once; `sleep` inherits stdout and outlives the grace.
+    let started = std::time::Instant::now();
+    let out = crate::policy::run_timeout(
+        &host_req("sleep 6 & echo started"),
+        Some(Duration::from_secs(30)),
+    )
+    .expect("run");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(
+        out.stdout_lossy().contains("started"),
+        "{}",
+        out.stdout_lossy()
+    );
+    assert!(
+        out.stderr_lossy().contains("still holds it open"),
+        "{}",
+        out.stderr_lossy()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn run_timeout_kills_the_shells_children_on_windows() {
+    // The subshell is a separate Windows process. Killing the shell alone
+    // left it appending to `hb` after the timeout.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let req = SandboxRequest {
+        command: "(while :; do echo x >> hb; sleep 0.2; done) & sleep 30".into(),
+        working_dir: dir.path().to_path_buf(),
+        settings: SandboxSettings::off(),
+    };
+    let err = crate::policy::run_timeout(&req, Some(Duration::from_secs(2)));
+    assert!(matches!(err, Err(SandboxError::TimedOut(_))), "{err:?}");
+    let hb = dir.path().join("hb");
+    let len = || std::fs::metadata(&hb).map(|m| m.len()).unwrap_or(0);
+    let before = len();
+    assert!(before > 0, "heartbeat never ran");
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(len(), before, "the shell's child survived the timeout");
+}
+
+#[test]
+fn shared_buf_collects_writes() {
+    use std::io::Write;
+    let mut buf = crate::policy::SharedBuf::default();
+    buf.write_all(b"ab").expect("write");
+    buf.flush().expect("flush");
+    assert_eq!(buf.take(), b"ab");
+    assert!(buf.take().is_empty());
+
+    // A reader thread that panicked mid-write must not lose the output.
+    let inner = std::sync::Arc::clone(&buf.0);
+    let _ = std::thread::spawn(move || {
+        let _guard = inner.lock().expect("lock");
+        panic!("poison shared buf");
+    })
+    .join();
+    buf.write_all(b"cd").expect("write after poison");
+    assert_eq!(buf.take(), b"cd");
+}
+
 #[test]
 fn ignore_io_ok_and_err() {
     crate::policy::ignore_io(Ok(()), "ok");
