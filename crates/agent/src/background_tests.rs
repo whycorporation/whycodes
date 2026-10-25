@@ -750,17 +750,13 @@ async fn pipe_to_job_keeps_a_char_split_across_reads() {
 #[test]
 fn scratch_log_persists_and_skips_failures() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir
-        .path()
-        .join(".whycodes")
-        .join("scratch")
-        .join("bg-scratch.log");
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, "stale log of an earlier session").unwrap();
-    let log = ensure_scratch_log(dir.path(), "bg-scratch").expect("log");
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "", "truncated");
+    let scratch = dir.path().join(".whycodes").join("scratch");
+    let next_id = AtomicU64::new(1);
+    let (id, log) = claim_job_log(&next_id, dir.path());
+    assert_eq!(id, "bg-1");
+    let path = scratch.join("bg-1.log");
     let mut job = sample_job(JobStatus::Running, "");
-    job.log = Some(log);
+    job.log = Some(log.expect("log"));
     let job = Arc::new(Mutex::new(job));
     append_output(&job, "hello-scratch");
     append_output(&job, "-and-more");
@@ -786,15 +782,28 @@ fn scratch_log_persists_and_skips_failures() {
 
     let blocked = dir.path().join("blocked-file");
     std::fs::write(&blocked, "not-a-dir").unwrap();
-    assert!(ensure_scratch_log(&blocked, "bg-x").is_none());
+    let (id, log) = claim_job_log(&next_id, &blocked);
+    assert_eq!(id, "bg-2");
+    assert!(log.is_none());
+}
 
-    let clash = dir
-        .path()
-        .join(".whycodes")
-        .join("scratch")
-        .join("bg-clash.log");
-    std::fs::create_dir_all(&clash).unwrap();
-    assert!(ensure_scratch_log(dir.path(), "bg-clash").is_none());
+#[test]
+fn claim_job_log_skips_ids_another_session_logs_under() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let scratch = dir.path().join(".whycodes").join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    std::fs::write(scratch.join("bg-1.log"), "other session").unwrap();
+    std::fs::write(scratch.join("bg-2.log"), "other session").unwrap();
+
+    let next_id = AtomicU64::new(1);
+    let (id, log) = claim_job_log(&next_id, dir.path());
+    assert_eq!(id, "bg-3");
+    assert!(log.is_some());
+    assert_eq!(
+        std::fs::read_to_string(scratch.join("bg-1.log")).unwrap(),
+        "other session",
+        "never truncated"
+    );
 }
 
 #[tokio::test]
