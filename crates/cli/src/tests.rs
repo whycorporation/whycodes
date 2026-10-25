@@ -5514,6 +5514,28 @@ async fn cmd_run_plain_empty_prompt_then_quit() {
 }
 
 #[test]
+fn replace_binary_works_while_an_old_displaced_binary_cannot_be_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("whycodes");
+    std::fs::write(&target, b"current").unwrap();
+    std::fs::write(dir.path().join(".whycodes.old.3"), b"stale").unwrap();
+    // Stands in for a displaced binary an older session still runs from:
+    // remove_file fails on it, as it does on Windows for a mapped image.
+    std::fs::create_dir(dir.path().join(".whycodes.old")).unwrap();
+
+    assert_eq!(
+        crate::upgrade::free_displaced_path(dir.path()),
+        dir.path().join(".whycodes.old.1")
+    );
+    assert!(
+        !dir.path().join(".whycodes.old.3").exists(),
+        "leftover removed"
+    );
+    crate::upgrade::replace_binary(&target, b"new").unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), b"new");
+}
+
+#[test]
 fn replace_binary_parentless_errors() {
     let err = crate::upgrade::replace_binary(std::path::Path::new("whycodes"), b"x");
     let _ = err;
