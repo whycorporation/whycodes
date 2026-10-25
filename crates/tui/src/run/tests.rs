@@ -11863,3 +11863,50 @@ async fn busy_enter_modes_queue_or_interrupt_the_running_turn() {
     assert_eq!(next.text, "after this");
     assert_eq!(next.mode, SteerMode::Queue);
 }
+
+#[test]
+fn window_title_names_the_session_or_falls_back() {
+    let dir = std::path::Path::new("/work/proj");
+    assert_eq!(window_title("", dir), "whycodes");
+    assert_eq!(window_title("New session", dir), "whycodes");
+    assert_eq!(window_title("proj-a3", dir), "whycodes");
+    assert_eq!(
+        window_title("Fix login bug", dir),
+        "whycodes · Fix login bug"
+    );
+    assert_eq!(
+        window_title("evil\u{7}\u{1b}]0;x", dir),
+        "whycodes · evil ]0;x",
+        "control bytes cannot end the OSC early"
+    );
+}
+
+#[test]
+fn sync_window_title_sends_only_on_change() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.session_title = "Fix login bug".into();
+    let mut out = Vec::new();
+    sync_window_title(&mut out, &mut app);
+    let first = String::from_utf8_lossy(&out).into_owned();
+    if !cfg!(windows) {
+        assert!(first.contains("whycodes · Fix login bug"), "{first:?}");
+    }
+    let len = out.len();
+    sync_window_title(&mut out, &mut app);
+    assert_eq!(out.len(), len, "unchanged title is not resent");
+    app.session_title = "Other".into();
+    sync_window_title(&mut out, &mut app);
+    assert_eq!(app.window_title_for.as_deref(), Some("Other"));
+}
+
+#[test]
+fn title_stack_is_pushed_on_enter_and_popped_on_restore() {
+    let mut out = Vec::new();
+    enter_raw_and_alt(&mut out, || Ok(())).unwrap();
+    assert!(String::from_utf8_lossy(&out).contains(TITLE_PUSH));
+    // `restore_*` would race the live code-page test on the shared console
+    // state; the pop itself is one write.
+    let mut out = Vec::new();
+    pop_title(&mut out);
+    assert!(String::from_utf8_lossy(&out).contains(TITLE_POP));
+}
