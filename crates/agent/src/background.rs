@@ -95,7 +95,7 @@ struct JobInner {
     auto_background: bool,
     completion_delivered: bool,
     /// Detached stdout/stderr under `.whycodes/scratch/<id>.log`.
-    log_path: Option<PathBuf>,
+    log: Option<ScratchLog>,
 }
 
 /// Shared registry of background shell jobs for one agent/session.
@@ -111,6 +111,8 @@ struct RegistryInner {
     order: Mutex<Vec<String>>,
     max_jobs: AtomicU64,
     listener: Mutex<Option<BackgroundListener>>,
+    /// Woken on every finish or kill (each goes through `emit`).
+    changed: tokio::sync::Notify,
 }
 
 impl std::fmt::Debug for BackgroundRegistry {
@@ -137,6 +139,7 @@ impl BackgroundRegistry {
                 order: Mutex::new(Vec::new()),
                 max_jobs: AtomicU64::new(max_jobs.max(1) as u64),
                 listener: Mutex::new(None),
+                changed: tokio::sync::Notify::new(),
             }),
         }
     }
@@ -310,11 +313,15 @@ impl BackgroundRegistry {
         self.start_prepared(command, label, prepare_job(&request), auto_background)
     }
 
-    /// Poll until `id` leaves `Running` or `timeout` elapses. Does not observe
+    /// Wait until `id` leaves `Running` or `timeout` elapses. Does not observe
     /// other jobs — a different completion cannot detach this wait.
     pub async fn wait_until_idle(&self, id: &str, timeout: Duration) -> JobStatus {
-        let deadline = Instant::now() + timeout;
+        let deadline = tokio::time::Instant::now() + timeout;
         loop {
+            // Registered before the status read, so a finish in between still wakes us.
+            let changed = self.inner.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             let status = {
                 let jobs = lock(&self.inner.jobs);
                 jobs.get(id).map(|j| lock(j).status)
@@ -322,14 +329,18 @@ impl BackgroundRegistry {
             match status {
                 None => return JobStatus::Failed,
                 Some(JobStatus::Running) => {
-                    if Instant::now() >= deadline {
+                    if tokio::time::timeout_at(deadline, changed).await.is_err() {
                         return JobStatus::Running;
                     }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
                 }
                 Some(st) => return st,
             }
         }
+    }
+
+    /// Return when any job finishes or is killed, or after `max`.
+    pub async fn changed_within(&self, max: Duration) {
+        drop(tokio::time::timeout(max, self.inner.changed.notified()).await);
     }
 
     /// Last lines of output for a running handle (truncated).
@@ -377,7 +388,7 @@ impl BackgroundRegistry {
         let id = format!("bg-{}", self.inner.next_id.fetch_add(1, Ordering::SeqCst));
         let label = nonempty_or_truncated(label, command);
         let kill_flag = Arc::new(AtomicBool::new(false));
-        let log_path = ensure_scratch_log(&prepared.working_dir, &id);
+        let log = ensure_scratch_log(&prepared.working_dir, &id);
 
         let job = Arc::new(Mutex::new(JobInner {
             id: id.clone(),
@@ -393,7 +404,7 @@ impl BackgroundRegistry {
             tree: None,
             auto_background,
             completion_delivered: false,
-            log_path,
+            log,
         }));
 
         {
@@ -435,6 +446,7 @@ impl BackgroundRegistry {
     }
 
     fn emit(&self, ev: BackgroundEvent) {
+        self.inner.changed.notify_waiters();
         if let Some(ref f) = *lock(&self.inner.listener) {
             f(ev);
         }
@@ -652,42 +664,43 @@ fn append_output(job: &Arc<Mutex<JobInner>>, chunk: &str) {
     let mut g = lock(job);
     g.output.push_str(chunk);
     cap_job_output(&mut g.output);
-    if let Some(path) = g.log_path.as_deref() {
-        append_scratch_output(path, chunk);
+    if let Some(log) = g.log.as_mut() {
+        log.append(chunk);
     }
 }
 
-fn ensure_scratch_log(working_dir: &Path, id: &str) -> Option<PathBuf> {
+/// A job's `.whycodes/scratch/<id>.log`, opened once: reopening it and
+/// reading its length for every chunk dominated noisy commands on Windows.
+struct ScratchLog {
+    file: std::fs::File,
+    len: u64,
+}
+
+impl ScratchLog {
+    fn append(&mut self, chunk: &str) {
+        if self.len >= MAX_JOB_LOG_BYTES {
+            return;
+        }
+        match std::io::Write::write_all(&mut self.file, chunk.as_bytes()) {
+            Ok(()) => self.len += chunk.len() as u64,
+            Err(e) => tracing::debug!(error = %e, "background scratch write skipped"),
+        }
+    }
+}
+
+fn ensure_scratch_log(working_dir: &Path, id: &str) -> Option<ScratchLog> {
     let dir = whycodes_core::project_scratch_dir(working_dir);
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::debug!(error = %e, "background scratch dir skipped");
         return None;
     }
-    let path = dir.join(format!("{id}.log"));
-    if let Err(e) = std::fs::write(&path, "") {
-        tracing::debug!(error = %e, "background scratch log skipped");
-        return None;
+    match std::fs::File::create(dir.join(format!("{id}.log"))) {
+        Ok(file) => Some(ScratchLog { file, len: 0 }),
+        Err(e) => {
+            tracing::debug!(error = %e, "background scratch log skipped");
+            None
+        }
     }
-    Some(path)
-}
-
-/// Append one chunk; rewriting the whole capped buffer per 4 KiB read cost
-/// 64 KiB of writes for every chunk of a noisy command.
-fn append_scratch_output(path: &Path, chunk: &str) {
-    let written = std::fs::OpenOptions::new()
-        .append(true)
-        .open(path)
-        .and_then(|mut file| append_below_cap(&mut file, chunk));
-    if let Err(e) = written {
-        tracing::debug!(error = %e, "background scratch write skipped");
-    }
-}
-
-fn append_below_cap(file: &mut std::fs::File, chunk: &str) -> std::io::Result<()> {
-    if file.metadata()?.len() >= MAX_JOB_LOG_BYTES {
-        return Ok(());
-    }
-    std::io::Write::write_all(file, chunk.as_bytes())
 }
 
 fn cap_job_output(output: &mut String) {
@@ -755,15 +768,32 @@ async fn join_pipe_task(
 async fn pipe_to_job(mut reader: JobReader, job: &Arc<Mutex<JobInner>>) {
     use tokio::io::AsyncReadExt;
     let mut buf = [0u8; 4096];
+    // A read can end inside a multibyte char; its first bytes wait here for
+    // the rest instead of turning into U+FFFD.
+    let mut pending = Vec::new();
     loop {
         match reader.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                let s = String::from_utf8_lossy(&buf[..n]);
-                append_output(job, &s);
+                pending.extend_from_slice(&buf[..n]);
+                let complete = complete_utf8_len(&pending);
+                append_output(job, &String::from_utf8_lossy(&pending[..complete]));
+                pending.drain(..complete);
             }
             Err(_read) => break,
         }
+    }
+    if !pending.is_empty() {
+        append_output(job, &String::from_utf8_lossy(&pending));
+    }
+}
+
+/// Length of `bytes` minus an incomplete UTF-8 sequence at its end. Invalid
+/// bytes count as complete (they decode lossily right away).
+fn complete_utf8_len(bytes: &[u8]) -> usize {
+    match std::str::from_utf8(bytes) {
+        Err(e) if e.error_len().is_none() => e.valid_up_to(),
+        _complete_or_invalid => bytes.len(),
     }
 }
 

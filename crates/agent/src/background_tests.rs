@@ -126,7 +126,7 @@ fn mark_auto_delivered_skips_inject() {
         tree: None,
         auto_background: true,
         completion_delivered: false,
-        log_path: None,
+        log: None,
     }));
     let reg = BackgroundRegistry::new(4);
     {
@@ -179,7 +179,7 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
         tree: None,
         auto_background: false,
         completion_delivered: false,
-        log_path: None,
+        log: None,
     }));
     append_output(&job, &"a".repeat(MAX_JOB_OUTPUT_BYTES + 32));
     {
@@ -212,7 +212,7 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
             tree: None,
             auto_background: false,
             completion_delivered: false,
-            log_path: None,
+            log: None,
         }));
         {
             let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -414,7 +414,7 @@ async fn run_background_job_spawn_failed_and_warning() {
         tree: None,
         auto_background: false,
         completion_delivered: false,
-        log_path: None,
+        log: None,
     }));
     {
         let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -477,7 +477,7 @@ async fn pipe_to_job_stops_on_read_error() {
         tree: None,
         auto_background: false,
         completion_delivered: false,
-        log_path: None,
+        log: None,
     }));
     pipe_to_job(Box::new(FailRead), &job).await;
 }
@@ -499,7 +499,7 @@ async fn run_background_job_aborts_pipe_tasks() {
         tree: None,
         auto_background: false,
         completion_delivered: false,
-        log_path: None,
+        log: None,
     }));
     {
         let mut jobs = reg.inner.jobs.lock().unwrap();
@@ -547,7 +547,7 @@ async fn spawn_pipe_task_none_reader_is_noop() {
         tree: None,
         auto_background: false,
         completion_delivered: false,
-        log_path: None,
+        log: None,
     }));
     let handle = spawn_pipe_task(None, Arc::clone(&job));
     handle.await.expect("join");
@@ -583,7 +583,7 @@ fn wait_status_records_error_and_success() {
         tree: None,
         auto_background: false,
         completion_delivered: false,
-        log_path: None,
+        log: None,
     }));
     assert!(wait_status(Err(std::io::Error::other("wait boom")), &job).is_none());
     let out = job.lock().unwrap().output.clone();
@@ -640,7 +640,7 @@ fn sample_job(status: JobStatus, output: &str) -> JobInner {
         tree: None,
         auto_background: false,
         completion_delivered: false,
-        log_path: None,
+        log: None,
     }
 }
 
@@ -729,19 +729,38 @@ fn cap_job_output_cuts_on_a_char_boundary() {
     assert!(out.len() <= MAX_JOB_OUTPUT_BYTES + '…'.len_utf8());
 }
 
+#[tokio::test]
+async fn pipe_to_job_keeps_a_char_split_across_reads() {
+    use tokio::io::AsyncWriteExt;
+    let job = Arc::new(Mutex::new(sample_job(JobStatus::Running, "")));
+    // A 1-byte duplex makes every read return a single byte.
+    let (mut tx, rx) = tokio::io::duplex(1);
+    let writer = tokio::spawn(async move {
+        let mut bytes = "şı€😀".as_bytes().to_vec();
+        bytes.push(0xff); // invalid: replaced at once
+        bytes.extend_from_slice(b"ok");
+        bytes.push(0xc5); // first byte of "ş", never completed
+        tx.write_all(&bytes).await.expect("write");
+    });
+    pipe_to_job(Box::new(rx), &job).await;
+    writer.await.expect("writer");
+    assert_eq!(lock(&job).output, "şı€😀\u{fffd}ok\u{fffd}");
+}
+
 #[test]
 fn scratch_log_persists_and_skips_failures() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = ensure_scratch_log(dir.path(), "bg-scratch").expect("log");
-    assert_eq!(
-        path,
-        dir.path()
-            .join(".whycodes")
-            .join("scratch")
-            .join("bg-scratch.log")
-    );
+    let path = dir
+        .path()
+        .join(".whycodes")
+        .join("scratch")
+        .join("bg-scratch.log");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "stale log of an earlier session").unwrap();
+    let log = ensure_scratch_log(dir.path(), "bg-scratch").expect("log");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "", "truncated");
     let mut job = sample_job(JobStatus::Running, "");
-    job.log_path = Some(path.clone());
+    job.log = Some(log);
     let job = Arc::new(Mutex::new(job));
     append_output(&job, "hello-scratch");
     append_output(&job, "-and-more");
@@ -753,14 +772,17 @@ fn scratch_log_persists_and_skips_failures() {
     append_output(&job, &big);
     let len = std::fs::metadata(&path).expect("meta").len() as usize;
     assert_eq!(len, "hello-scratch-and-more".len() + big.len());
-    std::fs::File::options()
-        .write(true)
-        .open(&path)
-        .unwrap()
-        .set_len(MAX_JOB_LOG_BYTES)
-        .unwrap();
-    append_scratch_output(&path, "over-the-cap");
-    assert_eq!(std::fs::metadata(&path).unwrap().len(), MAX_JOB_LOG_BYTES);
+    lock(&job).log.as_mut().unwrap().len = MAX_JOB_LOG_BYTES;
+    append_output(&job, "over-the-cap");
+    assert_eq!(std::fs::metadata(&path).unwrap().len() as usize, len);
+
+    // A failed write is skipped, not fatal.
+    let mut read_only = ScratchLog {
+        file: std::fs::File::open(&path).unwrap(),
+        len: 0,
+    };
+    read_only.append("nope");
+    assert_eq!(read_only.len, 0);
 
     let blocked = dir.path().join("blocked-file");
     std::fs::write(&blocked, "not-a-dir").unwrap();
@@ -773,7 +795,6 @@ fn scratch_log_persists_and_skips_failures() {
         .join("bg-clash.log");
     std::fs::create_dir_all(&clash).unwrap();
     assert!(ensure_scratch_log(dir.path(), "bg-clash").is_none());
-    append_scratch_output(&clash, "nope");
 }
 
 #[tokio::test]
