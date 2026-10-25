@@ -3169,6 +3169,8 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 
 **Prevention:** Formula bumps after a tag must go through a PR while `main` is protected. Do not give `GITHUB_TOKEN` a bypass just to skip review.
 
+**Update 2026-10-25:** The job checks out with `ssh-key: ${{ secrets.HOMEBREW_DEPLOY_KEY }}` and pushes over SSH. The "Protect main" ruleset bypasses the `DeployKey` actor type only, which covers every write deploy key on the repo, so keep that key the only one. The GitHub Actions app cannot be a bypass actor on this repo-level ruleset (422). Deploy keys had to be enabled in the org settings first. Manual backfill above is still the fallback.
+
 ## Landing: `pnpm deploy` is not the landing script
 
 **Date:** 2026-09-12 · **Area:** `.github/workflows/deploy-landing.yml`

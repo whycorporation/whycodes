@@ -136,6 +136,9 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          # The "Protect main" ruleset bypasses deploy keys only; GITHUB_TOKEN
+          # pushes are rejected with GH013. Key: repo deploy key with write.
+          ssh-key: ${{ secrets.HOMEBREW_DEPLOY_KEY }}
       - name: Bump formula
         env:
           GH_TOKEN: ${{ github.token }}

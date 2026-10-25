@@ -83,8 +83,9 @@ Everything lands through a PR whose required checks actually run.
    `git tag -a vX.Y.Z <merge-sha> && git push origin vX.Y.Z`.
    That starts `.github/workflows/release.yml` (4 targets + publish + landing).
    Do **not** re-tag if a job fails.
-4. **Homebrew job always fails** (it pushes `Formula/whycodes.rb` straight to
-   `main`; the ruleset rejects it). After the GitHub release exists, run
+4. **Homebrew job** pushes `Formula/whycodes.rb` straight to `main` over SSH
+   with the `HOMEBREW_DEPLOY_KEY` deploy key; the ruleset bypasses deploy
+   keys only (since v0.6.16). If it fails, run
    `scripts/update_homebrew_formula.sh vX.Y.Z` on a `chore/homebrew-vX.Y.Z`
    branch and open a PR. `Formula/**` is ignored on **push** to main only;
    pull requests always run CI.
