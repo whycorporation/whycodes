@@ -493,7 +493,7 @@ pub(crate) async fn after_tui_exit(exit: whycodes_tui::TuiExit) -> anyhow::Resul
                         eprintln!("{}", after_tui_upgrade_skip_line());
                     }
                     Err(e) => {
-                        eprintln!("{}", after_tui_upgrade_failed_line(&e.to_string()));
+                        eprintln!("{}", after_tui_upgrade_failed_line(&format!("{e:#}")));
                     }
                 }
             }

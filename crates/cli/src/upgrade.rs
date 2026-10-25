@@ -297,7 +297,7 @@ pub(crate) fn extract(archive: &[u8], name: &str) -> Result<Vec<u8>> {
 pub fn replace_binary(target: &Path, bytes: &[u8]) -> Result<()> {
     let dir = target.parent().context("binary has no parent directory")?;
     let staged = dir.join(".whycodes.new");
-    let displaced = dir.join(".whycodes.old");
+    let displaced = free_displaced_path(dir);
 
     std::fs::write(&staged, bytes).with_context(|| format!("writing {}", staged.display()))?;
 
@@ -307,7 +307,6 @@ pub fn replace_binary(target: &Path, bytes: &[u8]) -> Result<()> {
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
     }
 
-    let _ = std::fs::remove_file(&displaced);
     if target.exists() && std::fs::rename(target, &displaced).is_err() {
         let _ = std::fs::remove_file(&staged);
         bail!(
@@ -325,6 +324,31 @@ pub fn replace_binary(target: &Path, bytes: &[u8]) -> Result<()> {
 
     let _ = std::fs::remove_file(&displaced);
     Ok(())
+}
+
+/// Removes earlier upgrades' displaced binaries and returns a free name for
+/// this one. On Windows a displaced binary that an older session still runs
+/// from cannot be removed (or renamed over) until that session exits, so the
+/// fixed `.whycodes.old` would make every upgrade fail while it is open.
+pub(crate) fn free_displaced_path(dir: &Path) -> PathBuf {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".whycodes.old")
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    let mut displaced = dir.join(".whycodes.old");
+    let mut n = 0u32;
+    while displaced.exists() {
+        n += 1;
+        displaced = dir.join(format!(".whycodes.old.{n}"));
+    }
+    displaced
 }
 
 /// Where the running executable lives.
