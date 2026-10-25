@@ -30,6 +30,13 @@ pub const MAX_JOB_LOG_BYTES: u64 = 64 * 1024 * 1024;
 /// Finished jobs retained for `/bg` / `bg list` after exit.
 const RETAIN_FINISHED: usize = 16;
 
+/// After the shell exits, keep reading its pipes this long. A process it left
+/// running (`server &`) holds them open, and EOF would never come.
+const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(2);
+
+const PIPE_HELD_NOTE: &str =
+    "\n[stopped reading output: a process this command started still holds it open]\n";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobStatus {
     Running,
@@ -77,6 +84,9 @@ struct JobInner {
     output: String,
     exit_code: Option<i32>,
     kill_flag: Arc<AtomicBool>,
+    /// Shell pid (= its process group) while it runs and is not yet reaped,
+    /// so `kill` can signal the group without waiting for the job task.
+    pid: Option<u32>,
     /// Auto-detached foreground `bash` (issue #140). Completion is delivered once.
     auto_background: bool,
     completion_delivered: bool,
@@ -150,8 +160,9 @@ impl BackgroundRegistry {
     }
 
     pub fn list(&self) -> Vec<JobSnapshot> {
-        let order = lock(&self.inner.order);
+        // `jobs` before `order`, as in `start_prepared`; the reverse deadlocks.
         let jobs = lock(&self.inner.jobs);
+        let order = lock(&self.inner.order);
         let mut out = Vec::new();
         for id in order.iter() {
             let Some(j) = jobs.get(id) else {
@@ -216,6 +227,9 @@ impl BackgroundRegistry {
             return Ok(format!("job `{}` already {}", g.id, g.status.as_str()));
         }
         g.kill_flag.store(true, Ordering::SeqCst);
+        // Signal the group now: at teardown the runtime may drop the job task
+        // before it runs, and kill_on_drop reaches the shell only.
+        kill_child_group(g.pid.take());
         // Wait loop in the spawn task observes the flag and start_kill()s the child.
         g.status = JobStatus::Killed;
         g.finished = Some(Instant::now());
@@ -366,6 +380,7 @@ impl BackgroundRegistry {
             output: String::new(),
             exit_code: None,
             kill_flag: Arc::clone(&kill_flag),
+            pid: None,
             auto_background,
             completion_delivered: false,
             log_path,
@@ -507,6 +522,7 @@ async fn run_background_job(
         }
     };
 
+    lock(&job).pid = child.id();
     let out_task = spawn_pipe_task(boxed_reader(child.stdout.take()), Arc::clone(&job));
     let err_task = spawn_pipe_task(boxed_reader(child.stderr.take()), Arc::clone(&job));
 
@@ -524,9 +540,15 @@ async fn run_background_job(
             Err(_timeout) => continue,
         }
     };
+    // Reaped: the pid may be reused, so `kill` must not signal it any more.
+    lock(&job).pid = None;
 
-    join_pipe_task(out_task, "background stdout task skipped").await;
-    join_pipe_task(err_task, "background stderr task skipped").await;
+    let drain_until = tokio::time::Instant::now() + PIPE_DRAIN_GRACE;
+    let out_held = join_pipe_task(out_task, drain_until, "background stdout task skipped").await;
+    let err_held = join_pipe_task(err_task, drain_until, "background stderr task skipped").await;
+    if out_held || err_held {
+        append_output(&job, PIPE_HELD_NOTE);
+    }
 
     if kill_flag.load(Ordering::SeqCst) {
         finalize_job(&reg, &job, &id, JobStatus::Killed, None, &label);
@@ -652,7 +674,11 @@ fn cap_job_output(output: &mut String) {
     if output.len() <= MAX_JOB_OUTPUT_BYTES {
         return;
     }
-    let excess = output.len() - MAX_JOB_OUTPUT_BYTES;
+    // Cut on a char boundary: draining inside one panics (abort in release).
+    let mut excess = output.len() - MAX_JOB_OUTPUT_BYTES;
+    while !output.is_char_boundary(excess) {
+        excess += 1;
+    }
     output.drain(..excess);
     prefix_ellipsis(output);
 }
@@ -684,10 +710,25 @@ fn spawn_pipe_task(
     })
 }
 
-async fn join_pipe_task(task: tokio::task::JoinHandle<()>, skipped: &'static str) {
-    if let Err(e) = task.await {
-        let error = e.to_string();
-        tracing::debug!(error = %error, "{skipped}");
+/// Join a pipe reader by `deadline`; past it, abort the reader and return
+/// true (something still holds the pipe open).
+async fn join_pipe_task(
+    mut task: tokio::task::JoinHandle<()>,
+    deadline: tokio::time::Instant,
+    skipped: &'static str,
+) -> bool {
+    match tokio::time::timeout_at(deadline, &mut task).await {
+        Ok(joined) => {
+            if let Err(e) = joined {
+                let error = e.to_string();
+                tracing::debug!(error = %error, "{skipped}");
+            }
+            false
+        }
+        Err(_elapsed) => {
+            task.abort();
+            true
+        }
     }
 }
 

@@ -121,6 +121,7 @@ fn mark_auto_delivered_skips_inject() {
         output: "done".into(),
         exit_code: Some(0),
         kill_flag: Arc::new(AtomicBool::new(false)),
+        pid: None,
         auto_background: true,
         completion_delivered: false,
         log_path: None,
@@ -171,6 +172,7 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        pid: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -201,6 +203,7 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
             output: String::new(),
             exit_code: Some(0),
             kill_flag: Arc::new(AtomicBool::new(false)),
+            pid: None,
             auto_background: false,
             completion_delivered: false,
             log_path: None,
@@ -296,6 +299,36 @@ async fn start_shell_spawn_failed_marks_job_failed() {
 }
 
 #[tokio::test]
+async fn job_task_kills_the_child_when_kill_came_before_its_pid() {
+    // `kill` signals the group itself once the pid is known; before that (or
+    // on Windows) the job task must see the flag and kill the child.
+    let reg = BackgroundRegistry::new(4);
+    let job = Arc::new(Mutex::new(sample_job(JobStatus::Running, "")));
+    let (program, args): (&str, &[&str]) = if cfg!(windows) {
+        ("ping", &["-n", "30", "127.0.0.1"])
+    } else {
+        ("sleep", &["30"])
+    };
+    let t0 = Instant::now();
+    run_background_job(
+        reg,
+        Arc::clone(&job),
+        "bg-1".into(),
+        "job".into(),
+        program.into(),
+        args.iter().map(|a| a.to_string()).collect(),
+        std::env::temp_dir(),
+        vec![],
+        None,
+        Arc::new(AtomicBool::new(true)),
+    )
+    .await;
+    assert!(t0.elapsed() < Duration::from_secs(10), "{:?}", t0.elapsed());
+    assert_eq!(lock(&job).status, JobStatus::Killed);
+    assert_eq!(lock(&job).pid, None);
+}
+
+#[tokio::test]
 async fn kill_during_wait_marks_killed() {
     let reg = BackgroundRegistry::new(4);
     let id = reg
@@ -370,6 +403,7 @@ async fn run_background_job_spawn_failed_and_warning() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        pid: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -430,6 +464,7 @@ async fn pipe_to_job_stops_on_read_error() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        pid: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -449,6 +484,7 @@ async fn run_background_job_aborts_pipe_tasks() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        pid: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -494,6 +530,7 @@ async fn spawn_pipe_task_none_reader_is_noop() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        pid: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -508,7 +545,12 @@ async fn join_pipe_task_logs_join_error() {
     let handle = tokio::spawn(async {
         panic!("pipe join coverage");
     });
-    join_pipe_task(handle, "background stdout task skipped").await;
+    let deadline = tokio::time::Instant::now() + PIPE_DRAIN_GRACE;
+    let held = join_pipe_task(handle, deadline, "background stdout task skipped").await;
+    assert!(
+        !held,
+        "a reader that ended (here by panicking) does not hold the pipe"
+    );
 }
 
 #[test]
@@ -522,6 +564,7 @@ fn wait_status_records_error_and_success() {
         output: String::new(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        pid: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -576,6 +619,7 @@ fn sample_job(status: JobStatus, output: &str) -> JobInner {
         output: output.into(),
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
+        pid: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -649,6 +693,22 @@ fn lock_recovers_from_poison_and_helpers_cover_fallbacks() {
     cap_job_output(&mut over);
     assert!(over.starts_with('…'), "{over}");
     assert!(over.len() <= MAX_JOB_OUTPUT_BYTES + 4, "{}", over.len());
+}
+
+#[test]
+fn cap_job_output_cuts_on_a_char_boundary() {
+    // Past the cap every push trims the front. With 2-byte chars there, a
+    // 1-byte push used to cut inside one and panic (abort in release).
+    let mut out = String::new();
+    while out.len() <= MAX_JOB_OUTPUT_BYTES {
+        out.push_str("şğı");
+        cap_job_output(&mut out);
+    }
+    out.push('x');
+    cap_job_output(&mut out);
+    assert!(out.starts_with('…'), "{}", &out[..12]);
+    assert!(out.ends_with("ıx"));
+    assert!(out.len() <= MAX_JOB_OUTPUT_BYTES + '…'.len_utf8());
 }
 
 #[test]
@@ -818,4 +878,72 @@ async fn background_job_sees_whycodes_scratch() {
     let out = reg.read(&id, 10_000).expect("read");
     let want = whycodes_core::project_scratch_dir(&std::path::absolute(dir.path()).unwrap());
     assert!(out.contains(&*want.to_string_lossy()), "{out}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_process_left_holding_the_pipe_does_not_keep_the_job_running() {
+    let reg = BackgroundRegistry::new(4);
+    // The shell exits at once; `sleep` inherits stdout and outlives the grace.
+    let id = reg
+        .start_shell(
+            "sleep 6 & echo started",
+            std::env::temp_dir(),
+            SandboxSettings::off(),
+            None,
+        )
+        .expect("start");
+    let status = reg
+        .wait_until_idle(&id, PIPE_DRAIN_GRACE + Duration::from_secs(3))
+        .await;
+    assert_eq!(status, JobStatus::Done);
+    let out = reg.read(&id, 10_000).expect("read");
+    assert!(out.contains("started"), "{out}");
+    assert!(out.contains("still holds it open"), "{out}");
+}
+
+/// Live and not a zombie (a killed orphan may wait for init to reap it).
+#[cfg(target_os = "linux")]
+fn process_running(pid: i32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        !stat
+            .rsplit(')')
+            .next()
+            .unwrap_or("")
+            .trim_start()
+            .starts_with('Z')
+    })
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn kill_signals_the_process_group_without_the_job_task() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let reg = BackgroundRegistry::new(4);
+    let id = reg
+        .start_shell(
+            "sleep 60 & echo $! > child.pid; wait",
+            dir.path().to_path_buf(),
+            SandboxSettings::off(),
+            None,
+        )
+        .expect("start");
+    let pid_path = dir.path().join("child.pid");
+    let mut pid = None;
+    for _ in 0..200 {
+        pid = std::fs::read_to_string(&pid_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<i32>().ok());
+        if pid.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let pid = pid.expect("grandchild pid");
+    assert!(process_running(pid));
+    reg.kill(&id).expect("kill");
+    // Block the current-thread runtime: the job task cannot run, so only
+    // `kill` itself can have stopped the grandchild.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!process_running(pid), "grandchild {pid} survived kill");
 }
