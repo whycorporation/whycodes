@@ -62,7 +62,9 @@ pub(crate) async fn cmd_upgrade() -> anyhow::Result<()> {
         Err(e) => {
             // Not fatal: a machine with no network, or a platform with no
             // published binary, should still be told how to proceed.
-            let msg = e.to_string();
+            // `{:#}` keeps the cause: "reading asset X" alone hid whether
+            // the link timed out or was reset.
+            let msg = format!("{e:#}");
             println!("{}", upgrade_err_line(current, &msg));
             if should_print_source_build(&msg) {
                 for line in upgrade_source_build_lines() {
