@@ -10,7 +10,9 @@ separate `homebrew-whycodes` tap is not required yet. Tagged releases install
 prebuilt binaries (no Rust). `--HEAD` still compiles from `main`.
 
 macOS is the primary Homebrew audience (Apple silicon + Intel). Linuxbrew
-x86_64 is also wired; Linux aarch64 still needs a prebuild.
+x86_64 is also wired; Linux aarch64 still needs a prebuild. The Linux binary is
+built with `cargo zigbuild --target x86_64-unknown-linux-gnu.2.17`, so it
+needs glibc 2.17+ (CentOS 7 and newer) instead of the runner's glibc.
 
 ```bash
 brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
