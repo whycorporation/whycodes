@@ -272,6 +272,36 @@ fn cancel_aborts_scan_and_loop() {
 }
 
 #[test]
+fn fill_root_stops_reading_files_once_cancelled() {
+    let dir = fixture();
+    let idx = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+    let entry = |rel: &str| WalkEntry {
+        rel: rel.into(),
+        is_dir: false,
+        size: 0,
+    };
+    let has = |rel: &str| {
+        read(&idx.shared.states[0].store)
+            .entries()
+            .iter()
+            .any(|e| &*e.rel == rel)
+    };
+    fill_root(&idx.shared, 0, vec![entry("before.rs")]);
+    assert!(has("before.rs"));
+    idx.cancel_only();
+    fill_root(&idx.shared, 0, vec![entry("after.rs")]);
+    assert!(!has("after.rs"));
+}
+
+#[test]
 fn log_unwatch_spawn_ok_and_err() {
     log_unwatch_spawn(std::thread::Builder::new().spawn(|| {}));
     log_unwatch_spawn(Err(std::io::Error::other("no thread")));

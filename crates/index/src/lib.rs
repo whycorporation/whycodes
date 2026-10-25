@@ -631,22 +631,33 @@ fn full_scan(shared: &Arc<Shared>) {
                 lock(&queue).push(e);
             },
         );
-        let mut store = write(&state.store);
-        let mut content = write(&state.content);
-        for e in lock(&queue).drain(..) {
-            if !e.is_dir {
-                content.upsert(&shared.roots[i], &e.rel, e.size);
-            }
-            store.insert(i as u16, e.rel, e.is_dir, e.size);
-        }
-        content.mark_complete();
-        drop(content);
-        drop(store);
+        // A cancel inside stops the fill; the next root's check returns.
+        fill_root(shared, i, std::mem::take(&mut *lock(&queue)));
         if stats.truncated {
             shared.truncated.store(true, Ordering::Relaxed);
             break;
         }
     }
+}
+
+/// Bulk-insert one root's walked entries into its stores. Reading every
+/// file for the content index is the slow part: on a huge tree (a home
+/// directory hits `max_entries`) it ran for minutes, and the drop at exit
+/// joined it, so the process never quit.
+fn fill_root(shared: &Shared, i: usize, entries: Vec<WalkEntry>) {
+    let state = &shared.states[i];
+    let mut store = write(&state.store);
+    let mut content = write(&state.content);
+    for e in entries {
+        if shared.cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        if !e.is_dir {
+            content.upsert(&shared.roots[i], &e.rel, e.size);
+        }
+        store.insert(i as u16, e.rel, e.is_dir, e.size);
+    }
+    content.mark_complete();
 }
 
 /// Apply one debounced watcher batch: upserts push into nucleo; removals
