@@ -1,6 +1,6 @@
 {
   "name": "@whycorporation/whycodes-sdk",
-  "version": "0.6.15",
+  "version": "0.6.16",
   "description": "Thin TypeScript client for whycodes serve (protocol v1)",
   "type": "module",
   "license": "MIT",
