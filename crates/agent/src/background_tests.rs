@@ -122,6 +122,8 @@ fn mark_auto_delivered_skips_inject() {
         exit_code: Some(0),
         kill_flag: Arc::new(AtomicBool::new(false)),
         pid: None,
+        #[cfg(windows)]
+        tree: None,
         auto_background: true,
         completion_delivered: false,
         log_path: None,
@@ -173,6 +175,8 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
         pid: None,
+        #[cfg(windows)]
+        tree: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -204,6 +208,8 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
             exit_code: Some(0),
             kill_flag: Arc::new(AtomicBool::new(false)),
             pid: None,
+            #[cfg(windows)]
+            tree: None,
             auto_background: false,
             completion_delivered: false,
             log_path: None,
@@ -404,6 +410,8 @@ async fn run_background_job_spawn_failed_and_warning() {
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
         pid: None,
+        #[cfg(windows)]
+        tree: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -465,6 +473,8 @@ async fn pipe_to_job_stops_on_read_error() {
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
         pid: None,
+        #[cfg(windows)]
+        tree: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -485,6 +495,8 @@ async fn run_background_job_aborts_pipe_tasks() {
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
         pid: None,
+        #[cfg(windows)]
+        tree: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -531,6 +543,8 @@ async fn spawn_pipe_task_none_reader_is_noop() {
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
         pid: None,
+        #[cfg(windows)]
+        tree: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -565,6 +579,8 @@ fn wait_status_records_error_and_success() {
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
         pid: None,
+        #[cfg(windows)]
+        tree: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -620,6 +636,8 @@ fn sample_job(status: JobStatus, output: &str) -> JobInner {
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
         pid: None,
+        #[cfg(windows)]
+        tree: None,
         auto_background: false,
         completion_delivered: false,
         log_path: None,
@@ -946,4 +964,48 @@ async fn kill_signals_the_process_group_without_the_job_task() {
     // `kill` itself can have stopped the grandchild.
     std::thread::sleep(Duration::from_millis(300));
     assert!(!process_running(pid), "grandchild {pid} survived kill");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn kill_ends_the_shells_children_on_windows() {
+    // `ping` is a child of `cmd` and holds stdout. Killing `cmd` alone left it
+    // running, and the job waited out the pipe drain grace.
+    let reg = BackgroundRegistry::new(4);
+    let job = Arc::new(Mutex::new(sample_job(JobStatus::Running, "")));
+    {
+        let mut jobs = reg.inner.jobs.lock().unwrap();
+        jobs.insert("bg-1".into(), Arc::clone(&job));
+        let mut order = reg.inner.order.lock().unwrap();
+        order.push("bg-1".into());
+    }
+    let task = tokio::spawn(run_background_job(
+        reg.clone(),
+        Arc::clone(&job),
+        "bg-1".into(),
+        "job".into(),
+        "cmd".into(),
+        vec!["/C".into(), "ping -n 30 127.0.0.1".into()],
+        std::env::temp_dir(),
+        vec![],
+        None,
+        Arc::clone(&lock(&job).kill_flag),
+    ));
+    // Wait for ping's first reply: the grandchild is running and in the job.
+    for _ in 0..200 {
+        if lock(&job).output.contains("127.0.0.1") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(lock(&job).tree.is_some(), "shell adopted into a job");
+    let t0 = Instant::now();
+    reg.kill("bg-1").expect("kill");
+    task.await.expect("job task");
+    assert!(
+        t0.elapsed() < PIPE_DRAIN_GRACE,
+        "pipe stayed open after kill: {:?}",
+        t0.elapsed()
+    );
+    assert!(!lock(&job).output.contains("still holds it open"));
 }

@@ -12,6 +12,8 @@ mod bwrap;
 mod clean;
 mod host;
 mod policy;
+#[cfg(windows)]
+mod process_tree;
 mod scratch;
 
 pub use host::{EMBEDDED_SHELL_NAME, embedded_shell, host_shell_name, set_embedded_shell};
@@ -19,6 +21,8 @@ pub use policy::{
     Backend, PreparedCommand, SandboxError, SandboxOutcome, SandboxRequest, first_sighting,
     kill_pid_group, prepare, prepare_with, run, run_timeout,
 };
+#[cfg(windows)]
+pub use process_tree::ProcessTree;
 pub use scratch::{SCRATCH_ENV, SCRATCH_MAX_AGE, SCRATCH_MAX_BYTES};
 
 use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};

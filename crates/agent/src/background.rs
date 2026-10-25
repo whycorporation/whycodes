@@ -87,6 +87,10 @@ struct JobInner {
     /// Shell pid (= its process group) while it runs and is not yet reaped,
     /// so `kill` can signal the group without waiting for the job task.
     pid: Option<u32>,
+    /// Windows has no process groups: the shell's Job Object, same lifetime
+    /// as `pid`, so `kill` reaches the processes it started.
+    #[cfg(windows)]
+    tree: Option<whycodes_sandbox::ProcessTree>,
     /// Auto-detached foreground `bash` (issue #140). Completion is delivered once.
     auto_background: bool,
     completion_delivered: bool,
@@ -230,6 +234,10 @@ impl BackgroundRegistry {
         // Signal the group now: at teardown the runtime may drop the job task
         // before it runs, and kill_on_drop reaches the shell only.
         kill_child_group(g.pid.take());
+        #[cfg(windows)]
+        if let Some(tree) = g.tree.take() {
+            tree.kill();
+        }
         // Wait loop in the spawn task observes the flag and start_kill()s the child.
         g.status = JobStatus::Killed;
         g.finished = Some(Instant::now());
@@ -381,6 +389,8 @@ impl BackgroundRegistry {
             exit_code: None,
             kill_flag: Arc::clone(&kill_flag),
             pid: None,
+            #[cfg(windows)]
+            tree: None,
             auto_background,
             completion_delivered: false,
             log_path,
@@ -523,6 +533,12 @@ async fn run_background_job(
     };
 
     lock(&job).pid = child.id();
+    #[cfg(windows)]
+    {
+        lock(&job).tree = child
+            .raw_handle()
+            .and_then(whycodes_sandbox::ProcessTree::adopt);
+    }
     let out_task = spawn_pipe_task(boxed_reader(child.stdout.take()), Arc::clone(&job));
     let err_task = spawn_pipe_task(boxed_reader(child.stderr.take()), Arc::clone(&job));
 
@@ -542,6 +558,10 @@ async fn run_background_job(
     };
     // Reaped: the pid may be reused, so `kill` must not signal it any more.
     lock(&job).pid = None;
+    #[cfg(windows)]
+    {
+        lock(&job).tree = None;
+    }
 
     let drain_until = tokio::time::Instant::now() + PIPE_DRAIN_GRACE;
     let out_held = join_pipe_task(out_task, drain_until, "background stdout task skipped").await;
