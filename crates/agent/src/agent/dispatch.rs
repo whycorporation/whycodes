@@ -253,7 +253,10 @@ impl Agent {
             if remaining.is_zero() {
                 return wait_result(call, format!("Nothing happened in {timeout_secs} s."));
             }
-            tokio::time::sleep(remaining.min(WAIT_POLL)).await;
+            // Wakes on a job finishing; the poll still catches steering.
+            self.background
+                .changed_within(remaining.min(WAIT_POLL))
+                .await;
         }
     }
 
