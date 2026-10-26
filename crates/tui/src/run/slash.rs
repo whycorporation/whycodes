@@ -51,6 +51,10 @@ pub(super) fn handle_goal_slash(rest: &str, ctx: &mut SlashContext<'_>) {
             ctx.app.status_message =
                 format!("Goal is {chars} characters; the limit is {MAX_CONDITION_CHARS}.");
         }
+        GoalSlash::Set(_) if ctx.app.attached => {
+            // The transcript lives in the daemon; nothing here could check it.
+            ctx.app.status_message = "/goal is not available while attached to a daemon.".into();
+        }
         GoalSlash::Set(condition) => {
             let goal = Goal::new(condition.clone(), session_tokens(ctx.session));
             crate::goal::save(ctx.goal_db, &ctx.session.id, Some(&goal));
@@ -60,7 +64,8 @@ pub(super) fn handle_goal_slash(rest: &str, ctx: &mut SlashContext<'_>) {
                 "Goal set — working until it is met",
             );
             ctx.app.add_message(ChatRole::User, &condition);
-            ctx.app.enqueue_prompt_text(condition);
+            ctx.app
+                .enqueue_prompt_text(crate::goal::goal_prompt(&condition));
         }
     }
 }

@@ -753,6 +753,8 @@ fn merge_with_session_and_tui_fields() {
     overlay.session.compaction_llm = "off".into();
     overlay.session.compaction_method = "auto".into();
     overlay.session.model_fast = Some("flash".into());
+    overlay.session.goal_max_turns = 0;
+    overlay.session.goal_model = Some("judge".into());
     overlay.session.model_smol = Some("haiku".into());
     overlay.session.model_plan = Some("sonnet".into());
     overlay.session.prewalk = Some(true);
@@ -794,6 +796,12 @@ fn merge_with_session_and_tui_fields() {
     assert_eq!(merged.session.compaction_method, "auto");
     assert_eq!(base.session.compaction_method, "local", "default");
     assert_eq!(merged.session.model_fast.as_deref(), Some("flash"));
+    assert_eq!(
+        merged.session.goal_max_turns, 0,
+        "0 (no cap) overrides the default"
+    );
+    assert_eq!(base.session.goal_max_turns, 30, "default");
+    assert_eq!(merged.session.goal_model.as_deref(), Some("judge"));
     assert_eq!(merged.session.model_smol.as_deref(), Some("haiku"));
     assert_eq!(merged.session.model_plan.as_deref(), Some("sonnet"));
     assert_eq!(merged.session.prewalk, Some(true));

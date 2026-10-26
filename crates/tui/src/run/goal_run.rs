@@ -2,9 +2,29 @@
 //! the UI thread, and act on its verdict (continue, achieved, impossible).
 use super::*;
 use crate::goal::{TurnStep, Verdict};
+use whycodes_core::types::Role;
 
-/// One evaluator answer: verdict and reason, or why the check failed.
-pub(crate) type GoalCheck = Result<(Verdict, String), String>;
+/// One evaluator answer, or why the check failed.
+pub(crate) type GoalCheck = Result<GoalAnswer, String>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GoalAnswer {
+    pub verdict: Verdict,
+    pub reason: String,
+    /// Input plus output tokens the check spent (both attempts).
+    pub tokens: u64,
+}
+
+/// Rounds a check waits out a transient failure (rate limit, 5xx, network)
+/// after the transport's own retries, before the goal pauses. Live runs on a
+/// shared free pool: a gateway answered 429 for ~15s and the goal stopped;
+/// an unattended goal should outlast that.
+const CHECK_ROUNDS: u32 = 3;
+const CHECK_ROUND_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Asked again once when the first answer has no verdict line.
+const VERDICT_REMINDER: &str = "Your answer had no verdict line. Reply with exactly two lines \
+and no markdown:\nVERDICT: met | not_met | impossible\nREASON: one sentence";
 
 const GOAL_RESUME_HINT: &str = "Send a prompt to resume.";
 
@@ -22,7 +42,9 @@ pub(super) fn goal_after_turn(
         return;
     };
     let used_tools = crate::goal::turn_used_tools(&rt.session.messages);
-    match goal.record_turn(used_tools) {
+    let step = goal.record_turn(used_tools);
+    crate::goal::save(rt.db.as_ref(), &rt.session.id, Some(goal));
+    match step {
         TurnStep::Pause => {
             let why = goal.paused.clone().unwrap_or_default();
             app.add_message(
@@ -31,19 +53,29 @@ pub(super) fn goal_after_turn(
             );
         }
         TurnStep::Evaluate => {
-            let request =
-                crate::goal::evaluator_request(&goal.condition, goal.turns, &rt.session.messages);
-            let (provider, model) = whycodes_agent::resolve_title_model(
-                provider,
-                model,
-                config.session.model_fast.as_deref(),
+            let request = crate::goal::evaluator_request(
+                &goal.condition,
+                goal.turns,
+                &goal.findings,
+                &rt.session.messages,
             );
+            let (provider, model) =
+                crate::goal::checker_model(provider, model, config.session.goal_model.as_deref());
             let mut registry = whycodes_llm::provider::ProviderRegistry::default();
             registry.register_from_config(config);
             let api_key = api_key.to_string();
             let tx = rt.goal_tx.clone();
             tokio::spawn(async move {
-                let check = run_goal_check(&registry, &provider, &request, &api_key, &model).await;
+                let check = run_goal_check(
+                    &registry,
+                    &provider,
+                    &request,
+                    &api_key,
+                    &model,
+                    &goal_transport(),
+                    CHECK_ROUND_WAIT,
+                )
+                .await;
                 if tx.send(check).is_err() {
                     tracing::debug!("goal check dropped: session runtime closed");
                 }
@@ -78,55 +110,114 @@ pub(super) async fn run_goal_check(
     request: &whycodes_core::types::LlmRequest,
     api_key: &str,
     model: &str,
+    transport: &whycodes_llm::LlmTransport,
+    round_wait: std::time::Duration,
 ) -> GoalCheck {
     let Some(prov) = registry.get(provider) else {
         return Err(format!("provider {provider} is not configured"));
     };
-    match goal_transport()
-        .complete_uncached(prov, request, api_key, model)
-        .await
-    {
-        Ok(response) => {
-            let text = response
-                .content
-                .iter()
-                .filter_map(|b| match b {
-                    whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            Ok(crate::goal::parse_verdict(&text))
+    let mut request = request.clone();
+    let mut tokens = 0;
+    let mut text = String::new();
+    for attempt in 0..2 {
+        if attempt == 1 {
+            // Same question, plus the unreadable answer and a reminder of
+            // the format: at temperature 0 a bare retry repeats itself.
+            let mut messages = request.messages.to_vec();
+            messages.push(goal_message(Role::Assistant, &text));
+            messages.push(goal_message(Role::User, VERDICT_REMINDER));
+            request.messages = std::sync::Arc::from(messages);
+            // Live runs: reasoning models spent the whole budget thinking
+            // and answered with no text; the retry gets room to finish.
+            request.max_tokens = Some(4096);
         }
-        Err(e) => Err(e.to_string()),
+        let mut round = 0;
+        let response = loop {
+            match transport
+                .complete_uncached(prov, &request, api_key, model)
+                .await
+            {
+                Ok(response) => break response,
+                Err(e) if round < CHECK_ROUNDS && whycodes_llm::retry::is_retryable(&e) => {
+                    round += 1;
+                    tracing::debug!(error = %e, round, "goal check waits out a transient failure");
+                    tokio::time::sleep(round_wait).await;
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        };
+        tokens += response.usage.input_tokens + response.usage.output_tokens;
+        text = response
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let (Some(verdict), reason) = crate::goal::parse_verdict(&text) {
+            return Ok(GoalAnswer {
+                verdict,
+                reason,
+                tokens,
+            });
+        }
+    }
+    let snippet: String = text.trim().chars().take(120).collect();
+    Err(format!("the check gave no verdict ({snippet:?})"))
+}
+
+fn goal_message(role: Role, text: &str) -> whycodes_core::types::Message {
+    whycodes_core::types::Message {
+        role,
+        content: whycodes_core::types::MessageContent::Text(text.to_string()),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
     }
 }
 
 /// Overloads and dropped connections retry; a dead provider pauses the goal.
+/// The timeout covers every attempt: at 60s one slow answer from a free
+/// model (the checker is the session model now) paused goals in live runs.
 fn goal_transport() -> whycodes_llm::LlmTransport {
     whycodes_llm::LlmTransport {
         redactor: None,
-        complete_timeout: Some(std::time::Duration::from_secs(60)),
+        complete_timeout: Some(std::time::Duration::from_secs(180)),
+        // Rate limits (429) outlasted 8s backoffs in live runs; waiting up
+        // to 30s between attempts still fits the budget.
         retry: whycodes_llm::RetryPolicy {
-            max_retries: 3,
-            initial_backoff: std::time::Duration::from_millis(500),
-            max_backoff: std::time::Duration::from_secs(8),
-            max_elapsed: std::time::Duration::from_secs(90),
+            max_retries: 5,
+            initial_backoff: std::time::Duration::from_secs(1),
+            max_backoff: std::time::Duration::from_secs(30),
+            max_elapsed: std::time::Duration::from_secs(180),
             full_jitter: true,
         },
     }
 }
 
 /// Visible session: met / impossible clear the goal; not met queues the next
-/// turn unless the user already has a prompt waiting.
-pub(super) fn apply_goal_check(app: &mut TuiApp, rt: &mut SessionRuntime, check: GoalCheck) {
+/// turn unless the user already has a prompt waiting, the goal was paused
+/// while the check ran (Esc, a failed turn), or this run reached
+/// `max_turns` (`session.goal_max_turns`, 0 = no cap).
+pub(super) fn apply_goal_check(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    check: GoalCheck,
+    max_turns: u32,
+) {
     let Some(goal) = rt.goal.as_mut() else {
         // Cleared while the check was in flight.
         return;
     };
     goal.evaluating = false;
     app.mark_dirty();
-    let (verdict, reason) = match check {
+    let GoalAnswer {
+        verdict,
+        reason,
+        tokens,
+    } = match check {
         Ok(answer) => answer,
         Err(e) => {
             goal.pause(format!("goal check failed: {e}"));
@@ -137,11 +228,28 @@ pub(super) fn apply_goal_check(app: &mut TuiApp, rt: &mut SessionRuntime, check:
             return;
         }
     };
+    goal.check_tokens += tokens;
     let (line, toast) = match verdict {
         Verdict::NotMet => {
+            goal.record_finding(&reason);
+            if goal.paused.is_some() {
+                app.add_message(ChatRole::System, format!("◎ goal not met yet: {reason}"));
+                return;
+            }
+            if max_turns > 0 && goal.turns_this_run >= max_turns {
+                goal.pause(format!(
+                    "not met after {max_turns} turns (session.goal_max_turns)"
+                ));
+                app.add_message(
+                    ChatRole::System,
+                    format!(
+                        "◎ goal paused: not met after {max_turns} turns — {reason}. {GOAL_RESUME_HINT}"
+                    ),
+                );
+                return;
+            }
             app.add_message(ChatRole::System, format!("◎ goal not met yet: {reason}"));
             let next = crate::goal::continue_prompt(&goal.condition, &reason);
-            goal.last_reason = Some(reason);
             if !rt.agent_busy && !app.has_pending_turn() {
                 app.enqueue_prompt_text(next);
             }
@@ -172,8 +280,13 @@ pub(super) fn drain_background_goal(rt: &mut SessionRuntime) {
         goal.evaluating = false;
         rt.unread = true;
         match check {
-            Ok((Verdict::NotMet, reason)) => {
-                goal.last_reason = Some(reason);
+            Ok(GoalAnswer {
+                verdict: Verdict::NotMet,
+                reason,
+                tokens,
+            }) => {
+                goal.check_tokens += tokens;
+                goal.record_finding(&reason);
                 goal.pause("session was in the background");
             }
             Ok(_) => {

@@ -2062,7 +2062,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
             // `/goal` verdicts for the visible session.
             while let Ok(check) = rt.goal_rx.try_recv() {
-                apply_goal_check(&mut app, &mut rt, check);
+                apply_goal_check(&mut app, &mut rt, check, config.session.goal_max_turns);
             }
 
             // Local model servers found by the provider-dialog probe.

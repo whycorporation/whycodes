@@ -108,6 +108,8 @@ fn status_shows_state_spend_and_last_reason() {
     );
     // Fewer tokens than at start (a resumed session) never underflows.
     assert!(goal.status(0).contains("· 0 tokens"));
+    goal.check_tokens = 90;
+    assert!(goal.status(350).contains("· 250 tokens + 90 for checks"));
 }
 
 #[test]
@@ -121,25 +123,65 @@ fn elapsed_label_picks_the_unit() {
 fn verdicts_parse_and_vague_answers_are_not_met() {
     assert_eq!(
         parse_verdict("VERDICT: met\nREASON: tests passed in the last output"),
-        (Verdict::Met, "tests passed in the last output".into())
+        (Some(Verdict::Met), "tests passed in the last output".into())
     );
     assert_eq!(
         parse_verdict("verdict: **impossible**\nreason: the file does not exist"),
-        (Verdict::Impossible, "the file does not exist".into())
+        (Some(Verdict::Impossible), "the file does not exist".into())
     );
-    assert_eq!(
-        parse_verdict("VERDICT: not_met\nREASON: lint fails").0,
-        Verdict::NotMet
-    );
-    // No verdict line: keep working, and use the last line as the reason.
+    for not_met in ["not_met", "NOT MET", "unmet", "maybe"] {
+        assert_eq!(
+            parse_verdict(&format!("VERDICT: {not_met}\nREASON: lint fails")).0,
+            Some(Verdict::NotMet),
+            "{not_met}"
+        );
+    }
+    // No verdict line: unreadable, and the last line is the reason.
     assert_eq!(
         parse_verdict("I think it is probably fine.\nNeeds a test run."),
-        (Verdict::NotMet, "Needs a test run.".into())
+        (None, "Needs a test run.".into())
     );
+    assert_eq!(parse_verdict(""), (None, String::new()));
+    assert_eq!(parse_verdict("verdicts are hard").0, None);
+}
+
+#[test]
+fn verdicts_survive_the_markdown_small_models_add() {
+    for answer in [
+        "**VERDICT:** met\n**REASON:** all tests pass",
+        "**VERDICT**: met\nREASON: all tests pass",
+        "- VERDICT: met\n- REASON: all tests pass",
+        "## Verdict = Met.\n> Reason - all tests pass",
+        "  verdict:met\nreason:all tests pass",
+        "VERDICT: **met**\nREASON: **all tests pass**",
+    ] {
+        assert_eq!(
+            parse_verdict(answer),
+            (Some(Verdict::Met), "all tests pass".into()),
+            "{answer}"
+        );
+    }
+    // Stars inside the reason are content, not markdown.
     assert_eq!(
-        parse_verdict("VERDICT: maybe"),
-        (Verdict::NotMet, "VERDICT: maybe".into())
+        parse_verdict("VERDICT: met\nREASON: mul returns a * b now").1,
+        "mul returns a * b now"
     );
+}
+
+#[test]
+fn findings_keep_the_newest_and_turn_runs_restart_after_a_pause() {
+    let mut goal = Goal::new("tests pass", 0);
+    for turn in 1..=8 {
+        goal.record_turn(true);
+        goal.record_finding(&format!("reason {turn}"));
+    }
+    assert_eq!(goal.findings.len(), MAX_FINDINGS);
+    assert_eq!(goal.findings[0], "after turn 3: reason 3");
+    assert_eq!(goal.last_reason.as_deref(), Some("reason 8"));
+    assert_eq!((goal.turns, goal.turns_this_run), (8, 8));
+    goal.pause("turn cancelled");
+    goal.record_turn(true);
+    assert_eq!((goal.turns, goal.turns_this_run), (9, 1));
 }
 
 #[test]
@@ -216,6 +258,7 @@ fn evaluator_request_has_no_tools_and_carries_goal_and_transcript() {
     let req = evaluator_request(
         "tests pass",
         7,
+        &[],
         &[text(Role::User, "go"), text(Role::Assistant, "ok")],
     );
     assert!(req.tools.is_empty());
@@ -227,6 +270,16 @@ fn evaluator_request_has_no_tools_and_carries_goal_and_transcript() {
         "{body}"
     );
     assert!(body.ends_with("[assistant]\nok"), "{body}");
+
+    let findings = vec!["after turn 1: build is green".to_string()];
+    let req = evaluator_request("tests pass", 2, &findings, &[text(Role::User, "go")]);
+    let body = req.messages[0].content.as_text().unwrap();
+    assert!(
+        body.contains(
+            "Earlier checks (oldest first):\n- after turn 1: build is green\n\nTranscript"
+        ),
+        "{body}"
+    );
 }
 
 #[test]
@@ -235,4 +288,26 @@ fn continue_prompt_names_goal_reason_and_evidence() {
     assert!(p.starts_with("Continue working toward the goal: tests pass\n"));
     assert!(p.contains("not met yet — two tests still fail"));
     assert!(p.contains("show the evidence"));
+}
+
+#[test]
+fn checker_model_prefers_goal_model_then_the_session_model() {
+    let pick = |goal_model| checker_model("openrouter", "big", goal_model);
+    assert_eq!(pick(None), ("openrouter".into(), "big".into()));
+    assert_eq!(pick(Some("  ")), ("openrouter".into(), "big".into()));
+    assert_eq!(pick(Some("judge")), ("openrouter".into(), "judge".into()));
+    assert_eq!(
+        pick(Some("aiproxy/gc/grok-4.7")),
+        ("aiproxy".into(), "gc/grok-4.7".into())
+    );
+}
+
+#[test]
+fn goal_turns_ask_for_the_intent_and_an_honest_stop() {
+    let start = goal_prompt("tests pass");
+    assert!(start.starts_with("Goal: tests pass\n"), "{start}");
+    for prompt in [start, continue_prompt("tests pass", "red")] {
+        assert!(prompt.contains("as the user means it"), "{prompt}");
+        assert!(prompt.contains("instead of working around it"), "{prompt}");
+    }
 }
