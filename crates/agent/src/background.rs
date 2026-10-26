@@ -268,30 +268,21 @@ impl BackgroundRegistry {
         if g.status != JobStatus::Running {
             g.completion_delivered = true;
         }
-        let text = &g.output;
-        if max_chars == 0 || text.chars().count() <= max_chars {
-            return Ok(format!(
-                "[{} {}] {}\n{}",
-                g.id,
-                g.status.as_str(),
-                g.label,
-                text
-            ));
+        // The exit code is here too: live runs had the model call `bg list`
+        // after `bg read` only to learn it.
+        let state = match g.exit_code {
+            Some(code) => format!("{} (exit {code})", g.status.as_str()),
+            None => g.status.as_str().to_string(),
+        };
+        let text = whycodes_sandbox::clean_terminal_output(&g.output);
+        let count = text.chars().count();
+        if max_chars == 0 || count <= max_chars {
+            return Ok(format!("[{} {state}] {}\n{text}", g.id, g.label));
         }
-        let tail: String = text
-            .chars()
-            .rev()
-            .take(max_chars)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
+        let tail: String = text.chars().skip(count - max_chars).collect();
         Ok(format!(
-            "[{} {}] {}\n…(truncated)\n{}",
-            g.id,
-            g.status.as_str(),
-            g.label,
-            tail
+            "[{} {state}] {}\n…(truncated)\n{tail}",
+            g.id, g.label
         ))
     }
 

@@ -152,7 +152,12 @@ fn completions_are_taken_once_and_skip_delivered_jobs() {
 
     // Reading a finished job's output, or killing a job, counts as seen.
     lock(&job).completion_delivered = false;
-    reg.read("bg-auto", 100).unwrap();
+    lock(&job).output = "\x1b[1mdone\x1b[0m\n".into();
+    assert_eq!(
+        reg.read("bg-auto", 100).unwrap(),
+        "[bg-auto done (exit 0)] echo\ndone\n",
+        "exit code shown, terminal noise cleaned"
+    );
     assert!(reg.take_completions().is_empty());
     assert!(reg.output("missing").is_none());
     assert_eq!(reg.output("bg-auto").unwrap().id, "bg-auto");
