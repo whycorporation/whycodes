@@ -154,10 +154,12 @@ fn goal_transport() -> whycodes_llm::LlmTransport {
     whycodes_llm::LlmTransport {
         redactor: None,
         complete_timeout: Some(std::time::Duration::from_secs(180)),
+        // Rate limits (429) outlasted 8s backoffs in live runs; waiting up
+        // to 30s between attempts still fits the budget.
         retry: whycodes_llm::RetryPolicy {
-            max_retries: 3,
-            initial_backoff: std::time::Duration::from_millis(500),
-            max_backoff: std::time::Duration::from_secs(8),
+            max_retries: 5,
+            initial_backoff: std::time::Duration::from_secs(1),
+            max_backoff: std::time::Duration::from_secs(30),
             max_elapsed: std::time::Duration::from_secs(180),
             full_jitter: true,
         },
