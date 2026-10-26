@@ -105,9 +105,17 @@ pub(super) fn open_tree_picker(app: &mut TuiApp, session: &Session) {
 
 pub(super) enum LoopSlash {
     Stop,
-    Queue { n: usize, prompt: String },
+    Queue {
+        n: usize,
+        prompt: String,
+        /// The asked count was above [`MAX_LOOP`].
+        capped: bool,
+    },
     Usage,
 }
+
+/// Most turns one `/loop` queues.
+pub(super) const MAX_LOOP: usize = 20;
 
 /// `/loop stop|clear` or `/loop N prompt…` (N defaults to 3, clamped 1..=20).
 pub(super) fn parse_loop_slash(rest: &str) -> LoopSlash {
@@ -129,8 +137,9 @@ pub(super) fn parse_loop_slash(rest: &str) -> LoopSlash {
         return LoopSlash::Usage;
     }
     LoopSlash::Queue {
-        n: n.clamp(1, 20),
+        n: n.clamp(1, MAX_LOOP),
         prompt,
+        capped: n > MAX_LOOP,
     }
 }
 
@@ -514,15 +523,18 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     format!("Cleared {n} queued loop prompt(s)"),
                 );
             }
-            LoopSlash::Queue { n, prompt } => {
+            LoopSlash::Queue { n, prompt, capped } => {
                 ctx.app.add_message(ChatRole::User, &prompt);
                 ctx.app.enqueue_prompt_text(prompt.clone());
                 for _ in 1..n {
                     ctx.app.pending_auto_prompts.push_back(prompt.clone());
                 }
-                ctx.app
-                    .toasts
-                    .push(crate::toast::ToastKind::Info, format!("Loop ×{n} queued"));
+                let note = if capped {
+                    format!("Loop ×{n} queued (capped at {MAX_LOOP})")
+                } else {
+                    format!("Loop ×{n} queued")
+                };
+                ctx.app.toasts.push(crate::toast::ToastKind::Info, note);
             }
             LoopSlash::Usage => {
                 ctx.app.status_message = LOOP_USAGE.into();

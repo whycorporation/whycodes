@@ -99,6 +99,8 @@ pub struct ViewSnapshot {
     pub context_used: u64,
     pub pending_suggestion: Option<String>,
     pub pending_turns: VecDeque<PendingTurn>,
+    /// This session's remaining `/loop` repeats and scheduled prompts.
+    pub pending_auto_prompts: VecDeque<String>,
     pub session_id: String,
     pub todos: Vec<whycodes_core::TodoItem>,
     pub todos_collapsed: bool,
@@ -124,6 +126,7 @@ impl Default for ViewSnapshot {
             context_used: 0,
             pending_suggestion: None,
             pending_turns: VecDeque::new(),
+            pending_auto_prompts: VecDeque::new(),
             session_id: String::new(),
             todos: Vec::new(),
             todos_collapsed: false,

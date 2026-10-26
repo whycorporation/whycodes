@@ -250,6 +250,15 @@ fn render_location(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &Th
             )),
         );
     }
+    if !app.pending_auto_prompts.is_empty() {
+        bar.push(
+            "loop",
+            Line::from(Span::styled(
+                format!("↻ {} queued", app.pending_auto_prompts.len()),
+                Style::default().fg(palette.accent).bg(palette.bg),
+            )),
+        );
+    }
     if app.bg_running_count > 0 {
         bar.push(
             "bg",

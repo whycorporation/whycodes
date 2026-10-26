@@ -1844,22 +1844,22 @@ fn parse_loop_slash_covers_stop_queue_and_usage() {
     assert!(matches!(parse_loop_slash("stop"), LoopSlash::Stop));
     assert!(matches!(parse_loop_slash("clear"), LoopSlash::Stop));
     match parse_loop_slash("2 do the thing") {
-        LoopSlash::Queue { n, prompt } => {
-            assert_eq!(n, 2);
+        LoopSlash::Queue { n, prompt, capped } => {
+            assert_eq!((n, capped), (2, false));
             assert_eq!(prompt, "do the thing");
         }
         _ => panic!("expected queue, got usage/stop"),
     }
     match parse_loop_slash("keep going") {
-        LoopSlash::Queue { n, prompt } => {
-            assert_eq!(n, 3);
+        LoopSlash::Queue { n, prompt, capped } => {
+            assert_eq!((n, capped), (3, false));
             assert_eq!(prompt, "keep going");
         }
         _ => panic!("expected default N=3"),
     }
     match parse_loop_slash("99 only") {
-        LoopSlash::Queue { n, prompt } => {
-            assert_eq!(n, 20);
+        LoopSlash::Queue { n, prompt, capped } => {
+            assert_eq!((n, capped), (MAX_LOOP, true));
             assert_eq!(prompt, "only");
         }
         _ => panic!("expected clamp to 20"),
@@ -12059,4 +12059,41 @@ fn title_stack_is_pushed_on_enter_and_popped_on_restore() {
     let mut out = Vec::new();
     pop_title(&mut out);
     assert!(String::from_utf8_lossy(&out).contains(TITLE_POP));
+}
+
+#[test]
+fn a_cancelled_or_failed_turn_stops_the_loop() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    stop_loop_after_error(&mut app, "turn cancelled");
+    assert!(app.messages.is_empty(), "no loop: nothing to say");
+
+    app.pending_auto_prompts
+        .extend(["again".to_string(), "again".to_string()]);
+    stop_loop_after_error(&mut app, "turn cancelled");
+    assert!(app.pending_auto_prompts.is_empty());
+    assert_eq!(
+        app.messages.last().unwrap().content,
+        "↻ loop stopped: turn cancelled; 2 queued prompts dropped."
+    );
+    app.pending_auto_prompts.push_back("again".into());
+    stop_loop_after_error(&mut app, "turn failed");
+    assert_eq!(
+        app.messages.last().unwrap().content,
+        "↻ loop stopped: turn failed; 1 queued prompt dropped."
+    );
+}
+
+#[test]
+fn loop_repeats_stay_with_their_session_when_switching() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut other = vec![test_runtime()];
+    app.pending_auto_prompts.push_back("again".into());
+    switch_to_runtime(&mut app, &mut rt, &mut other, 0);
+    assert!(
+        app.pending_auto_prompts.is_empty(),
+        "not sent to the other session"
+    );
+    switch_to_runtime(&mut app, &mut rt, &mut other, 0);
+    assert_eq!(app.pending_auto_prompts.len(), 1, "back with its session");
 }

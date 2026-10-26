@@ -3917,6 +3917,7 @@ fn apply_turn_outcome(
             if let Some(err) = error {
                 app.current_agent_state = AgentState::Idle;
                 app.add_message(ChatRole::System, format!("Remote error: {err}"));
+                stop_loop_after_error(app, "turn failed");
                 app.status_message = "remote error".into();
             } else {
                 if !text.is_empty()
@@ -3967,6 +3968,7 @@ fn apply_turn_outcome(
                     true,
                 );
                 app.add_message(ChatRole::System, "⏹ Generation cancelled.");
+                stop_loop_after_error(app, "turn cancelled");
                 rt.persist("cancelled");
             } else {
                 let display =
@@ -3977,6 +3979,7 @@ fn apply_turn_outcome(
                     .unwrap_or_default();
                 app.status_message = format!("{dur}error — see chat");
                 app.add_message(ChatRole::System, format!("Error: {display}"));
+                stop_loop_after_error(app, "turn failed");
                 crate::desktop_notify::notify(
                     whycodes_config::NotifyEvent::TurnDone,
                     &format!("Turn failed: {display}"),
@@ -5550,6 +5553,23 @@ fn steer_remote(
     }
     app.status_message = "sent to the running turn".into();
     app.mark_dirty();
+}
+
+/// Esc or a failed turn ends a `/loop`: the queued repeats would otherwise
+/// start right away (and repeat the same error) after the user asked to stop.
+fn stop_loop_after_error(app: &mut TuiApp, why: &str) {
+    let dropped = app.pending_auto_prompts.len();
+    if dropped == 0 {
+        return;
+    }
+    app.pending_auto_prompts.clear();
+    app.add_message(
+        ChatRole::System,
+        format!(
+            "↻ loop stopped: {why}; {dropped} queued prompt{} dropped.",
+            if dropped == 1 { "" } else { "s" }
+        ),
+    );
 }
 
 fn queue_auto_prompt_if_idle(app: &mut TuiApp, agent_busy: bool) {
