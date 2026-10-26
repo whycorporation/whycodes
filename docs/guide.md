@@ -1345,7 +1345,9 @@ arguments instead.
 prompts. The default is
 `auto`: an `ask` is allowed without a prompt, routine `question` calls are
 auto-answered while todos or background jobs are open, and only `deny`
-rules, catastrophic shell commands and the sandbox still stop a call.
+rules, catastrophic shell commands and the sandbox still stop a call. A
+failed tool call is retried up to twice, except shell commands (a non-zero
+exit is the command's answer) and workflow tools such as `task` or `bg`.
 `important` prompts on questions and on high-risk tools (`browser`, a shell
 command at or above the risk threshold, a file write outside the project).
 `manual` prompts on every `ask`. The prompt box shows the current mode on

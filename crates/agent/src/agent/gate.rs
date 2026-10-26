@@ -76,6 +76,10 @@ fn tool_error_is_retryable(name: &str, result: &ToolResult) -> bool {
         return false;
     }
     match name {
+        // A shell's non-zero exit is the command's answer, not a flaky tool:
+        // live runs re-ran a failing build three times, a timed-out command
+        // waited out its timeout three times, and a `git push` would repeat.
+        "bash" | "shell" => false,
         "question" | "task" | "swarm" | "bg" | "schedule" | "wait" | "worktree" | "todowrite"
         | "todo" | "todoread" | "checkpoint" | "rewind" => false,
         _ => {
