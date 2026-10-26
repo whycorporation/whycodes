@@ -12097,3 +12097,14 @@ fn loop_repeats_stay_with_their_session_when_switching() {
     switch_to_runtime(&mut app, &mut rt, &mut other, 0);
     assert_eq!(app.pending_auto_prompts.len(), 1, "back with its session");
 }
+
+#[test]
+fn the_turn_placeholder_shares_the_sessions_job_registry() {
+    let mut rt = test_runtime();
+    let dir = tempfile::tempdir().unwrap();
+    rt.agent.background_registry().set_max_jobs(3);
+    let (agent, _session) = take_turn_owner(&mut rt, dir.path());
+    // Same registry: quitting mid-turn kills the jobs the real agent started.
+    rt.agent.background_registry().set_max_jobs(5);
+    assert_eq!(agent.background_registry().max_jobs(), 5);
+}

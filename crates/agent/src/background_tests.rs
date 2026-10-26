@@ -111,7 +111,7 @@ fn job_status_as_str_and_debug_fmt() {
 }
 
 #[test]
-fn mark_auto_delivered_skips_inject() {
+fn completions_are_taken_once_and_skip_delivered_jobs() {
     let job = Arc::new(Mutex::new(JobInner {
         id: "bg-auto".into(),
         label: "echo".into(),
@@ -124,7 +124,6 @@ fn mark_auto_delivered_skips_inject() {
         pid: None,
         #[cfg(windows)]
         tree: None,
-        auto_background: true,
         completion_delivered: false,
         log: None,
     }));
@@ -132,12 +131,86 @@ fn mark_auto_delivered_skips_inject() {
     {
         let mut jobs = lock(&reg.inner.jobs);
         jobs.insert("bg-auto".into(), Arc::clone(&job));
+        lock(&reg.inner.order).push("bg-auto".into());
+        lock(&reg.inner.order).push("bg-gone".into());
     }
-    assert_eq!(reg.take_auto_completions().len(), 1);
+    let taken = reg.take_completions();
+    assert_eq!(taken.len(), 1);
+    assert_eq!(
+        (
+            taken[0].status,
+            taken[0].exit_code,
+            taken[0].output.as_str()
+        ),
+        (JobStatus::Done, Some(0), "done")
+    );
+    assert!(reg.take_completions().is_empty(), "taken once");
     lock(&job).completion_delivered = false;
-    reg.mark_auto_delivered("bg-auto");
-    reg.mark_auto_delivered("missing");
-    assert!(reg.take_auto_completions().is_empty());
+    reg.mark_delivered("bg-auto");
+    reg.mark_delivered("missing");
+    assert!(reg.take_completions().is_empty());
+
+    // Reading a finished job's output, or killing a job, counts as seen.
+    lock(&job).completion_delivered = false;
+    reg.read("bg-auto", 100).unwrap();
+    assert!(reg.take_completions().is_empty());
+    assert!(reg.output("missing").is_none());
+    assert_eq!(reg.output("bg-auto").unwrap().id, "bg-auto");
+}
+
+#[test]
+fn notice_keeps_the_newest_output_and_points_at_the_log() {
+    let job = |output: String| JobSnapshotWithOutput {
+        id: "bg-9".into(),
+        status: JobStatus::Done,
+        exit_code: Some(0),
+        output,
+    };
+    assert_eq!(
+        job("ok\n".into()).notice(),
+        "Background job `bg-9` finished (done). Output:\nok\n"
+    );
+    let long = job(format!("{}END", "x".repeat(NOTICE_CHARS)));
+    let notice = long.notice();
+    assert!(
+        notice.starts_with(
+            "Background job `bg-9` finished (done). Output:\n[last 4000 chars; full log: read proc://bg-9]\nxxx"
+        ),
+        "{notice}"
+    );
+    assert!(notice.ends_with("END"));
+}
+
+#[test]
+fn display_reads_like_a_finished_foreground_shell() {
+    let job = |status, exit_code, output: &str| JobSnapshotWithOutput {
+        id: "bg-7".into(),
+        status,
+        exit_code,
+        output: output.into(),
+    };
+    assert_eq!(
+        job(JobStatus::Done, Some(0), "").display(),
+        "Command executed successfully (exit code: 0)"
+    );
+    assert_eq!(
+        job(JobStatus::Done, Some(0), "\x1b[32mok\x1b[0m\n50%\r100%\n").display(),
+        "ok\n100%\n"
+    );
+    assert_eq!(
+        job(JobStatus::Failed, Some(3), "boom").display(),
+        "boom\n(exit code: 3)"
+    );
+    assert_eq!(
+        job(JobStatus::Failed, None, "").display(),
+        "(exit code: none)"
+    );
+    let capped = job(JobStatus::Killed, None, "…tail").display();
+    assert!(
+        capped
+            .starts_with("[earlier output dropped past 64 KB; full log: read proc://bg-7]\n…tail"),
+        "{capped}"
+    );
 }
 
 #[tokio::test]
@@ -177,7 +250,6 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
         pid: None,
         #[cfg(windows)]
         tree: None,
-        auto_background: false,
         completion_delivered: false,
         log: None,
     }));
@@ -210,8 +282,8 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
             pid: None,
             #[cfg(windows)]
             tree: None,
-            auto_background: false,
-            completion_delivered: false,
+            // done-0's notice is still pending: pruning must keep it.
+            completion_delivered: i != 0,
             log: None,
         }));
         {
@@ -228,6 +300,10 @@ async fn spawn_fail_already_status_output_cap_and_prune() {
         .filter(|j| j.status != JobStatus::Running)
         .count();
     assert!(finished_n <= RETAIN_FINISHED + 4, "{finished_n}");
+    assert!(
+        reg.list().iter().any(|j| j.id == "done-0"),
+        "an undelivered completion survives pruning"
+    );
     {
         let mut order = reg.inner.order.lock().unwrap();
         order.push("ghost-missing".into());
@@ -412,7 +488,6 @@ async fn run_background_job_spawn_failed_and_warning() {
         pid: None,
         #[cfg(windows)]
         tree: None,
-        auto_background: false,
         completion_delivered: false,
         log: None,
     }));
@@ -475,7 +550,6 @@ async fn pipe_to_job_stops_on_read_error() {
         pid: None,
         #[cfg(windows)]
         tree: None,
-        auto_background: false,
         completion_delivered: false,
         log: None,
     }));
@@ -497,7 +571,6 @@ async fn run_background_job_aborts_pipe_tasks() {
         pid: None,
         #[cfg(windows)]
         tree: None,
-        auto_background: false,
         completion_delivered: false,
         log: None,
     }));
@@ -545,7 +618,6 @@ async fn spawn_pipe_task_none_reader_is_noop() {
         pid: None,
         #[cfg(windows)]
         tree: None,
-        auto_background: false,
         completion_delivered: false,
         log: None,
     }));
@@ -581,7 +653,6 @@ fn wait_status_records_error_and_success() {
         pid: None,
         #[cfg(windows)]
         tree: None,
-        auto_background: false,
         completion_delivered: false,
         log: None,
     }));
@@ -638,7 +709,6 @@ fn sample_job(status: JobStatus, output: &str) -> JobInner {
         pid: None,
         #[cfg(windows)]
         tree: None,
-        auto_background: false,
         completion_delivered: false,
         log: None,
     }
@@ -698,7 +768,7 @@ fn lock_recovers_from_poison_and_helpers_cover_fallbacks() {
         Err(e) => assert!(!e.is_empty(), "{e}"),
     }
     let err = BackgroundRegistry::new(1)
-        .start_prepared("echo hi", None, Err("sandbox unavailable".into()), false)
+        .start_prepared("echo hi", None, Err("sandbox unavailable".into()))
         .unwrap_err();
     assert!(err.contains("sandbox unavailable"), "{err}");
     let mut already = "…keep".to_string();
@@ -912,7 +982,7 @@ async fn background_job_sees_whycodes_scratch() {
     let reg = BackgroundRegistry::new(4);
     // Git Bash / the embedded shell expand `$VAR`; `cmd.exe` expands `%VAR%`.
     let id = reg
-        .start_shell_auto(
+        .start_shell(
             "echo \"$WHYCODES_SCRATCH\" %WHYCODES_SCRATCH%",
             dir.path().to_path_buf(),
             SandboxSettings::off(),
