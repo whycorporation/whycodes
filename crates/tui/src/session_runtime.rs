@@ -101,6 +101,10 @@ pub struct ViewSnapshot {
     pub pending_turns: VecDeque<PendingTurn>,
     /// This session's remaining `/loop` repeats and scheduled prompts.
     pub pending_auto_prompts: VecDeque<String>,
+    /// This session's background jobs as the status bar and tasks list show
+    /// them; a job that ends while the session is parked updates these.
+    pub bg_jobs: Vec<crate::app::BgJobUi>,
+    pub bg_running_count: usize,
     pub session_id: String,
     pub todos: Vec<whycodes_core::TodoItem>,
     pub todos_collapsed: bool,
@@ -127,6 +131,8 @@ impl Default for ViewSnapshot {
             pending_suggestion: None,
             pending_turns: VecDeque::new(),
             pending_auto_prompts: VecDeque::new(),
+            bg_jobs: Vec::new(),
+            bg_running_count: 0,
             session_id: String::new(),
             todos: Vec::new(),
             todos_collapsed: false,
