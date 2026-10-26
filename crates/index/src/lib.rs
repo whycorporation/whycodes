@@ -643,21 +643,30 @@ fn full_scan(shared: &Arc<Shared>) {
 /// Bulk-insert one root's walked entries into its stores. Reading every
 /// file for the content index is the slow part: on a huge tree (a home
 /// directory hits `max_entries`) it ran for minutes, and the drop at exit
-/// joined it, so the process never quit.
+/// joined it, so the process never quit. On a network mount (a WSL share)
+/// each read costs milliseconds, so files are read with no lock held:
+/// holding the store lock across them froze every `entries()` caller,
+/// including the TUI's first frame.
 fn fill_root(shared: &Shared, i: usize, entries: Vec<WalkEntry>) {
     let state = &shared.states[i];
-    let mut store = write(&state.store);
-    let mut content = write(&state.content);
-    for e in entries {
+    let mut files = Vec::new();
+    {
+        let mut store = write(&state.store);
+        for e in entries {
+            if !e.is_dir {
+                files.push((e.rel.clone(), e.size));
+            }
+            store.insert(i as u16, e.rel, e.is_dir, e.size);
+        }
+    }
+    for (rel, size) in files {
         if shared.cancel.load(Ordering::Relaxed) {
             return;
         }
-        if !e.is_dir {
-            content.upsert(&shared.roots[i], &e.rel, e.size);
-        }
-        store.insert(i as u16, e.rel, e.is_dir, e.size);
+        let posting = ContentIndex::load(&shared.roots[i], &rel, size);
+        write(&state.content).insert(&rel, posting);
     }
-    content.mark_complete();
+    write(&state.content).mark_complete();
 }
 
 /// Apply one debounced watcher batch: upserts push into nucleo; removals

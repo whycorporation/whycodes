@@ -288,17 +288,60 @@ fn fill_root_stops_reading_files_once_cancelled() {
         is_dir: false,
         size: 0,
     };
-    let has = |rel: &str| {
-        read(&idx.shared.states[0].store)
-            .entries()
-            .iter()
-            .any(|e| &*e.rel == rel)
-    };
-    fill_root(&idx.shared, 0, vec![entry("before.rs")]);
-    assert!(has("before.rs"));
+    let content = || read(&idx.shared.states[0].content);
+    write(&idx.shared.states[0].content).clear();
+    fill_root(&idx.shared, 0, vec![entry("src/main.rs")]);
+    assert_eq!(content().indexed_len(), 1);
+    assert!(content().is_complete());
+    write(&idx.shared.states[0].content).clear();
     idx.cancel_only();
-    fill_root(&idx.shared, 0, vec![entry("after.rs")]);
-    assert!(!has("after.rs"));
+    fill_root(&idx.shared, 0, vec![entry("src/main.rs")]);
+    assert_eq!(content().indexed_len(), 0);
+    assert!(!content().is_complete());
+}
+
+#[test]
+fn fill_root_reads_files_without_holding_the_store_lock() {
+    // A network mount (WSL share) makes each read slow; `entries()` callers,
+    // the TUI's first frame among them, must not wait on those reads.
+    let dir = fixture();
+    let idx = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+    let entry = WalkEntry {
+        rel: "src/main.rs".into(),
+        is_dir: false,
+        size: 0,
+    };
+    // Hold the content lock: the store fill must still finish, and the store
+    // must stay readable while the read loop waits on content.
+    let content = write(&idx.shared.states[0].content);
+    let filled = std::thread::scope(|s| {
+        let filler = s.spawn(|| fill_root(&idx.shared, 0, vec![entry]));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut filled = false;
+        while !filled && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+            // `try_read`: a store held across the reads must fail the test,
+            // not hang it.
+            filled = idx.shared.states[0].store.try_read().is_ok_and(|store| {
+                store
+                    .entries()
+                    .iter()
+                    .any(|e| &*e.rel == "src/main.rs" && e.size == 0)
+            });
+        }
+        drop(content);
+        filler.join().unwrap();
+        filled
+    });
+    assert!(filled, "store fill waited on the content lock");
 }
 
 #[test]
