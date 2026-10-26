@@ -2,9 +2,22 @@
 //! the UI thread, and act on its verdict (continue, achieved, impossible).
 use super::*;
 use crate::goal::{TurnStep, Verdict};
+use whycodes_core::types::Role;
 
-/// One evaluator answer: verdict and reason, or why the check failed.
-pub(crate) type GoalCheck = Result<(Verdict, String), String>;
+/// One evaluator answer, or why the check failed.
+pub(crate) type GoalCheck = Result<GoalAnswer, String>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GoalAnswer {
+    pub verdict: Verdict,
+    pub reason: String,
+    /// Input plus output tokens the check spent (both attempts).
+    pub tokens: u64,
+}
+
+/// Asked again once when the first answer has no verdict line.
+const VERDICT_REMINDER: &str = "Your answer had no verdict line. Reply with exactly two lines \
+and no markdown:\nVERDICT: met | not_met | impossible\nREASON: one sentence";
 
 const GOAL_RESUME_HINT: &str = "Send a prompt to resume.";
 
@@ -22,7 +35,9 @@ pub(super) fn goal_after_turn(
         return;
     };
     let used_tools = crate::goal::turn_used_tools(&rt.session.messages);
-    match goal.record_turn(used_tools) {
+    let step = goal.record_turn(used_tools);
+    crate::goal::save(rt.db.as_ref(), &rt.session.id, Some(goal));
+    match step {
         TurnStep::Pause => {
             let why = goal.paused.clone().unwrap_or_default();
             app.add_message(
@@ -31,8 +46,12 @@ pub(super) fn goal_after_turn(
             );
         }
         TurnStep::Evaluate => {
-            let request =
-                crate::goal::evaluator_request(&goal.condition, goal.turns, &rt.session.messages);
+            let request = crate::goal::evaluator_request(
+                &goal.condition,
+                goal.turns,
+                &goal.findings,
+                &rt.session.messages,
+            );
             let (provider, model) = whycodes_agent::resolve_title_model(
                 provider,
                 model,
@@ -82,23 +101,52 @@ pub(super) async fn run_goal_check(
     let Some(prov) = registry.get(provider) else {
         return Err(format!("provider {provider} is not configured"));
     };
-    match goal_transport()
-        .complete_uncached(prov, request, api_key, model)
-        .await
-    {
-        Ok(response) => {
-            let text = response
-                .content
-                .iter()
-                .filter_map(|b| match b {
-                    whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            Ok(crate::goal::parse_verdict(&text))
+    let transport = goal_transport();
+    let mut request = request.clone();
+    let mut tokens = 0;
+    let mut text = String::new();
+    for attempt in 0..2 {
+        if attempt == 1 {
+            // Same question, plus the unreadable answer and a reminder of
+            // the format: at temperature 0 a bare retry repeats itself.
+            let mut messages = request.messages.to_vec();
+            messages.push(goal_message(Role::Assistant, &text));
+            messages.push(goal_message(Role::User, VERDICT_REMINDER));
+            request.messages = std::sync::Arc::from(messages);
         }
-        Err(e) => Err(e.to_string()),
+        let response = transport
+            .complete_uncached(prov, &request, api_key, model)
+            .await
+            .map_err(|e| e.to_string())?;
+        tokens += response.usage.input_tokens + response.usage.output_tokens;
+        text = response
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let (Some(verdict), reason) = crate::goal::parse_verdict(&text) {
+            return Ok(GoalAnswer {
+                verdict,
+                reason,
+                tokens,
+            });
+        }
+    }
+    let snippet: String = text.trim().chars().take(120).collect();
+    Err(format!("the check gave no verdict ({snippet:?})"))
+}
+
+fn goal_message(role: Role, text: &str) -> whycodes_core::types::Message {
+    whycodes_core::types::Message {
+        role,
+        content: whycodes_core::types::MessageContent::Text(text.to_string()),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
     }
 }
 
@@ -118,15 +166,26 @@ fn goal_transport() -> whycodes_llm::LlmTransport {
 }
 
 /// Visible session: met / impossible clear the goal; not met queues the next
-/// turn unless the user already has a prompt waiting.
-pub(super) fn apply_goal_check(app: &mut TuiApp, rt: &mut SessionRuntime, check: GoalCheck) {
+/// turn unless the user already has a prompt waiting, the goal was paused
+/// while the check ran (Esc, a failed turn), or this run reached
+/// `max_turns` (`session.goal_max_turns`, 0 = no cap).
+pub(super) fn apply_goal_check(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    check: GoalCheck,
+    max_turns: u32,
+) {
     let Some(goal) = rt.goal.as_mut() else {
         // Cleared while the check was in flight.
         return;
     };
     goal.evaluating = false;
     app.mark_dirty();
-    let (verdict, reason) = match check {
+    let GoalAnswer {
+        verdict,
+        reason,
+        tokens,
+    } = match check {
         Ok(answer) => answer,
         Err(e) => {
             goal.pause(format!("goal check failed: {e}"));
@@ -137,11 +196,28 @@ pub(super) fn apply_goal_check(app: &mut TuiApp, rt: &mut SessionRuntime, check:
             return;
         }
     };
+    goal.check_tokens += tokens;
     let (line, toast) = match verdict {
         Verdict::NotMet => {
+            goal.record_finding(&reason);
+            if goal.paused.is_some() {
+                app.add_message(ChatRole::System, format!("◎ goal not met yet: {reason}"));
+                return;
+            }
+            if max_turns > 0 && goal.turns_this_run >= max_turns {
+                goal.pause(format!(
+                    "not met after {max_turns} turns (session.goal_max_turns)"
+                ));
+                app.add_message(
+                    ChatRole::System,
+                    format!(
+                        "◎ goal paused: not met after {max_turns} turns — {reason}. {GOAL_RESUME_HINT}"
+                    ),
+                );
+                return;
+            }
             app.add_message(ChatRole::System, format!("◎ goal not met yet: {reason}"));
             let next = crate::goal::continue_prompt(&goal.condition, &reason);
-            goal.last_reason = Some(reason);
             if !rt.agent_busy && !app.has_pending_turn() {
                 app.enqueue_prompt_text(next);
             }
@@ -172,8 +248,13 @@ pub(super) fn drain_background_goal(rt: &mut SessionRuntime) {
         goal.evaluating = false;
         rt.unread = true;
         match check {
-            Ok((Verdict::NotMet, reason)) => {
-                goal.last_reason = Some(reason);
+            Ok(GoalAnswer {
+                verdict: Verdict::NotMet,
+                reason,
+                tokens,
+            }) => {
+                goal.check_tokens += tokens;
+                goal.record_finding(&reason);
                 goal.pause("session was in the background");
             }
             Ok(_) => {

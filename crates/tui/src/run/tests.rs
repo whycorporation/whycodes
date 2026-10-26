@@ -10756,6 +10756,16 @@ async fn goal_slash_sets_shows_clears_and_rejects_long_conditions() {
     h.run("/goal lint is clean").await;
     h.run("/new").await;
     assert!(h.goal.is_none(), "/new clears the goal");
+
+    // Attached to a daemon the transcript is remote: nothing could check it.
+    h.app.attached = true;
+    h.run("/goal lint is clean").await;
+    assert!(h.goal.is_none());
+    assert!(
+        h.app
+            .status_message
+            .contains("not available while attached")
+    );
 }
 
 #[tokio::test]
@@ -10824,7 +10834,7 @@ async fn goal_turn_with_tools_asks_the_evaluator_on_this_runtime() {
     goal_after_turn(&mut app, &mut rt, &Config::default(), "acme", "m", "");
     assert!(rt.goal.as_ref().unwrap().evaluating);
     let check = rt.goal_rx.recv().await.expect("check");
-    apply_goal_check(&mut app, &mut rt, check);
+    apply_goal_check(&mut app, &mut rt, check, 30);
     let goal = rt.goal.as_ref().unwrap();
     assert!(!goal.evaluating);
     assert!(
@@ -10842,15 +10852,17 @@ async fn goal_verdicts_continue_finish_or_stop_the_goal() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut rt = test_runtime();
     // Cleared while in flight: ignored.
-    apply_goal_check(&mut app, &mut rt, Ok((Verdict::Met, "x".into())));
+    apply_goal_check(&mut app, &mut rt, answer(Verdict::Met, "x"), 30);
     assert!(app.messages.is_empty());
 
     rt.goal = Some(crate::goal::Goal::new("tests pass", 0));
     apply_goal_check(
         &mut app,
         &mut rt,
-        Ok((Verdict::NotMet, "2 tests fail".into())),
+        answer(Verdict::NotMet, "2 tests fail"),
+        30,
     );
+    assert_eq!(rt.goal.as_ref().unwrap().check_tokens, 7);
     assert_eq!(
         rt.goal.as_ref().unwrap().last_reason.as_deref(),
         Some("2 tests fail")
@@ -10867,11 +10879,11 @@ async fn goal_verdicts_continue_finish_or_stop_the_goal() {
 
     // A prompt already waiting (the user typed) wins over the continuation.
     app.enqueue_prompt_text("user prompt".to_string());
-    apply_goal_check(&mut app, &mut rt, Ok((Verdict::NotMet, "still red".into())));
+    apply_goal_check(&mut app, &mut rt, answer(Verdict::NotMet, "still red"), 30);
     assert_eq!(app.take_pending_turn().unwrap().text, "user prompt");
     assert!(!app.has_pending_turn());
 
-    apply_goal_check(&mut app, &mut rt, Ok((Verdict::Met, "all green".into())));
+    apply_goal_check(&mut app, &mut rt, answer(Verdict::Met, "all green"), 30);
     assert!(rt.goal.is_none());
     assert_eq!(
         app.messages.last().unwrap().content,
@@ -10882,7 +10894,8 @@ async fn goal_verdicts_continue_finish_or_stop_the_goal() {
     apply_goal_check(
         &mut app,
         &mut rt,
-        Ok((Verdict::Impossible, "no repo".into())),
+        answer(Verdict::Impossible, "no repo"),
+        30,
     );
     assert!(rt.goal.is_none());
     assert!(
@@ -10898,14 +10911,12 @@ async fn goal_verdicts_continue_finish_or_stop_the_goal() {
 async fn background_goal_verdicts_pause_or_clear() {
     use crate::goal::Verdict;
     let mut rt = test_runtime();
-    rt.goal_tx.send(Ok((Verdict::Met, "x".into()))).unwrap();
+    rt.goal_tx.send(answer(Verdict::Met, "x")).unwrap();
     drain_background_goal(&mut rt); // no goal: skipped
     assert!(rt.goal.is_none());
 
     rt.goal = Some(crate::goal::Goal::new("tests pass", 0));
-    rt.goal_tx
-        .send(Ok((Verdict::NotMet, "red".into())))
-        .unwrap();
+    rt.goal_tx.send(answer(Verdict::NotMet, "red")).unwrap();
     drain_background_goal(&mut rt);
     let goal = rt.goal.as_ref().unwrap();
     assert_eq!(
@@ -10913,6 +10924,7 @@ async fn background_goal_verdicts_pause_or_clear() {
         Some("session was in the background")
     );
     assert_eq!(goal.last_reason.as_deref(), Some("red"));
+    assert_eq!(goal.check_tokens, 7);
     assert!(rt.unread);
 
     rt.goal_tx.send(Err("offline".into())).unwrap();
@@ -10922,9 +10934,7 @@ async fn background_goal_verdicts_pause_or_clear() {
         Some("goal check failed: offline")
     );
 
-    rt.goal_tx
-        .send(Ok((Verdict::Impossible, "no".into())))
-        .unwrap();
+    rt.goal_tx.send(answer(Verdict::Impossible, "no")).unwrap();
     drain_background_goal(&mut rt);
     assert!(rt.goal.is_none());
 }
@@ -10942,13 +10952,98 @@ async fn run_goal_check_parses_the_model_reply_and_reports_failures() {
         "broken",
         [whycodes_llm::ScriptedStep::FailOpen("down".into())],
     )));
-    let request = crate::goal::evaluator_request("tests pass", 1, &[goal_user("go")]);
+    let request = crate::goal::evaluator_request("tests pass", 1, &[], &[goal_user("go")]);
+    let met = run_goal_check(&registry, "judge", &request, "", "m")
+        .await
+        .unwrap();
     assert_eq!(
-        run_goal_check(&registry, "judge", &request, "", "m").await,
-        Ok((crate::goal::Verdict::Met, "tests passed".into()))
+        (met.verdict, met.reason.as_str()),
+        (crate::goal::Verdict::Met, "tests passed")
     );
     let broken = run_goal_check(&registry, "broken", &request, "", "m").await;
     assert!(broken.is_err(), "{broken:?}");
+}
+
+#[tokio::test]
+async fn run_goal_check_asks_again_once_when_the_answer_has_no_verdict() {
+    let mut registry = whycodes_llm::provider::ProviderRegistry::default();
+    // One batch per call: an unreadable answer, then the retry's verdict.
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "script",
+        [
+            vec![whycodes_llm::ScriptedStep::Text("Looks done to me.".into())],
+            vec![whycodes_llm::ScriptedStep::Text(
+                "VERDICT: met\nREASON: tests passed".into(),
+            )],
+        ],
+    )));
+    let request = crate::goal::evaluator_request("tests pass", 1, &[], &[goal_user("go")]);
+    let met = run_goal_check(&registry, "script", &request, "", "m")
+        .await
+        .unwrap();
+    assert_eq!(met.verdict, crate::goal::Verdict::Met);
+
+    let mut registry = whycodes_llm::provider::ProviderRegistry::default();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "script",
+        [
+            vec![whycodes_llm::ScriptedStep::Text("Looks done to me.".into())],
+            vec![whycodes_llm::ScriptedStep::Text("Really, it is.".into())],
+        ],
+    )));
+    let err = run_goal_check(&registry, "script", &request, "", "m")
+        .await
+        .unwrap_err();
+    assert_eq!(err, "the check gave no verdict (\"Really, it is.\")");
+}
+
+#[test]
+fn a_stale_not_met_does_not_restart_a_paused_goal() {
+    use crate::goal::Verdict;
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.goal = Some(crate::goal::Goal::new("tests pass", 0));
+    pause_goal_after_error(&mut app, &mut rt, true);
+    apply_goal_check(&mut app, &mut rt, answer(Verdict::NotMet, "stale"), 30);
+    let goal = rt.goal.as_ref().unwrap();
+    assert_eq!(goal.paused.as_deref(), Some("turn cancelled"));
+    assert_eq!(goal.last_reason.as_deref(), Some("stale"));
+    assert!(!app.has_pending_turn());
+}
+
+#[test]
+fn goal_max_turns_pauses_instead_of_queuing_another_turn() {
+    use crate::goal::Verdict;
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut goal = crate::goal::Goal::new("tests pass", 0);
+    goal.record_turn(true);
+    goal.record_turn(true);
+    rt.goal = Some(goal);
+    // 0 = no cap.
+    apply_goal_check(&mut app, &mut rt, answer(Verdict::NotMet, "red"), 0);
+    assert!(app.take_pending_turn().is_some());
+    apply_goal_check(&mut app, &mut rt, answer(Verdict::NotMet, "still red"), 2);
+    assert!(!app.has_pending_turn());
+    assert_eq!(
+        rt.goal.as_ref().unwrap().paused.as_deref(),
+        Some("not met after 2 turns (session.goal_max_turns)")
+    );
+    assert!(
+        app.messages
+            .last()
+            .unwrap()
+            .content
+            .starts_with("◎ goal paused: not met after 2 turns — still red.")
+    );
+}
+
+fn answer(verdict: crate::goal::Verdict, reason: &str) -> GoalCheck {
+    Ok(GoalAnswer {
+        verdict,
+        reason: reason.into(),
+        tokens: 7,
+    })
 }
 
 #[test]
@@ -10958,15 +11053,25 @@ fn goal_save_and_restore_round_trip_through_the_state_table() {
     session.usage.output_tokens = 40;
     assert!(crate::goal::restore(Some(&db), &session).is_none());
     assert!(crate::goal::restore(None, &session).is_none());
-    let goal = crate::goal::Goal::new("tests pass", 0);
+    let mut goal = crate::goal::Goal::new("tests pass", 0);
+    goal.record_turn(true);
+    goal.record_turn(true);
     crate::goal::save(Some(&db), &session.id, Some(&goal));
     let restored = crate::goal::restore(Some(&db), &session).unwrap();
     assert_eq!(restored.condition, "tests pass");
     assert_eq!(
-        (restored.turns, restored.tokens_at_start),
-        (0, 40),
-        "counters reset on resume"
+        (
+            restored.turns,
+            restored.turns_this_run,
+            restored.tokens_at_start
+        ),
+        (2, 0, 40),
+        "the turn count survives a resume; the run and spend start fresh"
     );
+    // A goal saved before turns were stored restores with 0.
+    db.delete_state(&crate::goal::turns_key(&session.id))
+        .unwrap();
+    assert_eq!(crate::goal::restore(Some(&db), &session).unwrap().turns, 0);
     crate::goal::save(Some(&db), &session.id, None);
     assert!(crate::goal::restore(Some(&db), &session).is_none());
     crate::goal::save(None, &session.id, Some(&goal));

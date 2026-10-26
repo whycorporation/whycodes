@@ -5,15 +5,15 @@ use crate::types::{
     ToolsConfig, default_auto_background_after_secs, default_auto_index_chunks,
     default_auto_index_files, default_code_min_score, default_code_top_k, default_compaction_llm,
     default_compaction_method, default_compaction_threshold, default_consolidate_max,
-    default_intent_guidance, default_max_background_jobs, default_max_tokens,
-    default_memory_backend, default_memory_embed_dim, default_memory_index_bytes,
-    default_memory_index_lines, default_memory_min_score, default_memory_scope,
-    default_memory_token_budget, default_memory_top_k, default_model_race, default_prompt_cache,
-    default_prompt_suggestions, default_race_after_ms, default_response_cache,
-    default_retain_every_n, default_retain_max_facts, default_risk_threshold,
-    default_sandbox_fallback, default_sandbox_mode, default_session_min_score,
-    default_session_top_k, default_stream_retry_secs, default_swarm_max_agents,
-    default_tool_profile, default_undo_depth,
+    default_goal_max_turns, default_intent_guidance, default_max_background_jobs,
+    default_max_tokens, default_memory_backend, default_memory_embed_dim,
+    default_memory_index_bytes, default_memory_index_lines, default_memory_min_score,
+    default_memory_scope, default_memory_token_budget, default_memory_top_k, default_model_race,
+    default_prompt_cache, default_prompt_suggestions, default_race_after_ms,
+    default_response_cache, default_retain_every_n, default_retain_max_facts,
+    default_risk_threshold, default_sandbox_fallback, default_sandbox_mode,
+    default_session_min_score, default_session_top_k, default_stream_retry_secs,
+    default_swarm_max_agents, default_tool_profile, default_undo_depth,
 };
 use whycodes_core::types::PermissionSet;
 
@@ -211,6 +211,9 @@ impl Config {
         }
         if other.session.model_fast.is_some() {
             self.session.model_fast = other.session.model_fast.clone();
+        }
+        if other.session.goal_max_turns != default_goal_max_turns() {
+            self.session.goal_max_turns = other.session.goal_max_turns;
         }
         if other.session.model_smol.is_some() {
             self.session.model_smol = other.session.model_smol.clone();
