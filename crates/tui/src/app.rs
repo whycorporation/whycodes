@@ -3842,6 +3842,7 @@ impl TuiApp {
         self.context_used = view.context_used;
         self.pending_suggestion = view.pending_suggestion.take();
         self.pending_turns = std::mem::take(&mut view.pending_turns);
+        self.pending_auto_prompts = std::mem::take(&mut view.pending_auto_prompts);
         self.session_id = std::mem::take(&mut view.session_id);
         self.todos = std::mem::take(&mut view.todos);
         self.todos_collapsed = view.todos_collapsed;
@@ -3867,6 +3868,7 @@ impl TuiApp {
         view.context_used = self.context_used;
         view.pending_suggestion = self.pending_suggestion.take();
         view.pending_turns = std::mem::take(&mut self.pending_turns);
+        view.pending_auto_prompts = std::mem::take(&mut self.pending_auto_prompts);
         view.session_id = std::mem::take(&mut self.session_id);
         view.todos = std::mem::take(&mut self.todos);
         view.todos_collapsed = self.todos_collapsed;

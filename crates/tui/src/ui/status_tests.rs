@@ -235,6 +235,15 @@ fn location_shows_bg_job_count() {
 }
 
 #[test]
+fn location_shows_queued_loop_repeats() {
+    let mut app = footer_app();
+    app.pending_auto_prompts
+        .extend(["again".to_string(), "again".to_string()]);
+    let text = paint_location(&mut app, 120);
+    assert!(text.contains("↻ 2 queued"), "{text}");
+}
+
+#[test]
 fn location_hovered_context_shows_percent() {
     let mut app = footer_app();
     app.context_used = 100_000;

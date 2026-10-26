@@ -491,6 +491,11 @@ a new session. Branches are not merged.
 TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
 `/loop` (`/loop 3 <prompt>`; `/loop stop`), `/goal` (below).
 
+`/loop N <prompt>` sends the prompt now and queues N−1 repeats (N defaults
+to 3, at most 20). The top bar shows `↻ N queued`. Esc on a running turn, a
+failed turn, or `/loop stop` drops the remaining repeats. Repeats belong to
+their session: switching sessions does not send them elsewhere.
+
 ### Goals
 
 `/goal <condition>` keeps the agent working until the condition holds, for
