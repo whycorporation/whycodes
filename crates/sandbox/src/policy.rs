@@ -134,6 +134,16 @@ pub fn prepare_with(
     Ok(prepared)
 }
 
+/// Why `sandbox=workspace` fell through. Off Linux there is nothing to
+/// install: the old "requires bubblewrap on Linux" text read as a fix to
+/// apply on Windows and macOS.
+#[cfg(target_os = "linux")]
+const WORKSPACE_UNAVAILABLE: &str =
+    "sandbox=workspace requires bubblewrap (`bwrap`); it is not installed on this host";
+#[cfg(not(target_os = "linux"))]
+const WORKSPACE_UNAVAILABLE: &str =
+    "sandbox=workspace is Linux-only (bubblewrap); this host has no workspace sandbox";
+
 fn prepare_backend(
     request: &SandboxRequest,
     bwrap_available: bool,
@@ -146,9 +156,7 @@ fn prepare_backend(
             if bwrap_available {
                 bwrap::prepare_bwrap(&request.command, &cwd, request.settings.network)
             } else {
-                let msg = "sandbox=workspace requires bubblewrap (`bwrap`) on Linux; \
-                           it is not available on this host"
-                    .to_string();
+                let msg = WORKSPACE_UNAVAILABLE.to_string();
                 match request.settings.fallback {
                     SandboxFallback::Deny => Err(SandboxError::Unavailable(msg)),
                     SandboxFallback::Allow => {
