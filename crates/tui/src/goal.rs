@@ -360,16 +360,16 @@ fn message_text(content: &MessageContent) -> String {
     out.join("\n")
 }
 
-const EVALUATOR_SYSTEM: &str = "You check whether a coding agent has met a goal. \
-You cannot run commands or read files: judge only from the transcript. \
-Say met only when the transcript shows evidence (command output, test results, \
-the finished change). Say impossible only when the transcript shows the goal \
-cannot be reached by more work: something it needs is gone for good and cannot \
-be recreated, the user ruled it out, or the condition contradicts itself. \
-Missing evidence alone is not_met. \
-Findings from earlier checks still hold unless the transcript shows they changed. \
-Answer in plain text without markdown, in exactly two lines:\n\
-VERDICT: met | not_met | impossible\n\
+// Live runs on small models: a self-contradictory goal was judged not_met
+// (while the reason called it impossible) until the agent faked it, and the
+// fake was then judged met. Hence the explicit intent and up-front rules.
+const EVALUATOR_SYSTEM: &str = "You check whether a coding agent has met a goal. You cannot run commands or read files: judge only from the transcript.
+met: the transcript shows evidence (command output, test results, the finished change) that the goal holds as the user meant it. A workaround that only satisfies the wording (special-casing a check, faking output, redefining what the words mean) is not met.
+impossible: the goal contradicts itself or logic, something it needs is gone for good, or the user ruled it out. Judge this from the goal itself: the agent does not have to try first.
+not_met: anything else, including missing evidence.
+Findings from earlier checks still hold unless the transcript shows they changed.
+Answer in plain text without markdown, in exactly two lines:
+VERDICT: met | not_met | impossible
 REASON: one sentence naming what is done and what is still missing";
 
 /// No-tools request for the evaluator model.
