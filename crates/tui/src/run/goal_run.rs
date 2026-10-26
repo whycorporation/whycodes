@@ -148,15 +148,17 @@ fn goal_message(role: Role, text: &str) -> whycodes_core::types::Message {
 }
 
 /// Overloads and dropped connections retry; a dead provider pauses the goal.
+/// The timeout covers every attempt: at 60s one slow answer from a free
+/// model (the checker is the session model now) paused goals in live runs.
 fn goal_transport() -> whycodes_llm::LlmTransport {
     whycodes_llm::LlmTransport {
         redactor: None,
-        complete_timeout: Some(std::time::Duration::from_secs(60)),
+        complete_timeout: Some(std::time::Duration::from_secs(180)),
         retry: whycodes_llm::RetryPolicy {
             max_retries: 3,
             initial_backoff: std::time::Duration::from_millis(500),
             max_backoff: std::time::Duration::from_secs(8),
-            max_elapsed: std::time::Duration::from_secs(90),
+            max_elapsed: std::time::Duration::from_secs(180),
             full_jitter: true,
         },
     }
