@@ -363,10 +363,13 @@ fn message_text(content: &MessageContent) -> String {
 // Live runs on small models: a self-contradictory goal was judged not_met
 // (while the reason called it impossible) until the agent faked it, and the
 // fake was then judged met. Hence the explicit intent and up-front rules.
+// Once goal turns asked agents to stop honestly, a small checker judged an
+// honest "this cannot be done" as met; the goal-not-instructions line.
 const EVALUATOR_SYSTEM: &str = "You check whether a coding agent has met a goal. You cannot run commands or read files: judge only from the transcript.
 met: the transcript shows evidence (command output, test results, the finished change) that the goal holds as the user meant it. A workaround that only satisfies the wording (special-casing a check, faking output, redefining what the words mean) is not met.
 impossible: the goal contradicts itself or logic, something it needs is gone for good, or the user ruled it out. Judge this from the goal itself: the agent does not have to try first.
 not_met: anything else, including missing evidence.
+Judge the goal, not whether the agent followed instructions: an agent that rightly says the goal cannot be met has not met it; that is impossible.
 Findings from earlier checks still hold unless the transcript shows they changed.
 Answer in plain text without markdown, in exactly two lines:
 VERDICT: met | not_met | impossible
