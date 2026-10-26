@@ -40,6 +40,14 @@ enum Load {
     Unknown,
 }
 
+/// One file's indexed form, built by [`ContentIndex::load`].
+#[derive(Debug)]
+pub(crate) enum Posting {
+    Trigrams(Vec<u32>),
+    Binary,
+    Unknown,
+}
+
 impl ContentIndex {
     pub fn new() -> Self {
         Self::default()
@@ -69,16 +77,30 @@ impl ContentIndex {
 
     /// Re-read `rel` under `root` and replace its posting.
     pub fn upsert(&mut self, root: &Path, rel: &str, size: u64) {
-        self.remove(rel);
+        self.insert(rel, Self::load(root, rel, size));
+    }
+
+    /// Read `rel` under `root` without touching the index, so the file read
+    /// (slow on network mounts) can run while no lock is held.
+    pub(crate) fn load(root: &Path, rel: &str, size: u64) -> Posting {
         match load_file(&root.join(rel), size) {
-            Load::Binary => {
+            Load::Binary => Posting::Binary,
+            Load::Bytes(bytes) => Posting::Trigrams(extract_indexed_trigrams(&bytes)),
+            Load::Unknown => Posting::Unknown,
+        }
+    }
+
+    /// Replace `rel`'s posting with one built by [`Self::load`].
+    pub(crate) fn insert(&mut self, rel: &str, posting: Posting) {
+        self.remove(rel);
+        match posting {
+            Posting::Binary => {
                 self.skipped.insert(rel.into());
             }
-            Load::Bytes(bytes) => {
-                self.files
-                    .insert(rel.into(), extract_indexed_trigrams(&bytes));
+            Posting::Trigrams(trigrams) => {
+                self.files.insert(rel.into(), trigrams);
             }
-            Load::Unknown => {}
+            Posting::Unknown => {}
         }
     }
 
