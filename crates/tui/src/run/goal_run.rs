@@ -15,6 +15,13 @@ pub(crate) struct GoalAnswer {
     pub tokens: u64,
 }
 
+/// Rounds a check waits out a transient failure (rate limit, 5xx, network)
+/// after the transport's own retries, before the goal pauses. Live runs on a
+/// shared free pool: a gateway answered 429 for ~15s and the goal stopped;
+/// an unattended goal should outlast that.
+const CHECK_ROUNDS: u32 = 3;
+const CHECK_ROUND_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Asked again once when the first answer has no verdict line.
 const VERDICT_REMINDER: &str = "Your answer had no verdict line. Reply with exactly two lines \
 and no markdown:\nVERDICT: met | not_met | impossible\nREASON: one sentence";
@@ -59,7 +66,16 @@ pub(super) fn goal_after_turn(
             let api_key = api_key.to_string();
             let tx = rt.goal_tx.clone();
             tokio::spawn(async move {
-                let check = run_goal_check(&registry, &provider, &request, &api_key, &model).await;
+                let check = run_goal_check(
+                    &registry,
+                    &provider,
+                    &request,
+                    &api_key,
+                    &model,
+                    &goal_transport(),
+                    CHECK_ROUND_WAIT,
+                )
+                .await;
                 if tx.send(check).is_err() {
                     tracing::debug!("goal check dropped: session runtime closed");
                 }
@@ -94,11 +110,12 @@ pub(super) async fn run_goal_check(
     request: &whycodes_core::types::LlmRequest,
     api_key: &str,
     model: &str,
+    transport: &whycodes_llm::LlmTransport,
+    round_wait: std::time::Duration,
 ) -> GoalCheck {
     let Some(prov) = registry.get(provider) else {
         return Err(format!("provider {provider} is not configured"));
     };
-    let transport = goal_transport();
     let mut request = request.clone();
     let mut tokens = 0;
     let mut text = String::new();
@@ -111,10 +128,21 @@ pub(super) async fn run_goal_check(
             messages.push(goal_message(Role::User, VERDICT_REMINDER));
             request.messages = std::sync::Arc::from(messages);
         }
-        let response = transport
-            .complete_uncached(prov, &request, api_key, model)
-            .await
-            .map_err(|e| e.to_string())?;
+        let mut round = 0;
+        let response = loop {
+            match transport
+                .complete_uncached(prov, &request, api_key, model)
+                .await
+            {
+                Ok(response) => break response,
+                Err(e) if round < CHECK_ROUNDS && whycodes_llm::retry::is_retryable(&e) => {
+                    round += 1;
+                    tracing::debug!(error = %e, round, "goal check waits out a transient failure");
+                    tokio::time::sleep(round_wait).await;
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        };
         tokens += response.usage.input_tokens + response.usage.output_tokens;
         text = response
             .content

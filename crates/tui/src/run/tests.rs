@@ -10953,14 +10953,14 @@ async fn run_goal_check_parses_the_model_reply_and_reports_failures() {
         [whycodes_llm::ScriptedStep::FailOpen("down".into())],
     )));
     let request = crate::goal::evaluator_request("tests pass", 1, &[], &[goal_user("go")]);
-    let met = run_goal_check(&registry, "judge", &request, "", "m")
+    let met = run_goal_check(&registry, "judge", &request, "", "m", &no_retry(), ZERO)
         .await
         .unwrap();
     assert_eq!(
         (met.verdict, met.reason.as_str()),
         (crate::goal::Verdict::Met, "tests passed")
     );
-    let broken = run_goal_check(&registry, "broken", &request, "", "m").await;
+    let broken = run_goal_check(&registry, "broken", &request, "", "m", &no_retry(), ZERO).await;
     assert!(broken.is_err(), "{broken:?}");
 }
 
@@ -10978,7 +10978,7 @@ async fn run_goal_check_asks_again_once_when_the_answer_has_no_verdict() {
         ],
     )));
     let request = crate::goal::evaluator_request("tests pass", 1, &[], &[goal_user("go")]);
-    let met = run_goal_check(&registry, "script", &request, "", "m")
+    let met = run_goal_check(&registry, "script", &request, "", "m", &no_retry(), ZERO)
         .await
         .unwrap();
     assert_eq!(met.verdict, crate::goal::Verdict::Met);
@@ -10991,10 +10991,55 @@ async fn run_goal_check_asks_again_once_when_the_answer_has_no_verdict() {
             vec![whycodes_llm::ScriptedStep::Text("Really, it is.".into())],
         ],
     )));
-    let err = run_goal_check(&registry, "script", &request, "", "m")
+    let err = run_goal_check(&registry, "script", &request, "", "m", &no_retry(), ZERO)
         .await
         .unwrap_err();
     assert_eq!(err, "the check gave no verdict (\"Really, it is.\")");
+}
+
+#[tokio::test]
+async fn run_goal_check_waits_out_rate_limits_then_gives_up() {
+    let rate_limited =
+        || whycodes_llm::ScriptedStep::FailOpen("Provider API error (429): slow down".into());
+    let mut registry = whycodes_llm::provider::ProviderRegistry::default();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "script",
+        [
+            vec![rate_limited()],
+            vec![rate_limited()],
+            vec![whycodes_llm::ScriptedStep::Text(
+                "VERDICT: met\nREASON: tests passed".into(),
+            )],
+        ],
+    )));
+    let request = crate::goal::evaluator_request("tests pass", 1, &[], &[goal_user("go")]);
+    let met = run_goal_check(&registry, "script", &request, "", "m", &no_retry(), ZERO)
+        .await
+        .unwrap();
+    assert_eq!(met.verdict, crate::goal::Verdict::Met);
+
+    let mut registry = whycodes_llm::provider::ProviderRegistry::default();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        [rate_limited()],
+    )));
+    let err = run_goal_check(&registry, "script", &request, "", "m", &no_retry(), ZERO)
+        .await
+        .unwrap_err();
+    assert!(err.contains("429"), "{err}");
+}
+
+const ZERO: std::time::Duration = std::time::Duration::ZERO;
+
+fn no_retry() -> whycodes_llm::LlmTransport {
+    whycodes_llm::LlmTransport {
+        redactor: None,
+        complete_timeout: None,
+        retry: whycodes_llm::RetryPolicy {
+            max_retries: 0,
+            ..Default::default()
+        },
+    }
 }
 
 #[test]

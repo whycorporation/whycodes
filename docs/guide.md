@@ -512,7 +512,9 @@ once; a second one pauses the goal instead of guessing.
 - Three turns in a row without a tool call, a failed or cancelled turn, a
   failed check, or `session.goal_max_turns` turns (default 30, `0` = no cap)
   without meeting it pause the goal; your next prompt resumes it, and the
-  turn cap counts again from there.
+  turn cap counts again from there. A check that hits a rate limit, server
+  error or network error first waits it out (three more rounds, a minute
+  apart) so an unattended goal does not stop on a brief outage.
 - The top bar shows `◎ goal` (or `◎ goal paused`). A goal is saved with the
   session and restored on resume with its turn count; time and spend start
   fresh.
