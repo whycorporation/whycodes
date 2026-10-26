@@ -152,7 +152,9 @@ such table at the top level. `model_id` and `provider_id` are required.
 | `prompt_cache` | `"auto"` | — | Prompt-cache policy for providers that support cached prefixes: `auto` or `none`. |
 | `cache_warm_minutes` | `0` | — | Keep the prompt cache warm for this many idle minutes after a turn (TUI and daemon). Each keep-alive is a paid request; `0` turns it off. |
 | `undo_depth` | `50` | `WHYCODES_UNDO_DEPTH` | Turns `/undo` can step back in the TUI and `--plain` REPL. Past the cap the oldest entries drop first and `/undo` reports "Nothing older to undo (undo_depth = N)". `0` = unlimited. Snapshots share one copy of the transcript, so each entry costs a length marker plus a git stash ref; a compaction keeps the pre-compaction copy alive until no entry needs it. |
-| `model_fast` | — | — | Fast model for trivial chat and `/goal` checks (`provider/model` or bare id). Unset auto-picks the small sibling of the session model. |
+| `model_fast` | — | — | Fast model for trivial chat (`provider/model` or bare id). Unset auto-picks the small sibling of the session model. |
+| `goal_model` | — | — | Model that checks `/goal` after each turn (`provider/model` or bare id on the session provider). Unset uses the session model: a small model tends to accept workarounds as "met". |
+| `goal_max_turns` | `30` | — | Turns a `/goal` may take before it pauses, counted from when it was set, restored or last resumed. `0` = no cap. |
 | `model_smol` | — | — | Cheap model for `task` / `swarm` workers. Unset auto-picks the small sibling. |
 | `model_plan` | — | — | Model used while the `plan` agent is active. Unset keeps the session model. |
 | `prewalk` | unset (off) | `WHYCODES_PREWALK` (`0/1`), `--prewalk` | Start each turn on the strong model (`model_plan`, else the session model) and run the rest of the turn on the cheap one (`model_smol`, else the small sibling) after the first `edit` / `write` / `apply_patch` or non-safe `bash` call. Later turns stay on the cheap model until `/prewalk restart`. No cheaper sibling keeps the strong model. A higher layer can turn it on or off. |

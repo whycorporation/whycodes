@@ -495,21 +495,33 @@ TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
 
 `/goal <condition>` keeps the agent working until the condition holds, for
 example `/goal all tests in crates/storage pass and clippy is clean`. Setting
-a goal starts a turn. After each turn a fast model (`session.model_fast`,
-else the current model) reads the condition and the recent transcript and
-answers met, not met, or impossible: not met starts another turn, met or
-impossible clears the goal. The check cannot run commands, so the agent
-has to show the evidence (test output, the finished change) in the session.
+a goal starts a turn that asks the agent to meet the goal as you mean it and
+to say so instead of working around it when it cannot. After each turn a
+checker (`session.goal_model`, else the session model) reads the condition,
+the recent transcript and the findings of earlier checks, and answers met,
+not met, or impossible (contradictory goals count as impossible): not met
+starts another turn, met or impossible clears the goal. The check cannot run
+commands, so the agent has to show the evidence (test output, the finished
+change) in the session. An answer without a readable verdict is asked again
+once; a second one pauses the goal instead of guessing.
 
-- `/goal` shows the condition, time, turns checked, tokens, and the last reason.
+- `/goal` shows the condition, time, turns checked, tokens (plus what the
+  checks spent), and the last reason.
 - `/goal clear` (or `stop`, `off`, `reset`, `none`, `cancel`) removes it;
   `/new` and `/clear` do too. One goal per session, up to 4,000 characters.
-- Three turns in a row without a tool call, a failed or cancelled turn, or a
-  failed check pause the goal; your next prompt resumes it.
+- Three turns in a row without a tool call, a failed or cancelled turn, a
+  failed check, or `session.goal_max_turns` turns (default 30, `0` = no cap)
+  without meeting it pause the goal; your next prompt resumes it, and the
+  turn cap counts again from there. A check that hits a rate limit, server
+  error or network error first waits it out (three more rounds, a minute
+  apart) so an unattended goal does not stop on a brief outage.
 - The top bar shows `◎ goal` (or `◎ goal paused`). A goal is saved with the
-  session and restored on resume, with fresh counters.
-- There is no built-in turn or token cap; put one in the condition
-  (`…or stop after 20 turns`). The goal does not change permission prompts.
+  session and restored on resume with its turn count; time and spend start
+  fresh.
+- For a tighter budget, put it in the condition (`…or stop after 10 turns`).
+  The goal does not change permission prompts.
+- Not available while attached to a daemon (`whycodes connect`): the
+  transcript lives in the daemon.
 
 `--plain` only: `/thinking` toggles thinking output.
 
