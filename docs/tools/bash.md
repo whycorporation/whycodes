@@ -22,8 +22,11 @@ Execute a shell command in the project environment.
 
 Default: wait for stdout/stderr (timeout 120s).
 `background=true` returns a job id immediately; use `bg` to list/read/kill.
+When a background job ends, its exit and last output arrive as a message
+before your next step (unless `wait` or `bg read` already showed it).
 Long-running non-catastrophic commands auto-detach after 20s unless
-`[tools.bash] auto_background = false`. Catastrophic commands (rm -rf /,
+`[tools.bash] auto_background = false`; a `timeout` shorter than that still
+stops the command. Catastrophic commands (rm -rf /,
 git clean of home, …) stay in the foreground and still hit the permission gate.
 Child processes do not inherit provider API keys. Detached output lives under
 `.whycodes/scratch`, not the OS temp dir.

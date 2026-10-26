@@ -118,7 +118,7 @@
     },
     "profile": "core",
     "aliasOf": null,
-    "guide": "Execute a shell command in the project environment.\n\nDefault: wait for stdout/stderr (timeout 120s).\n`background=true` returns a job id immediately; use `bg` to list/read/kill.\nLong-running non-catastrophic commands auto-detach after 20s unless\n`[tools.bash] auto_background = false`. Catastrophic commands (rm -rf /,\ngit clean of home, …) stay in the foreground and still hit the permission gate.\nChild processes do not inherit provider API keys. Detached output lives under\n`.whycodes/scratch`, not the OS temp dir."
+    "guide": "Execute a shell command in the project environment.\n\nDefault: wait for stdout/stderr (timeout 120s).\n`background=true` returns a job id immediately; use `bg` to list/read/kill.\nWhen a background job ends, its exit and last output arrive as a message\nbefore your next step (unless `wait` or `bg read` already showed it).\nLong-running non-catastrophic commands auto-detach after 20s unless\n`[tools.bash] auto_background = false`; a `timeout` shorter than that still\nstops the command. Catastrophic commands (rm -rf /,\ngit clean of home, …) stay in the foreground and still hit the permission gate.\nChild processes do not inherit provider API keys. Detached output lives under\n`.whycodes/scratch`, not the OS temp dir."
   },
   {
     "name": "bg",
@@ -1050,7 +1050,7 @@
     },
     "profile": "deferred",
     "aliasOf": "bash",
-    "guide": "Execute a shell command in the project environment.\n\nDefault: wait for stdout/stderr (timeout 120s).\n`background=true` returns a job id immediately; use `bg` to list/read/kill.\nLong-running non-catastrophic commands auto-detach after 20s unless\n`[tools.bash] auto_background = false`. Catastrophic commands (rm -rf /,\ngit clean of home, …) stay in the foreground and still hit the permission gate.\nChild processes do not inherit provider API keys. Detached output lives under\n`.whycodes/scratch`, not the OS temp dir."
+    "guide": "Execute a shell command in the project environment.\n\nDefault: wait for stdout/stderr (timeout 120s).\n`background=true` returns a job id immediately; use `bg` to list/read/kill.\nWhen a background job ends, its exit and last output arrive as a message\nbefore your next step (unless `wait` or `bg read` already showed it).\nLong-running non-catastrophic commands auto-detach after 20s unless\n`[tools.bash] auto_background = false`; a `timeout` shorter than that still\nstops the command. Catastrophic commands (rm -rf /,\ngit clean of home, …) stay in the foreground and still hit the permission gate.\nChild processes do not inherit provider API keys. Detached output lives under\n`.whycodes/scratch`, not the OS temp dir."
   },
   {
     "name": "skill",
