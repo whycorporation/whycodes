@@ -407,7 +407,7 @@ pub fn evaluator_request(
         }]),
         tools: std::sync::Arc::from([]),
         // Room for a model that thinks before its two lines.
-        max_tokens: Some(512),
+        max_tokens: Some(1024),
         temperature: Some(0.0),
         top_p: None,
         top_k: None,

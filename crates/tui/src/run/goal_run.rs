@@ -127,6 +127,9 @@ pub(super) async fn run_goal_check(
             messages.push(goal_message(Role::Assistant, &text));
             messages.push(goal_message(Role::User, VERDICT_REMINDER));
             request.messages = std::sync::Arc::from(messages);
+            // Live runs: reasoning models spent the whole budget thinking
+            // and answered with no text; the retry gets room to finish.
+            request.max_tokens = Some(4096);
         }
         let mut round = 0;
         let response = loop {
