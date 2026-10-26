@@ -265,24 +265,26 @@ pub fn parse_verdict(text: &str) -> (Option<Verdict>, String) {
     (verdict, reason)
 }
 
-/// A line without bold stars and list or quote markers.
+/// A line without the list, quote and bold markers around it. Stars inside
+/// stay: a reason may say `a * b`.
 fn plain_line(line: &str) -> String {
-    line.replace('*', "")
-        .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '-' | '#' | '>'))
-        .trim()
+    line.trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '-' | '#' | '>' | '*'))
+        .trim_end_matches(|c: char| c.is_whitespace() || c == '*')
         .to_string()
 }
 
-/// The value of `name:` (or `name =` / `name -`), case-insensitive.
+/// The value of `name:` (or `name =` / `name -`), case-insensitive, with
+/// bold stars around the name or the separator skipped.
 fn field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     let head = line.get(..name.len())?;
     if !head.eq_ignore_ascii_case(name) {
         return None;
     }
+    let bold = |c: char| c.is_whitespace() || c == '*';
     line[name.len()..]
-        .trim_start()
+        .trim_start_matches(bold)
         .strip_prefix([':', '=', '-'])
-        .map(str::trim)
+        .map(|rest| rest.trim_start_matches(bold))
 }
 
 /// True when the turn that just finished (after the last user prompt) made a

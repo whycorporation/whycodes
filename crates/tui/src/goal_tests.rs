@@ -153,6 +153,7 @@ fn verdicts_survive_the_markdown_small_models_add() {
         "- VERDICT: met\n- REASON: all tests pass",
         "## Verdict = Met.\n> Reason - all tests pass",
         "  verdict:met\nreason:all tests pass",
+        "VERDICT: **met**\nREASON: **all tests pass**",
     ] {
         assert_eq!(
             parse_verdict(answer),
@@ -160,6 +161,11 @@ fn verdicts_survive_the_markdown_small_models_add() {
             "{answer}"
         );
     }
+    // Stars inside the reason are content, not markdown.
+    assert_eq!(
+        parse_verdict("VERDICT: met\nREASON: mul returns a * b now").1,
+        "mul returns a * b now"
+    );
 }
 
 #[test]
