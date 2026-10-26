@@ -289,3 +289,25 @@ fn continue_prompt_names_goal_reason_and_evidence() {
     assert!(p.contains("not met yet — two tests still fail"));
     assert!(p.contains("show the evidence"));
 }
+
+#[test]
+fn checker_model_prefers_goal_model_then_the_session_model() {
+    let pick = |goal_model| checker_model("openrouter", "big", goal_model);
+    assert_eq!(pick(None), ("openrouter".into(), "big".into()));
+    assert_eq!(pick(Some("  ")), ("openrouter".into(), "big".into()));
+    assert_eq!(pick(Some("judge")), ("openrouter".into(), "judge".into()));
+    assert_eq!(
+        pick(Some("aiproxy/gc/grok-4.7")),
+        ("aiproxy".into(), "gc/grok-4.7".into())
+    );
+}
+
+#[test]
+fn goal_turns_ask_for_the_intent_and_an_honest_stop() {
+    let start = goal_prompt("tests pass");
+    assert!(start.starts_with("Goal: tests pass\n"), "{start}");
+    for prompt in [start, continue_prompt("tests pass", "red")] {
+        assert!(prompt.contains("as the user means it"), "{prompt}");
+        assert!(prompt.contains("instead of working around it"), "{prompt}");
+    }
+}

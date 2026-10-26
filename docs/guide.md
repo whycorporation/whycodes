@@ -495,9 +495,11 @@ TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
 
 `/goal <condition>` keeps the agent working until the condition holds, for
 example `/goal all tests in crates/storage pass and clippy is clean`. Setting
-a goal starts a turn. After each turn a fast model (`session.model_fast`,
-else the current model) reads the condition, the recent transcript and the
-findings of earlier checks, and answers met, not met, or impossible: not met
+a goal starts a turn that asks the agent to meet the goal as you mean it and
+to say so instead of working around it when it cannot. After each turn a
+checker (`session.goal_model`, else the session model) reads the condition,
+the recent transcript and the findings of earlier checks, and answers met,
+not met, or impossible (contradictory goals count as impossible): not met
 starts another turn, met or impossible clears the goal. The check cannot run
 commands, so the agent has to show the evidence (test output, the finished
 change) in the session. An answer without a readable verdict is asked again

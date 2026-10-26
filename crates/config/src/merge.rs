@@ -212,6 +212,9 @@ impl Config {
         if other.session.model_fast.is_some() {
             self.session.model_fast = other.session.model_fast.clone();
         }
+        if other.session.goal_model.is_some() {
+            self.session.goal_model = other.session.goal_model.clone();
+        }
         if other.session.goal_max_turns != default_goal_max_turns() {
             self.session.goal_max_turns = other.session.goal_max_turns;
         }

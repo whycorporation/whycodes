@@ -52,11 +52,8 @@ pub(super) fn goal_after_turn(
                 &goal.findings,
                 &rt.session.messages,
             );
-            let (provider, model) = whycodes_agent::resolve_title_model(
-                provider,
-                model,
-                config.session.model_fast.as_deref(),
-            );
+            let (provider, model) =
+                crate::goal::checker_model(provider, model, config.session.goal_model.as_deref());
             let mut registry = whycodes_llm::provider::ProviderRegistry::default();
             registry.register_from_config(config);
             let api_key = api_key.to_string();

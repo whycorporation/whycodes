@@ -1439,6 +1439,10 @@ pub struct SessionConfig {
     /// set or last resumed); `0` = no cap.
     #[serde(default = "default_goal_max_turns")]
     pub goal_max_turns: u32,
+    /// Model that checks `/goal` (`provider/model` or bare id). Empty = the
+    /// session model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_model: Option<String>,
     /// Cheap model for `task` / `swarm` fan-out (`provider/model` or bare id).
     /// Empty = auto-pick the small sibling of the session model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1700,6 +1704,7 @@ impl Default for SessionConfig {
             undo_depth: default_undo_depth(),
             model_fast: None,
             goal_max_turns: default_goal_max_turns(),
+            goal_model: None,
             model_smol: None,
             model_plan: None,
             prewalk: None,

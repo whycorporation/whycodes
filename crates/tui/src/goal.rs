@@ -414,13 +414,38 @@ pub fn evaluator_request(
     }
 }
 
+/// Live runs: given a contradictory goal, agents built a value "equal" to
+/// both sides and called it done. Every goal turn asks for the intent and
+/// an honest stop instead.
+const GOAL_RULES: &str = "Meet it as the user means it. If it cannot be met that way \
+(it contradicts itself, or only a workaround would satisfy the wording), say so \
+plainly and stop instead of working around it. When it is met, show the evidence \
+(for example the command output) in your reply.";
+
+/// The prompt that starts a goal.
+pub fn goal_prompt(condition: &str) -> String {
+    format!("Goal: {condition}\n{GOAL_RULES}")
+}
+
 /// The prompt queued when the evaluator says not met.
 pub fn continue_prompt(condition: &str, reason: &str) -> String {
     format!(
         "Continue working toward the goal: {condition}\n\
-         Goal check: not met yet — {reason}\n\
-         When it is met, show the evidence (for example the command output) in your reply."
+         Goal check: not met yet — {reason}\n{GOAL_RULES}"
     )
+}
+
+/// The model that checks a goal: `session.goal_model` (`provider/model`, or
+/// a bare id on the session provider), else the session model. Not the
+/// small fast model: in live runs a weak checker accepted workarounds.
+pub fn checker_model(provider: &str, model: &str, goal_model: Option<&str>) -> (String, String) {
+    match goal_model.map(str::trim).filter(|m| !m.is_empty()) {
+        Some(raw) => match raw.split_once('/') {
+            Some((p, m)) => (p.to_string(), m.to_string()),
+            None => (provider.to_string(), raw.to_string()),
+        },
+        None => (provider.to_string(), model.to_string()),
+    }
 }
 
 #[cfg(test)]

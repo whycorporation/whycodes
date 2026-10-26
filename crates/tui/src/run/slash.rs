@@ -64,7 +64,8 @@ pub(super) fn handle_goal_slash(rest: &str, ctx: &mut SlashContext<'_>) {
                 "Goal set — working until it is met",
             );
             ctx.app.add_message(ChatRole::User, &condition);
-            ctx.app.enqueue_prompt_text(condition);
+            ctx.app
+                .enqueue_prompt_text(crate::goal::goal_prompt(&condition));
         }
     }
 }
