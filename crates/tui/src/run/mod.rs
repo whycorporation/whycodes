@@ -5418,6 +5418,10 @@ fn start_compact_task(
 }
 
 fn take_turn_owner(rt: &mut SessionRuntime, project_dir: &std::path::Path) -> (Agent, Session) {
+    // The placeholder shares the session's job registry: quitting or closing
+    // the session mid-turn kills its jobs through `rt.agent`, and a fresh
+    // registry there left them running.
+    let jobs = rt.agent.background_registry().clone();
     let ag = std::mem::replace(
         &mut rt.agent,
         Agent::new(whycodes_core::types::AgentInfo {
@@ -5429,7 +5433,8 @@ fn take_turn_owner(rt: &mut SessionRuntime, project_dir: &std::path::Path) -> (A
             system_prompt: Some(String::new()),
             temperature: None,
             top_p: None,
-        }),
+        })
+        .with_background_registry(jobs),
     );
     rt.session_backup = Some(rt.session.clone());
     let sess = std::mem::replace(

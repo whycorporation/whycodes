@@ -129,6 +129,11 @@ fn retryable_skips_policy_and_question() {
         &err("Unknown tool: 'nope'.")
     ));
     assert!(!tool_error_is_retryable("question", &err("do not ask")));
+    assert!(!tool_error_is_retryable("bash", &err("exit 101")));
+    assert!(!tool_error_is_retryable(
+        "shell",
+        &err("Command timed out after 3 seconds")
+    ));
     assert!(!tool_error_is_retryable("task", &err("subagent failed")));
     assert!(!tool_error_is_retryable("swarm", &err("x")));
     assert!(!tool_error_is_retryable("bg", &err("x")));

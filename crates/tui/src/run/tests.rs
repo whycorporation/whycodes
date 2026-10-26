@@ -12097,3 +12097,33 @@ fn loop_repeats_stay_with_their_session_when_switching() {
     switch_to_runtime(&mut app, &mut rt, &mut other, 0);
     assert_eq!(app.pending_auto_prompts.len(), 1, "back with its session");
 }
+
+#[test]
+fn background_job_rows_stay_with_their_session() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut other = vec![test_runtime()];
+    apply_background_event(&mut app, "bg-1", "running", "npm run dev");
+    assert_eq!(app.bg_running_count, 1);
+    switch_to_runtime(&mut app, &mut rt, &mut other, 0);
+    assert_eq!(app.bg_running_count, 0, "not the other session's job");
+    assert!(app.bg_jobs.is_empty());
+    // It ends while its session is parked: the parked view sees it.
+    with_view_scratch(&mut other[0].view, |scratch| {
+        apply_background_event(scratch, "bg-1", "done", "npm run dev (exit 0)");
+    });
+    switch_to_runtime(&mut app, &mut rt, &mut other, 0);
+    assert_eq!(app.bg_running_count, 0, "its end was not lost");
+    assert_eq!(app.bg_jobs.len(), 1);
+}
+
+#[test]
+fn the_turn_placeholder_shares_the_sessions_job_registry() {
+    let mut rt = test_runtime();
+    let dir = tempfile::tempdir().unwrap();
+    rt.agent.background_registry().set_max_jobs(3);
+    let (agent, _session) = take_turn_owner(&mut rt, dir.path());
+    // Same registry: quitting mid-turn kills the jobs the real agent started.
+    rt.agent.background_registry().set_max_jobs(5);
+    assert_eq!(agent.background_registry().max_jobs(), 5);
+}

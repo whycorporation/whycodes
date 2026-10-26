@@ -879,24 +879,9 @@ impl Agent {
         crate::side_turn::run(self, session, provider_name, model, api_key, question).await
     }
 
-    pub(crate) fn inject_auto_background_completions(&self, session: &mut Session) {
-        let done = self.background.take_auto_completions();
-        if done.is_empty() {
-            return;
-        }
-        for (id, status, output) in done {
-            let tail: String = output
-                .chars()
-                .rev()
-                .take(4_000)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect();
-            session.add_user_message(&format!(
-                "Background job `{id}` finished ({status}). Output:\n{tail}",
-                status = status.as_str()
-            ));
+    pub(crate) fn inject_background_completions(&self, session: &mut Session) {
+        for job in self.background.take_completions() {
+            session.add_user_message(&job.notice());
         }
     }
 

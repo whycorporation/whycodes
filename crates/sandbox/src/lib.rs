@@ -16,6 +16,7 @@ mod policy;
 mod process_tree;
 mod scratch;
 
+pub use clean::clean_terminal_output;
 pub use host::{EMBEDDED_SHELL_NAME, embedded_shell, host_shell_name, set_embedded_shell};
 pub use policy::{
     Backend, PreparedCommand, SandboxError, SandboxOutcome, SandboxRequest, first_sighting,

@@ -21,6 +21,7 @@ appended (`[lsp] edit_diagnostics_ms`, `0` = off).
 
 `bash` auto-backgrounds after 20 s (`[tools.bash] auto_background`,
 `auto_background_after_secs`); output goes to `.whycodes/scratch/<id>.log`.
+A background job's end is reported to the agent before its next step.
 MCP tools bind as `{server}_{tool}`. Shell plugins come from `plugins.toml`
 (`whycodes plugins`).
 

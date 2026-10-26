@@ -65,6 +65,76 @@ pub struct BackgroundEvent {
 
 pub type BackgroundListener = Arc<dyn Fn(BackgroundEvent) + Send + Sync>;
 
+/// A job's end as the model is told about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobSnapshotWithOutput {
+    pub id: String,
+    pub status: JobStatus,
+    pub exit_code: Option<i32>,
+    pub output: String,
+}
+
+/// Characters of output a completion notice carries (the newest).
+const NOTICE_CHARS: usize = 4_000;
+
+impl JobSnapshotWithOutput {
+    /// The message that tells the model this job ended.
+    pub fn notice(&self) -> String {
+        let shown = self.display();
+        let count = shown.chars().count();
+        let tail: String = shown
+            .chars()
+            .skip(count.saturating_sub(NOTICE_CHARS))
+            .collect();
+        let cut = if count > NOTICE_CHARS {
+            format!(
+                "[last {NOTICE_CHARS} chars; full log: read proc://{}]\n",
+                self.id
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            "Background job `{}` finished ({}). Output:\n{cut}{tail}",
+            self.id,
+            self.status.as_str()
+        )
+    }
+
+    /// Output as a finished foreground shell shows it: terminal noise
+    /// cleaned, a pointer to the full log when the head was dropped, and the
+    /// exit code of a failure.
+    pub fn display(&self) -> String {
+        let mut text = whycodes_sandbox::clean_terminal_output(&self.output);
+        if text.starts_with('…') {
+            text.insert_str(
+                0,
+                &format!(
+                    "[earlier output dropped past {} KB; full log: read proc://{}]\n",
+                    MAX_JOB_OUTPUT_BYTES / 1024,
+                    self.id
+                ),
+            );
+        }
+        let code = self
+            .exit_code
+            .map_or_else(|| "none".to_string(), |c| c.to_string());
+        match self.status {
+            JobStatus::Done if text.trim().is_empty() => {
+                format!("Command executed successfully (exit code: {code})")
+            }
+            JobStatus::Failed => {
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text.push_str(&format!("(exit code: {code})"));
+                text
+            }
+            _ => text,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct JobSnapshot {
     pub id: String,
@@ -91,8 +161,8 @@ struct JobInner {
     /// as `pid`, so `kill` reaches the processes it started.
     #[cfg(windows)]
     tree: Option<whycodes_sandbox::ProcessTree>,
-    /// Auto-detached foreground `bash` (issue #140). Completion is delivered once.
-    auto_background: bool,
+    /// The model has seen how this job ended (a completion notice, `wait`,
+    /// `bg read`, or it killed the job): no notice is injected for it.
     completion_delivered: bool,
     /// Detached stdout/stderr under `.whycodes/scratch/<id>.log`.
     log: Option<ScratchLog>,
@@ -194,31 +264,25 @@ impl BackgroundRegistry {
         let job = jobs
             .get(id)
             .ok_or_else(|| format!("unknown background job `{id}`"))?;
-        let g = lock(job);
-        let text = &g.output;
-        if max_chars == 0 || text.chars().count() <= max_chars {
-            return Ok(format!(
-                "[{} {}] {}\n{}",
-                g.id,
-                g.status.as_str(),
-                g.label,
-                text
-            ));
+        let mut g = lock(job);
+        if g.status != JobStatus::Running {
+            g.completion_delivered = true;
         }
-        let tail: String = text
-            .chars()
-            .rev()
-            .take(max_chars)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
+        // The exit code is here too: live runs had the model call `bg list`
+        // after `bg read` only to learn it.
+        let state = match g.exit_code {
+            Some(code) => format!("{} (exit {code})", g.status.as_str()),
+            None => g.status.as_str().to_string(),
+        };
+        let text = whycodes_sandbox::clean_terminal_output(&g.output);
+        let count = text.chars().count();
+        if max_chars == 0 || count <= max_chars {
+            return Ok(format!("[{} {state}] {}\n{text}", g.id, g.label));
+        }
+        let tail: String = text.chars().skip(count - max_chars).collect();
         Ok(format!(
-            "[{} {}] {}\n…(truncated)\n{}",
-            g.id,
-            g.status.as_str(),
-            g.label,
-            tail
+            "[{} {state}] {}\n…(truncated)\n{tail}",
+            g.id, g.label
         ))
     }
 
@@ -244,6 +308,8 @@ impl BackgroundRegistry {
         // Wait loop in the spawn task observes the flag and start_kill()s the child.
         g.status = JobStatus::Killed;
         g.finished = Some(Instant::now());
+        // Whoever killed it knows; no "finished (killed)" notice follows.
+        g.completion_delivered = true;
         let id = g.id.clone();
         let label = g.label.clone();
         drop(g);
@@ -276,28 +342,6 @@ impl BackgroundRegistry {
         sandbox: SandboxSettings,
         label: Option<String>,
     ) -> Result<String, String> {
-        self.start_shell_tagged(command, working_dir, sandbox, label, false)
-    }
-
-    /// Start a shell that was auto-detached from a foreground `bash`.
-    pub fn start_shell_auto(
-        &self,
-        command: &str,
-        working_dir: PathBuf,
-        sandbox: SandboxSettings,
-        label: Option<String>,
-    ) -> Result<String, String> {
-        self.start_shell_tagged(command, working_dir, sandbox, label, true)
-    }
-
-    fn start_shell_tagged(
-        &self,
-        command: &str,
-        working_dir: PathBuf,
-        sandbox: SandboxSettings,
-        label: Option<String>,
-        auto_background: bool,
-    ) -> Result<String, String> {
         let max = self.max_jobs();
         if self.running_count() >= max {
             return Err(format!(
@@ -310,7 +354,7 @@ impl BackgroundRegistry {
             working_dir,
             settings: sandbox,
         };
-        self.start_prepared(command, label, prepare_job(&request), auto_background)
+        self.start_prepared(command, label, prepare_job(&request))
     }
 
     /// Wait until `id` leaves `Running` or `timeout` elapses. Does not observe
@@ -348,24 +392,47 @@ impl BackgroundRegistry {
         self.read(id, max_chars).unwrap_or_default()
     }
 
-    /// Finished auto-background jobs that have not been delivered to the model.
-    pub fn take_auto_completions(&self) -> Vec<(String, JobStatus, String)> {
+    /// Finished jobs whose end the model has not seen yet, oldest first.
+    /// Jobs started with `background: true` are included: without a notice
+    /// the model only learnt that its test run ended by polling.
+    pub fn take_completions(&self) -> Vec<JobSnapshotWithOutput> {
         let jobs = lock(&self.inner.jobs);
+        let order = lock(&self.inner.order);
         let mut out = Vec::new();
-        for job in jobs.values() {
+        for id in order.iter() {
+            let Some(job) = jobs.get(id) else {
+                continue;
+            };
             let mut g = lock(job);
-            if !g.auto_background || g.completion_delivered || g.status == JobStatus::Running {
+            if g.completion_delivered || g.status == JobStatus::Running {
                 continue;
             }
             g.completion_delivered = true;
-            out.push((g.id.clone(), g.status, g.output.clone()));
+            out.push(JobSnapshotWithOutput {
+                id: g.id.clone(),
+                status: g.status,
+                exit_code: g.exit_code,
+                output: g.output.clone(),
+            });
         }
         out
     }
 
-    /// Foreground auto-bg that finished before the idle timeout: do not inject
-    /// the same output again on the next turn.
-    pub fn mark_auto_delivered(&self, id: &str) {
+    /// How a job ended and its output (the in-memory tail), if it exists.
+    pub fn output(&self, id: &str) -> Option<JobSnapshotWithOutput> {
+        let jobs = lock(&self.inner.jobs);
+        let g = lock(jobs.get(id)?);
+        Some(JobSnapshotWithOutput {
+            id: g.id.clone(),
+            status: g.status,
+            exit_code: g.exit_code,
+            output: g.output.clone(),
+        })
+    }
+
+    /// The model saw this job's end another way (a finished foreground
+    /// `bash`, `wait`): do not inject it again.
+    pub fn mark_delivered(&self, id: &str) {
         let jobs = lock(&self.inner.jobs);
         if let Some(job) = jobs.get(id) {
             lock(job).completion_delivered = true;
@@ -378,7 +445,6 @@ impl BackgroundRegistry {
         command: &str,
         label: Option<String>,
         prepared: Result<PreparedCommand, String>,
-        auto_background: bool,
     ) -> Result<String, String> {
         let prepared = match prepared {
             Ok(prepared) => prepared,
@@ -401,7 +467,6 @@ impl BackgroundRegistry {
             pid: None,
             #[cfg(windows)]
             tree: None,
-            auto_background,
             completion_delivered: false,
             log,
         }));
@@ -461,11 +526,16 @@ impl BackgroundRegistry {
         jobs: &mut HashMap<String, Arc<Mutex<JobInner>>>,
         order: &mut Vec<String>,
     ) {
+        // A finished job the model has not heard about yet stays until its
+        // notice is taken, or the notice would be lost.
         let finished: Vec<String> = order
             .iter()
             .filter(|id| {
                 jobs.get(id.as_str())
-                    .map(|j| lock(j).status != JobStatus::Running)
+                    .map(|j| {
+                        let g = lock(j);
+                        g.status != JobStatus::Running && g.completion_delivered
+                    })
                     .unwrap_or(false)
             })
             .cloned()
@@ -611,7 +681,7 @@ fn kill_child_group(pid: Option<u32>) {
     }
 }
 
-fn note_kill_result(result: Result<String, String>, id: &str) {
+pub(crate) fn note_kill_result(result: Result<String, String>, id: &str) {
     match result {
         Ok(_) => {}
         Err(e) => tracing::debug!(error = %e, %id, "background kill skipped"),

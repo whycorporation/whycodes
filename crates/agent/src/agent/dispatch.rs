@@ -120,7 +120,7 @@ impl Agent {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         self.wire_background_turn_listener(events);
-        let id = match self.background.start_shell_auto(
+        let id = match self.background.start_shell(
             &command,
             std::path::PathBuf::from(&tool_ctx.working_dir),
             tool_ctx.sandbox.clone(),
@@ -134,10 +134,34 @@ impl Agent {
                     .await;
             }
         };
+        // A `timeout` that ends before the detach point is honoured like a
+        // plain `bash`: the model asked for the command to be stopped.
+        let timeout = call
+            .arguments
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .map(|secs| Duration::from_secs(secs.max(1)))
+            .filter(|t| *t <= self.bash_auto_background_after);
+        let mut guard = KillUnlessReturned {
+            registry: &self.background,
+            id: &id,
+            armed: true,
+        };
         let status = self
             .background
-            .wait_until_idle(&id, self.bash_auto_background_after)
+            .wait_until_idle(&id, timeout.unwrap_or(self.bash_auto_background_after))
             .await;
+        if let Some(t) = timeout
+            && status == crate::background::JobStatus::Running
+        {
+            // The guard kills it on return; the result says why.
+            return ToolResult {
+                tool_call_id: call.id.clone(),
+                content: format!("Command timed out after {} seconds", t.as_secs()),
+                is_error: true,
+            };
+        }
+        guard.armed = false;
         if status == crate::background::JobStatus::Running {
             let tail = self.background.tail(&id, 2_000);
             emit(
@@ -165,11 +189,16 @@ impl Agent {
                 is_error: false,
             };
         }
-        self.background.mark_auto_delivered(&id);
-        // `tail` never errors: missing jobs yield "" (same as a vanished handle).
+        // Finished in the foreground: shown like a plain `bash` result (whole
+        // output, cleaned, no job header), and never injected again.
+        self.background.mark_delivered(&id);
         ToolResult {
             tool_call_id: call.id.clone(),
-            content: self.background.tail(&id, 8_000),
+            content: self
+                .background
+                .output(&id)
+                .map(|job| job.display())
+                .unwrap_or_default(),
             is_error: status == crate::background::JobStatus::Failed,
         }
     }
@@ -219,7 +248,7 @@ impl Agent {
             if self.steer.has_pending(session_id) {
                 return wait_result(
                     call,
-                    "A message from the user is pending for this session.                      End this step: it is delivered before your next request."
+                    "A message from the user is pending for this session. End this step: it is delivered before your next request."
                         .into(),
                 );
             }
@@ -230,7 +259,7 @@ impl Agent {
             });
             if let Some(job) = finished {
                 // Reported here; do not inject the same completion next step.
-                self.background.mark_auto_delivered(&job.id);
+                self.background.mark_delivered(&job.id);
                 return wait_result(
                     call,
                     format!(
@@ -1777,6 +1806,23 @@ fn fold_pending_cost(
         return;
     }
     super::recover_lock(pending).add(usd);
+}
+
+/// Kills a foreground `bash` job when its call is dropped before returning:
+/// Esc cancels a turn by dropping the tool future, and the job (run through
+/// the background registry for auto-detach) used to keep running.
+struct KillUnlessReturned<'a> {
+    registry: &'a crate::background::BackgroundRegistry,
+    id: &'a str,
+    armed: bool,
+}
+
+impl Drop for KillUnlessReturned<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            crate::background::note_kill_result(self.registry.kill(self.id), self.id);
+        }
+    }
 }
 
 fn background_turn_listener(tx: EventSink) -> crate::background::BackgroundListener {

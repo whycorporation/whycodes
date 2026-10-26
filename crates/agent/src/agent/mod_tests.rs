@@ -1192,13 +1192,13 @@ async fn auto_background_completion_is_delivered_once() {
         crate::background::JobStatus::Running,
         "brief hang must finish so inject has a completion"
     );
-    a.inject_auto_background_completions(&mut session);
+    a.inject_background_completions(&mut session);
     assert!(
         session.messages.len() > before,
         "auto-background completion must land in session once"
     );
     let after = session.messages.len();
-    a.inject_auto_background_completions(&mut session);
+    a.inject_background_completions(&mut session);
     assert_eq!(
         session.messages.len(),
         after,
@@ -4211,4 +4211,174 @@ fn whycodes_agent_gets_the_global_config_write_rule() {
     // Other agents do not get the rule.
     let build = Agent::new(config.get_agent("build").unwrap().clone()).with_config(&config);
     assert_eq!(build.info.permission.action_for_path("write", &file), None);
+}
+
+/// Prints a coloured first line and a progress bar on stdout, a warning on
+/// stderr, then exits 3: what a failing build looks like.
+fn noisy_failing_shell() -> &'static str {
+    #[cfg(windows)]
+    {
+        r#"python -c "import sys; print('FIRST ERROR'); print('\x1b[31mred\x1b[0m'); sys.stdout.write('50%\r100%\n'); sys.stderr.write('warn\n'); sys.exit(3)""#
+    }
+    #[cfg(not(windows))]
+    {
+        r"printf 'FIRST ERROR\n\033[31mred\033[0m\n50%%\r100%%\n'; echo warn >&2; exit 3"
+    }
+}
+
+fn long_shell() -> &'static str {
+    #[cfg(windows)]
+    {
+        "ping -n 30 127.0.0.1 >NUL"
+    }
+    #[cfg(not(windows))]
+    {
+        "sleep 30"
+    }
+}
+
+#[tokio::test]
+async fn a_finished_foreground_bash_reads_like_a_plain_one() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_secs(20);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let r = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": noisy_failing_shell()})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(r.is_error);
+    // Streams interleave as they arrive; a sandbox notice may lead.
+    assert!(!r.content.contains("[bg-"), "no job header: {r:?}");
+    assert!(r.content.contains("FIRST ERROR\n"), "{r:?}");
+    assert!(
+        !r.content.contains('\x1b') && !r.content.contains('\r'),
+        "{r:?}"
+    );
+    assert!(r.content.contains("red\n100%\n"), "{r:?}");
+    assert!(r.content.ends_with("(exit code: 3)"), "{r:?}");
+    assert!(
+        a.background.take_completions().is_empty(),
+        "already shown: no notice later"
+    );
+}
+
+#[tokio::test]
+async fn a_cancelled_foreground_bash_does_not_keep_running() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_secs(20);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    // Esc cancels a turn by dropping the tool future, like this timeout.
+    let call = tc("bash", json!({"command": long_shell()}));
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        a.execute_shell_with_auto_background(&call, &ctx, None),
+    )
+    .await;
+    assert!(cancelled.is_err());
+    assert_eq!(
+        a.background.running_count(),
+        0,
+        "cancel must kill the command"
+    );
+    assert!(
+        a.background.take_completions().is_empty(),
+        "no notice for it"
+    );
+}
+
+#[tokio::test]
+async fn a_foreground_timeout_before_the_detach_point_stops_the_command() {
+    let mut a = test_agent();
+    a.bash_auto_background = true;
+    a.bash_auto_background_after = std::time::Duration::from_secs(20);
+    let dir = tempfile::tempdir().unwrap();
+    let session = whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let t0 = std::time::Instant::now();
+    let r = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": long_shell(), "timeout": 1})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(10),
+        "{:?}",
+        t0.elapsed()
+    );
+    assert!(r.is_error);
+    assert_eq!(r.content, "Command timed out after 1 seconds");
+    assert_eq!(a.background.running_count(), 0, "killed, not detached");
+    assert!(a.background.take_completions().is_empty());
+
+    // A timeout past the detach point does not apply: it detaches as usual.
+    a.bash_auto_background_after = std::time::Duration::from_millis(300);
+    let r = a
+        .execute_shell_with_auto_background(
+            &tc("bash", json!({"command": long_shell(), "timeout": 60})),
+            &ctx,
+            None,
+        )
+        .await;
+    assert!(r.content.contains("state: running"), "{r:?}");
+    a.background.kill_all();
+}
+
+#[tokio::test]
+async fn a_background_true_job_is_announced_when_it_ends() {
+    let a = test_agent();
+    let dir = tempfile::tempdir().unwrap();
+    let mut session =
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    let ctx = a.tool_context(&session);
+    let started = a.execute_background_shell(
+        &tc(
+            "bash",
+            json!({"command": noisy_failing_shell(), "background": true}),
+        ),
+        &ctx,
+        None,
+    );
+    let id = started
+        .content
+        .split('`')
+        .nth(1)
+        .expect("job id")
+        .to_string();
+    let status = a
+        .background
+        .wait_until_idle(&id, std::time::Duration::from_secs(10))
+        .await;
+    assert_eq!(status, crate::background::JobStatus::Failed);
+    let before = session.messages.len();
+    a.inject_background_completions(&mut session);
+    assert_eq!(session.messages.len(), before + 1);
+    let notice = session
+        .messages
+        .last()
+        .unwrap()
+        .content
+        .as_text()
+        .unwrap()
+        .to_string();
+    assert!(
+        notice.starts_with(&format!(
+            "Background job `{id}` finished (failed). Output:\n"
+        )) && notice.contains("FIRST ERROR\n")
+            && !notice.contains('\x1b'),
+        "{notice}"
+    );
+    assert!(notice.ends_with("(exit code: 3)"), "{notice}");
+    a.inject_background_completions(&mut session);
+    assert_eq!(session.messages.len(), before + 1, "announced once");
 }
