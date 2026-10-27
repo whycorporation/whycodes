@@ -1736,6 +1736,9 @@ async fn generate_prompts(
     if should_fan_out(prompts) {
         let mut agent_info = agent_info_for(cli, &config);
         agent_info.permission = config.effective_permission(&agent_info.permission);
+        if format.is_structured() {
+            hide_question_tool(&mut agent_info);
+        }
         return run_generate_parallel(
             prompts,
             &config,
@@ -1757,6 +1760,9 @@ async fn generate_prompts(
 
     let mut agent_info = agent_info_for(cli, &config);
     agent_info.permission = config.effective_permission(&agent_info.permission);
+    if format.is_structured() {
+        hide_question_tool(&mut agent_info);
+    }
     let expanded = expand_user_input(prompt, &project_dir);
 
     // Structured CI formats cannot prompt on stdin. Default is fail-closed
@@ -1783,9 +1789,12 @@ async fn generate_prompts(
         &config,
         Some(&expanded),
     );
-    if format.is_structured() {
+    let system_prompt = if format.is_structured() {
         agent = apply_structured_permission_policy(agent, &config, approve_tools);
-    }
+        with_non_interactive_note(system_prompt)
+    } else {
+        system_prompt
+    };
 
     let mut session = whycodes_session::session::Session::new(project_dir.clone(), system_prompt);
 
@@ -1828,6 +1837,25 @@ pub(crate) fn structured_ask_is_fail_closed(config: &Config, approve_tools: bool
         return false;
     }
     !matches!(config.session.headless_ask, Some(HeadlessAskMode::Allow))
+}
+
+/// Nobody answers in a structured run: drop `question` from the advertised
+/// tools (an auto-picked answer only costs a round-trip and its schema is
+/// the largest in the core set). A call that still arrives is auto-answered.
+pub(crate) fn hide_question_tool(info: &mut AgentInfo) {
+    info.permission
+        .denied_tools
+        .get_or_insert_with(Vec::new)
+        .push("question".into());
+}
+
+/// Tell the model a structured run has no one to ask, so it decides and
+/// finishes instead of stopping on a clarifying question.
+pub(crate) fn with_non_interactive_note(prompt: String) -> String {
+    format!(
+        "{prompt}\n\n# Non-interactive run\nNo one can answer questions or approve a plan during this run. \
+         Do not ask the user; make reasonable assumptions, complete the task, then report what you did."
+    )
 }
 
 pub(crate) fn apply_structured_permission_policy(
@@ -1981,9 +2009,12 @@ pub(crate) async fn run_one_parallel_turn(
         config,
         Some(&expanded),
     );
-    if structured {
+    let system_prompt = if structured {
         agent = apply_structured_permission_policy(agent, config, approve_tools);
-    }
+        with_non_interactive_note(system_prompt)
+    } else {
+        system_prompt
+    };
 
     let mut session =
         whycodes_session::session::Session::new(project_dir.to_path_buf(), system_prompt);
