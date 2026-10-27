@@ -71,6 +71,19 @@ fn emit_parallel_outcome_covers_formats() {
 }
 
 #[test]
+fn structured_runs_hide_question_and_say_no_one_answers() {
+    let mut info = Config::default().get_agent("build").cloned().unwrap();
+    assert!(info.permission.is_tool_allowed("question"));
+    hide_question_tool(&mut info);
+    assert!(!info.permission.is_tool_allowed("question"));
+    assert!(info.permission.is_tool_allowed("edit"));
+
+    let prompt = with_non_interactive_note("base".into());
+    assert!(prompt.starts_with("base\n\n# Non-interactive run\n"));
+    assert!(prompt.contains("Do not ask the user"));
+}
+
+#[test]
 fn helpers_all_prompts_and_fan_out() {
     assert!(all_prompts_empty(&[String::new(), String::new()]));
     assert!(!all_prompts_empty(&["x".into()]));
