@@ -432,7 +432,9 @@ async fn drain_stderr(stderr: impl AsyncRead + Unpin, command: String, tail: Std
     while let Ok(Some(bytes)) = lines.next_segment().await {
         let line = String::from_utf8_lossy(&bytes).trim_end().to_string();
         debug!(server = %command, "{line}");
-        let mut tail = tail.lock().unwrap_or_else(|e| e.into_inner());
+        let mut tail = tail
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if tail.len() == STDERR_TAIL_LINES {
             tail.pop_front();
         }
@@ -442,7 +444,9 @@ async fn drain_stderr(stderr: impl AsyncRead + Unpin, command: String, tail: Std
 
 /// `e` plus what the server last wrote to stderr, which usually says why.
 fn with_stderr_tail(e: McpError, tail: &StderrTail) -> McpError {
-    let tail = tail.lock().unwrap_or_else(|e| e.into_inner());
+    let tail = tail
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if tail.is_empty() {
         return e;
     }
