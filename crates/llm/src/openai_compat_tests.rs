@@ -957,6 +957,23 @@ async fn chat_sse_keeps_multibyte_text_split_across_chunks() {
     assert_eq!(text, "Merhaba, şöyle güzel");
 }
 
+#[tokio::test]
+async fn chat_sse_reports_the_finish_reason() {
+    let body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"half an ans\"}}]}\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n",
+        "data: [DONE]\n",
+    );
+    let mut stream = chat_sse_from_bytes(scripted_bytes([Ok(body.as_bytes().to_vec())]), "openai");
+    let mut reasons = Vec::new();
+    while let Some(ev) = stream.next().await {
+        if let StreamEvent::MessageDelta { delta } = ev.unwrap() {
+            reasons.push(delta["stop_reason"].as_str().unwrap().to_string());
+        }
+    }
+    assert_eq!(reasons, ["length"]);
+}
+
 /// (thinking, text) of a whole SSE body.
 async fn sse_thinking_and_text(body: &str) -> (String, String) {
     let mut stream = chat_sse_from_bytes(scripted_bytes([Ok(body.as_bytes().to_vec())]), "openai");
