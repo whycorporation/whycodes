@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::TuiAppConfig;
 use crate::run::tests::test_runtime;
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,10 @@ for line in sys.stdin:
         send({"jsonrpc":"2.0","id":mid,"error":{"code":-32601,"message":"unknown"}})
 "#;
 
+fn app() -> TuiApp {
+    TuiApp::from_config(TuiAppConfig::default())
+}
+
 fn python() -> Option<&'static str> {
     ["python3", "python"].into_iter().find(|p| {
         std::process::Command::new(p)
@@ -31,9 +36,13 @@ fn python() -> Option<&'static str> {
 
 /// Config with the echo server, or `None` when no Python is installed.
 fn echo_config(dir: &std::path::Path) -> Option<Config> {
+    server_config(dir, ECHO_SERVER)
+}
+
+fn server_config(dir: &std::path::Path, body: &str) -> Option<Config> {
     let python = python()?;
-    let script = dir.join("echo.py");
-    std::fs::write(&script, ECHO_SERVER).unwrap();
+    let script = dir.join("server.py");
+    std::fs::write(&script, body).unwrap();
     let mut config = Config::default();
     config.mcp_servers.insert(
         "ghost".into(),
@@ -64,7 +73,7 @@ async fn no_servers_load_inline() {
     let mut mcp = PendingMcp::start(&mut rt, &Config::default()).await;
     assert!(mcp.0.is_none());
     mcp.poll(&mut rt, &mut []);
-    mcp.wait(&mut rt, &mut []).await;
+    mcp.wait(&mut app(), &mut rt, &mut [], TURN_WAIT).await;
     assert!(rt.agent.mcp_servers().is_empty());
 }
 
@@ -111,7 +120,8 @@ async fn wait_installs_into_idle_sessions_only() {
     let mut others = vec![test_runtime(), test_runtime()];
     others[1].agent_busy = true;
     let mut mcp = PendingMcp::start(&mut rt, &config).await;
-    mcp.wait(&mut rt, &mut others).await;
+    mcp.wait(&mut app(), &mut rt, &mut others, Duration::from_secs(30))
+        .await;
     assert!(mcp.0.is_none());
     assert_eq!(rt.agent.mcp_servers().len(), 1);
     assert_eq!(others[0].agent.mcp_servers().len(), 1);
@@ -138,7 +148,7 @@ async fn failed_load_task_installs_nothing() {
     if let Some(handle) = mcp.0.as_ref() {
         handle.abort();
     }
-    mcp.wait(&mut rt, &mut []).await;
+    mcp.wait(&mut app(), &mut rt, &mut [], TURN_WAIT).await;
     assert!(mcp.0.is_none());
     assert!(rt.agent.mcp_servers().is_empty());
 }
@@ -151,4 +161,32 @@ fn mcp_slash_commands_read_the_servers() {
     for cmd in ["/model", "/mcpx", "/help"] {
         assert!(!reads_mcp_servers(cmd), "{cmd}");
     }
+}
+
+#[tokio::test]
+async fn wait_gives_up_after_the_limit_and_poll_installs_later() {
+    let dir = tempfile::tempdir().unwrap();
+    let slow = format!(
+        "import time
+time.sleep(2)
+{ECHO_SERVER}"
+    );
+    let Some(config) = server_config(dir.path(), &slow) else {
+        return;
+    };
+    let mut rt = test_runtime();
+    let mut app = app();
+    let mut mcp = PendingMcp::start(&mut rt, &config).await;
+    mcp.wait(&mut app, &mut rt, &mut [], Duration::from_millis(100))
+        .await;
+    assert!(mcp.0.is_some(), "still connecting");
+    assert!(
+        !app.toasts.is_empty(),
+        "the user hears why tools are missing"
+    );
+    assert!(rt.agent.mcp_servers().is_empty());
+
+    until_finished(&mcp).await;
+    mcp.poll(&mut rt, &mut []);
+    assert_eq!(rt.agent.mcp_servers().len(), 1);
 }
