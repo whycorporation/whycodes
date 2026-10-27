@@ -273,9 +273,12 @@ fn definitions_core_profile_limits_surface() {
     assert!(!core_names.contains(&"lsp"));
     assert!(core.len() < full.len());
     assert!(full.iter().any(|d| d.name == "webfetch"));
-    // Core keeps todo aliases under real names.
+    // Core keeps todo tools under real names; the `todo` alias is callable
+    // but not advertised twice.
     assert!(core_names.contains(&"todowrite"));
-    assert!(core_names.contains(&"todo"));
+    assert!(!core_names.contains(&"todo"));
+    assert!(ex.get("todo").is_some());
+    assert!(!full.iter().any(|d| d.name == "todo"));
     assert!(!core_names.contains(&"todo_write"));
     assert!(!core_names.contains(&"apply_patch"));
     assert!(core_names.contains(&"bg"));
