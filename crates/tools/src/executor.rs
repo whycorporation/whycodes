@@ -212,6 +212,11 @@ impl ToolExecutor {
             })
             .map(|t| t.definition())
             .collect();
+        // `todo` stays callable, but advertising a second copy of the
+        // `todowrite` schema costs tokens on every request.
+        if defs.iter().any(|d| d.name == "todowrite") {
+            defs.retain(|d| d.name != "todo");
+        }
         defs.sort_by(|a, b| a.name.cmp(&b.name));
         let arc: Arc<[ToolDefinition]> = defs.into();
         let mut cache = recover_defs_cache(&self.defs_cache);
