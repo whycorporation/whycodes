@@ -769,8 +769,9 @@ impl Agent {
             let cut_off = hit_output_limit && cut_offs < MAX_CUT_OFFS;
             if cut_off {
                 cut_offs += 1;
+                let dropped = tool_calls.len();
                 tracing::warn!(
-                    dropped_tool_calls = tool_calls.len(),
+                    dropped_tool_calls = dropped,
                     cut_offs,
                     "response cut off at the output token limit; continuing"
                 );
