@@ -229,6 +229,11 @@ impl ChatSse {
                 other => self.pending.push_back(Ok(other)),
             }
         }
+        if let Some(reason) = event["choices"][0]["finish_reason"].as_str() {
+            self.pending.push_back(Ok(StreamEvent::MessageDelta {
+                delta: obj([("stop_reason", jstr(reason))]),
+            }));
+        }
         if let Some(ev) = stream_usage_from_chunk(&event) {
             self.pending.push_back(Ok(ev));
         }
