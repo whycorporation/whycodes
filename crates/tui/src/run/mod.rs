@@ -54,6 +54,7 @@ const MAX_LIVE_SESSIONS: usize = 8;
 
 mod goal_run;
 mod import;
+mod mcp_defer;
 mod persist;
 mod slash;
 #[cfg(test)]
@@ -66,6 +67,7 @@ pub(crate) use goal_run::GoalCheck;
 use goal_run::*;
 pub(crate) use import::mark_import_declined;
 use import::*;
+use mcp_defer::PendingMcp;
 pub use persist::resolve_and_load_session;
 use persist::*;
 pub use slash::SlashContext;
@@ -1763,7 +1765,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let mut pending_async_title: Option<(String, String)> = None;
     let mut update_rx = opts.update_rx;
 
-    hydrate_after_first_frame(
+    let mut mcp = hydrate_after_first_frame(
         &mut app,
         &mut rt,
         &mut file_index,
@@ -2148,6 +2150,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 None => steer_or_reclaim(&mut app, &mut rt, &project_dir),
             }
 
+            mcp.poll(&mut rt, &mut runtimes);
+
             // ── Start turn if needed ──────────────────────────────────
             if !rt.agent_busy
                 && let Some(turn) = app.take_pending_turn()
@@ -2182,6 +2186,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     continue;
                 }
 
+                mcp.wait(&mut rt, &mut runtimes).await;
                 spawn_local_turn(
                     &mut app,
                     &mut rt,
@@ -2337,7 +2342,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                             !runtimes.is_empty(),
                             runtimes.len() + 1 >= MAX_LIVE_SESSIONS,
                         )
-                        && apply_idle_loop_key(
+                    {
+                        if matches!(action, IdleLoopKey::SlashEnter)
+                            && slash_command_from_prompt(&app)
+                                .is_some_and(|cmd| mcp_defer::reads_mcp_servers(&cmd))
+                        {
+                            mcp.wait(&mut rt, &mut runtimes).await;
+                        }
+                        if apply_idle_loop_key(
                             action,
                             &mut app,
                             &mut rt,
@@ -2353,8 +2365,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                             &auth_tx,
                         )
                         .await
-                    {
-                        continue;
+                        {
+                            continue;
+                        }
                     }
 
                     // While busy: Esc cancels (draft preserved). Typing, scroll,
@@ -5998,6 +6011,7 @@ fn load_app_todos(app: &mut TuiApp) {
 ///
 /// Interactive `run` no longer paints a black splash then the themed home
 /// (two full-screen dumps). Bench still uses splash and never reaches here.
+/// MCP servers keep connecting after it returns; see [`mcp_defer`].
 #[allow(clippy::too_many_arguments)]
 async fn hydrate_after_first_frame(
     app: &mut TuiApp,
@@ -6009,7 +6023,7 @@ async fn hydrate_after_first_frame(
     config: &mut Config,
     project_dir: &std::path::Path,
     animate: bool,
-) {
+) -> PendingMcp {
     let hydrate_before = capture_first_frame_hydrate_chrome(app);
     app.config.theme.apply_syntax_theme();
     if app.project_dir.as_os_str() != project_dir.as_os_str() {
@@ -6034,11 +6048,12 @@ async fn hydrate_after_first_frame(
     hydrate_full_system_prompt(rt, project_dir, config, provider, model);
     hydrate_session_picker(app);
     hydrate_deferred_api_key(api_key, provider, model, config, app);
-    rt.agent.load_mcp(config).await;
+    let mcp = PendingMcp::start(rt, config).await;
     maybe_session_auto_index(project_dir, config);
     refresh_sidebar(app, config, file_index);
     load_app_todos(app);
     settle_first_frame_hydrate(app, &hydrate_before, animate);
+    mcp
 }
 
 fn hydrate_auth_plugins(project_dir: &std::path::Path) -> usize {

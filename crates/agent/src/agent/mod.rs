@@ -171,6 +171,13 @@ pub struct SharedTools {
     mcp_servers: Vec<crate::mcp_load::McpServerHandle>,
 }
 
+/// Tools built by [`Agent::begin_mcp_load`]; `None` keeps the agent's current value.
+#[derive(Clone)]
+pub struct McpLoad {
+    executor: Option<Arc<ToolExecutor>>,
+    mcp_servers: Option<Vec<crate::mcp_load::McpServerHandle>>,
+}
+
 /// Recover from a poisoned mutex instead of aborting (`panic = "abort"` in release).
 pub(crate) fn recover_lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -1083,22 +1090,53 @@ impl Agent {
 
     /// Like [`Self::with_mcp`] but for an already-owned agent (TUI deferred load).
     pub async fn load_mcp(&mut self, config: &whycodes_config::Config) {
+        let loaded = self.begin_mcp_load(config).await;
+        self.finish_mcp_load(loaded);
+    }
+
+    /// [`Self::load_mcp`] without holding `self` across the server connects:
+    /// plugins and the LSP overlay are read now, and the returned future
+    /// connects the MCP servers, so a caller can spawn it and keep painting.
+    /// Install the result with [`Self::finish_mcp_load`].
+    pub fn begin_mcp_load(
+        &mut self,
+        config: &whycodes_config::Config,
+    ) -> impl std::future::Future<Output = McpLoad> + Send + 'static {
         self.lsp_overlay = lsp_overlay_from_config(&config.lsp);
         let project = config.general.project_path.as_deref();
         let mut full = ToolExecutor::new();
         self.apply_lsp_overlay(&mut full);
         let n_plug = full.register_config_plugins(project);
-        let n_mcp = if config.mcp_servers.is_empty() {
-            0
-        } else {
-            let (n, servers) = crate::mcp_load::register_mcp_tools(&mut full, config).await;
+        let custom_lsp = lsp_overlay_is_custom(&self.lsp_overlay);
+        let config = (!config.mcp_servers.is_empty()).then(|| config.clone());
+        async move {
+            let (n_mcp, mcp_servers) = match config {
+                Some(config) => {
+                    let (n, servers) =
+                        crate::mcp_load::register_mcp_tools(&mut full, &config).await;
+                    (n, Some(servers))
+                }
+                None => (0, None),
+            };
+            let executor = (n_plug > 0 || n_mcp > 0 || custom_lsp).then(|| {
+                log_registered_count(n_plug, "shell plugins registered");
+                log_registered_count(n_mcp, "MCP tools registered");
+                Arc::new(full)
+            });
+            McpLoad {
+                executor,
+                mcp_servers,
+            }
+        }
+    }
+
+    /// Install what [`Self::begin_mcp_load`] connected.
+    pub fn finish_mcp_load(&mut self, loaded: McpLoad) {
+        if let Some(servers) = loaded.mcp_servers {
             self.mcp_servers = servers;
-            n
-        };
-        if n_plug > 0 || n_mcp > 0 || lsp_overlay_is_custom(&self.lsp_overlay) {
-            self.tool_executor = Arc::new(full);
-            log_registered_count(n_plug, "shell plugins registered");
-            log_registered_count(n_mcp, "MCP tools registered");
+        }
+        if let Some(executor) = loaded.executor {
+            self.tool_executor = executor;
         }
     }
 

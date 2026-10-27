@@ -758,7 +758,7 @@ fn switch_to_runtime_moves_transcripts() {
     );
 }
 
-fn test_runtime() -> SessionRuntime {
+pub(super) fn test_runtime() -> SessionRuntime {
     use std::sync::OnceLock;
     static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
     // Do not take ENV_LOCK if a caller already holds it (`isolate_home`).
