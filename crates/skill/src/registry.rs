@@ -81,6 +81,10 @@ impl SkillRegistry {
             }
         }
         load_skill_md_tree(&mut registry, &project.join(".claude").join("skills"));
+        load_plugin_skills(
+            &mut registry,
+            &whycodes_core::project_dir(project).join("plugins"),
+        );
         Ok(registry)
     }
 
@@ -93,6 +97,7 @@ impl SkillRegistry {
             registry.load_from_dir(&global)?;
             load_skill_md_tree(&mut registry, &global);
         }
+        load_plugin_skills(&mut registry, &whycodes_config_dir().join("plugins"));
         registry.add_bundled();
         Ok(registry)
     }
@@ -156,6 +161,20 @@ fn load_skill_md_tree(registry: &mut SkillRegistry, root: &Path) {
                 warn!("Failed to load skill {:?}: {}", skill_md, e);
             }
         }
+    }
+}
+
+/// `<plugins>/<id>/skills/<name>/SKILL.md` from plugin packages (the
+/// portable layout: `plugin.json`, `skills/`, `agents/`). An earlier skill
+/// of the same name wins.
+fn load_plugin_skills(registry: &mut SkillRegistry, plugins: &Path) {
+    let Ok(entries) = std::fs::read_dir(plugins) else {
+        return;
+    };
+    let mut roots: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    roots.sort();
+    for root in roots {
+        load_skill_md_tree(registry, &root.join("skills"));
     }
 }
 
@@ -504,6 +523,43 @@ description = "d"
         assert!(catalog_only.get("whycodes").is_none());
     }
 
+    fn write_plugin_skill(plugins: &Path, plugin: &str, skill: &str) {
+        let folder = plugins.join(plugin).join("skills").join(skill);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(plugins.join(plugin).join("plugin.json"), "{}").unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            format!("---\nname: {skill}\ndescription: from {plugin}\n---\nbody\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn plugin_packages_contribute_their_skills() {
+        let _guard = env_lock();
+        let home = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+        write_plugin_skill(&home.path().join("plugins"), "egm", "egm-review");
+        let project = tempfile::tempdir().unwrap();
+        let project_plugins = whycodes_core::project_dir(project.path()).join("plugins");
+        write_plugin_skill(&project_plugins, "local", "team-review");
+        std::fs::write(project_plugins.join("not-a-dir"), "x").unwrap();
+
+        let catalog = SkillRegistry::load_project(project.path()).unwrap();
+        let all = SkillRegistry::load_for_project(project.path()).unwrap();
+        restore_home(prev);
+
+        assert!(
+            catalog.get("team-review").is_some(),
+            "project plugin in the catalog"
+        );
+        assert!(catalog.get("egm-review").is_none(), "user plugin is not");
+        let egm = all.get("egm-review").expect("user plugin skill");
+        assert_eq!(egm.description, "from egm");
+        assert!(egm.location_note().contains("Plugin root"));
+    }
+
     #[test]
     fn add_bundled_keeps_a_user_skill_of_the_same_name() {
         let mut reg = SkillRegistry::new();
@@ -513,6 +569,7 @@ description = "d"
             prompt: "MINE".into(),
             tools_allowed: Vec::new(),
             file_patterns: Vec::new(),
+            dir: None,
         });
         reg.add_bundled();
         assert_eq!(reg.skills.len(), 1);

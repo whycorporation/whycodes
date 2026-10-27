@@ -1149,7 +1149,9 @@ Switching `/models` rebuilds the session system prompt.
 
 Skills are listed in the system prompt by **name and description only**. The
 body is loaded with `read skill://<name>` or `skill` (`action=load`). Project
-trees: `.skills/*.skill.md`, `.whycodes/skills/`, `.claude/skills/*/SKILL.md`.
+trees: `.skills/*.skill.md`, `.whycodes/skills/`, `.claude/skills/*/SKILL.md`,
+and plugin packages (below). A loaded `<name>/SKILL.md` body starts with the
+skill's folder, so the files it names (`references/`, `scripts/`) resolve.
 The bundled `whycodes` skill (the product manual, split into topics read as
 `skill://whycodes/<topic>`) is always loadable but is not listed in that
 catalog; the [`whycodes` agent](#the-whycodes-agent) carries its index.
@@ -1860,6 +1862,19 @@ Args become `PLUGIN_ARG_<KEY>` environment variables. `PLUGIN_WORKSPACE` is
 the session cwd. Config `[hooks]` stay the hook path — `hooks` in
 `plugin.json` is reserved, not loaded.
 
+**Plugin packages** — the portable layout (`plugin.json`, `skills/`,
+`agents/`, shared folders such as `resources/`) works from the same
+directories. Clone or copy the whole package, for example
+`git clone <repo> ~/.whycodes/plugins/<id>`:
+
+- `skills/<name>/SKILL.md` join the skill list. Project packages
+  (`.whycodes/plugins/`) are also listed in the system prompt.
+- `agents/*.md` personas become `task` subagent types. Your own
+  `agents/` folders win on a name clash.
+- A loaded skill names its folder and the package root, so paths such as
+  `agents/zoom_out.md` or `resources/…` in the skill text resolve.
+- A `plugin.json` without `command` / `tools` adds no shell tool.
+
 A plugin with `"kind": "auth"` registers an OAuth spec instead of a shell
 tool (`whycodes auth login`). Subscription-login plugins are **not** in
 the default install; see [auth.md](auth.md).
@@ -1873,5 +1888,6 @@ the default install; see [auth.md](auth.md).
 | Markdown slash commands | `.whycodes/commands/`, also `.opencode/commands/` |
 | MCP servers | `[mcp_servers]` in `config.toml`, tools as `{server}_{tool}` |
 | Shell plugins | `plugins.toml` or `plugins/*/plugin.json` → `plugin_<name>` |
+| Plugin packages | `plugins/<id>/skills/*/SKILL.md` → skills, `plugins/<id>/agents/*.md` → subagents |
 | Auth plugins | `plugins/*/plugin.json` with `"kind": "auth"` → OAuth login |
 | `allow` / `ask` / `deny` | `[permission]` in `config.toml` |

@@ -17,6 +17,10 @@ pub struct Skill {
     pub tools_allowed: Vec<String>,
     /// File glob patterns that trigger or scope the skill.
     pub file_patterns: Vec<String>,
+    /// Folder of a `<name>/SKILL.md` skill: the paths its body names
+    /// (`references/`, `scripts/`, a plugin's `agents/`) are relative to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<std::path::PathBuf>,
 }
 
 impl Skill {
@@ -77,14 +81,50 @@ impl Skill {
 
         let file_patterns = parse_string_list(parsed.get("file_patterns"));
 
+        let dir = path
+            .file_name()
+            .is_some_and(|f| f == "SKILL.md")
+            .then(|| path.parent().map(Path::to_path_buf))
+            .flatten();
+
         Ok(Skill {
             name,
             description,
             prompt,
             tools_allowed,
             file_patterns,
+            dir,
         })
     }
+
+    /// Where the skill's relative paths resolve, shown with its body. A
+    /// skill inside a plugin package (`<plugin>/skills/<name>/SKILL.md`
+    /// next to `<plugin>/plugin.json`) also names the plugin root, where
+    /// shared `agents/` and `resources/` folders live.
+    pub fn location_note(&self) -> String {
+        let Some(dir) = &self.dir else {
+            return String::new();
+        };
+        let mut note = format!(
+            "Skill folder: `{}` (relative paths in this skill resolve here).",
+            dir.display()
+        );
+        if let Some(root) = plugin_root(dir) {
+            note.push_str(&format!(
+                "\nPlugin root: `{}` (paths such as `agents/` or `resources/` resolve here).",
+                root.display()
+            ));
+        }
+        note
+    }
+}
+
+/// `<plugin>` for a skill folder at `<plugin>/skills/<name>` when
+/// `<plugin>/plugin.json` exists.
+fn plugin_root(skill_dir: &Path) -> Option<&Path> {
+    let skills = skill_dir.parent()?;
+    let root = skills.parent()?;
+    (skills.file_name()? == "skills" && root.join("plugin.json").is_file()).then_some(root)
 }
 
 /// Simple frontmatter parser that handles `key: value` lines and
@@ -199,6 +239,37 @@ mod tests {
         assert!(skill.tools_allowed.is_empty());
         assert!(skill.file_patterns.is_empty());
         assert_eq!(skill.prompt, "Just a prompt.");
+    }
+
+    #[test]
+    fn location_note_names_the_skill_folder_and_plugin_root() {
+        let (_dir, path) = write_temp("---\nname: flat\n---\nbody\n");
+        let flat = Skill::from_file(&path).unwrap();
+        assert!(flat.dir.is_none());
+        assert_eq!(flat.location_note(), "");
+
+        let root = tempfile::tempdir().unwrap();
+        let plugin = root.path().join("egm");
+        let folder = plugin.join("skills").join("egm-review");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            "---\nname: egm-review\n---\nbody\n",
+        )
+        .unwrap();
+        let loose = Skill::from_file(&folder.join("SKILL.md")).unwrap();
+        assert_eq!(loose.dir.as_deref(), Some(folder.as_path()));
+        let note = loose.location_note();
+        assert!(note.contains(&folder.display().to_string()), "{note}");
+        assert!(!note.contains("Plugin root"), "no plugin.json yet: {note}");
+
+        std::fs::write(plugin.join("plugin.json"), "{\"name\":\"egm\"}").unwrap();
+        let packaged = Skill::from_file(&folder.join("SKILL.md")).unwrap();
+        let note = packaged.location_note();
+        assert!(
+            note.contains(&format!("Plugin root: `{}`", plugin.display())),
+            "{note}"
+        );
     }
 
     #[test]

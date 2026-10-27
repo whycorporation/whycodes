@@ -30,10 +30,18 @@ fn skill_registry_or_err(
 fn skill_body(result: Result<SkillRegistry, ToolResult>, name: &str) -> ToolResult {
     match skill_registry_or_err(result) {
         Ok(registry) => match registry.get_ignore_ascii_case(name) {
-            Some(skill) => ok(&format!(
-                "# skill://{}\n{}\n\n{}",
-                skill.name, skill.description, skill.prompt
-            )),
+            Some(skill) => {
+                let note = skill.location_note();
+                let note = if note.is_empty() {
+                    note
+                } else {
+                    format!("\n\n{note}")
+                };
+                ok(&format!(
+                    "# skill://{}\n{}{note}\n\n{}",
+                    skill.name, skill.description, skill.prompt
+                ))
+            }
             None => err(&format!(
                 "Skill '{name}' not found. Use the `skill` tool (action=list) or `read skill://`."
             )),

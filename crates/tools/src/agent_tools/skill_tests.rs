@@ -114,10 +114,25 @@ fn skill_format_helpers_cover_empty_and_loaded() {
     assert!(listed.contains("Bare: (no description)"), "{listed}");
     assert_eq!(skill_description_label(""), "(no description)");
     assert_eq!(skill_description_label("hi"), "hi");
+    let mut demo = whycodes_skill::Skill {
+        name: "Demo".into(),
+        description: "d".into(),
+        prompt: "BODY".into(),
+        tools_allowed: Vec::new(),
+        file_patterns: Vec::new(),
+        dir: None,
+    };
     assert_eq!(
-        format_loaded_skill("Demo", "d", "BODY"),
+        format_loaded_skill(&demo),
         "Loaded skill 'Demo':\n\nd\n\nBODY"
     );
+    demo.dir = Some(std::path::PathBuf::from("skills/demo"));
+    let located = format_loaded_skill(&demo);
+    assert!(
+        located.starts_with("Loaded skill 'Demo':\n\nd\n\nSkill folder: `skills"),
+        "{located}"
+    );
+    assert!(located.ends_with("\n\nBODY"), "{located}");
     assert!(skill_not_found("nope").contains("nope"));
     assert!(unknown_skill_action("x").contains("Unknown action 'x'"));
     let load_err = skill_load_error("boom");

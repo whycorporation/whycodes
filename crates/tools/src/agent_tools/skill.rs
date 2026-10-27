@@ -102,8 +102,14 @@ fn format_skill_list(skills: Vec<(&str, &str)>) -> String {
     lines.join("\n")
 }
 
-fn format_loaded_skill(name: &str, description: &str, prompt: &str) -> String {
-    format!("Loaded skill '{name}':\n\n{description}\n\n{prompt}")
+fn format_loaded_skill(skill: &whycodes_skill::Skill) -> String {
+    let (name, description, prompt) = (&skill.name, &skill.description, &skill.prompt);
+    let note = skill.location_note();
+    if note.is_empty() {
+        format!("Loaded skill '{name}':\n\n{description}\n\n{prompt}")
+    } else {
+        format!("Loaded skill '{name}':\n\n{description}\n\n{note}\n\n{prompt}")
+    }
 }
 
 fn skill_not_found(name: &str) -> String {
@@ -151,7 +157,7 @@ fn loaded_skill(result: Result<SkillRegistry, ToolResult>, name: &str) -> ToolRe
         Ok(registry) => match registry.get_ignore_ascii_case(name) {
             Some(skill) => ToolResult {
                 tool_call_id: String::new(),
-                content: format_loaded_skill(&skill.name, &skill.description, &skill.prompt),
+                content: format_loaded_skill(skill),
                 is_error: false,
             },
             None => ToolResult {

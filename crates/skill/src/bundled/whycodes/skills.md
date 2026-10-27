@@ -12,6 +12,11 @@ Where they are read from:
   those directories.
 - User: `~/.whycodes/skills/` (under `WHYCODES_HOME` when set). Loadable,
   but not listed in the system prompt.
+- Plugin packages: `skills/<name>/SKILL.md` inside `.whycodes/plugins/<id>/`
+  (listed) and `~/.whycodes/plugins/<id>/` (loadable). Their `agents/*.md`
+  become `task` subagent types.
+- A loaded `<name>/SKILL.md` names its folder (and the plugin root), so the
+  relative paths it mentions resolve.
 - Bundled: `whycodes` (this manual). Its body is a topic index; a topic is
   `read skill://whycodes/<topic>`. A project or user skill with the same
   name wins for `skill://whycodes`; topics always come from the binary.

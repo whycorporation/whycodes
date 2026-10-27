@@ -20,8 +20,9 @@
 //! You are a careful code reviewer…
 //! ```
 //!
-//! Search order, later wins on a name clash: `~/.whycodes/agents`,
-//! `~/.claude/agents`, `<project>/.claude/agents`, `<project>/.whycodes/agents`.
+//! Search order, later wins on a name clash: `~/.whycodes/plugins/*/agents`,
+//! `~/.whycodes/agents`, `~/.claude/agents`, `<project>/.whycodes/plugins/*/agents`,
+//! `<project>/.claude/agents`, `<project>/.whycodes/agents`.
 //! `.whycodes/agents/` also holds finished workers' output (`agent://<id>`);
 //! those files have no frontmatter `description` and are skipped.
 
@@ -121,12 +122,33 @@ impl CustomAgent {
     }
 }
 
-/// Definition directories, lowest precedence first.
+/// Definition directories, lowest precedence first. Plugin packages
+/// (`plugins/<id>/agents/`) rank below the hand-written folders of the same
+/// scope, so a local definition can replace a plugin's.
 pub fn dirs(project: &Path) -> Vec<PathBuf> {
-    let mut out = vec![whycodes_core::paths::config_dir().join("agents")];
+    let config = whycodes_core::paths::config_dir();
+    let mut out = plugin_agent_dirs(&config.join("plugins"));
+    out.push(config.join("agents"));
     out.extend(whycodes_core::paths::user_home().map(|h| h.join(".claude").join("agents")));
+    out.extend(plugin_agent_dirs(
+        &whycodes_core::project_dir(project).join("plugins"),
+    ));
     out.push(project.join(".claude").join("agents"));
     out.push(whycodes_core::project_dir(project).join("agents"));
+    out
+}
+
+/// `<plugins>/<id>/agents` for every plugin folder, sorted.
+fn plugin_agent_dirs(plugins: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(plugins) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path().join("agents"))
+        .filter(|p| p.is_dir())
+        .collect();
+    out.sort();
     out
 }
 
