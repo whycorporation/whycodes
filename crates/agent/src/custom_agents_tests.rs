@@ -155,6 +155,42 @@ fn project_dirs_include_both_conventions() {
 }
 
 #[test]
+fn plugin_package_personas_load_below_local_definitions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path();
+    let plugins = whycodes_core::project_dir(project).join("plugins");
+    agent_file(
+        &plugins.join("egm").join("agents"),
+        "design_critic.md",
+        "---\nname: egm-design\ndescription: from the plugin\n---\ncritic",
+    );
+    agent_file(
+        &plugins.join("egm").join("agents"),
+        "zoom_out.md",
+        "---\nname: egm-zoom-out\ndescription: plugin zoom\n---\nzoom",
+    );
+    std::fs::write(plugins.join("loose-file"), "x").unwrap();
+    std::fs::create_dir_all(plugins.join("no-agents")).unwrap();
+    agent_file(
+        &whycodes_core::project_dir(project).join("agents"),
+        "mine.md",
+        "---\nname: egm-zoom-out\ndescription: my own zoom\n---\nmine",
+    );
+
+    let d = dirs(project);
+    let plugin_dir = plugins.join("egm").join("agents");
+    let local_dir = whycodes_core::project_dir(project).join("agents");
+    let pos = |p: &PathBuf| d.iter().position(|x| x == p).unwrap();
+    assert!(pos(&plugin_dir) < pos(&local_dir));
+    assert!(!d.contains(&plugins.join("no-agents").join("agents")));
+
+    let agents = load(project);
+    let by = |n: &str| agents.iter().find(|a| a.name == n).unwrap();
+    assert_eq!(by("egm-design").description, "from the plugin");
+    assert_eq!(by("egm-zoom-out").description, "my own zoom");
+}
+
+#[test]
 fn resolve_builtin_custom_and_unknown() {
     let agents = vec![sample(None)];
     assert_eq!(resolve("explore", &agents), Ok(None));

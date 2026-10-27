@@ -105,6 +105,7 @@ pub fn whycodes_skill() -> Skill {
         prompt: whycodes_catalog_markdown(),
         tools_allowed: Vec::new(),
         file_patterns: Vec::new(),
+        dir: None,
     }
 }
 

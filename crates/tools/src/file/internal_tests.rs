@@ -58,6 +58,32 @@ fn skill_url_loads_project_skill() {
 }
 
 #[test]
+fn skill_url_names_the_folder_of_a_skill_md_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join(".claude").join("skills").join("tree");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("SKILL.md"),
+        "---\nname: tree\ndescription: d\n---\n\nRead references/x.md\n",
+    )
+    .unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy());
+    let r = read_internal("skill://tree", &ctx).unwrap();
+    assert!(!r.is_error, "{}", r.content);
+    assert!(
+        r.content
+            .starts_with("# skill://tree\nd\n\nSkill folder: `"),
+        "{}",
+        r.content
+    );
+    assert!(
+        r.content.ends_with("\n\nRead references/x.md"),
+        "{}",
+        r.content
+    );
+}
+
+#[test]
 fn agent_url_lists_and_reads() {
     let dir = tempfile::tempdir().unwrap();
     let agents = dir.path().join(".whycodes").join("agents");
