@@ -6205,16 +6205,23 @@ async fn switch_to_agent(
         let route_model = route_model.to_string();
         let bg = agent.background_registry().clone();
         let claims = agent.session_claims();
+        // Keep the loaded MCP/plugin tools, file index and approval mode: a
+        // fresh agent would otherwise start without them.
         let mut next = Agent::new(info)
             .with_config(config)
             .with_background_registry(bg)
+            .with_shared_tools(agent.shared_tools())
             .with_permission_prompter(
                 Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
             )
             .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
         next.set_route(&route_provider, &route_model);
+        next.set_approval_mode(agent.approval_mode());
         if let Some(c) = claims {
             next = next.with_session_claims(c);
+        }
+        if let Some(index) = agent.file_index() {
+            next.set_file_index(index);
         }
         *agent = next;
         agent.wire_event_sink(event_tx.clone());

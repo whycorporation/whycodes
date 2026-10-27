@@ -546,6 +546,11 @@ impl Agent {
         self.file_index = Some(index);
     }
 
+    /// The shared workspace file index, if the host started one.
+    pub fn file_index(&self) -> Option<Arc<whycodes_index::WorkspaceIndex>> {
+        self.file_index.clone()
+    }
+
     /// Load shell plugins in place (paint-then-hydrate; avoids `with_plugins` move).
     pub fn hydrate_plugins(&mut self, project_dir: Option<&std::path::Path>) {
         let mut exec = whycodes_tools::executor::ToolExecutor::new();
