@@ -1,10 +1,14 @@
 //! MCP client: stdio, Streamable HTTP, and legacy HTTP+SSE.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 
 use crate::error::{McpError, Result};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
+use tokio::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt,
+    BufReader as AsyncBufReader,
+};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tracing::{debug, info, warn};
 
@@ -17,6 +21,12 @@ use crate::types::{
 
 const PROTOCOL_VERSION: &str = "2025-03-26";
 
+/// Stderr lines kept to explain a server that exits or answers badly.
+const STDERR_TAIL_LINES: usize = 5;
+
+/// Last lines a stdio server wrote to stderr.
+type StderrTail = Arc<Mutex<VecDeque<String>>>;
+
 #[allow(clippy::large_enum_variant)]
 enum Transport {
     Stdio {
@@ -27,6 +37,7 @@ enum Transport {
         writer: ChildStdin,
         reader: AsyncBufReader<ChildStdout>,
         next_id: u64,
+        stderr_tail: StderrTail,
     },
     StreamableHttp(StreamableHttpTransport),
     LegacySse(LegacySseTransport),
@@ -50,11 +61,13 @@ impl McpClient {
         env: Option<&HashMap<String, String>>,
         cwd: Option<&str>,
     ) -> Result<Self> {
-        let mut cmd = Command::new(command);
+        // Stderr is piped, not inherited: server logs written straight to
+        // the terminal land on top of the TUI.
+        let mut cmd = Command::new(spawnable_program(command));
         cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         whycodes_core::secret_env::strip_secret_env_vars(|name| {
             cmd.env_remove(name);
@@ -72,12 +85,21 @@ impl McpClient {
             .map_err(|e| McpError::msg(&format!("failed to spawn MCP server {command:?}: {e}")))?;
         let (writer, stdout) = take_stdio_pipes(&mut child)?;
         let reader = AsyncBufReader::new(stdout);
+        let stderr_tail = StderrTail::default();
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(drain_stderr(
+                stderr,
+                command.to_string(),
+                Arc::clone(&stderr_tail),
+            ));
+        }
         let mut client = Self {
             transport: Transport::Stdio {
                 child,
                 writer,
                 reader,
                 next_id: 1,
+                stderr_tail,
             },
             capabilities: ServerCapabilities::default(),
         };
@@ -174,6 +196,7 @@ impl McpClient {
                 writer,
                 reader,
                 next_id,
+                stderr_tail,
                 ..
             } => {
                 let id = *next_id;
@@ -184,7 +207,9 @@ impl McpClient {
                 writer.write_all(line.as_bytes()).await?;
                 writer.write_all(b"\n").await?;
                 writer.flush().await?;
-                read_stdio_response(reader, id).await
+                read_stdio_response(reader, writer, id)
+                    .await
+                    .map_err(|e| with_stderr_tail(e, stderr_tail))
             }
             Transport::StreamableHttp(t) => t.send_request(method, params).await,
             Transport::LegacySse(t) => t.send_request(method, params).await,
@@ -324,27 +349,49 @@ impl McpClient {
     }
 }
 
+/// Read lines until the response to `expected_id`.
+///
+/// Servers interleave other traffic on stdout: notifications (logging,
+/// progress, list changes), their own requests (`ping`), stray log lines,
+/// and late answers to requests the caller gave up on. None of that is the
+/// response, so it is skipped (requests are answered) instead of failing
+/// the call or, for a stale id, returning another request's result.
 async fn read_stdio_response(
     reader: &mut (dyn AsyncBufRead + Send + Unpin),
+    writer: &mut (dyn AsyncWrite + Send + Unpin),
     expected_id: u64,
 ) -> Result<serde_json::Value> {
     let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .await
-        .map_err(stdio_read_failed)?;
-    if line.trim().is_empty() {
-        return Err(McpError::msg("MCP server closed stdout (empty response)"));
-    }
-    let response: JsonRpcResponse = serde_json::from_str(&line)
-        .map_err(|e| McpError::msg(&format!("failed to parse MCP response: {line}: {e}")))?;
-    if response.id != expected_id {
+    let response = loop {
+        line.clear();
+        let read = reader
+            .read_line(&mut line)
+            .await
+            .map_err(stdio_read_failed)?;
+        if read == 0 {
+            return Err(McpError::msg("MCP server closed stdout (empty response)"));
+        }
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
+            debug!(line = line.trim_end(), "MCP server wrote a non-JSON line");
+            continue;
+        };
+        if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
+            if let Some(id) = message.get("id") {
+                answer_server_request(writer, id, method).await?;
+            }
+            continue;
+        }
+        let response: JsonRpcResponse = serde_json::from_value(message)
+            .map_err(|e| McpError::msg(&format!("failed to parse MCP response: {line}: {e}")))?;
+        if response.id == expected_id {
+            break response;
+        }
         warn!(
             expected = expected_id,
             got = response.id,
-            "MCP response id mismatch"
+            "MCP response for an earlier request; skipped"
         );
-    }
+    };
     if let Some(error) = response.error {
         return Err(McpError::msg(&format!(
             "MCP error [{}]: {}",
@@ -354,6 +401,92 @@ async fn read_stdio_response(
     response
         .result
         .ok_or_else(|| McpError::msg("MCP response has no result"))
+}
+
+/// Answer a request the server sent us. Only `ping` is supported: this
+/// client advertises no capabilities, so anything else is "not found".
+async fn answer_server_request(
+    writer: &mut (dyn AsyncWrite + Send + Unpin),
+    id: &serde_json::Value,
+    method: &str,
+) -> Result<()> {
+    let reply = if method == "ping" {
+        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": {}})
+    } else {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {"code": -32601, "message": format!("method not found: {method}")},
+        })
+    };
+    writer.write_all(format!("{reply}\n").as_bytes()).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Log a stdio server's stderr and keep its last lines for errors. Reads
+/// until EOF, so a chatty server never blocks on a full pipe; lines are
+/// bytes, so non-UTF-8 output cannot stop the drain.
+async fn drain_stderr(stderr: impl AsyncRead + Unpin, command: String, tail: StderrTail) {
+    let mut lines = AsyncBufReader::new(stderr).split(b'\n');
+    while let Ok(Some(bytes)) = lines.next_segment().await {
+        let line = String::from_utf8_lossy(&bytes).trim_end().to_string();
+        debug!(server = %command, "{line}");
+        let mut tail = tail
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if tail.len() == STDERR_TAIL_LINES {
+            tail.pop_front();
+        }
+        tail.push_back(line);
+    }
+}
+
+/// `e` plus what the server last wrote to stderr, which usually says why.
+fn with_stderr_tail(e: McpError, tail: &StderrTail) -> McpError {
+    let tail = tail
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if tail.is_empty() {
+        return e;
+    }
+    let lines: Vec<&str> = tail.iter().map(String::as_str).collect();
+    McpError::msg(&format!("{e} (server stderr: {})", lines.join(" | ")))
+}
+
+/// The program to spawn for `command`.
+///
+/// Windows starts only `.exe` files by bare name, but launchers such as
+/// `npx` and `uvx` are `.cmd` scripts, so a bare name is resolved through
+/// `PATH` and `PATHEXT` the way a shell would.
+#[cfg(windows)]
+fn spawnable_program(command: &str) -> std::path::PathBuf {
+    resolve_on_path(
+        command,
+        &std::env::var_os("PATH").unwrap_or_default(),
+        &std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into()),
+    )
+}
+
+#[cfg(windows)]
+fn resolve_on_path(command: &str, dirs: &std::ffi::OsStr, exts: &str) -> std::path::PathBuf {
+    let path = std::path::Path::new(command);
+    if path.extension().is_some() || path.components().count() > 1 {
+        return path.to_path_buf();
+    }
+    std::env::split_paths(dirs)
+        .flat_map(|dir| {
+            exts.split(';')
+                .filter(|e| !e.is_empty())
+                .map(move |ext| dir.join(format!("{command}{ext}")))
+        })
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+#[cfg(not(windows))]
+fn spawnable_program(command: &str) -> &str {
+    command
 }
 
 fn tools_list_failed(e: McpError) -> McpError {

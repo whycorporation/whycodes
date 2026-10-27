@@ -13,31 +13,43 @@ fn stdout_of(line: &str) -> Cursor<Vec<u8>> {
 
 #[tokio::test]
 async fn read_stdio_response_ok_error_empty_and_mismatch() {
+    let mut out = Vec::new();
     let mut ok = stdout_of("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n");
-    let value = read_stdio_response(&mut ok, 1).await.unwrap();
+    let value = read_stdio_response(&mut ok, &mut out, 1).await.unwrap();
     assert_eq!(value["ok"], true);
 
-    let mut mismatch = stdout_of("{\"jsonrpc\":\"2.0\",\"id\":9,\"result\":{\"ok\":true}}\n");
-    let value = read_stdio_response(&mut mismatch, 1).await.unwrap();
-    assert_eq!(value["ok"], true);
+    let mut stale_only = stdout_of("{\"jsonrpc\":\"2.0\",\"id\":9,\"result\":{\"ok\":true}}\n");
+    let e = read_stdio_response(&mut stale_only, &mut out, 1)
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("closed stdout"), "{e}");
 
     let mut err = stdout_of(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"nope\"}}\n",
     );
-    let e = read_stdio_response(&mut err, 1).await.unwrap_err();
+    let e = read_stdio_response(&mut err, &mut out, 1)
+        .await
+        .unwrap_err();
     assert!(e.to_string().contains("nope"), "{e}");
 
     let mut empty = stdout_of("");
-    let e = read_stdio_response(&mut empty, 1).await.unwrap_err();
+    let e = read_stdio_response(&mut empty, &mut out, 1)
+        .await
+        .unwrap_err();
     assert!(e.to_string().to_lowercase().contains("empty"), "{e}");
 
-    let mut bad = stdout_of("not-json\n");
-    let e = read_stdio_response(&mut bad, 1).await.unwrap_err();
+    let mut bad = stdout_of("{\"jsonrpc\":\"2.0\",\"id\":\"one\"}\n");
+    let e = read_stdio_response(&mut bad, &mut out, 1)
+        .await
+        .unwrap_err();
     assert!(e.to_string().contains("parse"), "{e}");
 
     let mut no_result = stdout_of("{\"jsonrpc\":\"2.0\",\"id\":1}\n");
-    let e = read_stdio_response(&mut no_result, 1).await.unwrap_err();
+    let e = read_stdio_response(&mut no_result, &mut out, 1)
+        .await
+        .unwrap_err();
     assert!(e.to_string().contains("no result"), "{e}");
+    assert!(out.is_empty(), "nothing to answer");
 
     assert_eq!(python_bin(true), "/usr/bin/python3");
     assert_eq!(python_bin(false), "python3");
@@ -103,6 +115,89 @@ async fn read_stdio_response_ok_error_empty_and_mismatch() {
             .to_string()
             .contains("failed to read response")
     );
+}
+
+#[tokio::test]
+async fn read_stdio_response_skips_traffic_that_is_not_the_answer() {
+    let mut stdout = stdout_of(concat!(
+        "Server starting (log on stdout)\n",
+        "\n",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{\"data\":\"hi\"}}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":\"r1\",\"method\":\"roots/list\"}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"late\":true}}\n",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"ok\":true}}\n",
+    ));
+    let mut out = Vec::new();
+    let value = read_stdio_response(&mut stdout, &mut out, 2).await.unwrap();
+    assert_eq!(value["ok"], true);
+
+    let replies: Vec<serde_json::Value> = String::from_utf8(out)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    assert_eq!(replies[0]["id"], 7);
+    assert_eq!(replies[0]["result"], serde_json::json!({}));
+    assert_eq!(replies[1]["id"], "r1");
+    assert_eq!(replies[1]["error"]["code"], -32601);
+}
+
+#[tokio::test]
+async fn stderr_drain_keeps_the_last_lines_for_errors() {
+    let tail = StderrTail::default();
+    let mut stderr = b"one\ntwo\nthree\n\xff bad utf8\nfour\nfive\nsix".to_vec();
+    stderr.extend_from_slice(b"\n");
+    drain_stderr(Cursor::new(stderr), "srv".into(), Arc::clone(&tail)).await;
+    let kept: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
+    assert_eq!(kept, ["three", "\u{fffd} bad utf8", "four", "five", "six"]);
+
+    let e = with_stderr_tail(McpError::msg("closed"), &tail).to_string();
+    assert!(e.starts_with("closed (server stderr: three |"), "{e}");
+    assert!(e.ends_with("| six)"), "{e}");
+    let quiet = with_stderr_tail(McpError::msg("closed"), &StderrTail::default());
+    assert_eq!(quiet.to_string(), McpError::msg("closed").to_string());
+}
+
+#[tokio::test]
+async fn stdio_error_names_what_the_server_wrote_to_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("dies.py");
+    std::fs::write(
+        &script,
+        // The sleep lets the drain read stderr before stdout closes.
+        "import sys, time\nsys.stdin.readline()\nsys.stderr.write('npm ERR! 404 no such package\\n')\nsys.stderr.flush()\ntime.sleep(0.5)\n",
+    )
+    .unwrap();
+    let err = McpClient::connect_stdio(python(), &["-u", script.to_str().unwrap()])
+        .await
+        .err()
+        .expect("server exits before answering")
+        .to_string();
+    assert!(err.contains("npm ERR! 404 no such package"), "{err}");
+}
+
+#[cfg(windows)]
+#[test]
+fn spawnable_program_resolves_cmd_launchers_on_windows() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("fakelaunch"), "#!/bin/sh\n").unwrap();
+    std::fs::write(dir.path().join("fakelaunch.cmd"), "@echo off\r\n").unwrap();
+    let path = dir.path().as_os_str();
+    let found = resolve_on_path("fakelaunch", path, ".EXE;.CMD;");
+    let missing = resolve_on_path("no-such-launcher", path, ".EXE;.CMD");
+    let explicit = resolve_on_path("tool.exe", path, ".EXE;.CMD");
+    assert!(spawnable_program("cmd").is_file(), "cmd.exe is on PATH");
+    assert!(
+        found
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with("fakelaunch.cmd"),
+        "{found:?}"
+    );
+    assert_eq!(missing, std::path::PathBuf::from("no-such-launcher"));
+    assert_eq!(explicit, std::path::PathBuf::from("tool.exe"));
 }
 
 fn python() -> &'static str {

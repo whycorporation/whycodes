@@ -427,6 +427,40 @@ async fn register_stdio_list_tools_error_skips_server() {
 }
 
 #[tokio::test]
+async fn a_server_that_never_answers_is_dropped_after_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let silent = write_stdio_script(dir.path(), "import time\ntime.sleep(60)\n");
+    let echo_dir = tempfile::tempdir().unwrap();
+    let echo = write_stdio_script(echo_dir.path(), &stdio_echo_script());
+    let mut executor = ToolExecutor::new();
+    let mut config = Config::default();
+    config
+        .mcp_servers
+        .insert("silent".into(), stdio_config(dir.path(), &silent));
+    config
+        .mcp_servers
+        .insert("ghost".into(), stdio_config(echo_dir.path(), &echo));
+    let started = std::time::Instant::now();
+    let (count, servers) =
+        register_mcp_tools_within(&mut executor, &config, Duration::from_secs(5)).await;
+    assert!(started.elapsed() < Duration::from_secs(30));
+    assert!(count >= 1, "the answering server still loads");
+    assert_eq!(servers.len(), 1);
+    assert_eq!(servers[0].name, "ghost");
+    assert!(executor.get("ghost_echo").is_some());
+
+    let err = start_server(
+        &stdio_config(dir.path(), &silent),
+        Duration::from_millis(300),
+    )
+    .await
+    .err()
+    .expect("times out")
+    .to_string();
+    assert!(err.contains("no answer within"), "{err}");
+}
+
+#[tokio::test]
 async fn register_unresolved_transport_logs_err_detail() {
     let mut executor = ToolExecutor::new();
     let mut config = Config::default();
