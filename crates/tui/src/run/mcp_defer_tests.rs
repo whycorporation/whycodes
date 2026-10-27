@@ -164,6 +164,53 @@ fn mcp_slash_commands_read_the_servers() {
 }
 
 #[tokio::test]
+async fn switching_agent_keeps_loaded_tools_index_and_approval_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(mut config) = echo_config(dir.path()) else {
+        return;
+    };
+    let mut rt = test_runtime();
+    let mut mcp = PendingMcp::start(&mut rt, &config).await;
+    mcp.wait(&mut app(), &mut rt, &mut [], Duration::from_secs(30))
+        .await;
+    assert_eq!(rt.agent.mcp_servers().len(), 1);
+    rt.agent
+        .set_file_index(whycodes_index::WorkspaceIndex::start(vec![
+            dir.path().to_path_buf(),
+        ]));
+    rt.agent
+        .set_approval_mode(whycodes_core::types::ApprovalMode::Manual);
+    let mut plan = rt.agent.info.clone();
+    plan.name = "plan".into();
+    config.agents.push(plan);
+
+    let (perm, _) = whycodes_agent::permission::ChannelPermissionPrompter::new();
+    let (question, _) = whycodes_agent::ChannelQuestionPrompter::new(None);
+    let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = app();
+    crate::run::switch_to_agent(
+        &mut app,
+        &mut rt.agent,
+        &mut rt.session,
+        &config,
+        dir.path(),
+        std::sync::Arc::new(perm),
+        std::sync::Arc::new(question),
+        &event_tx,
+        "plan",
+        true,
+    )
+    .await;
+    assert_eq!(rt.agent.info.name, "plan");
+    assert_eq!(rt.agent.mcp_servers().len(), 1, "MCP tools survive Ctrl+T");
+    assert!(rt.agent.file_index().is_some());
+    assert_eq!(
+        rt.agent.approval_mode(),
+        whycodes_core::types::ApprovalMode::Manual
+    );
+}
+
+#[tokio::test]
 async fn wait_gives_up_after_the_limit_and_poll_installs_later() {
     let dir = tempfile::tempdir().unwrap();
     let slow = format!(

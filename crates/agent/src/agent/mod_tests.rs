@@ -2049,9 +2049,11 @@ fn set_file_index_mutates_in_place() {
     let mut a = test_agent();
     let dir = tempfile::tempdir().unwrap();
     let idx = whycodes_index::WorkspaceIndex::start(vec![dir.path().to_path_buf()]);
+    assert!(a.file_index().is_none());
     a.set_file_index(idx);
     let session = Session::new(dir.path().to_path_buf(), "sys".into());
     assert!(a.tool_context(&session).file_index.is_some());
+    assert!(a.file_index().is_some());
 }
 
 #[test]
