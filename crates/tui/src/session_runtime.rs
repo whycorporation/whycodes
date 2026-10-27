@@ -281,6 +281,14 @@ impl SessionRuntime {
         let Some(db) = self.db.as_ref() else {
             return;
         };
+        // An untouched session (`/new`, Ctrl+N) holds nothing to resume and
+        // would only add an empty row to `/resume`. A stored session emptied
+        // by undo still saves.
+        if self.session.messages.is_empty()
+            && !matches!(db.get_session(&self.session.id), Ok(Some(_)))
+        {
+            return;
+        }
         if let Err(e) = self.session.save_to_db(db) {
             whycodes_core::logging::emit_sid(
                 "session",

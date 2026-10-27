@@ -138,6 +138,30 @@ fn persist_is_a_noop_without_a_database() {
     rt.persist("coverage");
 }
 
+#[test]
+fn persist_skips_an_untouched_session_but_saves_an_emptied_stored_one() {
+    let mut rt = make_runtime();
+    rt.db = Some(whycodes_storage::db::Database::open_in_memory().unwrap());
+    let stored = |rt: &SessionRuntime| {
+        let db = rt.db.as_ref().unwrap();
+        (
+            db.get_session(&rt.session.id).unwrap().is_some(),
+            db.message_count(&rt.session.id).unwrap(),
+        )
+    };
+
+    rt.persist("exit");
+    assert_eq!(stored(&rt), (false, 0), "no row for an untouched session");
+
+    rt.session.add_user_message("hi");
+    rt.persist("ok");
+    assert_eq!(stored(&rt), (true, 1));
+
+    rt.session.messages.clear();
+    rt.persist("exit");
+    assert_eq!(stored(&rt), (true, 0), "the emptied transcript is saved");
+}
+
 // ── helpers ────────────────────────────────────────────────────────
 
 /// Point the data dir at a throwaway temp dir once per test binary so
