@@ -188,6 +188,8 @@ impl Agent {
         let mut compact_paused = false;
         let mut overflow_retries: u32 = 0;
         let mut harmony_retries: u32 = 0;
+        // Steps in a row cut off at the output token limit.
+        let mut cut_offs: u32 = 0;
         // Mid-stream drop retry (`stream_retry_secs`): first drop + count.
         let mut stream_drop_t0: Option<Instant> = None;
         let mut stream_drops: usize = 0;
@@ -375,6 +377,7 @@ impl Agent {
             let mut turn_usage = whycodes_core::types::Usage::default();
             let mut assembler = ToolCallAssembler::new();
             let mut speculative_reads: Vec<crate::speculative_read::SpeculativeRead> = Vec::new();
+            let mut hit_output_limit = false;
             let step_t0 = Instant::now();
 
             // Professional transport: classify + full-jitter backoff + Retry-After.
@@ -721,7 +724,9 @@ impl Agent {
                         turn_usage.absorb_stream_cache(creation_input_tokens, read_input_tokens);
                     }
                     StreamEvent::MessageStart { .. } => skip_event(),
-                    StreamEvent::MessageDelta { .. } => skip_event(),
+                    StreamEvent::MessageDelta { delta } => {
+                        hit_output_limit |= is_output_limit_stop(&delta);
+                    }
                     StreamEvent::Error { message } => {
                         if whycodes_llm::classify_message(&message).kind
                             == whycodes_llm::ErrorKind::ContextOverflow
@@ -756,8 +761,27 @@ impl Agent {
             }
 
             // Merge streamed argument fragments into parsed JSON objects.
-            let tool_calls = assembler.finish();
+            let mut tool_calls = assembler.finish();
             let step_ms = step_t0.elapsed().as_millis();
+            // A response cut off at the output token limit is not an answer,
+            // and its last tool call may hold half its arguments: run none of
+            // them and ask the model to go on from where it stopped.
+            let cut_off = hit_output_limit && cut_offs < MAX_CUT_OFFS;
+            if cut_off {
+                cut_offs += 1;
+                tracing::warn!(
+                    dropped_tool_calls = tool_calls.len(),
+                    cut_offs,
+                    "response cut off at the output token limit; continuing"
+                );
+                emit(
+                    &events,
+                    TurnEvent::Status("Response hit the output token limit — continuing…".into()),
+                );
+                tool_calls.clear();
+            } else {
+                cut_offs = 0;
+            }
 
             if harmony
                 && let Some(hit) = harmony_leak(&accumulated_text, &thinking_acc, &tool_calls)
@@ -785,6 +809,7 @@ impl Agent {
 
             if let Some(request) = &cacheable
                 && !cache_hit
+                && !cut_off
                 && tool_calls.is_empty()
                 && !accumulated_text.trim().is_empty()
             {
@@ -845,6 +870,12 @@ impl Agent {
             // APIs reject assistant messages with no text/tool_calls.
             if !blocks.is_empty() {
                 session.add_assistant_message(blocks);
+            }
+
+            if cut_off {
+                crate::speculative_read::abort_all(&mut speculative_reads);
+                session.add_user_message(CUT_OFF_NOTE);
+                continue;
             }
 
             if tool_calls.is_empty() {
@@ -1306,6 +1337,23 @@ fn read_path_for<'a>(
 
 /// Result body for a call the turn stopped before it could answer.
 const NOT_RUN: &str = "Tool not run: the turn was stopped before this call finished.";
+
+/// Continue after this many cut-off steps in a row, then accept the reply.
+const MAX_CUT_OFFS: u32 = 3;
+
+const CUT_OFF_NOTE: &str = "Your last response was cut off at the output token limit, so none of \
+     its tool calls ran. Continue from where you stopped. Keep each response shorter: split a \
+     large file write into several smaller edits.";
+
+/// Whether a stream's stop reason says the output token limit cut it off:
+/// `length` (OpenAI-compatible), `max_tokens` (Anthropic), `MAX_TOKENS` (Google).
+fn is_output_limit_stop(delta: &serde_json::Value) -> bool {
+    ["stop_reason", "finishReason"].iter().any(|key| {
+        delta[key].as_str().is_some_and(|r| {
+            r.eq_ignore_ascii_case("length") || r.eq_ignore_ascii_case("max_tokens")
+        })
+    })
+}
 
 /// Answer every call of an interrupted batch, then hand back `err`.
 ///

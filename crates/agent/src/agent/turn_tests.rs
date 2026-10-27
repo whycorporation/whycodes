@@ -492,6 +492,80 @@ async fn extended_stream_events_and_usage() {
 }
 
 #[tokio::test]
+async fn cut_off_step_runs_no_tool_and_continues() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = batched([
+        vec![
+            ScriptedStep::ToolCall {
+                id: "c1".into(),
+                name: "write".into(),
+                input: json!({"path": "out.txt", "content": "half of the f"}),
+            },
+            ScriptedStep::MessageDelta(json!({"stop_reason": "length"})),
+        ],
+        vec![
+            ScriptedStep::Text("finished after the cut".into()),
+            ScriptedStep::MessageDelta(json!({"stop_reason": "stop"})),
+        ],
+    ]);
+    let mut session = session_at(dir.path(), "please write out.txt with the full text");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", Some(8))
+        .await
+        .expect("turn");
+    assert!(out.contains("finished after the cut"), "{out}");
+    assert!(
+        !dir.path().join("out.txt").exists(),
+        "a cut-off call never runs"
+    );
+    let notes = session
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::User && m.content.as_text() == Some(CUT_OFF_NOTE))
+        .count();
+    assert_eq!(notes, 1);
+}
+
+#[tokio::test]
+async fn repeated_cut_offs_stop_after_the_limit() {
+    let agent = repeating([
+        ScriptedStep::Text("still going".into()),
+        ScriptedStep::MessageDelta(json!({"finishReason": "MAX_TOKENS"})),
+    ]);
+    let mut session = session_user("please explain the whole module in detail");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", Some(20))
+        .await
+        .expect("turn");
+    assert!(out.contains("still going"), "{out}");
+    let notes = session
+        .messages
+        .iter()
+        .filter(|m| m.content.as_text() == Some(CUT_OFF_NOTE))
+        .count();
+    assert_eq!(notes, MAX_CUT_OFFS as usize);
+}
+
+#[test]
+fn output_limit_stop_reasons() {
+    for delta in [
+        json!({"stop_reason": "length"}),
+        json!({"stop_reason": "max_tokens"}),
+        json!({"finishReason": "MAX_TOKENS"}),
+    ] {
+        assert!(is_output_limit_stop(&delta), "{delta}");
+    }
+    for delta in [
+        json!({"stop_reason": "stop"}),
+        json!({"stop_reason": "end_turn"}),
+        json!({"finishReason": "STOP"}),
+        json!({"x": 1}),
+    ] {
+        assert!(!is_output_limit_stop(&delta), "{delta}");
+    }
+}
+
+#[tokio::test]
 async fn tool_use_delta_then_text() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
