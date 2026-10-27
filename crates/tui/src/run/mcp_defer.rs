@@ -1,12 +1,20 @@
 //! MCP servers connect in the background so the first frame and the event
-//! loop never wait on a slow or hanging server. The first turn still waits
-//! for them, so it sees the same tools as before.
+//! loop never wait on a slow or hanging server. A turn or `/mcp` waits a
+//! short while for them; a slower server's tools join a later turn.
+
+use std::time::Duration;
 
 use tokio::task::JoinHandle;
 use whycodes_agent::agent::McpLoad;
 use whycodes_config::Config;
 
+use crate::app::TuiApp;
 use crate::session_runtime::SessionRuntime;
+
+/// Longest a turn or `/mcp` waits for servers still connecting. The load
+/// itself may take up to a minute (`npx -y` downloads), and a frozen prompt
+/// for that long is worse than a first turn without those tools.
+pub(super) const TURN_WAIT: Duration = Duration::from_secs(5);
 
 /// A spawned [`whycodes_agent::agent::Agent::begin_mcp_load`], if any.
 #[derive(Default)]
@@ -33,10 +41,31 @@ impl PendingMcp {
         }
     }
 
-    /// Wait for the servers before a turn needs their tools.
-    pub(super) async fn wait(&mut self, rt: &mut SessionRuntime, runtimes: &mut [SessionRuntime]) {
-        if let Some(handle) = self.0.take() {
-            install(handle.await, rt, runtimes);
+    /// Wait up to `limit` for the servers before a turn or `/mcp` needs
+    /// them. Still connecting after that: tell the user and let [`Self::poll`]
+    /// install them later.
+    pub(super) async fn wait(
+        &mut self,
+        app: &mut TuiApp,
+        rt: &mut SessionRuntime,
+        runtimes: &mut [SessionRuntime],
+        limit: Duration,
+    ) {
+        let Some(handle) = self.0.as_mut() else {
+            return;
+        };
+        match tokio::time::timeout(limit, handle).await {
+            Ok(joined) => {
+                self.0 = None;
+                install(joined, rt, runtimes);
+            }
+            Err(elapsed) => {
+                tracing::debug!(%elapsed, "MCP servers still connecting");
+                app.toasts.push(
+                    crate::toast::ToastKind::Info,
+                    "MCP servers still connecting — their tools join a later turn",
+                );
+            }
         }
     }
 }

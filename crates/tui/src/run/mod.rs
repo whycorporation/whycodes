@@ -2186,7 +2186,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     continue;
                 }
 
-                mcp.wait(&mut rt, &mut runtimes).await;
+                mcp.wait(&mut app, &mut rt, &mut runtimes, mcp_defer::TURN_WAIT)
+                    .await;
                 spawn_local_turn(
                     &mut app,
                     &mut rt,
@@ -2347,7 +2348,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                             && slash_command_from_prompt(&app)
                                 .is_some_and(|cmd| mcp_defer::reads_mcp_servers(&cmd))
                         {
-                            mcp.wait(&mut rt, &mut runtimes).await;
+                            mcp.wait(&mut app, &mut rt, &mut runtimes, mcp_defer::TURN_WAIT)
+                                .await;
                         }
                         if apply_idle_loop_key(
                             action,

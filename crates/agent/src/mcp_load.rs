@@ -2,10 +2,12 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use whycodes_config::{Config, McpServerConfig, McpTransportKind};
+use whycodes_mcp::McpTool;
 use whycodes_mcp::client::McpClient;
 use whycodes_tools::executor::ToolExecutor;
 use whycodes_tools::mcp::{McpCaller, McpToolBridge};
@@ -76,8 +78,21 @@ pub async fn register_mcp_tools(
     executor: &mut ToolExecutor,
     config: &Config,
 ) -> (usize, Vec<McpServerHandle>) {
-    // Connect all servers concurrently so multi-MCP cold start is max(latency),
-    // not sum — list_tools still runs after each connect succeeds.
+    register_mcp_tools_within(executor, config, SERVER_START_TIMEOUT).await
+}
+
+/// How long one server may take to connect and list its tools. `npx -y`
+/// can download the server first, so this is generous; nothing waits on it
+/// in the foreground for long (the TUI loads servers in the background).
+const SERVER_START_TIMEOUT: Duration = Duration::from_secs(60);
+
+async fn register_mcp_tools_within(
+    executor: &mut ToolExecutor,
+    config: &Config,
+    limit: Duration,
+) -> (usize, Vec<McpServerHandle>) {
+    // Start all servers concurrently so multi-MCP cold start is
+    // max(latency), not sum.
     let data_dir = whycodes_core::paths::data_dir();
     let connect_futs: Vec<_> = config
         .mcp_servers
@@ -88,7 +103,7 @@ pub async fn register_mcp_tools(
             let data_dir = data_dir.clone();
             async move {
                 let server = with_oauth_header(&server_name, server, &data_dir).await;
-                let result = connect_mcp_server(&server).await;
+                let result = start_server(&server, limit).await;
                 (server_name, server, result)
             }
         })
@@ -99,19 +114,9 @@ pub async fn register_mcp_tools(
     let mut servers = Vec::new();
     for (server_name, server, result) in connected {
         match result {
-            Ok(client) => {
+            Ok((client, tools)) => {
                 let transport = client.transport_name();
                 let client = Arc::new(Mutex::new(client));
-                let tools = {
-                    let mut c = client.lock().await;
-                    match c.list_tools().await {
-                        Ok(t) => t,
-                        Err(e) => {
-                            warn!(server = %server_name, error = %e, "MCP tools/list failed");
-                            continue;
-                        }
-                    }
-                };
                 servers.push(McpServerHandle {
                     name: server_name.clone(),
                     client: Arc::clone(&client),
@@ -167,6 +172,22 @@ pub async fn register_mcp_tools(
     }
     count += crate::mcp_content::register_resource_tools(executor, &servers).await;
     (count, servers)
+}
+
+/// Connect `server` and list its tools, giving up after `limit` so a server
+/// that never answers cannot hold the others (or a turn waiting on them).
+async fn start_server(
+    server: &McpServerConfig,
+    limit: Duration,
+) -> anyhow::Result<(McpClient, Vec<McpTool>)> {
+    let start = async {
+        let mut client = connect_mcp_server(server).await?;
+        let tools = client.list_tools().await?;
+        anyhow::Ok((client, tools))
+    };
+    tokio::time::timeout(limit, start)
+        .await
+        .map_err(|_| anyhow::anyhow!("no answer within {} s", limit.as_secs_f32()))?
 }
 
 /// Add a stored OAuth bearer (`whycodes mcp login`) to a remote server's
