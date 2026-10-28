@@ -84,7 +84,7 @@ default `core` profile, are deferred like every non-core tool
 (`crates/tools/src/profile.rs:53-67`); they enter the array only after
 `tool_search select` or with `tool_profile = "full"`. There is no deferred-tool
 list in the system prompt: the catalog is returned by `tool_search list`
-(`crates/agent/src/agent/dispatch.rs:308-340`); `prompts/build.txt:39` only
+(`crates/agent/src/agent/dispatch.rs:308-340`); `prompts/build.txt:45` only
 mentions `tool_search`.
 
 **Messages** — the session history, then request-time suffixes appended to
