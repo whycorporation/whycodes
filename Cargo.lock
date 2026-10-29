@@ -162,6 +162,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ariadne"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8454c8a44ce2cb9cc7e7fae67fc6128465b343b92c6631e94beca3c8d1524ea5"
+dependencies = [
+ "unicode-width 0.2.2",
+ "yansi",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4489,9 +4499,9 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sed"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19bce1f582ae9c42585d227c1d18cd909e9b532f471dffb386333d4685fa8cab"
+checksum = "b908cd347ea83fee7c9fdb621e4dccdd6612d9962da2be03a846be2e6d83f758"
 dependencies = [
  "clap",
  "clap_complete",
@@ -4507,7 +4517,8 @@ dependencies = [
  "tempfile",
  "terminal_size",
  "textwrap",
- "uucore 0.10.0",
+ "unicode-width 0.2.2",
+ "uucore 0.12.0",
 ]
 
 [[package]]
@@ -6137,7 +6148,6 @@ dependencies = [
  "clap",
  "fluent",
  "fluent-syntax",
- "libc",
  "nix 0.31.3",
  "os_display",
  "rustc-hash",
@@ -6155,6 +6165,7 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f24a5910ebbf2c0baf486a9125705f8e026a8f7741a3ea8cf5eca3c9257c9bdf"
 dependencies = [
+ "ariadne",
  "bigdecimal",
  "bstr",
  "clap",
@@ -7350,6 +7361,12 @@ checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
 dependencies = [
  "linked-hash-map",
 ]
+
+[[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yoke"
