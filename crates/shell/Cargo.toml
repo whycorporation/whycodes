@@ -83,11 +83,9 @@ uu_tr = "=0.12.0"
 uu_uniq = "=0.12.0"
 uu_wc = "=0.12.0"
 findutils = "=0.10.0"
-sed = "=0.2.0"
-# sed 0.2 is built on uucore 0.10; only to set its utility-name mode.
-uucore_sed = { package = "uucore", version = "=0.10.0" }
+sed = "=0.3.0"
 tracing.workspace = true
-diffutils = "=0.5.0"
+diffutils = "=0.6.0"
 
 [dev-dependencies]
 tempfile.workspace = true

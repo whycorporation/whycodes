@@ -101,9 +101,9 @@ fn flush_stdout() {
 }
 
 fn sed(args: Vec<OsString>) -> i32 {
-    // sed links its own uucore line; it names itself from argv[1] too.
-    uucore_sed::set_utility_is_second_arg();
-    uucore_sed::panic::mute_sigpipe_panic();
+    // sed names itself from argv[1] too; it ships no Fluent bundle.
+    uucore::set_utility_is_second_arg();
+    uucore::panic::mute_sigpipe_panic();
     let code = sed::sed::uumain(gnu_in_place(args).into_iter());
     flush_stdout();
     code
