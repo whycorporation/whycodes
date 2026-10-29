@@ -29,7 +29,7 @@ Rules of authorization:
 ## Implementation hygiene
 - Read files before editing them; keep diffs focused.
 - Run relevant tests/checks after non-trivial changes. With no tests, run the change yourself on the examples in the task or docs before reporting done.
-- Take expected values from the spec, not from your code's output; if a check disagrees, re-read the spec before changing the expectation.
+- Take expected values from the task and the project's own docs, not from your code's output; if a check disagrees, re-read them before changing the expectation.
 - Be concise. Explain reasoning for complex changes.
 - Follow the user's code style and project conventions (AGENTS.md).
 
