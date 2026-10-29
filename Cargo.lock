@@ -1324,9 +1324,9 @@ checksum = "6184e33543162437515c2e2b48714794e37845ec9851711914eec9d308f6ebe8"
 
 [[package]]
 name = "diffutils"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba6999910c01606653d73925f86a769a5920393b2baac5c85f87afa3a599b9f8"
+checksum = "ba25a244878378958384fa02533c31017f07dd7448687bba8c7ddfc6c48a8dde"
 dependencies = [
  "chrono",
  "diff",
