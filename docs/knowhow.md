@@ -1460,8 +1460,10 @@ prefill.
 always syncs the meter from the live transcript. Last-step usage still
 updates the meter *during* the stream.
 
-**Prevention:** OpenAI-family `cached_tokens` must never become Anthropic
-`cache_read_input_tokens`. Mutating compact/prune must leave `token_cache`
+**Prevention:** OpenAI-family `cached_tokens` must never be added on top of
+`input_tokens`: either split it out (`input = prompt − cached`, as
+chat-completions `split_prompt` does since 2026-10-30) or leave the cache
+fields unset (Codex). Mutating compact/prune must leave `token_cache`
 valid. Do not skip transcript sync at turn end because billed usage exists.
 
 ### 2026-08-30 — Question popup Esc / `[✗]` left the agent hung (issue #41)

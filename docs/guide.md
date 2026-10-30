@@ -223,6 +223,8 @@ whycodes slop --base main
 whycodes slop --json           # scripts / CI
 ```
 
+Untracked files count unless `.gitignore` excludes them; untracked files
+under `.whycodes/` (todos, scratch logs, tool artifacts) never count.
 TUI and `--plain` also have `/slop` (optional git ref after the command).
 Headless `generate --format json` / `stream-json` attach a `slop` object on
 the final `result` event when the turn mutated the worktree.

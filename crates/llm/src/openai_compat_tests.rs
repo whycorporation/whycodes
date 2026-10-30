@@ -632,18 +632,69 @@ fn truncated_tool_arguments_yield_empty_object() {
 }
 
 #[test]
-fn usage_from_chat_completion_ignores_openai_cached_subset() {
-    // cached_tokens is inside prompt_tokens — must not become additive cache_read.
+fn usage_from_chat_completion_splits_the_cached_subset_out() {
+    // cached_tokens is inside prompt_tokens: it moves to cache_read, so the
+    // total still equals prompt + completion.
     let usage = usage_from_chat_completion(&json!({
         "prompt_tokens": 1200,
         "completion_tokens": 40,
         "prompt_tokens_details": { "cached_tokens": 900 },
     }));
-    assert_eq!(usage.input_tokens, 1200);
+    assert_eq!(usage.input_tokens, 300);
     assert_eq!(usage.output_tokens, 40);
-    assert_eq!(usage.cache_read_input_tokens, None);
+    assert_eq!(usage.cache_read_input_tokens, Some(900));
     assert_eq!(usage.cache_creation_input_tokens, None);
     assert_eq!(usage.total(), 1240);
+
+    // DeepSeek's field; a cached count above the prompt is clamped.
+    let deepseek = usage_from_chat_completion(&json!({
+        "prompt_tokens": 100, "completion_tokens": 1, "prompt_cache_hit_tokens": 60,
+    }));
+    assert_eq!(
+        (deepseek.input_tokens, deepseek.cache_read_input_tokens),
+        (40, Some(60))
+    );
+    let clamped = usage_from_chat_completion(&json!({
+        "prompt_tokens": 10, "prompt_tokens_details": { "cached_tokens": 50 },
+    }));
+    assert_eq!((clamped.input_tokens, clamped.total()), (0, 10));
+
+    let uncached = usage_from_chat_completion(&json!({ "prompt_tokens": 5 }));
+    assert_eq!(uncached.cache_read_input_tokens, None);
+}
+
+#[test]
+fn stream_usage_reports_cached_prompt_as_a_cache_read() {
+    use whycodes_core::types::StreamEvent;
+    let event = json!({
+        "choices": [],
+        "usage": {
+            "prompt_tokens": 162, "completion_tokens": 33,
+            "prompt_tokens_details": { "cached_tokens": 128 }
+        }
+    });
+    assert!(matches!(
+        stream_usage_from_chunk(&event),
+        Some(StreamEvent::Usage {
+            input_tokens: 34,
+            output_tokens: 33
+        })
+    ));
+    assert!(matches!(
+        stream_cache_from_chunk(&event),
+        Some(StreamEvent::CacheUsage {
+            creation_input_tokens: 0,
+            read_input_tokens: 128
+        })
+    ));
+    // A fully cached prompt is still a usage event.
+    let all_cached = json!({ "usage": {
+        "prompt_tokens": 8, "completion_tokens": 0,
+        "prompt_tokens_details": { "cached_tokens": 8 }
+    }});
+    assert!(stream_usage_from_chunk(&all_cached).is_some());
+    assert!(stream_cache_from_chunk(&json!({ "choices": [] })).is_none());
+    assert!(stream_cache_from_chunk(&json!({ "usage": { "prompt_tokens": 3 } })).is_none());
 }
 
 #[test]
@@ -972,6 +1023,35 @@ async fn chat_sse_reports_the_finish_reason() {
         }
     }
     assert_eq!(reasons, ["length"]);
+}
+
+#[tokio::test]
+async fn chat_sse_reports_cached_prompt_tokens() {
+    let body = concat!(
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":162,\"completion_tokens\":33,",
+        "\"prompt_tokens_details\":{\"cached_tokens\":128}}}\n",
+        "data: [DONE]\n",
+    );
+    let mut stream = chat_sse_from_bytes(scripted_bytes([Ok(body.as_bytes().to_vec())]), "openai");
+    let mut usage = whycodes_core::types::Usage::default();
+    while let Some(ev) = stream.next().await {
+        match ev.unwrap() {
+            StreamEvent::Usage {
+                input_tokens,
+                output_tokens,
+            } => usage.absorb_stream(input_tokens, output_tokens),
+            StreamEvent::CacheUsage {
+                creation_input_tokens,
+                read_input_tokens,
+            } => usage.absorb_stream_cache(creation_input_tokens, read_input_tokens),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        (usage.input_tokens, usage.cache_read_input_tokens),
+        (34, Some(128))
+    );
+    assert_eq!(usage.total(), 195);
 }
 
 /// (thinking, text) of a whole SSE body.

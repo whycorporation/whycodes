@@ -27,6 +27,25 @@ fn test_deepseek_r1() {
 }
 
 #[test]
+fn test_glm_catalog() {
+    let caps = detect_capabilities("zcode", "GLM-5.3-flash");
+    assert!(caps.tools && caps.thinking && !caps.vision);
+    assert_eq!(caps.context_window, 200_000);
+    for (model, window) in [
+        ("glm-4.5-air", 128_000),
+        ("z-ai/glm-4.6", 200_000),
+        ("glm-4.7", 200_000),
+        ("glm-5", 200_000),
+    ] {
+        assert_eq!(known_context_window(model), Some(window), "{model}");
+    }
+    // Vision, older and unparsed ids keep the generic fallback.
+    for model in ["glm-4.5v", "glm-4", "glm-4.0", "glm-x.1", "chatglm"] {
+        assert_eq!(known_context_window(model), None, "{model}");
+    }
+}
+
+#[test]
 fn test_unknown_model() {
     let caps = detect_capabilities("openai", "some-new-model");
     assert!(caps.tools); // falls back to provider heuristic
