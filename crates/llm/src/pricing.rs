@@ -22,8 +22,9 @@ pub struct ModelPrice {
 
 impl ModelPrice {
     /// Cost of one usage record. Cache fields are additive in [`Usage`]
-    /// (Anthropic); OpenAI-style cached input sits inside `input_tokens`
-    /// and is billed at the input rate here, so the estimate can run high.
+    /// (Anthropic); chat.completions providers split OpenAI-style cached
+    /// input out of `input_tokens`. Where a provider leaves it inside, it is
+    /// billed at the input rate here, so the estimate can run high.
     pub fn cost(&self, usage: &Usage) -> f64 {
         let per = |tokens: u64, rate: f64| tokens as f64 * rate / 1_000_000.0;
         per(usage.input_tokens, self.input)

@@ -237,6 +237,9 @@ impl ChatSse {
         if let Some(ev) = stream_usage_from_chunk(&event) {
             self.pending.push_back(Ok(ev));
         }
+        if let Some(ev) = stream_cache_from_chunk(&event) {
+            self.pending.push_back(Ok(ev));
+        }
     }
 
     fn flush_think(&mut self) {
@@ -652,20 +655,32 @@ pub fn attach_stream_usage_option(body: &mut Value) {
     );
 }
 
-/// Map a non-stream `usage` object from chat.completions into our [`Usage`].
+/// `(uncached prompt, cached prompt)` from a chat.completions `usage` object.
 ///
-/// OpenAI-style `prompt_tokens_details.cached_tokens` is a **subset** of
-/// `prompt_tokens`, not an additive Anthropic-style cache field. Mapping it
-/// into `cache_read_input_tokens` would double-count in `Usage::total()` and
-/// the context meter. We leave cache fields unset here; Anthropic fills them
-/// via its own provider path.
+/// OpenAI-style `prompt_tokens_details.cached_tokens` (DeepSeek:
+/// `prompt_cache_hit_tokens`) is a **subset** of `prompt_tokens`, while
+/// [`Usage`](whycodes_core::types::Usage) keeps cache reads additive
+/// (Anthropic). Splitting the subset out keeps `total()` and the context meter
+/// equal to `prompt_tokens` and lets pricing bill cached input at its rate.
+fn split_prompt(usage: &Value) -> (u64, u64) {
+    let prompt = usage["prompt_tokens"].as_u64().unwrap_or(0);
+    let cached = usage["prompt_tokens_details"]["cached_tokens"]
+        .as_u64()
+        .or_else(|| usage["prompt_cache_hit_tokens"].as_u64())
+        .unwrap_or(0)
+        .min(prompt);
+    (prompt - cached, cached)
+}
+
+/// Map a non-stream `usage` object from chat.completions into our [`Usage`].
 pub fn usage_from_chat_completion(usage: &Value) -> whycodes_core::types::Usage {
     super::usage_dump::dump_raw_usage("openai_compat", usage);
+    let (input_tokens, cached) = split_prompt(usage);
     whycodes_core::types::Usage {
-        input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
+        input_tokens,
         output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
         cache_creation_input_tokens: None,
-        cache_read_input_tokens: None,
+        cache_read_input_tokens: (cached > 0).then_some(cached),
     }
 }
 
@@ -680,20 +695,26 @@ pub fn stream_usage_from_chunk(event: &Value) -> Option<whycodes_core::types::St
         return None;
     }
     super::usage_dump::dump_raw_usage("openai_compat", usage);
-    let input_tokens = usage
-        .get("prompt_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let (input_tokens, cached) = split_prompt(usage);
     let output_tokens = usage
         .get("completion_tokens")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
-    if input_tokens == 0 && output_tokens == 0 {
+    if input_tokens == 0 && cached == 0 && output_tokens == 0 {
         return None;
     }
     Some(whycodes_core::types::StreamEvent::Usage {
         input_tokens,
         output_tokens,
+    })
+}
+
+/// The cached part of a chunk's `usage`, as a cache-read event.
+pub fn stream_cache_from_chunk(event: &Value) -> Option<whycodes_core::types::StreamEvent> {
+    let (_, cached) = split_prompt(event.get("usage")?);
+    (cached > 0).then_some(whycodes_core::types::StreamEvent::CacheUsage {
+        creation_input_tokens: 0,
+        read_input_tokens: cached,
     })
 }
 

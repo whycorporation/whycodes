@@ -1277,8 +1277,8 @@ fn format_scaled(v: f64, suffix: char) -> String {
 ///
 /// Uses **Anthropic-style additive** cache fields (`cache_creation` /
 /// `cache_read` are not already inside `input_tokens`). OpenAI-compatible
-/// providers must not map subset `cached_tokens` into those fields — only
-/// `input_tokens` (= `prompt_tokens`) counts as fill for them.
+/// providers split their subset `cached_tokens` out of `input_tokens`, so the
+/// sum is still `prompt_tokens`.
 ///
 /// Output/completion tokens are excluded: they are not part of the next
 /// prefill until the assistant turn is stored in the session.

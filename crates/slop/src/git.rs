@@ -78,7 +78,9 @@ pub(crate) fn merge_untracked(
 ) {
     for rel in extra.split(['\n', '\0']) {
         let rel = normalize_path(rel.trim());
-        if rel.is_empty() || paths.iter().any(|p| p == &rel) {
+        // Untracked `.whycodes/` files are the agent's own run state (todos,
+        // scratch logs, tool artifacts), not part of the change.
+        if rel.is_empty() || rel.starts_with(".whycodes/") || paths.iter().any(|p| p == &rel) {
             continue;
         }
         *files_changed += 1;

@@ -232,6 +232,20 @@ fn heuristic_context_window(model_lower: &str, provider_lower: &str) -> u32 {
     }
 }
 
+/// Text GLM models: 128k for 4.5, 200k from 4.6 on (`glm-5.3-flash` too).
+/// Vision ids (`glm-4.5v`) and older or unparsed versions fall through.
+fn glm_context_window(model_lower: &str) -> Option<u32> {
+    let rest = &model_lower[model_lower.find("glm-")? + "glm-".len()..];
+    let version = rest.split('-').next()?;
+    let (major, minor) = version.split_once('.').unwrap_or((version, "0"));
+    let (major, minor) = (major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?);
+    match (major, minor) {
+        (4, 5) => Some(128_000),
+        (4, 6..) | (5.., _) => Some(200_000),
+        _ => None,
+    }
+}
+
 /// Static map of known models and their capabilities.
 fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
     // ── OpenAI ────────────────────────────────────────────────────────
@@ -452,6 +466,18 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             vision: true,
             thinking: false,
             context_window: 1_000_000,
+            caching: false,
+            compaction: false,
+        });
+    }
+
+    // ── GLM ───────────────────────────────────────────────────────────
+    if let Some(context_window) = glm_context_window(model_lower) {
+        return Some(ModelCapabilities {
+            tools: true,
+            vision: false,
+            thinking: true,
+            context_window,
             caching: false,
             compaction: false,
         });

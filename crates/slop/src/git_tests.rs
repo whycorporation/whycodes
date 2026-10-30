@@ -30,7 +30,7 @@ fn merge_untracked_skips_empty_dupes_and_unreadable() {
     let mut paths = vec!["keep.rs".into()];
     merge_untracked(
         dir.path(),
-        "\nkeep.rs\nghost.rs\nnotes.md\n",
+        "\nkeep.rs\nghost.rs\nnotes.md\n.whycodes/todos/s.json\n",
         &mut delta,
         &mut files,
         &mut paths,
@@ -39,6 +39,7 @@ fn merge_untracked_skips_empty_dupes_and_unreadable() {
     assert!(paths.contains(&"ghost.rs".into()));
     assert!(paths.contains(&"notes.md".into()));
     assert_eq!(paths.iter().filter(|p| *p == "keep.rs").count(), 1);
+    assert!(!paths.iter().any(|p| p.starts_with(".whycodes/")));
 }
 
 #[test]

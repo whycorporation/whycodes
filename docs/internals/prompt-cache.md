@@ -18,7 +18,8 @@ details say "not verified".
 | Family | Explicit markers | Cache usage reported | Where |
 |---|---|---|---|
 | Anthropic Messages (`anthropic` provider, `crates/llm/src/providers/anthropic.rs`) | yes, when `request.use_prompt_cache` (`anthropic.rs:311-316`) | `cache_creation_input_tokens` / `cache_read_input_tokens` as `StreamEvent::CacheUsage` | `crates/llm/src/cache.rs` |
-| OpenAI-compatible chat (`openai`, `openrouter`, `groq`, `together`, `deepseek`, `mistral`, `xai`, `custom`, `copilot`), Codex Responses | none; no `prompt_cache_key`/`store`-style fields are sent (grep) | none: `cached_tokens` is deliberately left unset (`crates/llm/src/openai_compat.rs:649-660`, `crates/llm/src/providers/codex.rs:274-277`) | implicit prefix caching only |
+| OpenAI-compatible chat (`openai`, `openrouter`, `groq`, `together`, `deepseek`, `mistral`, `xai`, `custom`, `copilot`) | none; no `prompt_cache_key`/`store`-style fields are sent (grep) | `prompt_tokens_details.cached_tokens` (DeepSeek `prompt_cache_hit_tokens`) is split out of `prompt_tokens` into `cache_read` (`split_prompt` in `crates/llm/src/openai_compat.rs`) | implicit prefix caching only |
+| Codex Responses | none | none: `cached_tokens` is left unset (`crates/llm/src/providers/codex.rs:274-277`) | implicit prefix caching only |
 | Google / Code Assist / Antigravity, Ollama | none | none (`google.rs:113-114`, `codeassist.rs:807-808`, `ollama.rs:327-328`) | implicit only |
 
 `LlmRequest::use_prompt_cache` is consumed by exactly one site,
@@ -112,8 +113,9 @@ id and compares with the previous step's; `cache_miss_notice`
 `Prompt cache miss: Xk tokens sent uncached (last step read Yk from cache)`
 when the previous read was ≥ 2 048, this read is under a quarter of it, and
 `input + cache_creation` ≥ 2 048. It is logged and sent as `TurnEvent::Status`
-(`turn.rs:690-693`). Because non-Anthropic providers never fill the cache
-fields, the notice can only fire on the Anthropic provider.
+(`turn.rs:690-693`). The Anthropic provider and OpenAI-compatible chat
+(which reports `cached_tokens`) fill the cache fields, so the notice can fire
+on either; Codex, Google and Ollama never do.
 
 ### 5. `/fresh`
 
@@ -220,7 +222,7 @@ thresholds.
 
 - `crates/llm/src/cache.rs` — `CachePolicy`, `CacheConfig`, `apply_anthropic_cache_policy`.
 - `crates/llm/src/providers/anthropic.rs` — `build_body` applies the policy; usage events carry cache counts.
-- `crates/llm/src/openai_compat.rs`, `providers/codex.rs` — why `cached_tokens` is not surfaced.
+- `crates/llm/src/openai_compat.rs` — `split_prompt` turns subset `cached_tokens` into an additive cache read; `providers/codex.rs` leaves it unset.
 - `crates/session/src/session.rs` — `build_request`, `set_system_prompt`, in-place tool-result rewrites.
 - `crates/agent/src/agent/mod.rs` — `append_turn_context`, `append_request_user_suffix`, `note_cache_read`, `skip_prompt_cache_next`, `preconnect`, system prompt layering.
 - `crates/agent/src/agent/turn.rs` — flag handling, suffix injection, usage fold, miss notice.
