@@ -135,6 +135,7 @@ fn glm5_offers_low_high_max_and_defaults_to_high() {
             Some(XHigh)
         );
         assert_eq!(ThinkingConfig::ultrathink_effort(model), XHigh);
+        assert!(ReasoningEffort::model_allows_xhigh("zcode", model));
     }
     // Untested on the wire: older GLM keeps sending no effort.
     for model in ["glm-4.6", "glm-4.5v", "chatglm"] {
