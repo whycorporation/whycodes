@@ -85,11 +85,12 @@ struct LoopOutput {
 
 impl LoopOutput {
     /// The output when the worker finished, else why it did not.
-    fn finished(self) -> Result<Self, String> {
-        match self.unfinished {
+    fn finished(out: whycodes_core::Result<Self>) -> Result<Self, String> {
+        let out = out.map_err(|e| e.to_string())?;
+        match out.unfinished {
             Some(Unfinished::TurnLimit(max)) => Err(format!("exceeded maximum turns ({max})")),
             Some(Unfinished::Failed(e)) => Err(e.to_string()),
-            None => Ok(self),
+            None => Ok(out),
         }
     }
 }
@@ -460,9 +461,7 @@ impl SubagentRunner {
         let retry = self
             .run_turn_inner(session, provider_name, model, api_key, 1, permission)
             .await;
-        let retry = retry
-            .map_err(|e| e.to_string())
-            .and_then(LoopOutput::finished);
+        let retry = LoopOutput::finished(retry);
         let (retry, retry_usage) = match retry {
             Ok(r) => (r.text, r.usage),
             Err(e) => {

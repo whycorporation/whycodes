@@ -1504,21 +1504,24 @@ async fn structured_result_keeps_errors_when_the_retry_fails() {
 
 #[test]
 fn loop_output_finished_names_why_it_stopped() {
-    let out = |unfinished| super::LoopOutput {
-        text: String::new(),
-        usage: whycodes_core::types::Usage::default(),
-        cancelled: false,
-        unfinished,
+    use super::{LoopOutput, Unfinished};
+    let out = |unfinished| {
+        Ok(LoopOutput {
+            text: String::new(),
+            usage: whycodes_core::types::Usage::default(),
+            cancelled: false,
+            unfinished,
+        })
     };
     assert_eq!(
-        out(Some(super::Unfinished::TurnLimit(1))).finished().err(),
+        LoopOutput::finished(out(Some(Unfinished::TurnLimit(1)))).err(),
         Some("exceeded maximum turns (1)".to_string())
     );
-    let failed = out(Some(super::Unfinished::Failed(whycodes_core::Error::llm(
-        "down",
-    ))));
-    assert!(matches!(failed.finished(), Err(e) if e.contains("down")));
-    assert!(matches!(out(None).finished(), Ok(o) if o.text.is_empty()));
+    let failed = out(Some(Unfinished::Failed(whycodes_core::Error::llm("down"))));
+    assert!(matches!(LoopOutput::finished(failed), Err(e) if e.contains("down")));
+    assert!(matches!(LoopOutput::finished(out(None)), Ok(o) if o.text.is_empty()));
+    let preflight = LoopOutput::finished(Err(whycodes_core::Error::llm("no provider")));
+    assert!(matches!(preflight, Err(e) if e.contains("no provider")));
 }
 
 #[tokio::test]
