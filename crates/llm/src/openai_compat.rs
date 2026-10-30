@@ -190,6 +190,8 @@ pub(crate) fn chat_sse_from_bytes(bytes: ByteStream, provider: &str) -> Provider
         pending: std::collections::VecDeque::new(),
         provider: provider.to_string(),
         done: false,
+        started: false,
+        finished: false,
         think: crate::think_tags::ThinkTags::default(),
     })
 }
@@ -200,6 +202,10 @@ struct ChatSse {
     pending: std::collections::VecDeque<whycodes_core::Result<StreamEvent>>,
     provider: String,
     done: bool,
+    /// A chunk arrived, and a `finish_reason` arrived. Started but not
+    /// finished at EOF (no `[DONE]`) means the upstream cut the answer.
+    started: bool,
+    finished: bool,
     /// Inline `<think>` at the start of `content` (some open models).
     think: crate::think_tags::ThinkTags,
 }
@@ -219,6 +225,7 @@ impl ChatSse {
         let Ok(event) = serde_json::from_str::<Value>(data) else {
             return;
         };
+        self.started = true;
         let delta = &event["choices"][0]["delta"];
         for ev in stream_events_for_chat_delta(delta) {
             match ev {
@@ -230,6 +237,7 @@ impl ChatSse {
             }
         }
         if let Some(reason) = event["choices"][0]["finish_reason"].as_str() {
+            self.finished = true;
             self.pending.push_back(Ok(StreamEvent::MessageDelta {
                 delta: obj([("stop_reason", jstr(reason))]),
             }));
@@ -276,6 +284,14 @@ impl Stream for ChatSse {
                 }
                 Poll::Ready(Some(Err(e))) => {
                     return Poll::Ready(Some(Err(stream_chunk_error(&this.provider, e))));
+                }
+                Poll::Ready(None) if this.started && !this.finished => {
+                    // A clean close mid-answer (gateways that swallow the
+                    // upstream reset) would otherwise end the turn on a
+                    // half-written reply; surface it as a retryable drop.
+                    this.done = true;
+                    let err = "unexpected EOF before finish_reason or [DONE]";
+                    return Poll::Ready(Some(Err(stream_chunk_error(&this.provider, err))));
                 }
                 Poll::Ready(None) => {
                     this.flush_think();

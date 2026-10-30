@@ -1026,6 +1026,22 @@ async fn chat_sse_reports_the_finish_reason() {
 }
 
 #[tokio::test]
+async fn chat_sse_errors_when_the_stream_ends_mid_answer() {
+    // Seen behind a local gateway: the upstream resets mid-reasoning and the
+    // gateway closes cleanly, with neither `finish_reason` nor `[DONE]`.
+    let body = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Update cli\"}}]}\n";
+    let mut stream = chat_sse_from_bytes(scripted_bytes([Ok(body.as_bytes().to_vec())]), "zcode");
+    let mut last = None;
+    while let Some(ev) = stream.next().await {
+        last = Some(ev);
+    }
+    let err = last.expect("events").expect_err("truncation is an error");
+    let class = crate::classify(&err);
+    assert_eq!(class.kind, crate::ErrorKind::Network);
+    assert!(class.retryable);
+}
+
+#[tokio::test]
 async fn chat_sse_reports_cached_prompt_tokens() {
     let body = concat!(
         "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":162,\"completion_tokens\":33,",
@@ -1083,7 +1099,10 @@ async fn chat_sse_moves_a_leading_think_tag_to_thinking() {
     );
 
     // No `[DONE]` and the tag never closes: the thought is also the answer.
-    let unclosed = "data: {\"choices\":[{\"delta\":{\"content\":\"<think>It prints hi.\"}}]}\n";
+    let unclosed = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"<think>It prints hi.\"}}]}\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n",
+    );
     assert_eq!(
         sse_thinking_and_text(unclosed).await,
         ("It prints hi.".into(), "It prints hi.".into())
