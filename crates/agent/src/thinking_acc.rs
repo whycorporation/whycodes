@@ -127,7 +127,7 @@ pub fn attach_thinking_request(
 }
 
 /// Raise thinking budget / reasoning effort for an `ultrathink` turn.
-pub fn apply_ultrathink(request: &mut whycodes_core::types::LlmRequest) {
+pub fn apply_ultrathink(request: &mut whycodes_core::types::LlmRequest, model: &str) {
     let mut payload = request.thinking.take().unwrap_or_else(|| {
         serde_json::json!({
             "enabled": true,
@@ -142,7 +142,8 @@ pub fn apply_ultrathink(request: &mut whycodes_core::types::LlmRequest) {
     if budget < 16_000 {
         payload["budget_tokens"] = serde_json::json!(16_000);
     }
-    payload["reasoning_effort"] = serde_json::json!("high");
+    let effort = whycodes_llm::thinking::ThinkingConfig::ultrathink_effort(model);
+    payload["reasoning_effort"] = serde_json::json!(effort.as_str());
     request.thinking = Some(payload);
 }
 

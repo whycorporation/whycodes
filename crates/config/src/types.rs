@@ -1501,7 +1501,8 @@ pub struct SessionConfig {
     pub compaction_method: String,
     /// OpenAI-compat / xAI `reasoning_effort`: `low` | `medium` | `high` | `xhigh`.
     /// Empty = family default (`medium` when the model supports effort).
-    /// `xhigh` (Max) is grok-4.6+ only; older models clamp to `high`.
+    /// `xhigh` (Max) is grok-4.6+ and GLM-5+ only; a missing level clamps to
+    /// `high` (GLM-5+ has no `medium` and defaults to `high`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
     /// Standalone prose keywords (`ultrathink`, `orchestrate`) that inject a

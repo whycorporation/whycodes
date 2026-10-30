@@ -44,7 +44,7 @@ fn from_structured_reads_reasoning_effort() {
     let cfg = ThinkingConfig::from_request_value(Some(&v)).unwrap();
     assert_eq!(cfg.reasoning_effort.as_deref(), Some("high"));
     let mut body = serde_json::json!({});
-    ThinkingConfig::apply_openai_effort(&mut body, Some(&v));
+    ThinkingConfig::apply_openai_effort(&mut body, "grok-4", Some(&v));
     assert_eq!(body["reasoning_effort"], "high");
 }
 
@@ -114,15 +114,55 @@ fn grok_46_offers_xhigh_older_does_not() {
 }
 
 #[test]
+fn glm5_offers_low_high_max_and_defaults_to_high() {
+    use ReasoningEffort::{High, Low, XHigh};
+    for model in ["GLM-5.3-flash", "glm-5", "z-ai/glm-5.1"] {
+        assert_eq!(ThinkingConfig::default_effort("zcode", model), Some("high"));
+        assert_eq!(
+            ThinkingConfig::supported_efforts("zcode", model),
+            [Low, High, XHigh]
+        );
+        assert_eq!(
+            ThinkingConfig::resolve_effort("zcode", model, None),
+            Some(High)
+        );
+        assert_eq!(
+            ThinkingConfig::resolve_effort("zcode", model, Some("medium")),
+            Some(High)
+        );
+        assert_eq!(
+            ThinkingConfig::resolve_effort("zcode", model, Some("max")),
+            Some(XHigh)
+        );
+        assert_eq!(ThinkingConfig::ultrathink_effort(model), XHigh);
+    }
+    // Untested on the wire: older GLM keeps sending no effort.
+    for model in ["glm-4.6", "glm-4.5v", "chatglm"] {
+        assert!(ThinkingConfig::supported_efforts("zcode", model).is_empty());
+    }
+    assert_eq!(ThinkingConfig::ultrathink_effort("grok-4.6"), High);
+}
+
+#[test]
+fn apply_openai_effort_sends_max_to_glm_only() {
+    let v = serde_json::json!({"enabled": true, "reasoning_effort": "xhigh"});
+    let mut body = serde_json::json!({});
+    ThinkingConfig::apply_openai_effort(&mut body, "GLM-5.3-flash", Some(&v));
+    assert_eq!(body["reasoning_effort"], "max");
+    ThinkingConfig::apply_openai_effort(&mut body, "grok-4.6", Some(&v));
+    assert_eq!(body["reasoning_effort"], "xhigh");
+}
+
+#[test]
 fn apply_openai_effort_skips_none_and_disabled() {
     let mut body = serde_json::json!({});
-    ThinkingConfig::apply_openai_effort(&mut body, None);
+    ThinkingConfig::apply_openai_effort(&mut body, "gpt-5", None);
     assert!(body.get("reasoning_effort").is_none());
     let v = serde_json::json!({"type": "disabled", "reasoning_effort": "high"});
-    ThinkingConfig::apply_openai_effort(&mut body, Some(&v));
+    ThinkingConfig::apply_openai_effort(&mut body, "gpt-5", Some(&v));
     assert!(body.get("reasoning_effort").is_none());
     let enabled_no_effort = serde_json::json!({"enabled": true, "budget_tokens": 100});
-    ThinkingConfig::apply_openai_effort(&mut body, Some(&enabled_no_effort));
+    ThinkingConfig::apply_openai_effort(&mut body, "gpt-5", Some(&enabled_no_effort));
     assert!(body.get("reasoning_effort").is_none());
 }
 
