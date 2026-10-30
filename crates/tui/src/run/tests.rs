@@ -10952,7 +10952,7 @@ async fn run_goal_check_parses_the_model_reply_and_reports_failures() {
         "broken",
         [whycodes_llm::ScriptedStep::FailOpen("down".into())],
     )));
-    let request = crate::goal::evaluator_request("tests pass", 1, &[], &[goal_user("go")]);
+    let request = crate::goal::evaluator_request("tests pass", 1, &[], &[], &[goal_user("go")]);
     let met = run_goal_check(&registry, "judge", &request, "", "m", &no_retry(), ZERO)
         .await
         .unwrap();
@@ -10977,7 +10977,7 @@ async fn run_goal_check_asks_again_once_when_the_answer_has_no_verdict() {
             )],
         ],
     )));
-    let request = crate::goal::evaluator_request("tests pass", 1, &[], &[goal_user("go")]);
+    let request = crate::goal::evaluator_request("tests pass", 1, &[], &[], &[goal_user("go")]);
     let met = run_goal_check(&registry, "script", &request, "", "m", &no_retry(), ZERO)
         .await
         .unwrap();
@@ -11012,7 +11012,7 @@ async fn run_goal_check_waits_out_rate_limits_then_gives_up() {
             )],
         ],
     )));
-    let request = crate::goal::evaluator_request("tests pass", 1, &[], &[goal_user("go")]);
+    let request = crate::goal::evaluator_request("tests pass", 1, &[], &[], &[goal_user("go")]);
     let met = run_goal_check(&registry, "script", &request, "", "m", &no_retry(), ZERO)
         .await
         .unwrap();
@@ -11100,10 +11100,17 @@ fn goal_save_and_restore_round_trip_through_the_state_table() {
     assert!(crate::goal::restore(None, &session).is_none());
     let mut goal = crate::goal::Goal::new("tests pass", 0);
     goal.record_turn(true);
+    goal.record_finding("build is green");
     goal.record_turn(true);
     crate::goal::save(Some(&db), &session.id, Some(&goal));
     let restored = crate::goal::restore(Some(&db), &session).unwrap();
     assert_eq!(restored.condition, "tests pass");
+    assert_eq!(restored.findings, ["after turn 1: build is green"]);
+    assert_eq!(
+        restored.last_reason.as_deref(),
+        Some("after turn 1: build is green"),
+        "earlier findings survive a resume"
+    );
     assert_eq!(
         (
             restored.turns,

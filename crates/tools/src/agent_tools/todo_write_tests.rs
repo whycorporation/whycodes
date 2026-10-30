@@ -110,3 +110,31 @@ async fn save_error_is_tool_error() {
         out.content
     );
 }
+
+#[tokio::test]
+async fn result_reports_progress_and_warnings() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(dir.path(), Some("s"));
+    let tool = TodoWriteTool::new();
+    let out = tool
+        .execute(
+            json!({"todos":[
+                {"id":"a","content":"one","status":"completed"},
+                {"id":"b","content":"two","status":"in_progress"},
+                {"id":"c","content":" ","status":"in_progress"}
+            ]}),
+            &c,
+        )
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert!(
+        out.content.contains("1/3 done · next: two"),
+        "{}",
+        out.content
+    );
+    assert!(out.content.contains("Warning: 2 items are in_progress"));
+    assert!(out.content.contains("Warning: item \"c\" has no content."));
+
+    let empty = tool.execute(json!({"merge": false, "todos": []}), &c).await;
+    assert!(!empty.content.contains("done"), "{}", empty.content);
+}

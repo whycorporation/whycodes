@@ -333,6 +333,131 @@ fn inject_memory_honors_subagent_banks_off() {
 }
 
 #[tokio::test]
+async fn run_keeps_partial_work_and_usage_at_turn_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let mut registry = ProviderRegistry::new();
+    // Every step reads again: the worker never finishes on its own.
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        [
+            whycodes_llm::ScriptedStep::Text("reading n.txt".into()),
+            whycodes_llm::ScriptedStep::Usage {
+                input_tokens: 5,
+                output_tokens: 1,
+            },
+            whycodes_llm::ScriptedStep::ToolCall {
+                id: "r1".into(),
+                name: "read".into(),
+                input: serde_json::json!({"path": "n.txt"}),
+            },
+        ],
+    )));
+    let runner = SubagentRunner::new(
+        Arc::new(registry),
+        Arc::new(ToolExecutor::new()),
+        make_info(),
+        dir.path().to_path_buf(),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    )
+    .with_approval_mode(ApprovalMode::Auto);
+    let result = runner
+        .run(
+            SubagentTask {
+                goal: "read n.txt".into(),
+                context: None,
+                tools: None,
+                max_turns: 2,
+                output_schema: Some(serde_json::json!({"type": "object"})),
+            },
+            "script",
+            "m",
+            "k",
+        )
+        .await;
+    assert!(!result.success);
+    assert!(!result.cancelled);
+    assert!(result.structured.is_none());
+    let out = &result.output;
+    assert!(out.contains("exceeded maximum turns (2)"), "{out}");
+    assert!(out.contains("Work before it stopped"), "{out}");
+    assert!(out.contains("reading n.txt"), "{out}");
+    assert!(out.contains("→ read n.txt"), "{out}");
+    assert_eq!(result.usage.input_tokens, 10);
+}
+
+#[test]
+fn turn_limit_output_without_partial_work() {
+    let out = super::turn_limit_output(3, "  ");
+    assert!(out.contains("exceeded maximum turns (3)"));
+    assert!(!out.contains("Work before it stopped"));
+}
+
+#[tokio::test]
+async fn run_keeps_partial_work_when_a_later_step_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    for failure in [
+        whycodes_llm::ScriptedStep::Error("stream boom".into()),
+        whycodes_llm::ScriptedStep::FailOpen("open boom".into()),
+    ] {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+            "script",
+            [
+                vec![
+                    whycodes_llm::ScriptedStep::Usage {
+                        input_tokens: 4,
+                        output_tokens: 1,
+                    },
+                    whycodes_llm::ScriptedStep::ToolCall {
+                        id: "r1".into(),
+                        name: "read".into(),
+                        input: serde_json::json!({"path": "n.txt"}),
+                    },
+                ],
+                vec![failure],
+            ],
+        )));
+        let runner = SubagentRunner::new(
+            Arc::new(registry),
+            Arc::new(ToolExecutor::new()),
+            make_info(),
+            dir.path().to_path_buf(),
+            SandboxSettings::off(),
+            NetworkPolicy::unrestricted(),
+        )
+        .with_approval_mode(ApprovalMode::Auto);
+        let result = runner
+            .run(
+                SubagentTask {
+                    goal: "read n.txt".into(),
+                    context: None,
+                    tools: None,
+                    max_turns: 5,
+                    output_schema: None,
+                },
+                "script",
+                "m",
+                "k",
+            )
+            .await;
+        let out = &result.output;
+        assert!(!result.success);
+        assert!(!result.cancelled);
+        assert!(out.starts_with("Subagent error: "), "{out}");
+        assert!(out.contains("boom"), "{out}");
+        assert!(out.contains("Work before it stopped"), "{out}");
+        assert!(out.contains("→ read n.txt"), "{out}");
+        assert_eq!(
+            result.usage.input_tokens, 4,
+            "the spend before the failure counts"
+        );
+    }
+}
+
+#[tokio::test]
 async fn run_wraps_stream_error_as_failed_result() {
     let result = scripted_runner([whycodes_llm::ScriptedStep::Error("stream boom".into())])
         .run(
@@ -1375,4 +1500,23 @@ async fn structured_result_keeps_errors_when_the_retry_fails() {
     assert_eq!(s.value, None);
     assert_eq!(s.errors.len(), 2, "{:?}", s.errors);
     assert!(s.errors[1].starts_with("retry failed:"), "{:?}", s.errors);
+}
+
+#[test]
+fn loop_output_finished_names_why_it_stopped() {
+    let out = |unfinished| super::LoopOutput {
+        text: String::new(),
+        usage: whycodes_core::types::Usage::default(),
+        cancelled: false,
+        unfinished,
+    };
+    assert_eq!(
+        out(Some(super::Unfinished::TurnLimit(1))).finished().err(),
+        Some("exceeded maximum turns (1)".to_string())
+    );
+    let failed = out(Some(super::Unfinished::Failed(whycodes_core::Error::llm(
+        "down",
+    ))));
+    assert!(matches!(failed.finished(), Err(e) if e.contains("down")));
+    assert!(matches!(out(None).finished(), Ok(o) if o.text.is_empty()));
 }

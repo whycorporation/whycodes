@@ -3340,3 +3340,119 @@ async fn cancel_during_stream_retry_backoff() {
         "{err:?}"
     );
 }
+
+fn todo_write_step(statuses: &[&str]) -> Vec<ScriptedStep> {
+    let todos: Vec<_> = statuses
+        .iter()
+        .enumerate()
+        .map(|(i, s)| json!({"id": i.to_string(), "content": format!("step {i}"), "status": s}))
+        .collect();
+    vec![ScriptedStep::ToolCall {
+        id: "t1".into(),
+        name: "todowrite".into(),
+        input: json!({ "todos": todos }),
+    }]
+}
+
+fn reminders(session: &Session) -> usize {
+    session
+        .messages
+        .iter()
+        .filter(|m| {
+            m.role == Role::User
+                && m.content
+                    .as_text()
+                    .is_some_and(|t| t.starts_with("You stopped while your todo list"))
+        })
+        .count()
+}
+
+#[tokio::test]
+async fn stopping_with_open_todos_written_this_turn_is_reminded_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = batched([
+        todo_write_step(&["completed", "in_progress", "pending"]),
+        vec![ScriptedStep::Text("stopping early".into())],
+        vec![ScriptedStep::Text("still open, needs the user".into())],
+    ]);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut session = session_at(dir.path(), "do the three steps");
+    let out = agent
+        .run_turn_with_events(&mut session, opts(Some(tx)))
+        .await
+        .expect("turn");
+    assert!(out.contains("needs the user"), "{out}");
+    assert_eq!(
+        reminders(&session),
+        1,
+        "reminded once, then the stop stands"
+    );
+    let note = session
+        .messages
+        .iter()
+        .rev()
+        .find_map(|m| m.content.as_text().filter(|t| t.starts_with("You stopped")))
+        .unwrap()
+        .to_string();
+    assert!(note.contains("- ▶ step 1\n- ☐ step 2\n"), "{note}");
+    assert!(!note.contains("step 0"), "{note}");
+    assert!(
+        drain_status(&mut rx)
+            .iter()
+            .any(|s| s.contains("Todo list still has open items")),
+    );
+}
+
+#[tokio::test]
+async fn no_todo_reminder_when_done_unwritten_or_planning() {
+    // Every item finished.
+    let dir = tempfile::tempdir().unwrap();
+    let agent = batched([
+        todo_write_step(&["completed", "cancelled"]),
+        vec![ScriptedStep::Text("all done".into())],
+    ]);
+    let mut session = session_at(dir.path(), "do it");
+    agent
+        .run_turn(&mut session, "script", "m", "k", Some(8))
+        .await
+        .expect("turn");
+    assert_eq!(reminders(&session), 0);
+
+    // Open items left from an earlier turn: this turn did not write them.
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_at(dir.path(), "unrelated question");
+    whycodes_core::todo::save_todos(
+        dir.path(),
+        Some(session.id.as_str()),
+        &[whycodes_core::todo::TodoItem::new(
+            "1",
+            "old",
+            whycodes_core::todo::TodoStatus::Pending,
+        )],
+    )
+    .unwrap();
+    let agent = scripted([ScriptedStep::Text("answer".into())]);
+    agent
+        .run_turn(&mut session, "script", "m", "k", Some(8))
+        .await
+        .expect("turn");
+    assert_eq!(reminders(&session), 0);
+
+    // The plan agent leaves implementation steps pending on purpose.
+    let dir = tempfile::tempdir().unwrap();
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(ScriptedProvider::batched(
+        "script",
+        [
+            todo_write_step(&["in_progress", "pending"]),
+            vec![ScriptedStep::Text("here is the plan".into())],
+        ],
+    )));
+    let agent = Agent::new(info("plan")).with_provider_registry(registry);
+    let mut session = session_at(dir.path(), "plan it");
+    agent
+        .run_turn(&mut session, "script", "m", "k", Some(8))
+        .await
+        .expect("turn");
+    assert_eq!(reminders(&session), 0);
+}

@@ -36,6 +36,12 @@ pub fn turns_key(session_id: &str) -> String {
     format!("goal_turns:{session_id}")
 }
 
+/// `state` table key holding the goal's earlier findings (JSON array), so
+/// what a check already confirmed is not forgotten across a resume.
+pub fn findings_key(session_id: &str) -> String {
+    format!("goal_findings:{session_id}")
+}
+
 /// Input plus output tokens the session has spent (goal spend baseline).
 pub fn session_tokens(session: &whycodes_session::session::Session) -> u64 {
     session.usage.input_tokens + session.usage.output_tokens
@@ -48,19 +54,27 @@ pub fn save(db: Option<&whycodes_storage::db::Database>, session_id: &str, goal:
         return;
     };
     let (key, turns) = (state_key(session_id), turns_key(session_id));
+    let findings = findings_key(session_id);
     let result = match goal {
         Some(goal) => db
             .set_state(&key, &goal.condition)
-            .and_then(|()| db.set_state(&turns, &goal.turns.to_string())),
-        None => db.delete_state(&key).and_then(|()| db.delete_state(&turns)),
+            .and_then(|()| db.set_state(&turns, &goal.turns.to_string()))
+            .and_then(|()| {
+                let json = serde_json::to_string(&goal.findings).unwrap_or_default();
+                db.set_state(&findings, &json)
+            }),
+        None => db
+            .delete_state(&key)
+            .and_then(|()| db.delete_state(&turns))
+            .and_then(|()| db.delete_state(&findings)),
     };
     if let Err(e) = result {
         tracing::debug!(error = %e, "goal state not saved");
     }
 }
 
-/// The session's saved goal, restored active with its turn count; time and
-/// spend start fresh.
+/// The session's saved goal, restored active with its turn count and
+/// findings; time and spend start fresh.
 pub fn restore(
     db: Option<&whycodes_storage::db::Database>,
     session: &whycodes_session::session::Session,
@@ -70,6 +84,10 @@ pub fn restore(
     let mut goal = Goal::new(condition, session_tokens(session));
     if let Ok(Some(turns)) = db.get_state(&turns_key(&session.id)) {
         goal.turns = turns.parse().unwrap_or(0);
+    }
+    if let Ok(Some(raw)) = db.get_state(&findings_key(&session.id)) {
+        goal.findings = serde_json::from_str(&raw).unwrap_or_default();
+        goal.last_reason = goal.findings.last().cloned();
     }
     Some(goal)
 }
@@ -371,6 +389,7 @@ impossible: the goal contradicts itself or logic, something it needs is gone for
 not_met: anything else, including missing evidence.
 Judge the goal, not whether the agent followed instructions: an agent that rightly says the goal cannot be met has not met it; that is impossible.
 Findings from earlier checks still hold unless the transcript shows they changed.
+The agent's todo list is its own plan: open items suggest work remains, but a fully checked list is not evidence on its own.
 Answer in plain text without markdown, in exactly two lines:
 VERDICT: met | not_met | impossible
 REASON: one sentence naming what is done and what is still missing";
@@ -380,6 +399,7 @@ pub fn evaluator_request(
     condition: &str,
     turns: u32,
     findings: &[String],
+    todos: &[whycodes_core::todo::TodoItem],
     messages: &[Message],
 ) -> LlmRequest {
     // The turn count lets a condition like "or stop after 20 turns" be judged;
@@ -389,6 +409,13 @@ pub fn evaluator_request(
         body.push_str("Earlier checks (oldest first):\n");
         for finding in findings {
             body.push_str(&format!("- {finding}\n"));
+        }
+        body.push('\n');
+    }
+    if !todos.is_empty() {
+        body.push_str("Agent's todo list:\n");
+        for todo in todos {
+            body.push_str(&format!("{} ({})\n", todo.line(), todo.status.as_str()));
         }
         body.push('\n');
     }

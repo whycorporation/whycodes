@@ -259,6 +259,7 @@ fn evaluator_request_has_no_tools_and_carries_goal_and_transcript() {
         "tests pass",
         7,
         &[],
+        &[],
         &[text(Role::User, "go"), text(Role::Assistant, "ok")],
     );
     assert!(req.tools.is_empty());
@@ -272,7 +273,7 @@ fn evaluator_request_has_no_tools_and_carries_goal_and_transcript() {
     assert!(body.ends_with("[assistant]\nok"), "{body}");
 
     let findings = vec!["after turn 1: build is green".to_string()];
-    let req = evaluator_request("tests pass", 2, &findings, &[text(Role::User, "go")]);
+    let req = evaluator_request("tests pass", 2, &findings, &[], &[text(Role::User, "go")]);
     let body = req.messages[0].content.as_text().unwrap();
     assert!(
         body.contains(
@@ -280,6 +281,19 @@ fn evaluator_request_has_no_tools_and_carries_goal_and_transcript() {
         ),
         "{body}"
     );
+
+    use whycodes_core::todo::{TodoItem, TodoStatus};
+    let todos = [
+        TodoItem::new("1", "fix parser", TodoStatus::Completed),
+        TodoItem::new("2", "run tests", TodoStatus::Pending),
+    ];
+    let req = evaluator_request("tests pass", 2, &findings, &todos, &[]);
+    let body = req.messages[0].content.as_text().unwrap();
+    assert!(
+        body.contains("build is green\n\nAgent's todo list:\n☑ fix parser (completed)\n☐ run tests (pending)\n\nTranscript"),
+        "{body}"
+    );
+    assert!(req.system.contains("todo list is its own plan"));
 }
 
 #[test]

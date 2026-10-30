@@ -53,10 +53,15 @@ pub(super) fn goal_after_turn(
             );
         }
         TurnStep::Evaluate => {
+            let todos = whycodes_core::todo::load_todos(
+                &rt.session.project_path,
+                Some(rt.session.id.as_str()),
+            );
             let request = crate::goal::evaluator_request(
                 &goal.condition,
                 goal.turns,
                 &goal.findings,
+                &todos,
                 &rt.session.messages,
             );
             let (provider, model) =
