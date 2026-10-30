@@ -1520,3 +1520,27 @@ fn loop_output_finished_names_why_it_stopped() {
     assert!(matches!(failed.finished(), Err(e) if e.contains("down")));
     assert!(matches!(out(None).finished(), Ok(o) if o.text.is_empty()));
 }
+
+#[tokio::test]
+async fn an_empty_step_is_not_persisted_and_ends_the_worker() {
+    let result = scripted_runner([whycodes_llm::ScriptedStep::Usage {
+        input_tokens: 2,
+        output_tokens: 0,
+    }])
+    .run(
+        SubagentTask {
+            goal: "inspect".into(),
+            context: None,
+            tools: Some(vec!["read".into()]),
+            max_turns: 2,
+            output_schema: None,
+        },
+        "script",
+        "m",
+        "k",
+    )
+    .await;
+    assert!(result.success, "{result:?}");
+    assert!(result.output.trim().is_empty(), "{}", result.output);
+    assert_eq!(result.usage.input_tokens, 2);
+}
