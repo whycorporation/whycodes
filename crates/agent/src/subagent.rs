@@ -79,6 +79,28 @@ struct LoopOutput {
     text: String,
     usage: whycodes_core::types::Usage,
     cancelled: bool,
+    /// Why the worker stopped before it finished; `text` is then partial.
+    unfinished: Option<Unfinished>,
+}
+
+impl LoopOutput {
+    /// The output when the worker finished, else why it did not.
+    fn finished(out: whycodes_core::Result<Self>) -> Result<Self, String> {
+        let out = out.map_err(|e| e.to_string())?;
+        match out.unfinished {
+            Some(Unfinished::TurnLimit(max)) => Err(format!("exceeded maximum turns ({max})")),
+            Some(Unfinished::Failed(e)) => Err(e.to_string()),
+            None => Ok(out),
+        }
+    }
+}
+
+/// A worker that stopped before finishing, keeping the steps it took.
+enum Unfinished {
+    /// It used up `max_turns`.
+    TurnLimit(usize),
+    /// A step's LLM call failed.
+    Failed(whycodes_core::Error),
 }
 
 /// Runner that executes a subagent task by creating a fresh session and
@@ -357,7 +379,7 @@ impl SubagentRunner {
 
         let mut structured = None;
         let output = match (output, &task.output_schema) {
-            (Ok(out), Some(schema)) if !out.cancelled => {
+            (Ok(out), Some(schema)) if !out.cancelled && out.unfinished.is_none() => {
                 let route = (provider_name, model, api_key);
                 let (text, usage, s) = self
                     .structured_result(
@@ -374,6 +396,7 @@ impl SubagentRunner {
                     text,
                     usage,
                     cancelled: false,
+                    unfinished: None,
                 })
             }
             (other, _) => other,
@@ -384,12 +407,15 @@ impl SubagentRunner {
         let result = match output {
             Ok(out) => SubagentResult {
                 goal: task.goal,
-                output: if out.cancelled {
-                    cancelled_output(&out.text)
-                } else {
-                    out.text
+                success: !out.cancelled && out.unfinished.is_none(),
+                output: match out.unfinished {
+                    Some(Unfinished::TurnLimit(max)) => turn_limit_output(max, &out.text),
+                    Some(Unfinished::Failed(e)) => {
+                        with_partial(format!("Subagent error: {e}"), &out.text)
+                    }
+                    None if out.cancelled => cancelled_output(&out.text),
+                    None => out.text,
                 },
-                success: !out.cancelled,
                 duration,
                 usage: out.usage,
                 cancelled: out.cancelled,
@@ -435,6 +461,7 @@ impl SubagentRunner {
         let retry = self
             .run_turn_inner(session, provider_name, model, api_key, 1, permission)
             .await;
+        let retry = LoopOutput::finished(retry);
         let (retry, retry_usage) = match retry {
             Ok(r) => (r.text, r.usage),
             Err(e) => {
@@ -550,6 +577,7 @@ impl SubagentRunner {
         let started = Instant::now();
         let mut log = String::new();
         let mut cancelled = false;
+        let mut unfinished = None;
 
         loop {
             // A cancel takes effect between steps: the last step's tool calls
@@ -559,11 +587,11 @@ impl SubagentRunner {
                 break;
             }
             turn_count += 1;
+            // Out of turns: keep the work and the spend instead of an error,
+            // so the parent can see what was done and pick up from there.
             if turn_count > max_turns {
-                return Err(whycodes_core::Error::Agent(format!(
-                    "Subagent exceeded maximum turns ({})",
-                    max_turns
-                )));
+                unfinished = Some(Unfinished::TurnLimit(max_turns));
+                break;
             }
 
             if let Some(hub) = &self.swarm_hub {
@@ -598,54 +626,65 @@ impl SubagentRunner {
             let mut assembler = ToolCallAssembler::new();
             let mut step_usage = whycodes_core::types::Usage::default();
 
-            let mut event_stream = whycodes_llm::default_transport()
-                .with_redactor(self.secrets.clone())
-                .stream(provider, &request, api_key, &model)
-                .await?;
+            // A failed step ends the worker like the turn limit does: the
+            // steps before it stand, so the parent gets them, not just the error.
+            let streamed: whycodes_core::Result<()> = async {
+                let mut event_stream = whycodes_llm::default_transport()
+                    .with_redactor(self.secrets.clone())
+                    .stream(provider, &request, api_key, &model)
+                    .await?;
 
-            while let Some(event) = event_stream.next().await {
-                match event? {
-                    StreamEvent::TextDelta { text } => {
-                        accumulated_text.push_str(&text);
-                    }
-                    StreamEvent::ToolUse { id, name, input } => {
-                        assembler.on_tool_use(id, name, input);
-                    }
-                    StreamEvent::ToolUseDelta {
-                        id,
-                        input_json_delta,
-                    } => {
-                        assembler.on_tool_use_delta(&id, &input_json_delta);
-                    }
-                    StreamEvent::Thinking { text } => {
-                        tracing::debug!("Subagent thinking: {}", text);
-                    }
-                    StreamEvent::ThinkingDelta { text } => {
-                        tracing::debug!("Subagent thinking: {}", text);
-                    }
-                    StreamEvent::ThinkingSignature { .. } => {}
-                    StreamEvent::RedactedThinking { .. } => {}
-                    StreamEvent::MessageStop => break,
-                    // Per-step snapshot fold; added into total_usage after
-                    // the stream so multi-step workers still sum.
-                    StreamEvent::Usage {
-                        input_tokens,
-                        output_tokens,
-                    } => {
-                        step_usage.absorb_stream(input_tokens, output_tokens);
-                    }
-                    StreamEvent::CacheUsage {
-                        creation_input_tokens,
-                        read_input_tokens,
-                    } => {
-                        step_usage.absorb_stream_cache(creation_input_tokens, read_input_tokens);
-                    }
-                    StreamEvent::MessageStart { .. } => {}
-                    StreamEvent::MessageDelta { .. } => {}
-                    StreamEvent::Error { message } => {
-                        return Err(whycodes_core::Error::llm(message));
+                while let Some(event) = event_stream.next().await {
+                    match event? {
+                        StreamEvent::TextDelta { text } => {
+                            accumulated_text.push_str(&text);
+                        }
+                        StreamEvent::ToolUse { id, name, input } => {
+                            assembler.on_tool_use(id, name, input);
+                        }
+                        StreamEvent::ToolUseDelta {
+                            id,
+                            input_json_delta,
+                        } => {
+                            assembler.on_tool_use_delta(&id, &input_json_delta);
+                        }
+                        StreamEvent::Thinking { text } => {
+                            tracing::debug!("Subagent thinking: {}", text);
+                        }
+                        StreamEvent::ThinkingDelta { text } => {
+                            tracing::debug!("Subagent thinking: {}", text);
+                        }
+                        StreamEvent::ThinkingSignature { .. } => {}
+                        StreamEvent::RedactedThinking { .. } => {}
+                        StreamEvent::MessageStop => break,
+                        // Per-step snapshot fold; added into total_usage after
+                        // the stream so multi-step workers still sum.
+                        StreamEvent::Usage {
+                            input_tokens,
+                            output_tokens,
+                        } => {
+                            step_usage.absorb_stream(input_tokens, output_tokens);
+                        }
+                        StreamEvent::CacheUsage {
+                            creation_input_tokens,
+                            read_input_tokens,
+                        } => {
+                            step_usage
+                                .absorb_stream_cache(creation_input_tokens, read_input_tokens);
+                        }
+                        StreamEvent::MessageStart { .. } => {}
+                        StreamEvent::MessageDelta { .. } => {}
+                        StreamEvent::Error { message } => {
+                            return Err(whycodes_core::Error::llm(message));
+                        }
                     }
                 }
+                Ok(())
+            }
+            .await;
+            if let Err(e) = streamed {
+                unfinished = Some(Unfinished::Failed(e));
+                break;
             }
 
             if !step_usage.is_empty() {
@@ -747,6 +786,11 @@ impl SubagentRunner {
             }
         }
 
+        // The log holds each step's text plus its tool calls and results:
+        // more for the parent to pick up from than the text alone.
+        if unfinished.is_some() && !log.is_empty() {
+            final_text = log;
+        }
         if let Some((inbox, key)) = &self.steer {
             final_text.push_str(&unread_tell_note(inbox.drain(key)));
         }
@@ -754,6 +798,7 @@ impl SubagentRunner {
             text: final_text,
             usage: total_usage,
             cancelled,
+            unfinished,
         })
     }
 
@@ -1019,6 +1064,26 @@ fn cancelled_output(partial: &str) -> String {
         return CANCELLED_BY_USER.to_string();
     }
     format!("{CANCELLED_BY_USER}\n\nOutput before the cancel:\n{partial}")
+}
+
+/// Result text for a worker that ran out of turns, keeping its partial work.
+fn turn_limit_output(max_turns: usize, partial: &str) -> String {
+    with_partial(
+        format!(
+            "Subagent exceeded maximum turns ({max_turns}) before finishing. \
+             Check what is done before relying on it; raise max_turns or split the task to continue."
+        ),
+        partial,
+    )
+}
+
+/// `head`, then the work a worker did before it stopped, when there is any.
+fn with_partial(head: String, partial: &str) -> String {
+    let partial = partial.trim();
+    if partial.is_empty() {
+        return head;
+    }
+    format!("{head}\n\nWork before it stopped:\n{partial}")
 }
 
 /// Short label for a tool call: its name plus the main argument.

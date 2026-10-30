@@ -190,6 +190,8 @@ impl Agent {
         let mut harmony_retries: u32 = 0;
         // Steps in a row cut off at the output token limit.
         let mut cut_offs: u32 = 0;
+        // A todo list was written this turn / the model was reminded of it.
+        let (mut todos_written, mut todos_reminded) = (false, false);
         // Mid-stream drop retry (`stream_retry_secs`): first drop + count.
         let mut stream_drop_t0: Option<Instant> = None;
         let mut stream_drops: usize = 0;
@@ -879,6 +881,24 @@ impl Agent {
                 continue;
             }
 
+            // Stopping with open items on a list written this turn usually
+            // means the model lost track of its plan: remind it once, then
+            // accept the next stop (it may be blocked on the user).
+            if tool_calls.is_empty()
+                && todos_written
+                && !todos_reminded
+                && let Some(note) = self.open_todos_note(session)
+            {
+                todos_reminded = true;
+                crate::speculative_read::abort_all(&mut speculative_reads);
+                emit(
+                    &events,
+                    TurnEvent::Status("Todo list still has open items — continuing".into()),
+                );
+                session.add_user_message(&note);
+                continue;
+            }
+
             if tool_calls.is_empty() {
                 crate::speculative_read::abort_all(&mut speculative_reads);
                 whycodes_core::logging::emit_sid(
@@ -904,6 +924,9 @@ impl Agent {
                 );
                 break;
             }
+            todos_written |= tool_calls
+                .iter()
+                .any(|tc| matches!(tc.name.as_str(), "todowrite" | "todo"));
 
             // Doom-loop: refuse identical tool+args repeated DOOM_LOOP_THRESHOLD times
             let results = if would_doom_loop(&recent_tool_sigs, &tool_calls) {
@@ -1345,6 +1368,37 @@ const MAX_CUT_OFFS: u32 = 3;
 const CUT_OFF_NOTE: &str = "Your last response was cut off at the output token limit, so none of \
      its tool calls ran. Continue from where you stopped. Keep each response shorter: split a \
      large file write into several smaller edits.";
+
+/// The reminder for a model that stopped with open todo items, or `None`
+/// when every item is done or cancelled.
+fn open_todos_note(todos: &[whycodes_core::todo::TodoItem]) -> Option<String> {
+    let open: Vec<String> = todos
+        .iter()
+        .filter(|t| !t.status.is_terminal())
+        .map(|t| format!("- {}", t.line()))
+        .collect();
+    if open.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "You stopped while your todo list still has open items:\n{}\n\
+         Continue with the next one. If an item is already done, no longer needed, or \
+         needs the user, update it with todowrite (completed or cancelled) and say why.",
+        open.join("\n")
+    ))
+}
+
+impl Agent {
+    /// [`open_todos_note`] for this session's list. The `plan` agent leaves
+    /// implementation steps pending on purpose, so it is never reminded.
+    fn open_todos_note(&self, session: &whycodes_session::Session) -> Option<String> {
+        if self.info.name == "plan" {
+            return None;
+        }
+        let sid = Some(session.id.trim()).filter(|s| !s.is_empty());
+        open_todos_note(&whycodes_core::todo::load_todos(&session.project_path, sid))
+    }
+}
 
 /// Whether a stream's stop reason says the output token limit cut it off:
 /// `length` (OpenAI-compatible), `max_tokens` (Anthropic), `MAX_TOKENS` (Google).

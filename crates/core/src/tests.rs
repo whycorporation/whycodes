@@ -1154,6 +1154,81 @@ mod todo_tests {
     }
 
     #[test]
+    fn save_fails_when_temp_file_is_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let why = dir.path().join(".whycodes");
+        std::fs::create_dir_all(why.join("todos.json.tmp")).unwrap();
+        let err = save_todos(dir.path(), None, &[]).unwrap_err();
+        assert!(err.contains("writing todos"), "{err}");
+    }
+
+    #[test]
+    fn save_replaces_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let one = vec![TodoItem::new("1", "a", TodoStatus::Pending)];
+        save_todos(dir.path(), None, &one).unwrap();
+        save_todos(dir.path(), None, &[]).unwrap();
+        assert!(load_todos(dir.path(), None).is_empty());
+        let path = todos_path(dir.path(), None);
+        assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn empty_ids_get_free_numeric_ids() {
+        let existing = vec![
+            TodoItem::new("3", "taken", TodoStatus::Pending),
+            TodoItem::new("x", "other", TodoStatus::Pending),
+        ];
+        let incoming = vec![
+            TodoItem::new("", "first", TodoStatus::Pending),
+            TodoItem::new("", "second", TodoStatus::Pending),
+        ];
+        let merged = apply_todo_update(existing, incoming.clone(), true);
+        let ids: Vec<&str> = merged.iter().map(|t| t.id.as_str()).collect();
+        // len + 1 = 3 is taken, so the first new item skips to 4.
+        assert_eq!(ids, ["3", "x", "4", "5"]);
+        let replaced = apply_todo_update(Vec::new(), incoming, false);
+        let ids: Vec<&str> = replaced.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["1", "2"]);
+        // An id written twice in one call keeps the last.
+        let twice = apply_todo_update(
+            Vec::new(),
+            vec![
+                TodoItem::new("a", "old", TodoStatus::Pending),
+                TodoItem::new("a", "new", TodoStatus::Completed),
+            ],
+            false,
+        );
+        assert_eq!(
+            twice,
+            vec![TodoItem::new("a", "new", TodoStatus::Completed)]
+        );
+    }
+
+    #[test]
+    fn warnings_and_progress_line() {
+        let items = vec![
+            TodoItem::new("1", "a", TodoStatus::Completed),
+            TodoItem::new("2", "b", TodoStatus::Pending),
+            TodoItem::new("3", "c", TodoStatus::Cancelled),
+        ];
+        assert!(todo_warnings(&items).is_empty());
+        assert_eq!(progress_line(&items), "2/3 done · next: b");
+        let busy = vec![
+            TodoItem::new("1", "a", TodoStatus::Pending),
+            TodoItem::new("2", "b", TodoStatus::InProgress),
+            TodoItem::new("3", "", TodoStatus::InProgress),
+        ];
+        assert_eq!(progress_line(&busy), "0/3 done · next: b");
+        let warnings = todo_warnings(&busy);
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings[0].contains("2 items are in_progress"));
+        assert!(warnings[1].contains("\"3\" has no content"));
+        let done = [TodoItem::new("1", "a", TodoStatus::Completed)];
+        assert_eq!(progress_line(&done), "all 1 done");
+    }
+
+    #[test]
     fn merge_by_id_and_replace() {
         let existing = vec![
             TodoItem::new("a", "old", TodoStatus::Pending),

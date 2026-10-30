@@ -133,28 +133,75 @@ pub fn save_todos(
     // eagerly so llvm-cov does not see a dead `unwrap_or_else` closure.
     let value = serde_json::json!({ "todos": todos });
     let json = serde_json::to_string_pretty(&value).unwrap_or(value.to_string());
-    std::fs::write(&path, json).map_err(|e| format!("writing todos: {e}"))
+    // Write then rename: a crash mid-write must not leave a torn file, which
+    // `load_todos` would read as an empty list and the next merge would keep.
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| format!("writing todos: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("writing todos: {e}"))
 }
 
-/// Merge incoming items into `existing` by `id`. Empty ids always append.
+/// Merge incoming items into `existing` by `id` (an id written twice keeps
+/// the last). Empty ids always append, under a fresh numeric id so a later
+/// update can reach them. `merge: false` starts from an empty list.
 pub fn apply_todo_update(
     mut existing: Vec<TodoItem>,
     incoming: Vec<TodoItem>,
     merge: bool,
 ) -> Vec<TodoItem> {
     if !merge {
-        return incoming;
+        existing.clear();
     }
-    for new in incoming {
-        if !new.id.is_empty()
-            && let Some(old) = existing.iter_mut().find(|t| t.id == new.id)
-        {
+    for mut new in incoming {
+        if new.id.is_empty() {
+            new.id = free_id(&existing);
+            existing.push(new);
+        } else if let Some(old) = existing.iter_mut().find(|t| t.id == new.id) {
             *old = new;
         } else {
             existing.push(new);
         }
     }
     existing
+}
+
+/// First number from `len + 1` up that is not already an id.
+fn free_id(todos: &[TodoItem]) -> String {
+    let mut n = todos.len() + 1;
+    while todos.iter().any(|t| t.id == n.to_string()) {
+        n += 1;
+    }
+    n.to_string()
+}
+
+/// Problems in a list the model just wrote, worded as fixes for it.
+pub fn todo_warnings(todos: &[TodoItem]) -> Vec<String> {
+    let mut out = Vec::new();
+    let active = todos
+        .iter()
+        .filter(|t| t.status == TodoStatus::InProgress)
+        .count();
+    if active > 1 {
+        out.push(format!(
+            "{active} items are in_progress; keep exactly one in_progress at a time."
+        ));
+    }
+    for t in todos.iter().filter(|t| t.content.trim().is_empty()) {
+        out.push(format!("item {:?} has no content.", t.id));
+    }
+    out
+}
+
+/// `2/5 done · next: write tests`, or `all 5 done` when nothing is open.
+pub fn progress_line(todos: &[TodoItem]) -> String {
+    let done = terminal_count(todos);
+    let next = todos
+        .iter()
+        .find(|t| t.status == TodoStatus::InProgress)
+        .or_else(|| todos.iter().find(|t| t.status == TodoStatus::Pending));
+    match next {
+        Some(t) => format!("{done}/{} done · next: {}", todos.len(), t.content),
+        None => format!("all {done} done"),
+    }
 }
 
 /// Apply a `todowrite` / `todo` tool argument object.

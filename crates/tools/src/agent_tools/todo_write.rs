@@ -131,6 +131,15 @@ fn format_todo_result(todos: &[TodoItem], working: &Path, session_id: Option<&st
             item.content
         ));
     }
+    if !todos.is_empty() {
+        result.push_str(&format!(
+            "\n{}\n",
+            whycodes_core::todo::progress_line(todos)
+        ));
+    }
+    for warning in whycodes_core::todo::todo_warnings(todos) {
+        result.push_str(&format!("Warning: {warning}\n"));
+    }
     result.push_str(&format!(
         "\nStored {} todos in {}",
         todos.len(),
