@@ -1202,9 +1202,10 @@ a `fallback_models` entry does not hand off.
 
 OpenAI-compat and xAI Grok send `reasoning_effort` on thinking models. Default
 is `medium`. `xhigh` (Max) is grok-4.6+ only; older Grok models clamp to
-`high`. In the TUI the current level sits next to the model name on the prompt
-border — click it (or `/effort`) to pick. `ultrathink` in a prompt still
-raises that turn to `high`.
+`high`. GLM-5+ offers `low`, `high` and `xhigh` (sent as `max`) and defaults to
+`high`; `medium` clamps to `high`. In the TUI the current level sits next to
+the model name on the prompt border — click it (or `/effort`) to pick.
+`ultrathink` in a prompt still raises that turn to `high` (`max` on GLM-5+).
 
 Context-window errors are classified separately from 429s: the same request is
 not retried; whycodes compacts once and retries the step. From 85% of the

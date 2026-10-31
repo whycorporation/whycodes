@@ -52,10 +52,21 @@ fn attach_sets_budget_and_effort_for_grok() {
     req.thinking = None;
     attach_thinking_request(&mut req, "xai", "grok-4", None, Some("xhigh"));
     assert_eq!(req.thinking.as_ref().unwrap()["reasoning_effort"], "high");
-    apply_ultrathink(&mut req);
+    apply_ultrathink(&mut req, "grok-4");
     let t = req.thinking.as_ref().unwrap();
     assert_eq!(t["budget_tokens"], 16_000);
     assert_eq!(t["reasoning_effort"], "high");
+
+    // GLM-5+: `high` by default, a config `medium` clamps to it, and
+    // ultrathink asks for the deepest level.
+    req.thinking = None;
+    attach_thinking_request(&mut req, "zcode", "GLM-5.3-flash", None, None);
+    assert_eq!(req.thinking.as_ref().unwrap()["reasoning_effort"], "high");
+    req.thinking = None;
+    attach_thinking_request(&mut req, "zcode", "GLM-5.3-flash", None, Some("medium"));
+    assert_eq!(req.thinking.as_ref().unwrap()["reasoning_effort"], "high");
+    apply_ultrathink(&mut req, "GLM-5.3-flash");
+    assert_eq!(req.thinking.as_ref().unwrap()["reasoning_effort"], "xhigh");
 }
 
 #[test]
@@ -152,7 +163,7 @@ fn ultrathink_enables_thinking_when_absent() {
         thinking: None,
         use_prompt_cache: false,
     };
-    apply_ultrathink(&mut req);
+    apply_ultrathink(&mut req, "gpt-5");
     let t = req.thinking.unwrap();
     assert_eq!(t["enabled"], true);
     assert_eq!(t["budget_tokens"], 16_000);

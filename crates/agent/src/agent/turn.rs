@@ -344,7 +344,7 @@ impl Agent {
                 self.reasoning_effort.as_deref(),
             );
             if magic.ultrathink {
-                crate::thinking_acc::apply_ultrathink(&mut request);
+                crate::thinking_acc::apply_ultrathink(&mut request, model);
             }
 
             // First LLM step: ephemeral intent posture (not stored in session;

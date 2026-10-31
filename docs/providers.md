@@ -82,7 +82,10 @@ after the role prompt; `system_prompt_for_route` rebuilds it on `/models`.
 turns the field on for providers `openai`, `xai`, `openrouter`, `deepseek`
 and for model families `o1*`, `o3*`, `o4*`, `gpt-5`, `grok-4`,
 `grok-3-mini`, `*reasoner`, default `medium`. `xhigh` is accepted only for
-Grok ≥ 4.6 (`model_allows_xhigh`); otherwise it clamps to `high`.
+Grok ≥ 4.6 and GLM ≥ 5 (`model_allows_xhigh`); otherwise it clamps to `high`.
+GLM ≥ 5 has its own levels (`low` | `high` | `xhigh`, sent as `max`), defaults
+to `high`, and clamps `medium` to `high`; left unset it reasons at its deepest
+level and cannot turn thinking off.
 `apply_openai_effort` writes `reasoning_effort` into chat-completions
 bodies; `apply_anthropic` writes `thinking: {type: enabled, budget_tokens}`
 and raises `max_tokens` to at least `budget_tokens + 4096`.

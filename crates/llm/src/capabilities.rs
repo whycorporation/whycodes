@@ -232,14 +232,19 @@ fn heuristic_context_window(model_lower: &str, provider_lower: &str) -> u32 {
     }
 }
 
-/// Text GLM models: 128k for 4.5, 200k from 4.6 on (`glm-5.3-flash` too).
-/// Vision ids (`glm-4.5v`) and older or unparsed versions fall through.
-fn glm_context_window(model_lower: &str) -> Option<u32> {
+/// `(major, minor)` of a text GLM id (`glm-5.3-flash` → `(5, 3)`).
+/// Vision ids (`glm-4.5v`) and unparsed versions give `None`.
+pub(crate) fn glm_version(model_lower: &str) -> Option<(u32, u32)> {
     let rest = &model_lower[model_lower.find("glm-")? + "glm-".len()..];
     let version = rest.split('-').next()?;
     let (major, minor) = version.split_once('.').unwrap_or((version, "0"));
-    let (major, minor) = (major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?);
-    match (major, minor) {
+    Some((major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?))
+}
+
+/// Text GLM models: 128k for 4.5, 200k from 4.6 on (`glm-5.3-flash` too).
+/// Vision ids (`glm-4.5v`) and older or unparsed versions fall through.
+fn glm_context_window(model_lower: &str) -> Option<u32> {
+    match glm_version(model_lower)? {
         (4, 5) => Some(128_000),
         (4, 6..) | (5.., _) => Some(200_000),
         _ => None,

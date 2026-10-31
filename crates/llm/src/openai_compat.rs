@@ -63,7 +63,11 @@ pub fn chat_completions_body(request: &LlmRequest, model: &str, messages: Vec<Va
         json_value::insert(&mut body, "parallel_tool_calls", Value::Bool(true));
     }
     apply_sampling(&mut body, request);
-    crate::thinking::ThinkingConfig::apply_openai_effort(&mut body, request.thinking.as_ref());
+    crate::thinking::ThinkingConfig::apply_openai_effort(
+        &mut body,
+        model,
+        request.thinking.as_ref(),
+    );
     body
 }
 

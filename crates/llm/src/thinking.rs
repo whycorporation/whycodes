@@ -27,13 +27,15 @@ pub enum ReasoningEffort {
     Low,
     Medium,
     High,
-    /// grok-4.6+ only (`xhigh` / Max).
+    /// grok-4.6+ (`xhigh`) and GLM-5+ (`max` on the wire).
     XHigh,
 }
 
 impl ReasoningEffort {
     pub const ALL: [Self; 4] = [Self::Low, Self::Medium, Self::High, Self::XHigh];
     pub const STANDARD: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+    /// GLM-5+ accepts `low` | `high` | `max` and rejects turning thinking off.
+    pub const GLM: [Self; 3] = [Self::Low, Self::High, Self::XHigh];
 
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
@@ -69,19 +71,28 @@ impl ReasoningEffort {
             Self::Low => "Fast — some reasoning, best for latency",
             Self::Medium => "Balanced — complex analysis, long context",
             Self::High => "Deeper thinking — hard problems, multi-step",
-            Self::XHigh => "Maximum depth — grok-4.6+ only",
+            Self::XHigh => "Maximum depth — grok-4.6+ and GLM-5+",
         }
     }
 
-    /// `xhigh` is documented for grok-4.6 and newer.
+    /// `xhigh` is documented for grok-4.6 and newer; GLM-5+ calls it `max`.
     pub fn model_allows_xhigh(provider: &str, model: &str) -> bool {
         let p = provider.to_ascii_lowercase();
         let m = model.to_ascii_lowercase();
+        if glm_effort_model(&m) {
+            return true;
+        }
         if p != "xai" && !m.contains("grok") {
             return false;
         }
         grok_version_at_least(&m, 4, 6)
     }
+}
+
+/// GLM-5+ thinks on every request and takes `reasoning_effort`; left unset
+/// it reasons at its deepest level.
+fn glm_effort_model(model_lower: &str) -> bool {
+    crate::capabilities::glm_version(model_lower).is_some_and(|(major, _)| major >= 5)
 }
 
 fn default_enabled() -> bool {
@@ -180,6 +191,9 @@ impl ThinkingConfig {
         if Self::default_effort(provider, model).is_none() {
             return &[];
         }
+        if glm_effort_model(&model.to_ascii_lowercase()) {
+            return &ReasoningEffort::GLM;
+        }
         if ReasoningEffort::model_allows_xhigh(provider, model) {
             &ReasoningEffort::ALL
         } else {
@@ -199,11 +213,22 @@ impl ThinkingConfig {
         }
         let want = override_effort
             .and_then(ReasoningEffort::parse)
+            .or_else(|| Self::default_effort(provider, model).and_then(ReasoningEffort::parse))
             .unwrap_or(ReasoningEffort::Medium);
-        if want == ReasoningEffort::XHigh && !levels.contains(&ReasoningEffort::XHigh) {
-            Some(ReasoningEffort::High)
-        } else {
+        // `xhigh` on older grok, `medium` on GLM.
+        if levels.contains(&want) {
             Some(want)
+        } else {
+            Some(ReasoningEffort::High)
+        }
+    }
+
+    /// Effort for an `ultrathink` turn: GLM's `max`, else `high`.
+    pub fn ultrathink_effort(model: &str) -> ReasoningEffort {
+        if glm_effort_model(&model.to_ascii_lowercase()) {
+            ReasoningEffort::XHigh
+        } else {
+            ReasoningEffort::High
         }
     }
 
@@ -221,6 +246,10 @@ impl ThinkingConfig {
             || m.contains("reasoner")
         {
             Some("medium")
+        } else if glm_effort_model(&m) {
+            // Its own default is the deepest level; `high` measured about a
+            // third fewer output tokens on an agentic refactor, same result.
+            Some("high")
         } else {
             None
         }
@@ -252,6 +281,7 @@ impl ThinkingConfig {
     /// OpenAI-compat `reasoning_effort` when the request asks for thinking.
     pub fn apply_openai_effort(
         body: &mut serde_json::Value,
+        model: &str,
         request_thinking: Option<&serde_json::Value>,
     ) {
         let Some(cfg) = Self::from_request_value(request_thinking) else {
@@ -260,7 +290,10 @@ impl ThinkingConfig {
         if !cfg.enabled {
             return;
         }
-        if let Some(effort) = cfg.reasoning_effort {
+        if let Some(mut effort) = cfg.reasoning_effort {
+            if effort == "xhigh" && glm_effort_model(&model.to_ascii_lowercase()) {
+                effort = "max".into();
+            }
             body["reasoning_effort"] = serde_json::Value::String(effort);
         }
     }
