@@ -6505,7 +6505,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-agent"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -6534,7 +6534,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-auth"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -6554,7 +6554,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-cli"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "anyhow",
  "axum",
@@ -6604,14 +6604,14 @@ dependencies = [
 
 [[package]]
 name = "whycodes-command-risk"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "criterion",
 ]
 
 [[package]]
 name = "whycodes-config"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "serde",
  "serde_json",
@@ -6624,7 +6624,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-core"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "chrono",
  "directories",
@@ -6641,7 +6641,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-format"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "criterion",
  "mermaid-text",
@@ -6655,7 +6655,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-function"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "serde_json",
  "whycodes-core",
@@ -6663,7 +6663,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-import"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "serde",
  "serde_json",
@@ -6676,7 +6676,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-index"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "criterion",
  "ignore",
@@ -6689,7 +6689,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-llm"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -6716,7 +6716,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-lsp"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "serde",
  "serde_json",
@@ -6729,7 +6729,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-mcp"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "async-stream",
  "axum",
@@ -6751,7 +6751,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-memory"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "chrono",
  "serde",
@@ -6770,7 +6770,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-plugin"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "reqwest",
  "serde",
@@ -6784,7 +6784,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-protocol"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "serde",
  "serde_json",
@@ -6793,7 +6793,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-sandbox"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "libc",
  "tempfile",
@@ -6804,7 +6804,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-schema"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "serde",
  "serde_json",
@@ -6813,7 +6813,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-sdk"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "axum",
  "futures",
@@ -6828,7 +6828,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-server"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -6856,7 +6856,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-session"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "chrono",
  "futures",
@@ -6873,7 +6873,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-shell"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "brush-builtins",
  "brush-core",
@@ -6910,7 +6910,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-skill"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "serde",
  "serde_json",
@@ -6924,7 +6924,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-slop"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "serde",
  "tempfile",
@@ -6932,7 +6932,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-storage"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -6947,7 +6947,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-tools"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "anyhow",
  "ast-grep-core",
@@ -6983,7 +6983,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-tui"
-version = "0.6.26"
+version = "0.6.27"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
