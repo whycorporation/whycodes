@@ -217,3 +217,13 @@ fn reasoning_effort_parse_labels_and_unknown() {
     assert_eq!(parsed.budget_tokens, 1);
     assert!(ThinkingConfig::resolve_effort("anthropic", "claude-sonnet-4", None).is_none());
 }
+
+#[test]
+fn side_call_thinking_asks_for_the_lowest_effort_the_model_takes() {
+    let glm = ThinkingConfig::side_call_thinking("zcode", "GLM-5.3").expect("glm takes effort");
+    assert_eq!(glm["reasoning_effort"], "low");
+    let mut body = serde_json::json!({});
+    ThinkingConfig::apply_openai_effort(&mut body, "GLM-5.3", Some(&glm));
+    assert_eq!(body["reasoning_effort"], "low");
+    assert!(ThinkingConfig::side_call_thinking("anthropic", "claude-sonnet-4").is_none());
+}

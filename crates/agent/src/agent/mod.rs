@@ -48,6 +48,9 @@ pub struct Agent {
     secrets: Option<Arc<whycodes_llm::Redactor>>,
     /// A summary of the current prefix prepared before the threshold.
     speculative_summary: Mutex<Option<compact::SpeculativeSummary>>,
+    /// When a model-written compaction summary last failed; summaries stay
+    /// local until [`compact::SUMMARY_COOLDOWN`] has passed.
+    summary_failed_at: compact::SummaryFailure,
     sandbox: SandboxSettings,
     network: NetworkPolicy,
     /// Config-driven tool and lifecycle hooks (empty by default).
@@ -429,6 +432,7 @@ impl Agent {
             risk_threshold: RiskThreshold::default(),
             secrets: whycodes_llm::secrets::installed(),
             speculative_summary: Mutex::new(None),
+            summary_failed_at: compact::SummaryFailure::default(),
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
             hooks: Vec::new(),
@@ -920,7 +924,7 @@ impl Agent {
 
     pub(crate) fn inject_background_completions(&self, session: &mut Session) {
         for job in self.background.take_completions() {
-            session.add_user_message(&job.notice());
+            session.add_agent_note(&job.notice());
         }
     }
 
