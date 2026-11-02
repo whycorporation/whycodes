@@ -973,24 +973,23 @@ impl Agent {
                 // Sequential for shell / mutating / permission-ask tools so risk
                 // gates and the TUI single-slot permission UI stay correct.
                 let tool_t0 = Instant::now();
+                let mut results = Vec::with_capacity(tool_calls.len());
                 let executed = self
-                    .execute_tool_calls(
+                    .run_tool_calls(
                         &tool_calls,
                         session,
                         &tool_ctx,
-                        provider_name,
-                        model,
-                        &api_key,
+                        (provider_name, model, &api_key),
                         &events,
                         &cancel,
                         Some(&turn_intent),
                         &mut speculative_reads,
+                        &mut results,
                     )
                     .await;
-                let results = match executed {
-                    Ok(results) => results,
-                    Err(e) => return Err(close_unanswered_calls(session, &tool_calls, e)),
-                };
+                if let Err(e) = executed {
+                    return Err(close_unanswered_calls(session, &tool_calls, results, e));
+                }
                 crate::speculative_read::abort_all(&mut speculative_reads);
                 // Prewalk: the strong model planned and made the first edit;
                 // the remaining steps run on the cheap model.
@@ -1409,7 +1408,8 @@ fn is_output_limit_stop(delta: &serde_json::Value) -> bool {
     })
 }
 
-/// Answer every call of an interrupted batch, then hand back `err`.
+/// Answer every call of an interrupted batch, then hand back `err`: the
+/// calls that finished keep their results (`done`), the rest read as not run.
 ///
 /// The assistant turn holding these calls is already in the transcript.
 /// Strict APIs reject the next request if any call lacks a result (OpenAI:
@@ -1418,17 +1418,17 @@ fn is_output_limit_stop(delta: &serde_json::Value) -> bool {
 fn close_unanswered_calls(
     session: &mut Session,
     calls: &[whycodes_core::types::ToolCall],
+    mut done: Vec<whycodes_core::types::ToolResult>,
     err: whycodes_core::Error,
 ) -> whycodes_core::Error {
-    let mut results = Vec::with_capacity(calls.len());
-    for call in calls {
-        results.push(whycodes_core::types::ToolResult {
+    for call in calls.iter().skip(done.len()) {
+        done.push(whycodes_core::types::ToolResult {
             tool_call_id: call.id.clone(),
             content: NOT_RUN.to_string(),
             is_error: true,
         });
     }
-    session.add_tool_results(results);
+    session.add_tool_results(done);
     err
 }
 
