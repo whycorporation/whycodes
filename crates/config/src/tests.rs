@@ -3415,3 +3415,45 @@ fn project_set_of_another_key_leaves_the_global_default_agent() {
         assert_eq!(Config::load_layered(&proj).unwrap().default_agent, "plan");
     });
 }
+
+#[test]
+fn update_global_keeps_the_files_comments_order_and_missing_defaults() {
+    with_isolated_home(|home| {
+        let text = format!(
+            "schema_version = {CONFIG_SCHEMA_VERSION}\n\
+             # hand-written\n\
+             default_agent = \"build\"\n\n\
+             [mcp_servers.git]  # the git server\n\
+             command = \"npx\"\n\
+             args = []\n"
+        );
+        std::fs::write(home.join("config.toml"), &text).unwrap();
+        Config::update_global(&mut |global| {
+            let git = global.mcp_servers.get_mut("git").unwrap();
+            git.command = Some("uvx".into());
+            git.args = vec!["mcp-server-git".into()];
+        })
+        .unwrap();
+        let on_disk = std::fs::read_to_string(home.join("config.toml")).unwrap();
+        assert_eq!(
+            on_disk,
+            text.replace("\"npx\"", "\"uvx\"")
+                .replace("args = []", "args = [\"mcp-server-git\"]")
+        );
+    });
+}
+
+#[test]
+fn a_schema_bump_changes_only_schema_version() {
+    with_isolated_home(|home| {
+        let text = "# keep me\ndefault_agent = \"plan\"\n";
+        std::fs::write(home.join("config.toml"), text).unwrap();
+        let cfg = Config::load_global_raw().unwrap();
+        assert_eq!(cfg.schema_version, CONFIG_SCHEMA_VERSION);
+        let on_disk = std::fs::read_to_string(home.join("config.toml")).unwrap();
+        assert_eq!(
+            on_disk,
+            format!("{text}schema_version = {CONFIG_SCHEMA_VERSION}\n")
+        );
+    });
+}

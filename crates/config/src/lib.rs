@@ -7,6 +7,7 @@ pub mod dotted;
 mod edit;
 mod load;
 mod merge;
+mod patch;
 mod stream_rules;
 mod types;
 mod validate;
