@@ -12252,3 +12252,103 @@ fn the_turn_placeholder_keeps_the_sessions_tools() {
     let probe = Agent::new(dummy_info("probe")).with_shared_tools(tools);
     assert_eq!(probe.mcp_servers().len(), before);
 }
+
+#[test]
+fn an_open_picker_owns_plain_keys_while_busy() {
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let ctrl_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(!picker_owns_key(&app, &enter), "nothing open: Enter steers");
+    crate::input::open_dialog(&mut app, DialogKind::Help);
+    assert!(picker_owns_key(&app, &enter), "Enter selects in the dialog");
+    assert!(
+        !picker_owns_key(&app, &ctrl_c),
+        "Ctrl+C still cancels the turn"
+    );
+    assert!(!picker_owns_key(&app, &Event::FocusGained));
+}
+
+#[test]
+fn slash_commands_typed_mid_turn_act_or_wait_visibly() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut goal = None;
+    let type_draft = |app: &mut TuiApp, s: &str| {
+        app.input_buffer = s.into();
+        app.input_cursor = s.len();
+    };
+
+    type_draft(&mut app, "just a message");
+    assert!(!slash::busy_slash(&mut app, &mut goal, None));
+
+    app.pending_auto_prompts
+        .extend(["a".to_string(), "b".to_string()]);
+    type_draft(&mut app, "/loop stop");
+    assert!(slash::busy_slash(&mut app, &mut goal, None));
+    assert!(app.pending_auto_prompts.is_empty());
+    assert!(app.input_buffer.is_empty());
+
+    type_draft(&mut app, "/copy");
+    assert!(slash::busy_slash(&mut app, &mut goal, None));
+    assert!(app.input_buffer.is_empty());
+
+    type_draft(&mut app, "/goal clear");
+    assert!(slash::busy_slash(&mut app, &mut goal, None));
+    assert_eq!(app.status_message, "No active goal.");
+    goal = Some(crate::goal::Goal::new("ship it", 0));
+    type_draft(&mut app, "/goal clear");
+    assert!(slash::busy_slash(&mut app, &mut goal, None));
+    assert!(goal.is_none());
+
+    // Anything else stays in the prompt for after the turn.
+    type_draft(&mut app, "/models");
+    assert!(slash::busy_slash(&mut app, &mut goal, None));
+    assert_eq!(app.input_buffer, "/models");
+}
+
+#[tokio::test]
+async fn picker_choices_made_mid_turn_wait_for_the_turn_to_end() {
+    let _home = isolate_home();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.agent_busy = true;
+    let mut config = Config::default();
+    let (mut provider, mut model, mut api_key) = ("acme".into(), "m1".into(), "k".into());
+    let mut catalog_fetch_pending = false;
+    let (catalog_tx, _catalog_rx) = mpsc::unbounded_channel();
+    let (auth_tx, _auth_rx) = mpsc::unbounded_channel();
+    app.pending_model = Some(("xai".into(), "grok-4".into()));
+    for _ in 0..2 {
+        apply_pending_picker_choices(
+            &mut app,
+            &mut rt,
+            &mut config,
+            &mut provider,
+            &mut model,
+            &mut api_key,
+            &mut catalog_fetch_pending,
+            catalog_tx.clone(),
+            &auth_tx,
+        )
+        .await;
+    }
+    assert_eq!(model, "m1", "not applied to the turn's placeholder agent");
+    assert!(app.pending_model.is_some());
+    assert!(app.picker_wait_noted);
+
+    rt.agent_busy = false;
+    apply_pending_picker_choices(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+        &mut catalog_fetch_pending,
+        catalog_tx,
+        &auth_tx,
+    )
+    .await;
+    assert_eq!(model, "grok-4");
+    assert!(!app.picker_wait_noted);
+}
