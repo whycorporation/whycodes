@@ -753,6 +753,15 @@ impl Agent {
             }
 
             if stream_rule_retry {
+                if !accumulated_text.is_empty() || !accumulated_thinking.is_empty() {
+                    emit(
+                        &events,
+                        TurnEvent::DraftDiscarded {
+                            text: accumulated_text,
+                            thinking: accumulated_thinking,
+                        },
+                    );
+                }
                 continue;
             }
             // This step streamed to the end: a later drop gets a fresh window.
