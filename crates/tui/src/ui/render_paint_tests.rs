@@ -217,6 +217,7 @@ fn chat_message_with_thinking(tb: ThinkingBlock) -> crate::app::ChatMessage {
         layout_cache_alt: None,
         line_cache: None,
         stream_md: None,
+        last_step_at: 0,
     }
 }
 

@@ -15,6 +15,7 @@ fn msg(role: ChatRole, content: &str) -> ChatMessage {
         layout_cache_alt: None,
         line_cache: None,
         stream_md: None,
+        last_step_at: 0,
     }
 }
 

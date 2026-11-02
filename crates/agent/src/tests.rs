@@ -972,15 +972,11 @@ async fn scripted_tool_then_exhausted_turns() {
     let mut session =
         whycodes_session::session::Session::new(dir.path().to_path_buf(), "test".into());
     session.add_user_message("please read note.txt and summarize it");
-    let err = agent
+    let out = agent
         .run_turn(&mut session, "script", "m", "k", Some(1))
         .await
-        .expect_err("max turns after tool");
-    assert!(
-        err.to_string().to_lowercase().contains("turn")
-            || err.to_string().to_lowercase().contains("exceed"),
-        "{err}"
-    );
+        .expect("max turns ends the turn cleanly");
+    assert!(out.contains("step limit"), "{out}");
 }
 
 #[tokio::test]

@@ -121,24 +121,27 @@ async fn unknown_provider_lists_builtins() {
 }
 
 #[tokio::test]
-async fn max_turns_exceeded_after_tool() {
+async fn max_turns_reached_after_a_tool_keeps_the_work_and_says_so() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("note.txt"), "secret").unwrap();
-    let agent = scripted([ScriptedStep::ToolCall {
-        id: "c1".into(),
-        name: "read".into(),
-        input: json!({"path": "note.txt"}),
-    }]);
+    let agent = scripted([
+        ScriptedStep::Text("Reading it.".into()),
+        ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "read".into(),
+            input: json!({"path": "note.txt"}),
+        },
+    ]);
     let mut session = session_at(dir.path(), "please read note.txt and summarize it");
-    let err = agent
+    let out = agent
         .run_turn(&mut session, "script", "m", "k", Some(1))
         .await
-        .expect_err("max turns");
+        .expect("the limit ends the turn, not the run");
+    assert!(out.starts_with("Reading it."), "{out}");
+    assert!(out.contains("step limit (1)"), "{out}");
     assert!(
-        err.to_string()
-            .to_lowercase()
-            .contains("exceeded maximum turns"),
-        "{err}"
+        session.messages.iter().any(|m| m.role == Role::Tool),
+        "the tool's result is kept"
     );
 }
 

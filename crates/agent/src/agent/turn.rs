@@ -237,10 +237,17 @@ impl Agent {
             }
 
             let max = max_turns.unwrap_or(0);
+            // Out of steps: keep what was done (and say so) instead of an
+            // error that dropped the turn's text, as a subagent already does.
             if max_turns.is_some() && turn_count >= max {
-                return Err(whycodes_core::Error::Agent(format!(
-                    "Exceeded maximum turns ({max})"
-                )));
+                let note = format!(
+                    "Stopped at the step limit ({max}) before a final answer; \
+                     raise --max-turns to let it finish."
+                );
+                tracing::warn!(max, "turn reached its step limit");
+                emit(&events, TurnEvent::Status(note.clone()));
+                append_step_text(&mut final_text, &format!("[{note}]"));
+                break;
             }
 
             // Always shrink oversized / old tool dumps before prefill (cheap).

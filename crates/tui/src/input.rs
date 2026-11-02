@@ -41,7 +41,44 @@ fn paste_os_clipboard(app: &mut TuiApp) {
     if app.mode != AppMode::Normal && app.mode != AppMode::Session {
         return;
     }
-    match crate::clipboard_image::read_for_prompt() {
+    // The read spawns a tool (PowerShell on Windows: seconds) — off the UI
+    // thread, so the screen keeps painting. One read at a time.
+    if app.clipboard_read.is_some() {
+        return;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    crate::clipboard_image::read_in_background(tx);
+    app.clipboard_read = Some(rx);
+    if !poll_clipboard_paste(app) {
+        app.status_message = "Reading clipboard…".into();
+        app.mark_dirty();
+    }
+}
+
+/// Apply a finished Ctrl+V read, if one is in. Called each loop pass.
+/// Returns whether one was applied.
+pub(crate) fn poll_clipboard_paste(app: &mut TuiApp) -> bool {
+    let Some(rx) = app.clipboard_read.as_ref() else {
+        return false;
+    };
+    let result = match rx.try_recv() {
+        Ok(result) => result,
+        Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            Err("Reading the clipboard failed".into())
+        }
+    };
+    app.clipboard_read = None;
+    apply_clipboard_read(app, result);
+    app.mark_dirty();
+    true
+}
+
+fn apply_clipboard_read(
+    app: &mut TuiApp,
+    result: Result<crate::clipboard_image::PromptClipboard, String>,
+) {
+    match result {
         Ok(crate::clipboard_image::PromptClipboard::Empty) => {}
         Ok(crate::clipboard_image::PromptClipboard::ImagePaths(paths)) => {
             app.focus_prompt();
