@@ -3875,6 +3875,12 @@ impl TuiApp {
         self.todos = std::mem::take(&mut view.todos);
         self.todos_collapsed = view.todos_collapsed;
         self.todos_scroll = view.todos_scroll;
+        // The footer and a force-stop rebuild read `agent_name`: it must be
+        // this session's agent, not the one picked in the session left.
+        if let Some((name, idx)) = view.agent.take() {
+            self.agent_name = name;
+            self.agent_cycle_idx = idx;
+        }
     }
 
     /// Move this app's view fields back into `view` (no transcript clone).
@@ -3904,6 +3910,7 @@ impl TuiApp {
         view.todos_collapsed = self.todos_collapsed;
         view.todos_scroll = self.todos_scroll;
         self.todos_scroll = 0;
+        view.agent = Some((self.agent_name.clone(), self.agent_cycle_idx));
     }
 
     /// Replace the session todo list. Auto-collapses when every item is
