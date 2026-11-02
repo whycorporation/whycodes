@@ -538,7 +538,41 @@ fn init_logging(cli: &Cli) {
         // Last-resort so tracing macros still work somewhere.
         let _ = tracing_subscriber::fmt::try_init();
     }
+    install_closed_pipe_exit();
 }
+
+/// A `print!` to a closed pipe (`whycodes run … | head`, a console that
+/// went away) panics with "failed printing to stdout: …". That is the
+/// reader leaving, not a crash: exit quietly instead of writing a crash
+/// report. Windows has no SIGPIPE, so this is the only guard there.
+fn install_closed_pipe_exit() {
+    let crash_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied());
+        if message.is_some_and(is_closed_pipe_panic) {
+            std::process::exit(0);
+        }
+        crash_hook(info);
+    }));
+}
+
+/// Std's panic for a write to a closed stdout/stderr pipe. The OS text is
+/// localized ("Boru kapatılıyor"), so match the error number: 232 / 109 on
+/// Windows (pipe closing / broken), EPIPE (32) on Unix.
+fn is_closed_pipe_panic(message: &str) -> bool {
+    let printing = message.starts_with("failed printing to stdout")
+        || message.starts_with("failed printing to stderr");
+    printing && CLOSED_PIPE_ERRORS.iter().any(|code| message.contains(code))
+}
+
+#[cfg(windows)]
+const CLOSED_PIPE_ERRORS: &[&str] = &["(os error 232)", "(os error 109)"];
+#[cfg(not(windows))]
+const CLOSED_PIPE_ERRORS: &[&str] = &["(os error 32)"];
 
 pub(crate) fn is_tui_invoke(cli: &Cli) -> bool {
     !cli.plain
