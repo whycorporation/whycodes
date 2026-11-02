@@ -3042,6 +3042,58 @@ fn force_stop_applies_outcome_or_rebuilds() {
 }
 
 #[test]
+fn switching_sessions_shows_each_sessions_own_agent() {
+    let mut active = test_runtime();
+    let mut parked = test_runtime();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    (app.agent_name, app.agent_cycle_idx) = ("plan".into(), 1);
+    let mut seed = TuiApp::from_config(TuiAppConfig::default());
+    (seed.agent_name, seed.agent_cycle_idx) = ("build".into(), 0);
+    seed.yield_view(&mut parked.view);
+    let mut runtimes = vec![parked];
+
+    switch_to_runtime(&mut app, &mut active, &mut runtimes, 0);
+    assert_eq!((app.agent_name.as_str(), app.agent_cycle_idx), ("build", 0));
+    switch_to_runtime(&mut app, &mut active, &mut runtimes, 0);
+    assert_eq!((app.agent_name.as_str(), app.agent_cycle_idx), ("plan", 1));
+
+    // A snapshot that never held an agent keeps the app's.
+    let mut fresh = vec![test_runtime()];
+    switch_to_runtime(&mut app, &mut active, &mut fresh, 0);
+    assert_eq!(app.agent_name, "plan");
+}
+
+#[test]
+fn force_stop_ends_a_running_loop() {
+    let _home = isolate_home();
+    let (dir, idx) = temp_index();
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    rt.agent_busy = true;
+    rt.cancel_flag = Some(new_cancel_flag());
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.pending_auto_prompts
+        .push_back("next loop prompt".into());
+    let mut at = Some(Instant::now());
+    force_stop_turn(
+        &mut app,
+        &mut rt,
+        &mut at,
+        &Config::default(),
+        dir.path(),
+        &idx,
+    );
+    assert!(app.pending_auto_prompts.is_empty());
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.role == ChatRole::System && m.content.contains("loop stopped")),
+        "{:?}",
+        app.messages.iter().map(|m| &m.content).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn rebuild_agent_resolves_pending_name() {
     let _home = isolate_home();
     let (dir, idx) = temp_index();
