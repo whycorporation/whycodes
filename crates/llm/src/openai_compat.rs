@@ -229,6 +229,16 @@ impl ChatSse {
         let Ok(event) = serde_json::from_str::<Value>(data) else {
             return;
         };
+        // `data: {"error":{…}}` mid-stream: the real cause (a 429, an
+        // overflow, an upstream failure). Read as a chunk it was dropped and
+        // a following `finish_reason` passed the partial reply as an answer.
+        if let Some(error) = event.get("error").filter(|e| e.is_object()) {
+            self.pending.push_back(Ok(StreamEvent::Error {
+                message: stream_error_message(error),
+            }));
+            self.done = true;
+            return;
+        }
         self.started = true;
         let delta = &event["choices"][0]["delta"];
         for ev in stream_events_for_chat_delta(delta) {
@@ -311,6 +321,31 @@ impl Stream for ChatSse {
                 Poll::Pending => return Poll::Pending,
             }
         }
+    }
+}
+
+/// `{"code": 429, "type": "rate_limit_error", "message": "…"}` as one line
+/// that keeps what the error classifier keys on (status, type, text).
+pub(crate) fn stream_error_message(error: &Value) -> String {
+    let field = |key: &str| match &error[key] {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    };
+    let head: Vec<String> = [field("code"), field("type")]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect();
+    let message = field("message");
+    let message = if message.is_empty() {
+        "provider error".to_string()
+    } else {
+        message
+    };
+    if head.is_empty() {
+        message
+    } else {
+        format!("({}) {message}", head.join(" "))
     }
 }
 
