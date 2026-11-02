@@ -756,6 +756,9 @@ pub struct ChatMessage {
     /// Live-tail markdown freeze (checkpoint). Only the growing
     /// assistant bubble uses this; closed messages sit in `line_cache`.
     pub stream_md: Option<crate::md_stream::IncrementalMarkdown>,
+    /// Byte offset in `content` where the turn's last step began (after its
+    /// last tool call). Steps share one bubble; `/copy` takes this tail.
+    pub last_step_at: usize,
 }
 
 impl ChatMessage {
@@ -802,6 +805,18 @@ impl ChatMessage {
             layout_cache_alt: None,
             line_cache: None,
             stream_md: None,
+            last_step_at: 0,
+        }
+    }
+
+    /// The text of the turn's last step: the answer after the tool calls,
+    /// or the whole message when that step wrote nothing.
+    pub fn last_step_text(&self) -> &str {
+        let tail = self.content.get(self.last_step_at..).unwrap_or_default();
+        if tail.trim().is_empty() {
+            &self.content
+        } else {
+            tail
         }
     }
 }
@@ -1567,6 +1582,9 @@ pub struct TuiApp {
     pub(crate) bg_jobs: Vec<BgJobUi>,
     /// Model switch from the picker dialog: `(provider, model)`.
     pub(crate) pending_model: Option<(String, String)>,
+    /// A Ctrl+V image read running off the UI thread.
+    pub(crate) clipboard_read:
+        Option<std::sync::mpsc::Receiver<Result<crate::clipboard_image::PromptClipboard, String>>>,
     /// A model / effort / mode picked mid-turn waits for the turn to end;
     /// set once its "applies after this turn" note was shown.
     pub(crate) picker_wait_noted: bool,
@@ -2412,6 +2430,7 @@ impl TuiApp {
             goal_chip: None,
             bg_jobs: Vec::new(),
             pending_model: None,
+            clipboard_read: None,
             picker_wait_noted: false,
             pending_effort: None,
             effort_picker_selected: 0,
@@ -3600,7 +3619,7 @@ impl TuiApp {
             .iter()
             .rev()
             .find(|m| m.role == ChatRole::Assistant && !m.content.trim().is_empty())
-            .map(|m| m.content.clone());
+            .map(|m| m.last_step_text().trim().to_string());
         match reply {
             Some(text) => self.copy_with_toast(&text, "reply"),
             None => {
@@ -4106,6 +4125,7 @@ impl TuiApp {
             if !last.content.trim().is_empty() && !last.content.ends_with("\n\n") {
                 last.content.push_str("\n\n");
             }
+            last.last_step_at = last.content.len();
             last.blocks.push(ChatBlock::ToolUse {
                 id: tc.id.clone(),
                 name: tc.name.clone(),

@@ -335,15 +335,29 @@ fn classify_spawn_err_not_found_and_io() {
 }
 
 #[test]
-fn classify_command_output_maps_spawn_and_stdout() {
-    match classify_command_output(Err(io::Error::new(io::ErrorKind::NotFound, "x"))) {
+fn command_stdout_reads_output_and_kills_a_tool_that_overruns() {
+    match command_stdout("whycodes-no-such-tool", &[], Duration::from_secs(2)) {
         Err(RunErr::NotFound) => {}
         other => panic!("expected NotFound, got {other:?}"),
     }
-    match classify_command_output(Err(io::Error::other("pipe"))) {
-        Err(RunErr::Io(msg)) => assert!(msg.contains("pipe"), "{msg}"),
-        other => panic!("expected Io, got {other:?}"),
+    #[cfg(windows)]
+    let (echo, slow): (&[&str], &[&str]) = (
+        &["cmd", "/c", "echo hi"],
+        &["ping", "-n", "30", "127.0.0.1"],
+    );
+    #[cfg(not(windows))]
+    let (echo, slow): (&[&str], &[&str]) = (&["echo", "hi"], &["sleep", "30"]);
+    let out = command_stdout(echo[0], &echo[1..], Duration::from_secs(10)).unwrap();
+    assert!(String::from_utf8_lossy(&out).contains("hi"));
+    let t0 = std::time::Instant::now();
+    match command_stdout(slow[0], &slow[1..], Duration::from_millis(300)) {
+        Err(RunErr::Timeout) => {}
+        other => panic!("expected Timeout, got {other:?}"),
     }
+    assert!(
+        t0.elapsed() < Duration::from_secs(10),
+        "killed, not waited out"
+    );
 }
 
 #[test]
@@ -365,10 +379,8 @@ fn finish_windows_clipboard_covers_temp_read_and_run_errs() {
         windows_clipboard_run_err(&missing, RunErr::Exit),
         Ok(PromptClipboard::Empty)
     ));
-    assert!(matches!(
-        windows_clipboard_run_err(&missing, RunErr::Timeout),
-        Ok(PromptClipboard::Empty)
-    ));
+    let timed_out = windows_clipboard_run_err(&missing, RunErr::Timeout).unwrap_err();
+    assert!(timed_out.contains("timed out"), "{timed_out}");
     let err = windows_clipboard_run_err(&missing, RunErr::NotFound).unwrap_err();
     assert!(err.contains("PowerShell"), "{err}");
     let err = windows_clipboard_run_err(&missing, RunErr::TooLarge).unwrap_err();

@@ -2725,3 +2725,55 @@ fn each_session_lists_its_own_workers() {
     app.restore_view(&saved);
     assert_eq!(app.subagents[0].id, "a-1");
 }
+
+#[test]
+fn copy_takes_the_last_steps_answer_not_the_whole_turn() {
+    let mut app = TuiApp::new(test_config());
+    app.append_to_last("Let me read the file.");
+    app.add_tool_call("c1".into(), "read".into(), serde_json::json!({}));
+    app.append_to_last("Now I'll check the tests.");
+    app.add_tool_call("c2".into(), "bash".into(), serde_json::json!({}));
+    app.append_to_last("All 12 tests pass.");
+    let last = app.messages.last().unwrap();
+    assert_eq!(last.last_step_text(), "All 12 tests pass.");
+
+    // A turn that ended on a tool call: nothing after it, copy all of it.
+    app.add_tool_call("c3".into(), "read".into(), serde_json::json!({}));
+    let last = app.messages.last().unwrap();
+    assert!(last.last_step_text().starts_with("Let me read"));
+    // A draft taken back below the mark does not slice past the end.
+    let mut msg = app.messages.last().unwrap().clone();
+    msg.content.truncate(3);
+    assert_eq!(msg.last_step_text(), "Let");
+}
+
+#[test]
+fn a_clipboard_read_lands_when_it_finishes() {
+    let mut app = TuiApp::new(test_config());
+    assert!(
+        !crate::input::poll_clipboard_paste(&mut app),
+        "nothing pending"
+    );
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.clipboard_read = Some(rx);
+    assert!(
+        !crate::input::poll_clipboard_paste(&mut app),
+        "still reading"
+    );
+    assert!(app.clipboard_read.is_some());
+    tx.send(Err(
+        "Reading the clipboard image timed out — try again".into()
+    ))
+    .unwrap();
+    assert!(crate::input::poll_clipboard_paste(&mut app));
+    assert!(app.clipboard_read.is_none());
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.clipboard_read = Some(rx);
+    drop(tx);
+    assert!(
+        crate::input::poll_clipboard_paste(&mut app),
+        "a dead reader ends the read"
+    );
+    assert!(app.clipboard_read.is_none());
+}
