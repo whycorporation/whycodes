@@ -441,3 +441,53 @@ fn extract_unclosed_paren_and_empty_model() {
     assert_eq!(no_digits.kind, ErrorKind::RateLimited);
     assert_ne!(no_digits.retry_after, Some(Duration::from_secs(0)));
 }
+
+#[test]
+fn a_limit_that_resets_on_a_later_day_is_not_retried() {
+    let later = (chrono::Utc::now() + chrono::Duration::days(2)).format("%Y-%m-%d 19:34:49");
+    let raw = format!(
+        "zcode API error (429 Too Many Requests): [1310][Weekly/Monthly Limit Exhausted. \
+         Your limit will reset at {later}][20261031165911e6e9842af0444bc4]"
+    );
+    let c = classify_message(&raw);
+    assert_eq!(c.kind, ErrorKind::RateLimited);
+    assert!(!c.retryable);
+    assert_eq!(
+        c.user_message(),
+        format!("Usage limit reached — resets at {later}")
+    );
+    // A transport-tagged error keeps that verdict.
+    let tagged = whycodes_core::Error::llm_kind(ErrorKind::RateLimited, raw);
+    assert!(!classify(&tagged).retryable);
+
+    // Today's stamp is just when the error was written: retry as before.
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S");
+    assert!(classify_message(&format!("(429) slow down at {now}")).retryable);
+}
+
+#[test]
+fn long_rate_limit_waits_are_not_retried() {
+    for (raw, shown) in [
+        ("(429) quota hit, retry in 2 days", "2 d"),
+        ("(429) quota hit, retry in 5 hours", "5 h"),
+        ("(429) quota hit, retry in 3 minutes", "3 min"),
+    ] {
+        let c = classify_message(raw);
+        assert!(!c.retryable, "{raw}");
+        assert_eq!(
+            c.user_message(),
+            format!("Usage limit reached — retry in {shown}")
+        );
+    }
+    let c = classify_message("(429) slow down, retry in 30 seconds and read the terms");
+    assert!(c.retryable);
+    assert_eq!(c.retry_after, Some(std::time::Duration::from_secs(30)));
+    let bare = ClassifiedError {
+        kind: ErrorKind::RateLimited,
+        retryable: false,
+        retry_after: None,
+        status: Some(429),
+        message: "(429)".into(),
+    };
+    assert_eq!(bare.user_message(), "Usage limit reached");
+}

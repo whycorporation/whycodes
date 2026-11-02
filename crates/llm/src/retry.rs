@@ -153,9 +153,11 @@ where
                 let classified = classify(&e);
                 let attempt_ms = attempt_t0.elapsed().as_millis() as u64;
                 // `attempt` is 1-based try count; retries already used = attempt - 1.
+                // The first failure always gets its retry: a gateway timeout
+                // (524 after ~125 s) spends the whole budget on one attempt.
                 let allow = classified.retryable
                     && (attempt - 1) < policy.max_retries
-                    && started.elapsed() < policy.max_elapsed;
+                    && (attempt == 1 || started.elapsed() < policy.max_elapsed);
 
                 if !allow {
                     log_retry_give_up(
@@ -171,9 +173,13 @@ where
                 }
 
                 let delay = policy.sleep_duration(attempt, &classified);
-                // `allow` already requires `elapsed < max_elapsed`, so remaining > 0.
+                // Past the budget only on that first retry: keep its backoff.
                 let remaining = policy.max_elapsed.saturating_sub(started.elapsed());
-                let delay = delay.min(remaining);
+                let delay = if remaining.is_zero() {
+                    delay
+                } else {
+                    delay.min(remaining)
+                };
 
                 log_retry_again(RetryAgainFields {
                     op,

@@ -567,30 +567,8 @@ impl Agent {
                                 "error": e.to_string(),
                             })),
                         );
-                        let first_drop = *stream_drop_t0.get_or_insert_with(Instant::now);
-                        let Some(delay) =
-                            stream_retry_delay(self.stream_retry, first_drop, stream_drops, &e)
-                        else {
-                            return Err(e);
-                        };
-                        stream_drops += 1;
-                        emit(
-                            &events,
-                            TurnEvent::Status(format!(
-                                "Stream dropped ({}) — retrying this step…",
-                                whycodes_llm::classify(&e).kind
-                            )),
-                        );
-                        let delay_ms = delay.as_millis() as u64;
-                        tracing::warn!(stream_drops, delay_ms, error = %e, "stream drop retry");
-                        tokio::select! {
-                            biased;
-                            _ = wait_until_cancelled(&cancel) => {
-                                emit(&events, TurnEvent::Cancelled);
-                                return Err(whycodes_core::Error::Agent("Cancelled".into()));
-                            }
-                            _ = tokio::time::sleep(delay) => {}
-                        }
+                        let drops = (&mut stream_drop_t0, &mut stream_drops);
+                        wait_stream_retry(self.stream_retry, drops, e, &events, &cancel).await?;
                         stream_rule_retry = true;
                         break;
                     }
@@ -752,7 +730,13 @@ impl Agent {
                             break;
                         }
                         crate::speculative_read::abort_all(&mut speculative_reads);
-                        return Err(whycodes_core::Error::llm(message));
+                        // A provider error event (`response.failed`, an
+                        // overloaded upstream) is a drop like any other.
+                        let e = whycodes_core::Error::llm(message);
+                        let drops = (&mut stream_drop_t0, &mut stream_drops);
+                        wait_stream_retry(self.stream_retry, drops, e, &events, &cancel).await?;
+                        stream_rule_retry = true;
+                        break;
                     }
                 }
             }
@@ -760,6 +744,8 @@ impl Agent {
             if stream_rule_retry {
                 continue;
             }
+            // This step streamed to the end: a later drop gets a fresh window.
+            (stream_drop_t0, stream_drops) = (None, 0);
 
             // Merge streamed argument fragments into parsed JSON objects.
             let mut tool_calls = assembler.finish();
@@ -1235,6 +1221,39 @@ fn stream_retry_delay(
     }
     let backoff = whycodes_llm::RetryPolicy::default().backoff_for_attempt(drops + 1);
     Some(backoff.min(remaining))
+}
+
+/// Wait out a retryable stream failure inside the `stream_retry_secs`
+/// window: `drops` is (first drop of this run of failures, retries spent).
+/// `Err` when the turn ends instead: not retryable, window spent, or Esc.
+async fn wait_stream_retry(
+    window: std::time::Duration,
+    drops: (&mut Option<Instant>, &mut usize),
+    e: whycodes_core::Error,
+    events: &Option<crate::events::EventSink>,
+    cancel: &Option<crate::events::CancelFlag>,
+) -> whycodes_core::Result<()> {
+    let (first, count) = drops;
+    let first_drop = *first.get_or_insert_with(Instant::now);
+    let Some(delay) = stream_retry_delay(window, first_drop, *count, &e) else {
+        return Err(e);
+    };
+    *count += 1;
+    let kind = whycodes_llm::classify(&e).kind;
+    emit(
+        events,
+        TurnEvent::Status(format!("Stream dropped ({kind}) — retrying this step…")),
+    );
+    let (stream_drops, delay_ms) = (*count, delay.as_millis() as u64);
+    tracing::warn!(stream_drops, delay_ms, error = %e, "stream drop retry");
+    tokio::select! {
+        biased;
+        _ = wait_until_cancelled(cancel) => {
+            emit(events, TurnEvent::Cancelled);
+            Err(whycodes_core::Error::Agent("Cancelled".into()))
+        }
+        _ = tokio::time::sleep(delay) => Ok(()),
+    }
 }
 
 /// Match `text` on `channel` against the stream rules. On a hit: abort

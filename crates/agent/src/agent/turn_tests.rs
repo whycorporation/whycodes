@@ -3456,3 +3456,45 @@ async fn no_todo_reminder_when_done_unwritten_or_planning() {
         .expect("turn");
     assert_eq!(reminders(&session), 0);
 }
+
+#[tokio::test]
+async fn every_step_gets_its_own_stream_retry_window() {
+    // A provider error event is retried like a dropped connection, and a
+    // step that streamed to the end resets the window: the second drop,
+    // well past the first one's window, is still retried.
+    let drop =
+        || ScriptedStep::Error("Stream: error decoding response body: unexpected EOF".into());
+    let window = std::time::Duration::from_millis(300);
+    let mut agent = batched([
+        vec![drop()],
+        vec![
+            ScriptedStep::Hang(window * 2),
+            ScriptedStep::ToolCall {
+                id: "c1".into(),
+                name: "read".into(),
+                input: json!({"path": "missing-window.txt"}),
+            },
+        ],
+        vec![drop()],
+        vec![ScriptedStep::Text("finished".into())],
+    ]);
+    agent.stream_retry = window;
+    let mut session = session_user("please read the missing file");
+    let out = agent
+        .run_turn(&mut session, "script", "window-reset-unique", "k", Some(6))
+        .await
+        .expect("both drops retried");
+    assert!(out.contains("finished"), "{out}");
+}
+
+#[tokio::test]
+async fn a_fatal_provider_error_event_still_ends_the_turn() {
+    let mut agent = scripted([ScriptedStep::Error("invalid request: bad schema".into())]);
+    agent.stream_retry = std::time::Duration::from_secs(30);
+    let mut session = session_user("please explain rust ownership");
+    let err = agent
+        .run_turn(&mut session, "script", "fatal-event-unique", "k", Some(2))
+        .await
+        .expect_err("not retryable");
+    assert!(err.to_string().contains("bad schema"), "{err}");
+}

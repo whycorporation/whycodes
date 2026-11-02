@@ -32,6 +32,15 @@ impl ClassifiedError {
     /// Short, user-facing line for TUI / CLI (no raw JSON dump when possible).
     pub fn user_message(&self) -> String {
         match self.kind {
+            ErrorKind::RateLimited if !self.retryable => {
+                match reset_stamp(&self.message).filter(|at| after_today(at)) {
+                    Some(at) => format!("Usage limit reached — resets at {at}"),
+                    None => match self.retry_after {
+                        Some(d) => format!("Usage limit reached — retry in {}", long_wait(d)),
+                        None => "Usage limit reached".into(),
+                    },
+                }
+            }
             ErrorKind::RateLimited => {
                 if let Some(d) = self.retry_after {
                     format!("Rate limited — retry in {}s", d.as_secs().max(1))
@@ -127,8 +136,9 @@ pub fn classify(err: &Error) -> ClassifiedError {
         && kind != ErrorKind::Unknown
     {
         let mut classified = classify_message(&err.to_string());
+        let long_limit = classified.kind == ErrorKind::RateLimited && !classified.retryable;
         classified.kind = kind;
-        classified.retryable = kind.retryable();
+        classified.retryable = kind.retryable() && !long_limit;
         return classified;
     }
     classify_message(&err.to_string())
@@ -176,9 +186,13 @@ pub fn classify_message(raw: &str) -> ClassifiedError {
         || lower.contains("\"code\":\"rate_limit")
         || lower.contains("rate_limit_exceeded")
     {
+        // A limit that resets on a clock ("reset at 2026-11-04 19:34:49")
+        // or minutes away will not lift within this request's retries.
+        let long = reset_stamp(raw).is_some_and(after_today)
+            || retry_after.is_some_and(|d| d > MAX_RATE_WAIT);
         return ClassifiedError {
             kind: ErrorKind::RateLimited,
-            retryable: true,
+            retryable: !long,
             retry_after: retry_after.or(Some(Duration::from_secs(5))),
             status: status.or(Some(429)),
             message,
@@ -429,6 +443,66 @@ fn compact_reason(s: &str, max_chars: usize) -> String {
     out
 }
 
+/// Longest rate-limit wait still worth retrying within one request.
+const MAX_RATE_WAIT: Duration = Duration::from_secs(60);
+
+/// A calendar reset time in a limit body (`2026-11-04 19:34:49`), verbatim.
+fn reset_stamp(msg: &str) -> Option<&str> {
+    // `dddd-dd-dd` then ` ` or `T` then `dd:dd`, optionally `:dd`.
+    const SHAPE: &[u8] = b"0000-00-00 00:00";
+    let bytes = msg.as_bytes();
+    let fits = |at: usize, shape: &[u8]| {
+        bytes.len() >= at + shape.len()
+            && shape
+                .iter()
+                .zip(&bytes[at..])
+                .all(|(want, got)| match want {
+                    b'0' => got.is_ascii_digit(),
+                    b' ' => matches!(got, b' ' | b'T'),
+                    _ => want == got,
+                })
+    };
+    let start = (0..bytes.len()).find(|&at| fits(at, SHAPE))?;
+    let end = start + SHAPE.len();
+    let end = if fits(end, b":00") { end + 3 } else { end };
+    Some(&msg[start..end])
+}
+
+/// Whether `stamp` (from [`reset_stamp`]) falls on a later day than today
+/// (UTC). An error body may also carry the time it was written; only a
+/// later date is surely a reset time, whatever the provider's time zone.
+fn after_today(stamp: &str) -> bool {
+    chrono::NaiveDate::parse_from_str(&stamp[..10], "%Y-%m-%d")
+        .is_ok_and(|day| day > chrono::Utc::now().date_naive())
+}
+
+/// `d` as a rough human span: `3 min`, `5 h`, `2 d`.
+fn long_wait(d: Duration) -> String {
+    let secs = d.as_secs();
+    match secs {
+        0..3_600 => format!("{} min", secs.div_ceil(60)),
+        3_600..86_400 => format!("{} h", secs.div_ceil(3_600)),
+        _ => format!("{} d", secs.div_ceil(86_400)),
+    }
+}
+
+/// Seconds per unit word right after a number (`2 days`, `3 min`); `0` = ms.
+fn unit_secs(rest: &str) -> u64 {
+    let word: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    match word.as_str() {
+        "ms" | "millisecond" | "milliseconds" => 0,
+        "m" | "min" | "mins" | "minute" | "minutes" => 60,
+        "h" | "hr" | "hrs" | "hour" | "hours" => 3_600,
+        "d" | "day" | "days" => 86_400,
+        // `5s`, `5 seconds`, or a bare number (`wait 10 before retrying`).
+        _ => 1,
+    }
+}
+
 fn extract_retry_after(msg: &str) -> Option<Duration> {
     // Header-ish: "retry-after: 12" or "Retry-After: Wed, …"
     let lower = msg.to_ascii_lowercase();
@@ -451,10 +525,10 @@ fn extract_retry_after(msg: &str) -> Option<Duration> {
             let after = &lower[idx + pat.len()..];
             let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
             if let Ok(n) = digits.parse::<u64>() {
-                if after.contains("ms") {
-                    return Some(Duration::from_millis(n * mult));
-                }
-                return Some(Duration::from_secs(n * mult));
+                return match unit_secs(&after[digits.len()..]) {
+                    0 => Some(Duration::from_millis(n * mult)),
+                    unit => Some(Duration::from_secs(n * unit * mult)),
+                };
             }
         }
     }
