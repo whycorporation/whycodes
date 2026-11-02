@@ -1759,6 +1759,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // When the user first hit Esc / [stop]. After CANCEL_FORCE_AFTER we
     // abort the join handle so "Cancelling…" can never stick forever.
     let mut cancel_requested_at: Option<Instant> = None;
+    // The session that timer belongs to: it is reset on a switch, or an Esc
+    // in one session would force-stop the turn of the next.
+    let mut cancel_owner = app.session_id.clone();
     let mut spinner_frame: usize = 0;
     let mut last_spinner_tick = Instant::now();
     // Title may arrive before TurnOutcome restores the real rt.session; hold it.
@@ -1825,6 +1828,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     );
     let result = async {
         'main: loop {
+            if app.session_id != cancel_owner {
+                cancel_owner.clone_from(&app.session_id);
+                cancel_requested_at = None;
+            }
             // ── Drain background sessions into their own view snapshots ──
             // Events on inactive runtimes never touch `app`; they update the
             // runtime's snapshot + state and set `unread` so the dashboard
@@ -3287,6 +3294,10 @@ fn force_stop_turn(
     if !already {
         app.add_message(ChatRole::System, "⏹ Stopped.");
     }
+    // A forced stop is the user's "stop": the next /loop prompt must not
+    // start right after it, and a /goal must not judge a turn it never saw.
+    stop_loop_after_error(app, "turn stopped");
+    pause_goal_after_error(app, rt, true);
     persist_session_best_effort(&rt.session, "force_cancelled");
     close_interactive_overlays(app);
     app.mark_dirty();

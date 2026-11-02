@@ -1232,6 +1232,26 @@ fn compaction_block_is_sent_as_summary_text() {
     );
 }
 
+#[tokio::test]
+async fn chat_sse_keeps_a_finished_answer_when_the_connection_resets() {
+    // `finish_reason` arrived, then the gateway reset before `[DONE]`.
+    let body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"all done\"}}]}\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n",
+    );
+    let mut stream = chat_sse_from_bytes(
+        scripted_bytes([Ok(body.as_bytes().to_vec()), Err("connection reset".into())]),
+        "zcode",
+    );
+    let mut text = String::new();
+    while let Some(ev) = stream.next().await {
+        if let StreamEvent::TextDelta { text: d } = ev.expect("no error after finish") {
+            text.push_str(&d);
+        }
+    }
+    assert_eq!(text, "all done");
+}
+
 #[test]
 fn agent_note_name_never_reaches_the_provider() {
     let note = Message {

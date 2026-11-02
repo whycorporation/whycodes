@@ -2576,6 +2576,22 @@ fn init_logging_from_cli_debug() {
     ignore_sigpipe();
 }
 
+#[test]
+fn a_print_to_a_closed_pipe_is_not_a_crash() {
+    #[cfg(windows)]
+    let closed = "failed printing to stdout: Boru kapatılıyor. (os error 232)";
+    #[cfg(not(windows))]
+    let closed = "failed printing to stdout: Broken pipe (os error 32)";
+    assert!(is_closed_pipe_panic(closed));
+    assert!(is_closed_pipe_panic(&closed.replace("stdout", "stderr")));
+    assert!(!is_closed_pipe_panic(
+        "failed printing to stdout: disk full (os error 112)"
+    ));
+    assert!(!is_closed_pipe_panic(
+        "index out of bounds (os error 32) (os error 232)"
+    ));
+}
+
 #[tokio::test]
 async fn cmd_auth_unknown_provider_and_status() {
     let _home = IsolatedHome::new();

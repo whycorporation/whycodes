@@ -109,6 +109,9 @@ pub struct ViewSnapshot {
     pub todos: Vec<whycodes_core::TodoItem>,
     pub todos_collapsed: bool,
     pub todos_scroll: usize,
+    /// This session's primary agent and its Ctrl+T cycle position. `None`
+    /// until the session was first parked (it then keeps the app's).
+    pub agent: Option<(String, usize)>,
 }
 
 impl Default for ViewSnapshot {
@@ -137,6 +140,7 @@ impl Default for ViewSnapshot {
             todos: Vec::new(),
             todos_collapsed: false,
             todos_scroll: 0,
+            agent: None,
         }
     }
 }
