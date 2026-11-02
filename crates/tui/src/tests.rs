@@ -2670,3 +2670,58 @@ fn discard_draft_takes_the_dropped_step_back_off_the_reply() {
     empty.discard_draft("x", "y");
     assert!(empty.messages.is_empty());
 }
+
+fn worker(id: &str, status: &str) -> crate::app::SubagentUpdate {
+    crate::app::SubagentUpdate {
+        id: id.into(),
+        kind: "explore".into(),
+        description: format!("job {id}"),
+        status: status.into(),
+        activity: String::new(),
+        elapsed_ms: 0,
+        output: String::new(),
+    }
+}
+
+#[test]
+fn the_tasks_panel_keeps_a_bounded_list_and_never_drops_running_workers() {
+    let mut app = TuiApp::new(test_config());
+    app.upsert_subagent(worker("live", "running"));
+    for i in 0..30 {
+        app.upsert_subagent(worker(&format!("w{i}"), "completed"));
+    }
+    assert_eq!(app.subagents.len(), crate::app::SUBAGENT_ROWS);
+    assert!(app.subagents.iter().any(|s| s.id == "live"));
+    assert!(
+        app.subagents.iter().any(|s| s.id == "w29"),
+        "the newest stay"
+    );
+    assert!(!app.subagents.iter().any(|s| s.id == "w0"), "the oldest go");
+
+    // All running: nothing finished to drop, so nothing is.
+    let mut busy = TuiApp::new(test_config());
+    for i in 0..20 {
+        busy.upsert_subagent(worker(&format!("r{i}"), "running"));
+    }
+    assert_eq!(busy.subagents.len(), 20);
+}
+
+#[test]
+fn each_session_lists_its_own_workers() {
+    let mut app = TuiApp::new(test_config());
+    app.upsert_subagent(worker("a-1", "running"));
+    let mut parked = crate::session_runtime::ViewSnapshot::default();
+    app.yield_view(&mut parked);
+    assert!(
+        app.subagents.is_empty(),
+        "the next session starts without A's"
+    );
+    app.adopt_view(&mut parked);
+    assert_eq!(app.subagents[0].id, "a-1");
+
+    let mut saved = crate::session_runtime::ViewSnapshot::default();
+    app.save_view(&mut saved);
+    app.subagents.clear();
+    app.restore_view(&saved);
+    assert_eq!(app.subagents[0].id, "a-1");
+}

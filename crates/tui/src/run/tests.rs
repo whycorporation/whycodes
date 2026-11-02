@@ -12352,3 +12352,34 @@ async fn picker_choices_made_mid_turn_wait_for_the_turn_to_end() {
     assert_eq!(model, "grok-4");
     assert!(!app.picker_wait_noted);
 }
+
+#[test]
+fn force_stop_marks_running_workers_cancelled() {
+    let _home = isolate_home();
+    let (dir, idx) = temp_index();
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    rt.agent_busy = true;
+    rt.cancel_flag = Some(new_cancel_flag());
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.upsert_subagent(crate::app::SubagentUpdate {
+        id: "w1".into(),
+        kind: "explore".into(),
+        description: "scan".into(),
+        status: "running".into(),
+        activity: String::new(),
+        elapsed_ms: 0,
+        output: String::new(),
+    });
+    let mut at = Some(Instant::now());
+    force_stop_turn(
+        &mut app,
+        &mut rt,
+        &mut at,
+        &Config::default(),
+        dir.path(),
+        &idx,
+    );
+    assert_eq!(app.subagents[0].status, "cancelled");
+    assert_eq!(app.running_task_count(), 0);
+}

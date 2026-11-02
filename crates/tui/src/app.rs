@@ -962,6 +962,9 @@ impl BgJobUi {
     }
 }
 
+/// Worker rows kept in the tasks panel per session.
+pub(crate) const SUBAGENT_ROWS: usize = 16;
+
 /// One child session shown in the sticky tasks panel / framed view.
 #[derive(Debug, Clone)]
 pub struct SubagentUi {
@@ -2526,6 +2529,14 @@ impl TuiApp {
                 tokens: 0,
             });
         }
+        // Bounded like `bg_jobs`: each row keeps the worker's full output.
+        // Finished rows go first; running ones always stay.
+        while self.subagents.len() > SUBAGENT_ROWS {
+            let Some(pos) = self.subagents.iter().position(SubagentUi::is_terminal) else {
+                break;
+            };
+            self.subagents.remove(pos);
+        }
         if self.open_subagent.as_deref() == Some(id.as_str()) {
             self.load_subagent_view_file();
         }
@@ -3820,6 +3831,7 @@ impl TuiApp {
         view.todos = self.todos.clone();
         view.todos_collapsed = self.todos_collapsed;
         view.todos_scroll = self.todos_scroll;
+        view.subagents = self.subagents.clone();
     }
 
     /// Restore a previously saved per-session view state (switching back).
@@ -3844,6 +3856,7 @@ impl TuiApp {
         self.todos = view.todos.clone();
         self.todos_collapsed = view.todos_collapsed;
         self.todos_scroll = view.todos_scroll;
+        self.subagents = view.subagents.clone();
         self.dialogs.clear();
         self.mark_dirty();
         self.request_full_clear(2);
@@ -3879,6 +3892,9 @@ impl TuiApp {
         self.todos = std::mem::take(&mut view.todos);
         self.todos_collapsed = view.todos_collapsed;
         self.todos_scroll = view.todos_scroll;
+        // Workers belong to the session that started them: B must not list
+        // A's, and A's updates while parked land in A's snapshot.
+        self.subagents = std::mem::take(&mut view.subagents);
         // The footer and a force-stop rebuild read `agent_name`: it must be
         // this session's agent, not the one picked in the session left.
         if let Some((name, idx)) = view.agent.take() {
@@ -3914,6 +3930,7 @@ impl TuiApp {
         view.todos_collapsed = self.todos_collapsed;
         view.todos_scroll = self.todos_scroll;
         self.todos_scroll = 0;
+        view.subagents = std::mem::take(&mut self.subagents);
         view.agent = Some((self.agent_name.clone(), self.agent_cycle_idx));
     }
 
