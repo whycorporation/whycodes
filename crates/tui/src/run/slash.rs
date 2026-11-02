@@ -245,6 +245,59 @@ pub(super) fn busy_tell(app: &mut TuiApp, inbox: &whycodes_agent::steer::SteerIn
 
 /// `/agents` typed while a turn runs opens the agent hub. `false` when the
 /// draft is something else.
+/// A slash command typed while a turn runs (after `/tell`, `/agents`,
+/// `/queue`, `/now`). `/loop stop`, `/copy` and `/goal clear` act at once:
+/// they are how a runaway loop or goal is stopped. Anything else needs the
+/// session idle, so it stays in the prompt with a note instead of vanishing.
+/// Returns whether the draft was a slash command.
+pub(super) fn busy_slash(
+    app: &mut TuiApp,
+    goal: &mut Option<crate::goal::Goal>,
+    goal_db: Option<&whycodes_storage::db::Database>,
+) -> bool {
+    let draft = app.input_buffer.trim().to_string();
+    let Some(command) = draft.strip_prefix('/') else {
+        return false;
+    };
+    let (name, rest) = command.split_once(' ').unwrap_or((command, ""));
+    match (name, rest.trim()) {
+        ("loop", "stop" | "clear") => {
+            consume_slash_draft(app);
+            let n = app.pending_auto_prompts.len();
+            app.pending_auto_prompts.clear();
+            app.toasts.push(
+                crate::toast::ToastKind::Info,
+                format!("Cleared {n} queued loop prompt(s)"),
+            );
+        }
+        ("copy", "") => {
+            consume_slash_draft(app);
+            app.copy_last_reply();
+        }
+        ("goal", "clear") => {
+            consume_slash_draft(app);
+            if goal.take().is_some() {
+                crate::goal::save(goal_db, &app.session_id, None);
+                app.toasts
+                    .push(crate::toast::ToastKind::Info, "Goal cleared");
+            } else {
+                app.status_message = "No active goal.".into();
+            }
+        }
+        _ => {
+            app.slash_suggest.dismiss();
+            app.toasts.push(
+                crate::toast::ToastKind::Info,
+                format!(
+                    "/{name} runs when this turn ends — press Enter then, or Esc to stop the turn"
+                ),
+            );
+        }
+    }
+    app.mark_dirty();
+    true
+}
+
 pub(super) fn busy_agents(app: &mut TuiApp) -> bool {
     if app.input_buffer.trim() != "/agents" {
         return false;
