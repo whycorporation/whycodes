@@ -181,6 +181,8 @@ impl Agent {
         // Latency: wall clock for the whole user turn (all LLM steps + tools).
         let user_turn_t0 = Instant::now();
         let mut ttft_ms: Option<u128> = None;
+        // Steps refused as a doom loop this turn; the turn ends at the cap.
+        let mut doom_refusals: u32 = 0;
         // Recent tool signatures for doom-loop detection.
         let mut recent_tool_sigs: VecDeque<String> = VecDeque::with_capacity(8);
         // Autocompact circuit breaker: stop retrying after N ineffective passes.
@@ -925,7 +927,9 @@ impl Agent {
                 .any(|tc| matches!(tc.name.as_str(), "todowrite" | "todo"));
 
             // Doom-loop: refuse identical tool+args repeated DOOM_LOOP_THRESHOLD times
-            let results = if would_doom_loop(&recent_tool_sigs, &tool_calls) {
+            let doom_loop = would_doom_loop(&recent_tool_sigs, &tool_calls);
+            let results = if doom_loop {
+                doom_refusals += 1;
                 crate::speculative_read::abort_all(&mut speculative_reads);
                 emit(
                     &events,
@@ -1047,8 +1051,10 @@ impl Agent {
                 settle_checkpoint_rewind(session, &tool_calls, &mut results);
 
             // Capture failures before move — avoid cloning large tool bodies.
+            // A refusal already says what to do; repeating it as a recovery
+            // note only doubled it in the context.
             let mut failed_tools = Vec::new();
-            for result in &results {
+            for result in results.iter().filter(|_| !doom_loop) {
                 if result.is_error {
                     failed_tools.push(format!(
                         "The tool failed with error: {content}. Please correct your approach.",
@@ -1089,6 +1095,18 @@ impl Agent {
             if !failed_tools.is_empty() {
                 let recovery_msg = failed_tools.join("\n");
                 session.add_agent_note(&recovery_msg);
+            }
+            // Told to stop and still repeating: end the turn instead of
+            // paying for more identical requests (no step cap when interactive).
+            if doom_refusals >= MAX_DOOM_REFUSALS {
+                tracing::warn!(doom_refusals, "doom loop: ending the turn");
+                emit(
+                    &events,
+                    TurnEvent::Status(
+                        "Stopped: the model kept repeating the same tool call".into(),
+                    ),
+                );
+                break;
             }
         }
 
@@ -1389,6 +1407,9 @@ fn read_path_for<'a>(
 
 /// Result body for a call the turn stopped before it could answer.
 const NOT_RUN: &str = "Tool not run: the turn was stopped before this call finished.";
+
+/// Doom-loop refusals in one turn before it ends.
+const MAX_DOOM_REFUSALS: u32 = 3;
 
 /// Continue after this many cut-off steps in a row, then accept the reply.
 const MAX_CUT_OFFS: u32 = 3;
