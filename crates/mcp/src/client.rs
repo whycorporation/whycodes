@@ -361,16 +361,20 @@ async fn read_stdio_response(
     writer: &mut (dyn AsyncWrite + Send + Unpin),
     expected_id: u64,
 ) -> Result<serde_json::Value> {
-    let mut line = String::new();
+    let mut bytes = Vec::new();
     let response = loop {
-        line.clear();
+        bytes.clear();
         let read = reader
-            .read_line(&mut line)
+            .read_until(b'\n', &mut bytes)
             .await
             .map_err(stdio_read_failed)?;
         if read == 0 {
             return Err(McpError::msg("MCP server closed stdout (empty response)"));
         }
+        // Bytes, not `read_line`: a launcher's banner in the console code
+        // page (cp1254 on Turkish Windows) is not UTF-8, and one such line
+        // must be skipped like any other stray line, not end the handshake.
+        let line = String::from_utf8_lossy(&bytes);
         let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
             debug!(line = line.trim_end(), "MCP server wrote a non-JSON line");
             continue;

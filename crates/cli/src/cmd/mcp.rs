@@ -206,6 +206,7 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
         McpCmd::Add {
             name,
             command,
+            command_args,
             args,
             url,
             transport,
@@ -221,10 +222,11 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                 anyhow::bail!("use either a local <command> or --url, not both");
             }
 
-            let arg_vec: Vec<String> = args
+            let mut arg_vec: Vec<String> = args
                 .as_deref()
                 .map(|s| s.split_whitespace().map(|a| a.to_string()).collect())
                 .unwrap_or_default();
+            arg_vec.extend(command_args.iter().cloned());
 
             let server = whycodes_config::McpServerConfig {
                 transport: transport_kind,
@@ -238,6 +240,9 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
             server
                 .resolved_transport()
                 .map_err(|e| anyhow::anyhow!(e))?;
+            if let Some(problem) = server.stdio_problem() {
+                anyhow::bail!(problem);
+            }
 
             Config::update_global(&mut |global| {
                 global.mcp_servers.insert(name.clone(), server.clone());

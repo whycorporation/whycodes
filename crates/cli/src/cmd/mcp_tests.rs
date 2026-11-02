@@ -74,6 +74,7 @@ async fn cmd_mcp_list_add_remove_roundtrip() {
     let err = cmd_mcp(&McpCmd::Add {
         name: "fs".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: None,
         transport: None,
@@ -85,6 +86,7 @@ async fn cmd_mcp_list_add_remove_roundtrip() {
     let err = cmd_mcp(&McpCmd::Add {
         name: "fs".into(),
         command: Some("npx".into()),
+        command_args: Vec::new(),
         args: None,
         url: Some("https://example.test/mcp".into()),
         transport: None,
@@ -97,6 +99,7 @@ async fn cmd_mcp_list_add_remove_roundtrip() {
     cmd_mcp(&McpCmd::Add {
         name: "fs".into(),
         command: Some("npx".into()),
+        command_args: Vec::new(),
         args: Some("-y pkg".into()),
         url: None,
         transport: Some("stdio".into()),
@@ -107,6 +110,7 @@ async fn cmd_mcp_list_add_remove_roundtrip() {
     cmd_mcp(&McpCmd::Add {
         name: "remote".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: Some("https://example.test/mcp".into()),
         transport: Some("http".into()),
@@ -164,7 +168,8 @@ async fn mcp_login_and_logout() {
 
     cmd_mcp(&McpCmd::Add {
         name: "local".into(),
-        command: Some("npx".into()),
+        command: Some("node".into()),
+        command_args: Vec::new(),
         args: None,
         url: None,
         transport: None,
@@ -183,6 +188,7 @@ async fn mcp_login_and_logout() {
     cmd_mcp(&McpCmd::Add {
         name: "remote".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: Some("http://127.0.0.1:9/mcp".into()),
         transport: Some("http".into()),
@@ -235,4 +241,26 @@ async fn mcp_login_and_logout() {
     assert!(mcp_login_done_line("x").contains("Signed in"));
     assert!(mcp_logout_line("x", true).contains("Removed"));
     assert!(mcp_logout_line("x", false).contains("No OAuth token"));
+}
+
+#[tokio::test]
+async fn cmd_mcp_add_keeps_dash_args_and_refuses_a_bare_package_runner() {
+    let _home = crate::cmd::helpers::IsolatedHome::new();
+    let add = |command_args: Vec<String>| McpCmd::Add {
+        name: "git".into(),
+        command: Some("npx".into()),
+        command_args,
+        args: None,
+        url: None,
+        transport: None,
+        headers: vec![],
+    };
+    let err = cmd_mcp(&add(Vec::new())).await.unwrap_err();
+    assert!(err.to_string().contains("needs the package"), "{err}");
+
+    cmd_mcp(&add(vec!["-y".into(), "@scope/server git".into()]))
+        .await
+        .unwrap();
+    let saved = whycodes_config::Config::load_global_raw().unwrap();
+    assert_eq!(saved.mcp_servers["git"].args, ["-y", "@scope/server git"]);
 }

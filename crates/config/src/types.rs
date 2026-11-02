@@ -716,6 +716,26 @@ impl McpServerConfig {
         }
     }
 
+    /// Why this stdio entry cannot work, before anything is spawned: an
+    /// empty `command`, or a package runner (`npx`, `uvx`, …) given no
+    /// package in `args`, which waits for input until the connect times out.
+    pub fn stdio_problem(&self) -> Option<String> {
+        let command = self.command.as_deref()?.trim();
+        if command.is_empty() {
+            return Some("MCP server `command` is empty".into());
+        }
+        // Both separators on every OS: a Windows path in a shared config.
+        let file = command.rsplit(['/', '\\']).next().unwrap_or(command);
+        let stem = file.split('.').next().unwrap_or(file).to_ascii_lowercase();
+        let runner = matches!(stem.as_str(), "npx" | "pnpx" | "bunx" | "uvx");
+        (runner && self.args.iter().all(|a| a.trim().is_empty())).then(|| {
+            format!(
+                "`{command}` needs the package to run in `args` \
+                 (e.g. args = [\"-y\", \"<package>\"])"
+            )
+        })
+    }
+
     pub fn is_remote(&self) -> bool {
         matches!(
             self.resolved_transport().ok(),
@@ -2269,6 +2289,17 @@ mod tests {
                 .resolved_transport()
                 .is_err()
         );
+        assert!(mcp(None, Some("https://x"), None).stdio_problem().is_none());
+        let empty = mcp(Some("  "), None, None).stdio_problem().unwrap();
+        assert!(empty.contains("empty"), "{empty}");
+        let bare = mcp(Some(r"C:\nodejs\npx.cmd"), None, None);
+        assert!(bare.stdio_problem().unwrap().contains("package"));
+        let with_pkg = McpServerConfig {
+            args: vec!["-y".into(), "@scope/server".into()],
+            ..bare
+        };
+        assert!(with_pkg.stdio_problem().is_none());
+        assert!(mcp(Some("node"), None, None).stdio_problem().is_none());
         let remote = mcp(None, Some("https://x"), Some(McpTransportKind::Http));
         assert!(remote.is_remote());
         assert!(!mcp(Some("npx"), None, Some(McpTransportKind::Stdio)).is_remote());

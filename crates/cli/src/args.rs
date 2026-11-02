@@ -367,8 +367,12 @@ pub enum McpCmd {
         name: String,
         /// Local command to spawn (stdio). Omit when using `--url`.
         command: Option<String>,
-        /// Arguments for the local command
-        #[arg(long)]
+        /// Arguments for the local command, after `--`, passed as-is:
+        /// `whycodes mcp add git npx -- -y @modelcontextprotocol/server-git`
+        #[arg(last = true)]
+        command_args: Vec<String>,
+        /// Arguments for the local command as one string (split on spaces)
+        #[arg(long, allow_hyphen_values = true)]
         args: Option<String>,
         /// Remote MCP endpoint URL (Streamable HTTP or legacy SSE)
         #[arg(long)]
