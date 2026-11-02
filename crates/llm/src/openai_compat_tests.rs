@@ -1231,3 +1231,21 @@ fn compaction_block_is_sent_as_summary_text() {
         "[Earlier conversation summary]\nthe summary"
     );
 }
+
+#[test]
+fn agent_note_name_never_reaches_the_provider() {
+    let note = Message {
+        role: Role::User,
+        content: MessageContent::Text("the tool failed".into()),
+        tool_call_id: None,
+        name: Some(whycodes_core::types::AGENT_NOTE_NAME.into()),
+        created_at: None,
+    };
+    let out = convert_messages(&req_with(vec![note]));
+    let user = out
+        .iter()
+        .find(|m| m["role"] == "user")
+        .expect("user message");
+    assert!(user.get("name").is_none(), "{user}");
+    assert_eq!(user["content"], "the tool failed");
+}

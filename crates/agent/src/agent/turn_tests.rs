@@ -3456,3 +3456,44 @@ async fn no_todo_reminder_when_done_unwritten_or_planning() {
         .expect("turn");
     assert_eq!(reminders(&session), 0);
 }
+
+#[tokio::test]
+async fn esc_stops_a_compaction_that_waits_on_the_model() {
+    let mut agent = repeating([ScriptedStep::Hang(std::time::Duration::from_secs(120))]);
+    agent.compaction_threshold = 8;
+    agent.compaction_llm = true;
+    let mut session = session_user("old ask");
+    session.add_assistant_message(vec![ContentBlock::Text {
+        text: "old answer ".repeat(50),
+    }]);
+    session.add_user_message("new ask");
+    let cancel = crate::events::new_cancel_flag();
+    let flag = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        crate::events::request_cancel(&flag);
+    });
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let t0 = std::time::Instant::now();
+    let err = agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "script",
+                model: "m",
+                api_key: "k",
+                max_turns: None,
+                events: Some(tx),
+                cancel: Some(cancel),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Cancelled"), "{err}");
+    assert!(t0.elapsed() < std::time::Duration::from_secs(30));
+    let status = drain_status(&mut rx);
+    assert!(
+        status.iter().any(|s| s.contains("Compacting context")),
+        "{status:?}"
+    );
+}
