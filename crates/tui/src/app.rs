@@ -927,7 +927,8 @@ pub enum ChatBlock {
     },
     ToolResult {
         id: String,
-        content: String,
+        /// Shared with the call's `result`: one copy of up to 512 KiB.
+        content: std::sync::Arc<str>,
         is_error: bool,
     },
     /// Compact subagent lifecycle row in the parent scrollback.
@@ -1358,7 +1359,7 @@ pub struct ChatToolCall {
     pub name: String,
     pub arguments: serde_json::Value,
     pub collapsed: bool,
-    pub result: Option<String>,
+    pub result: Option<std::sync::Arc<str>>,
     pub is_error: bool,
 }
 
@@ -4163,7 +4164,7 @@ impl TuiApp {
         content: impl Into<String>,
         is_error: bool,
     ) {
-        let content = cap_tool_view(content.into());
+        let content: std::sync::Arc<str> = cap_tool_view(content.into()).into();
         // Search backwards for the matching tool-call
         for msg in self.messages.iter_mut().rev() {
             for tc in msg.tool_calls.iter_mut() {
@@ -4297,7 +4298,8 @@ pub fn chat_messages_from_session(
                 for m in out.iter_mut().rev() {
                     for tc in m.tool_calls.iter_mut() {
                         if tc.id == id {
-                            let content = cap_tool_view(content.clone());
+                            let content: std::sync::Arc<str> =
+                                cap_tool_view(content.clone()).into();
                             tc.result = Some(content.clone());
                             m.blocks.push(ChatBlock::ToolResult {
                                 id: id.to_string(),
@@ -4379,7 +4381,7 @@ pub fn chat_messages_from_session(
                             is_error,
                         } => {
                             let err = is_error.unwrap_or(false);
-                            let c = cap_tool_view(c.clone());
+                            let c: std::sync::Arc<str> = cap_tool_view(c.clone()).into();
                             if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == *tool_use_id) {
                                 tc.result = Some(c.clone());
                                 tc.is_error = err;

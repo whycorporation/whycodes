@@ -264,3 +264,23 @@ async fn cmd_mcp_add_keeps_dash_args_and_refuses_a_bare_package_runner() {
     let saved = whycodes_config::Config::load_global_raw().unwrap();
     assert_eq!(saved.mcp_servers["git"].args, ["-y", "@scope/server git"]);
 }
+
+#[test]
+fn args_keep_quoted_parts_together() {
+    assert_eq!(
+        split_args(r#"-y "C:\My Tools\server.js"  --name 'two words' plain"#),
+        [
+            "-y",
+            r"C:\My Tools\server.js",
+            "--name",
+            "two words",
+            "plain"
+        ]
+    );
+    assert_eq!(split_args(r#"empty "" end"#), ["empty", "", "end"]);
+    assert_eq!(split_args("   "), Vec::<String>::new());
+    assert_eq!(
+        split_args(r#"open "unclosed rest"#),
+        ["open", "unclosed rest"]
+    );
+}

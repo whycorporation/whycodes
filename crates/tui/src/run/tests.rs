@@ -7263,7 +7263,7 @@ async fn apply_pending_import_writes_and_reloads() {
     let mut config = Config::default();
     let mut agent = Agent::new(dummy_info("build"));
     let idx = whycodes_index::WorkspaceIndex::start(Vec::new());
-    apply_pending_import(&mut app, &mut agent, &mut config, home.path(), &idx).await;
+    let _wrote = apply_pending_import(&mut app, &mut agent, &mut config, home.path(), &idx);
     assert!(
         config.mcp_servers.contains_key("fs")
             || app

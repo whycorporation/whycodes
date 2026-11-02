@@ -78,7 +78,18 @@ impl Agent {
             .unwrap_or_default();
         self.run_prompt_hooks(session, &prompt).await?;
         let usage_before = session.usage.clone();
-        let reply = self.run_turn_steps(session, opts).await?;
+        let cancel = opts.cancel.clone();
+        let reply = match self.run_turn_steps(session, opts).await {
+            Ok(reply) => reply,
+            Err(e) => {
+                // Esc: the summary prepared for this turn's compaction would
+                // run on for up to a minute, paid for and never read.
+                if is_cancelled(&cancel) {
+                    self.abort_speculative_summary();
+                }
+                return Err(e);
+            }
+        };
         self.run_stop_hooks(session, &reply, &usage_before).await;
         Ok(reply)
     }

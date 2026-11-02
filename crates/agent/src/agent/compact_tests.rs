@@ -687,3 +687,21 @@ async fn a_failed_summary_starts_the_cooldown() {
         .await;
     assert!(cooling_down(&agent.summary_failed_at));
 }
+
+#[tokio::test]
+async fn a_cancelled_turn_drops_its_background_summary() {
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        vec![whycodes_llm::ScriptedStep::Hang(
+            std::time::Duration::from_secs(60),
+        )],
+    )));
+    let mut agent = Agent::new(info()).with_provider_registry(registry);
+    agent.compaction_llm = true;
+    let session = fat_session();
+    assert!(agent.maybe_spawn_speculative_summary(&session, "script", "abort-unique", "k"));
+    agent.abort_speculative_summary();
+    assert!(super::super::recover_lock(&agent.speculative_summary).is_none());
+    agent.abort_speculative_summary();
+}
