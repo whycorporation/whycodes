@@ -369,7 +369,7 @@ fn convert_one_message(msg: &Message, args_format: ToolArgumentsFormat) -> Optio
         // Strict OpenAI-compat hosts (xAI) reject `tool_call_id: ""`.
         return None;
     }
-    if let Some(name) = &msg.name {
+    if let Some(name) = msg.name.as_ref().filter(|_| !msg.is_agent_note()) {
         obj["name"] = Value::String(name.clone());
     }
 
