@@ -3318,6 +3318,11 @@ fn force_stop_turn(
     // start right after it, and a /goal must not judge a turn it never saw.
     stop_loop_after_error(app, "turn stopped");
     pause_goal_after_error(app, rt, true);
+    // The aborted turn took its workers with it; a row left `running` kept
+    // the fast poll rate on for good.
+    for row in app.subagents.iter_mut().filter(|s| s.is_running()) {
+        row.status = "cancelled".into();
+    }
     persist_session_best_effort(&rt.session, "force_cancelled");
     close_interactive_overlays(app);
     app.mark_dirty();
