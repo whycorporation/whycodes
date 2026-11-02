@@ -2382,8 +2382,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     // While busy: Esc cancels (draft preserved). Typing, scroll,
                     // and focus still work so the user can queue thoughts.
                     // Permission / question overlays own Esc/Enter — do not steal them.
-                    let overlay_owns_keys =
-                        dialog_overlay_owns_keys(app.dialogs.active()) || hub_owns_key(&app, &ev);
+                    let overlay_owns_keys = dialog_overlay_owns_keys(app.dialogs.active())
+                        || hub_owns_key(&app, &ev)
+                        || picker_owns_key(&app, &ev);
                     if rt.agent_busy
                         && !overlay_owns_keys
                         && let Event::Key(key) = &ev
@@ -2992,6 +2993,9 @@ fn apply_busy_key(
                 return;
             }
             let command = slash::take_mode_command(app);
+            if command.is_none() && slash::busy_slash(app, &mut rt.goal, rt.db.as_ref()) {
+                return;
+            }
             let mode = command.unwrap_or(mode);
             if app.prompt_has_content() {
                 app.submit_input_with(mode);
@@ -3028,6 +3032,20 @@ fn hub_owns_key(app: &TuiApp, ev: &Event) -> bool {
     open && !key
         .modifiers
         .contains(crossterm::event::KeyModifiers::CONTROL)
+}
+
+/// Any other dialog open mid-turn (model / effort / mode pickers, help, the
+/// sessions dashboard) reads Enter and Esc itself: Enter selects instead of
+/// submitting the draft, Esc closes it instead of cancelling the turn. Ctrl
+/// chords still reach the turn.
+fn picker_owns_key(app: &TuiApp, ev: &Event) -> bool {
+    let Event::Key(key) = ev else {
+        return false;
+    };
+    app.dialogs.active().is_some()
+        && !key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
 }
 
 fn dialog_overlay_owns_keys(active: Option<&DialogKind>) -> bool {
@@ -4302,6 +4320,20 @@ async fn apply_pending_picker_choices(
     catalog_tx: mpsc::UnboundedSender<(String, String, u32)>,
     auth_tx: &mpsc::UnboundedSender<AuthFlowEvent>,
 ) {
+    // Mid-turn `rt.agent` is a placeholder the finished turn replaces: a
+    // route, effort or mode set on it now would be lost. Hold the choice.
+    let agent_choice = app.pending_model.is_some()
+        || app.pending_effort.is_some()
+        || app.pending_approval_mode.is_some();
+    if rt.agent_busy && agent_choice {
+        if !app.picker_wait_noted {
+            app.picker_wait_noted = true;
+            app.toasts
+                .push(crate::toast::ToastKind::Info, "Applies when this turn ends");
+        }
+        return;
+    }
+    app.picker_wait_noted = false;
     if let Some((p, m)) = app.pending_model.take() {
         apply_model_choice(app, provider, model, api_key, p, m, config);
         rt.agent.set_route(provider, model);

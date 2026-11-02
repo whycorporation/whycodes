@@ -1564,6 +1564,9 @@ pub struct TuiApp {
     pub(crate) bg_jobs: Vec<BgJobUi>,
     /// Model switch from the picker dialog: `(provider, model)`.
     pub(crate) pending_model: Option<(String, String)>,
+    /// A model / effort / mode picked mid-turn waits for the turn to end;
+    /// set once its "applies after this turn" note was shown.
+    pub(crate) picker_wait_noted: bool,
     /// Reasoning effort from the picker / `/effort` (`low`/`medium`/`high`/`xhigh`).
     pub(crate) pending_effort: Option<String>,
     /// Cursor in the effort picker (`ThinkingConfig::supported_efforts`).
@@ -2406,6 +2409,7 @@ impl TuiApp {
             goal_chip: None,
             bg_jobs: Vec::new(),
             pending_model: None,
+            picker_wait_noted: false,
             pending_effort: None,
             effort_picker_selected: 0,
             reasoning_effort: None,
