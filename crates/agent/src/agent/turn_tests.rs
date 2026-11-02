@@ -3687,3 +3687,63 @@ async fn a_model_that_keeps_repeating_after_refusals_ends_the_turn() {
         "a refusal is not repeated as a recovery note"
     );
 }
+
+#[tokio::test]
+async fn a_call_still_cut_off_after_every_continuation_never_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = repeating([
+        ScriptedStep::Text("writing it".into()),
+        ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "write".into(),
+            input: json!({"path": "out.txt", "content": "half of the f"}),
+        },
+        ScriptedStep::MessageDelta(json!({"stop_reason": "length"})),
+    ]);
+    let mut session = session_at(dir.path(), "please write out.txt with the full text");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "script",
+                model: "still-cut-unique",
+                api_key: "k",
+                max_turns: Some(10),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await
+        .expect("the turn ends on the text");
+    assert!(
+        !dir.path().join("out.txt").exists(),
+        "the cut call never ran"
+    );
+    let status = drain_status(&mut rx);
+    assert!(
+        status.iter().any(|s| s.contains("kept hitting")),
+        "{status:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_stalled_stream_is_retried_like_a_dropped_one() {
+    let mut agent = batched([
+        vec![
+            ScriptedStep::Text("partial".into()),
+            ScriptedStep::Hang(std::time::Duration::from_secs(30)),
+        ],
+        vec![ScriptedStep::Text("after the stall".into())],
+    ]);
+    agent.stream_idle = std::time::Duration::from_millis(200);
+    agent.stream_retry = std::time::Duration::from_secs(30);
+    let mut session = session_user("please explain rust ownership");
+    let t0 = std::time::Instant::now();
+    let out = agent
+        .run_turn(&mut session, "script", "stall-unique", "k", Some(3))
+        .await
+        .expect("retried after the stall");
+    assert!(out.contains("after the stall"), "{out}");
+    assert!(t0.elapsed() < std::time::Duration::from_secs(20));
+}

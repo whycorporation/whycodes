@@ -491,3 +491,15 @@ fn long_rate_limit_waits_are_not_retried() {
     };
     assert_eq!(bare.user_message(), "Usage limit reached");
 }
+
+#[test]
+fn readable_reason_shows_the_providers_words_not_its_json() {
+    let raw = r#"gw API error (418): {"error":{"message":"teapot refused","type":"odd"}}"#;
+    assert_eq!(readable_reason(raw), "gw API error (418): teapot refused");
+    assert_eq!(
+        readable_reason(r#"{"message":"bare reason"}"#),
+        "bare reason"
+    );
+    let long = "x".repeat(500);
+    assert!(readable_reason(&long).chars().count() <= 300);
+}

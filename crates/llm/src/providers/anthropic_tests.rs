@@ -833,3 +833,38 @@ async fn compaction_http_error_is_an_error() {
         "{err}"
     );
 }
+
+#[tokio::test]
+async fn a_stream_closed_before_message_stop_is_a_drop() {
+    use crate::openai_compat::scripted_bytes;
+    use futures::StreamExt;
+    let half = b"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"half\"}}\n".to_vec();
+    let mut stream = anthropic_sse_from_bytes(scripted_bytes([Ok(half)]));
+    let mut last = None;
+    while let Some(ev) = stream.next().await {
+        last = Some(ev);
+    }
+    let err = last
+        .expect("events")
+        .expect_err("a cut-off answer is an error");
+    assert!(crate::classify(&err).retryable, "{err}");
+
+    // A finished answer closes cleanly; so does a stream that sent nothing.
+    let done = b"data: {\"type\":\"message_stop\"}\n".to_vec();
+    let mut stream = anthropic_sse_from_bytes(scripted_bytes([Ok(done)]));
+    while let Some(ev) = stream.next().await {
+        ev.expect("no error after message_stop");
+    }
+    let mut empty = anthropic_sse_from_bytes(scripted_bytes([]));
+    assert!(empty.next().await.is_none());
+}
+
+#[test]
+fn a_stream_error_event_keeps_its_type() {
+    let events = events_for_data(
+        r#"{"type":"error","error":{"type":"api_error","message":"Internal server error"}}"#,
+    );
+    let err = events[0].as_ref().expect_err("error event");
+    assert!(err.to_string().contains("api_error"), "{err}");
+    assert!(crate::classify(err).retryable, "{err}");
+}
