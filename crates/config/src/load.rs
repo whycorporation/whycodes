@@ -247,10 +247,27 @@ impl Config {
     /// save that. Callers keep their merged, in-memory config for the run
     /// and pass the same edit here, so values from the project layer, the
     /// environment or CLI flags never land in the global file.
+    ///
+    /// Only the keys the edit changed are written: the file keeps its other
+    /// keys, comments and order, and gains no defaults it did not have.
     pub fn update_global(edit: &mut dyn FnMut(&mut Config)) -> Result<()> {
-        let mut global = Self::load_global_raw()?;
-        edit(&mut global);
-        global.save()
+        let before = Self::load_global_raw()?;
+        let mut after = before.clone();
+        edit(&mut after);
+        Self::patch_global_file(&before, &after)
+    }
+
+    /// Write the change from `before` to `after` into the global file. No
+    /// file yet (first run): the whole config, as [`Self::save`] does.
+    fn patch_global_file(before: &Config, after: &Config) -> Result<()> {
+        let path = Self::default_path()?;
+        if !path.exists() {
+            return after.save();
+        }
+        let text = std::fs::read_to_string(&path)?;
+        let content =
+            crate::patch::patched_text(&text, &before.to_toml_value()?, &after.to_toml_value()?)?;
+        write_atomic(&path, content.as_bytes())
     }
 
     /// Rewrite an older `config.toml` in place so later loads see the current
@@ -259,10 +276,12 @@ impl Config {
         if self.schema_version >= CONFIG_SCHEMA_VERSION {
             return Ok(false);
         }
+        let before = self.clone();
         self.schema_version = CONFIG_SCHEMA_VERSION;
         // Best-effort: a read-only home should still run with the in-memory
         // defaults for new fields. The next writable save persists the bump.
-        match self.save() {
+        // Only `schema_version` changes in the file.
+        match Self::patch_global_file(&before, self) {
             Ok(()) => Ok(true),
             Err(e) => {
                 tracing::warn!("config schema migrate could not rewrite config.toml: {e}");
