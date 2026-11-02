@@ -457,7 +457,7 @@ impl SubagentRunner {
             }
             Err(errors) => errors,
         };
-        session.add_user_message(&structured_output::retry_message(&errors));
+        session.add_agent_note(&structured_output::retry_message(&errors));
         let retry = self
             .run_turn_inner(session, provider_name, model, api_key, 1, permission)
             .await;
@@ -604,7 +604,7 @@ impl SubagentRunner {
                     for m in inbox {
                         note.push_str(&format!("- from {}: {}\n", m.from, m.text));
                     }
-                    session.add_user_message(&note);
+                    session.add_agent_note(&note);
                 }
             }
 
