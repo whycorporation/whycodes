@@ -2158,6 +2158,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             }
 
             mcp.poll(&mut app, &mut rt, &mut runtimes);
+            // A Ctrl+V image read finishes off the UI thread.
+            crate::input::poll_clipboard_paste(&mut app);
 
             // ── Start turn if needed ──────────────────────────────────
             if !rt.agent_busy

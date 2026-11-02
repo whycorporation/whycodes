@@ -18,6 +18,9 @@ use std::time::Duration;
 use crate::images::{MAX_IMAGE_BYTES, resolve_image_path};
 
 const TIMEOUT: Duration = Duration::from_millis(1500);
+/// PowerShell loading Windows.Forms cold takes 1–3 s on its own; at 1.5 s
+/// a real screenshot paste often timed out and pasted nothing.
+const WINDOWS_TIMEOUT: Duration = Duration::from_secs(5);
 
 static STASH_SEQ: AtomicU32 = AtomicU32::new(1);
 
@@ -201,6 +204,28 @@ fn prune_clipboard_path(
 
 fn stash_clipboard_image(bytes: &[u8]) -> Result<PathBuf, String> {
     stash_image_bytes_in(bytes, &clipboard_images_dir())
+}
+
+/// [`read_for_prompt`] off the UI thread: the spawned tool (PowerShell on
+/// Windows) can take seconds, and the TUI must keep painting meanwhile.
+/// The answer arrives on `tx`.
+pub fn read_in_background(tx: mpsc::Sender<Result<PromptClipboard, String>>) {
+    // Tests stub the read per thread, so they answer on this one.
+    #[cfg(test)]
+    {
+        send_prompt(&tx, read_for_prompt());
+    }
+    #[cfg(not(test))]
+    std::thread::spawn(move || send_prompt(&tx, read_for_prompt()));
+}
+
+fn send_prompt(
+    tx: &mpsc::Sender<Result<PromptClipboard, String>>,
+    value: Result<PromptClipboard, String>,
+) {
+    if let Err(error) = tx.send(value) {
+        tracing::debug!(?error, "clipboard paste: prompt receiver dropped");
+    }
 }
 
 /// Ctrl+V entry: bitmap / uri-list only. Empty clipboard is a silent no-op.
@@ -393,7 +418,7 @@ fn run_windows_clipboard(script: &str) -> Result<(), RunErr> {
     command_status(
         "powershell",
         &["-NoProfile", "-STA", "-Command", script],
-        TIMEOUT,
+        WINDOWS_TIMEOUT,
     )
 }
 
@@ -433,7 +458,9 @@ fn finish_windows_saved_image(dest: &Path) -> Result<PromptClipboard, String> {
 fn windows_clipboard_run_err(dest: &Path, err: RunErr) -> Result<PromptClipboard, String> {
     cleanup_temp(dest);
     match err {
-        RunErr::Exit | RunErr::Timeout => Ok(PromptClipboard::Empty),
+        RunErr::Exit => Ok(PromptClipboard::Empty),
+        // Silence here read as "nothing to paste" while an image was there.
+        RunErr::Timeout => Err("Reading the clipboard image timed out — try again".into()),
         RunErr::NotFound => Err("PowerShell is required to paste images from the clipboard".into()),
         RunErr::TooLarge => Err("clipboard image is too large".into()),
         RunErr::Io(e) => Err(e),
@@ -515,13 +542,6 @@ fn bytes_to_prompt(result: Result<Vec<u8>, RunErr>) -> Result<PromptClipboard, S
     }
 }
 
-fn classify_command_output(output: io::Result<std::process::Output>) -> Result<Vec<u8>, RunErr> {
-    match output {
-        Ok(out) => classify_stdout(out.stdout, out.status.success()),
-        Err(e) => Err(classify_spawn_err(e)),
-    }
-}
-
 fn classify_stdout(stdout: Vec<u8>, success: bool) -> Result<Vec<u8>, RunErr> {
     if (stdout.len() as u64) > MAX_IMAGE_BYTES {
         return Err(RunErr::TooLarge);
@@ -552,21 +572,53 @@ fn command_stdout(bin: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>
     if let Some(stubbed) = cmd_stub_call(bin, args) {
         return stubbed;
     }
-    let bin_owned = bin.to_string();
-    let args_owned: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
+    let mut child = Command::new(bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(classify_spawn_err)?;
+    // Drain stdout on a thread so a large image cannot fill the pipe and
+    // stall the child; this thread keeps the child to kill it on timeout.
+    let stdout = child.stdout.take();
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let output = Command::new(&bin_owned)
-            .args(&args_owned)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output();
-        send_run(tx, classify_command_output(output));
-    });
-    match rx.recv_timeout(timeout) {
-        Ok(r) => r,
-        Err(_timeout) => Err(RunErr::Timeout),
+    std::thread::spawn(move || send_run(tx, read_all(stdout)));
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                let bytes = rx.recv_timeout(left).unwrap_or(Err(RunErr::Timeout))?;
+                return classify_stdout(bytes, status.success());
+            }
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                // A timed-out tool used to run on and write its PNG later.
+                kill_child(&mut child);
+                return Err(RunErr::Timeout);
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(e) => return Err(RunErr::Io(e.to_string())),
+        }
+    }
+}
+
+fn read_all(stdout: Option<std::process::ChildStdout>) -> Result<Vec<u8>, RunErr> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    if let Some(mut out) = stdout {
+        out.read_to_end(&mut bytes)
+            .map_err(|e| RunErr::Io(e.to_string()))?;
+    }
+    Ok(bytes)
+}
+
+fn kill_child(child: &mut std::process::Child) {
+    if let Err(error) = child.kill() {
+        tracing::debug!(%error, "clipboard paste: kill timed-out tool");
+    }
+    if let Err(error) = child.wait() {
+        tracing::debug!(%error, "clipboard paste: reap timed-out tool");
     }
 }
 
