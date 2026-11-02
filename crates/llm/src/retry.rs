@@ -173,13 +173,9 @@ where
                 }
 
                 let delay = policy.sleep_duration(attempt, &classified);
-                // Past the budget only on that first retry: keep its backoff.
+                // Zero only on that first retry past the budget: it goes at once.
                 let remaining = policy.max_elapsed.saturating_sub(started.elapsed());
-                let delay = if remaining.is_zero() {
-                    delay
-                } else {
-                    delay.min(remaining)
-                };
+                let delay = delay.min(remaining);
 
                 log_retry_again(RetryAgainFields {
                     op,
