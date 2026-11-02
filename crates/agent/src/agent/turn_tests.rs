@@ -3635,3 +3635,52 @@ async fn a_dropped_draft_is_taken_back_before_the_retry_streams() {
         ]
     );
 }
+
+#[tokio::test]
+async fn a_model_that_keeps_repeating_after_refusals_ends_the_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let agent = repeating([ScriptedStep::ToolCall {
+        id: "c1".into(),
+        name: "read".into(),
+        input: json!({"path": "n.txt"}),
+    }]);
+    let mut session = session_at(dir.path(), "please read n.txt forever");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "script",
+                model: "doom-cap-unique",
+                api_key: "k",
+                // Interactive: no step cap of its own.
+                max_turns: None,
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await
+        .expect("the turn ends instead of looping");
+    let status = drain_status(&mut rx);
+    assert!(
+        status.iter().any(|s| s.contains("kept repeating")),
+        "{status:?}"
+    );
+    let refused = session
+        .messages
+        .iter()
+        .filter(|m| {
+            m.role == Role::Tool && m.content.as_text().is_some_and(|t| t.contains("Doom loop"))
+        })
+        .count();
+    assert_eq!(refused, MAX_DOOM_REFUSALS as usize);
+    assert!(
+        !session
+            .messages
+            .iter()
+            .any(|m| m.is_agent_note()
+                && m.content.as_text().is_some_and(|t| t.contains("Doom loop"))),
+        "a refusal is not repeated as a recovery note"
+    );
+}
