@@ -220,6 +220,10 @@ pub fn json_to_turn_event(v: &serde_json::Value) -> Option<TurnEvent> {
         "enqueue_prompt" => TurnEvent::EnqueuePrompt {
             text: v.get("text")?.as_str()?.to_string(),
         },
+        "draft_discarded" => TurnEvent::DraftDiscarded {
+            text: str_field(v, "text"),
+            thinking: str_field(v, "thinking"),
+        },
         // Lists daemon workers in the agent hub (no log or tokens on /api).
         "subagent" => TurnEvent::Subagent {
             id: v.get("id")?.as_str()?.to_string(),

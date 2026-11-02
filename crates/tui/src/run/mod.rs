@@ -5680,6 +5680,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             app.current_agent_state = AgentState::Thinking;
             app.append_thinking(&t);
         }
+        TurnEvent::DraftDiscarded { text, thinking } => app.discard_draft(&text, &thinking),
         TurnEvent::ToolStart { id, name, input } => {
             app.finish_open_thinking();
             // Short labels in the busy strip (`bash` → `run`).

@@ -13,6 +13,11 @@ fn maps_text_and_drops_panel() {
         })
         .is_none()
     );
+    let discarded = TurnEvent::DraftDiscarded {
+        text: "half".into(),
+        thinking: String::new(),
+    };
+    assert!(from_turn_event(&discarded).is_none());
 }
 
 #[test]

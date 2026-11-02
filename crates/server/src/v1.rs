@@ -567,6 +567,7 @@ pub(crate) fn from_turn_event(ev: &TurnEvent) -> Option<SdkEvent> {
         },
         // TUI-only chrome — not part of the public v1 contract.
         TurnEvent::EnqueuePrompt { .. }
+        | TurnEvent::DraftDiscarded { .. }
         | TurnEvent::Panel(_)
         | TurnEvent::Todos { .. }
         | TurnEvent::SwarmMessage { .. }

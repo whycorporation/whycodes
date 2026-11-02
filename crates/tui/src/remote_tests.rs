@@ -358,3 +358,16 @@ fn subagent_events_reach_the_agent_hub() {
     assert!(matches!(bare, Some(TurnEvent::Subagent { kind, .. }) if kind.is_empty()));
     assert!(json_to_turn_event(&serde_json::json!({"type": "subagent"})).is_none());
 }
+
+#[test]
+fn draft_discarded_event_maps_through() {
+    let ev = json_to_turn_event(
+        &serde_json::json!({"type": "draft_discarded", "text": "half", "thinking": "hm"}),
+    );
+    match ev {
+        Some(TurnEvent::DraftDiscarded { text, thinking }) => {
+            assert_eq!((text.as_str(), thinking.as_str()), ("half", "hm"));
+        }
+        other => panic!("{other:?}"),
+    }
+}
