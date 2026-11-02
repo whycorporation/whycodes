@@ -156,3 +156,30 @@ async fn retry_with_backoff_wrapper_and_elapsed_cap() {
     assert!(err.to_string().contains("503"));
     log_retry_helpers_for_tests();
 }
+
+#[tokio::test]
+async fn a_slow_first_failure_still_gets_one_retry() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let policy = RetryPolicy {
+        max_retries: 3,
+        initial_backoff: Duration::from_millis(1),
+        max_backoff: Duration::from_millis(1),
+        max_elapsed: Duration::from_millis(1),
+        full_jitter: false,
+    };
+    let tries = AtomicUsize::new(0);
+    let err = execute_with_policy(&policy, "slow-524", || async {
+        tries.fetch_add(1, Ordering::SeqCst);
+        // Like a gateway timeout: the attempt alone outlasts the budget.
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        Err::<(), _>(whycodes_core::Error::llm("API error (524): timeout"))
+    })
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("524"));
+    assert_eq!(
+        tries.load(Ordering::SeqCst),
+        2,
+        "one retry, then the budget holds"
+    );
+}
