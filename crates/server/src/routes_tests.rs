@@ -247,6 +247,13 @@ fn turn_events_have_stable_api_payloads() {
         Some(serde_json::json!({"type": "enqueue_prompt", "text": "next"}))
     );
     assert_eq!(
+        turn_event_json(&TurnEvent::DraftDiscarded {
+            text: "half".into(),
+            thinking: "hmm".into()
+        }),
+        Some(serde_json::json!({"type": "draft_discarded", "text": "half", "thinking": "hmm"}))
+    );
+    assert_eq!(
         turn_event_json(&TurnEvent::SwarmMessage {
             from: "a".into(),
             to: "b".into(),

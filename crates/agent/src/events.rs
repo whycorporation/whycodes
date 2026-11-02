@@ -67,6 +67,11 @@ pub enum TurnEvent {
     },
     /// Queue a user prompt for the next free TUI turn (`schedule` / `/loop`).
     EnqueuePrompt { text: String },
+    /// The step's streamed draft was dropped and the step runs again (a
+    /// stream drop, a stream rule, a context overflow): the `TextDelta` /
+    /// `ThinkingDelta` text sent since the step began, which a view that
+    /// shows deltas should take back off the end of the reply.
+    DraftDiscarded { text: String, thinking: String },
     /// Pin a file / diff / mermaid on the TUI side panel.
     Panel(whycodes_core::PanelUpdate),
     /// A swarm worker sent a message (toast).

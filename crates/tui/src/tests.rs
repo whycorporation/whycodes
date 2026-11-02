@@ -2643,3 +2643,30 @@ fn text_after_a_tool_call_starts_a_new_paragraph() {
         "I'll read main.rs first.\n\nDone."
     );
 }
+
+#[test]
+fn discard_draft_takes_the_dropped_step_back_off_the_reply() {
+    let mut app = TuiApp::new(test_config());
+    app.add_message(ChatRole::Assistant, "Step one.\n\n");
+    app.append_thinking("planning the retry");
+    app.append_to_last("half an ans");
+    app.discard_draft("half an ans", "planning the retry");
+    let last = app.messages.last().unwrap();
+    assert_eq!(last.content, "Step one.\n\n");
+    assert!(
+        !last
+            .blocks
+            .iter()
+            .any(|b| matches!(b, ChatBlock::Thinking(_)))
+    );
+
+    // Text it does not end with stays; so does a user message.
+    app.discard_draft("not there", "nor this");
+    assert_eq!(app.messages.last().unwrap().content, "Step one.\n\n");
+    app.add_message(ChatRole::User, "next");
+    app.discard_draft("next", "");
+    assert_eq!(app.messages.last().unwrap().content, "next");
+    let mut empty = TuiApp::new(test_config());
+    empty.discard_draft("x", "y");
+    assert!(empty.messages.is_empty());
+}
