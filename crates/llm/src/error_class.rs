@@ -244,7 +244,8 @@ pub fn classify_message(raw: &str) -> ClassifiedError {
         || lower.contains("\"type\":\"server_error\"")
         || lower.contains("\"code\":\"internal_server_error\"")
         || lower.contains("internal_server_error")
-        || lower.contains("\"type\":\"api_error\"")
+        || lower.contains("api_error")
+        || lower.contains("internal server error")
         || lower.contains("overloaded")
         || lower.contains("service unavailable")
         || lower.contains("bad gateway")
@@ -431,6 +432,17 @@ fn first_json_value(s: &str) -> Option<serde_json::Value> {
     let start = s.find('{')?;
     let mut de = serde_json::Deserializer::from_str(&s[start..]);
     Deserialize::deserialize(&mut de).ok()
+}
+
+/// `raw` for a person: the provider's own reason when it is a JSON body,
+/// else the text itself, whitespace folded and capped.
+pub(crate) fn readable_reason(raw: &str) -> String {
+    let prefix = raw.find(['{', '[']).map_or(raw, |i| raw[..i].trim_end());
+    match extract_provider_reason(raw) {
+        Some(reason) if prefix.is_empty() => compact_reason(&reason, 300),
+        Some(reason) => compact_reason(&format!("{prefix} {reason}"), 300),
+        None => compact_reason(raw, 300),
+    }
 }
 
 fn compact_reason(s: &str, max_chars: usize) -> String {

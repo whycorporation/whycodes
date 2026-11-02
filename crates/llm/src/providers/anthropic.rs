@@ -167,12 +167,10 @@ fn events_for_data(data: &str) -> Vec<whycodes_core::Result<StreamEvent>> {
             out.push(Ok(StreamEvent::MessageStop));
         }
         Some("error") => {
-            out.push(Err(whycodes_core::Error::llm(
-                event["error"]["message"]
-                    .as_str()
-                    .unwrap_or("Unknown error")
-                    .to_string(),
-            )));
+            // The type (`overloaded_error`, `api_error`) is what tells a
+            // retryable failure from a fatal one; the text alone often doesn't.
+            let message = crate::openai_compat::stream_error_message(&event["error"]);
+            out.push(Err(whycodes_core::Error::llm(message)));
         }
         _ => {}
     }
@@ -627,6 +625,10 @@ struct AnthropicSse {
     buffer: crate::line_buffer::LineBuffer,
     pending: std::collections::VecDeque<whycodes_core::Result<StreamEvent>>,
     done: bool,
+    /// Some event arrived / `message_stop` arrived: a clean close in
+    /// between is a cut-off answer, not a finished one.
+    started: bool,
+    stopped: bool,
 }
 
 impl AnthropicSse {
@@ -640,7 +642,11 @@ impl AnthropicSse {
             self.done = true;
             return;
         }
-        self.pending.extend(events_for_data(data));
+        for ev in events_for_data(data) {
+            self.started = true;
+            self.stopped |= matches!(ev, Ok(StreamEvent::MessageStop));
+            self.pending.push_back(ev);
+        }
     }
 }
 
@@ -672,7 +678,16 @@ impl Stream for AnthropicSse {
                         e,
                     ))));
                 }
-                Poll::Ready(None) => this.done = true,
+                Poll::Ready(None) => {
+                    this.done = true;
+                    if this.started && !this.stopped {
+                        let err = "unexpected EOF before message_stop";
+                        return Poll::Ready(Some(Err(crate::openai_compat::stream_chunk_error(
+                            "anthropic",
+                            err,
+                        ))));
+                    }
+                }
                 Poll::Pending => return Poll::Pending,
             }
         }
@@ -685,6 +700,8 @@ fn anthropic_sse(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream
         buffer: crate::line_buffer::LineBuffer::default(),
         pending: std::collections::VecDeque::new(),
         done: false,
+        started: false,
+        stopped: false,
     })
 }
 

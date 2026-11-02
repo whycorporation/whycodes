@@ -89,6 +89,10 @@ pub struct Agent {
     /// `[session] stream_retry_secs`: window for re-sending a step whose
     /// stream dropped mid-response (default 60s). Zero = off.
     stream_retry: std::time::Duration,
+    /// Longest silence between stream events before the step counts as a
+    /// dropped stream (retried like one). A proxy that stops sending without
+    /// closing used to hold the turn until Esc.
+    stream_idle: std::time::Duration,
     /// `[session] fallback_models`: `provider/model` tried when a stream fails to open.
     fallback_models: Vec<String>,
     /// Config `api_key` per provider, for fallback targets on another provider.
@@ -254,6 +258,10 @@ impl ExecutorRecipe {
 pub(crate) fn recover_lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
+
+/// Default [`Agent::stream_idle`]: generous, since some models think for
+/// minutes without streaming a token.
+pub(crate) const STREAM_IDLE: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Stop auto-compact after this many consecutive ineffective passes.
 pub(crate) const MAX_CONSECUTIVE_COMPACT_FAILURES: u32 = 3;
@@ -513,6 +521,7 @@ impl Agent {
             model_race: "off".into(),
             race_after: std::time::Duration::from_millis(800),
             stream_retry: std::time::Duration::from_secs(60),
+            stream_idle: STREAM_IDLE,
             fallback_models: Vec::new(),
             fallback_config_keys: std::collections::HashMap::new(),
             response_cache: true,

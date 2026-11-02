@@ -1269,3 +1269,36 @@ fn agent_note_name_never_reaches_the_provider() {
     assert!(user.get("name").is_none(), "{user}");
     assert_eq!(user["content"], "the tool failed");
 }
+
+#[tokio::test]
+async fn an_error_chunk_mid_stream_is_reported_not_dropped() {
+    let body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n",
+        "data: {\"error\":{\"code\":429,\"type\":\"rate_limit_error\",\"message\":\"slow down\"}}\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"error\"}]}\n",
+    );
+    let mut stream = chat_sse_from_bytes(scripted_bytes([Ok(body.as_bytes().to_vec())]), "gw");
+    let mut error = None;
+    let mut finished = false;
+    while let Some(ev) = stream.next().await {
+        match ev.unwrap() {
+            StreamEvent::Error { message } => error = Some(message),
+            StreamEvent::MessageDelta { .. } => finished = true,
+            _ => {}
+        }
+    }
+    let message = error.expect("the error reaches the agent");
+    assert_eq!(message, "(429 rate_limit_error) slow down");
+    assert!(!finished, "nothing after the error is read");
+}
+
+#[test]
+fn stream_error_message_keeps_what_there_is() {
+    let msg = |v: serde_json::Value| stream_error_message(&v);
+    assert_eq!(msg(serde_json::json!({"message": "boom"})), "boom");
+    assert_eq!(
+        msg(serde_json::json!({"type": "overloaded"})),
+        "(overloaded) provider error"
+    );
+    assert_eq!(msg(serde_json::json!({"code": true})), "provider error");
+}
