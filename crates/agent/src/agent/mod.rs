@@ -187,6 +187,14 @@ pub struct SharedTools {
 pub struct McpLoad {
     executor: Option<Arc<ToolExecutor>>,
     mcp_servers: Option<Vec<crate::mcp_load::McpServerHandle>>,
+    failures: Vec<crate::mcp_load::McpFailure>,
+}
+
+impl McpLoad {
+    /// Configured servers that did not connect, for the UI to report.
+    pub fn failures(&self) -> &[crate::mcp_load::McpFailure] {
+        &self.failures
+    }
 }
 
 /// Recover from a poisoned mutex instead of aborting (`panic = "abort"` in release).
@@ -1146,13 +1154,13 @@ impl Agent {
         let custom_lsp = lsp_overlay_is_custom(&self.lsp_overlay);
         let config = (!config.mcp_servers.is_empty()).then(|| config.clone());
         async move {
-            let (n_mcp, mcp_servers) = match config {
+            let (n_mcp, mcp_servers, failures) = match config {
                 Some(config) => {
-                    let (n, servers) =
+                    let (n, servers, failures) =
                         crate::mcp_load::register_mcp_tools(&mut full, &config).await;
-                    (n, Some(servers))
+                    (n, Some(servers), failures)
                 }
-                None => (0, None),
+                None => (0, None, Vec::new()),
             };
             let executor = (n_plug > 0 || n_mcp > 0 || custom_lsp).then(|| {
                 log_registered_count(n_plug, "shell plugins registered");
@@ -1162,6 +1170,7 @@ impl Agent {
             McpLoad {
                 executor,
                 mcp_servers,
+                failures,
             }
         }
     }

@@ -75,13 +75,22 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
     }
 }
 
+/// A configured server that did not connect, with what to do about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpFailure {
+    pub server: String,
+    pub error: String,
+    /// Empty when there is nothing specific to suggest.
+    pub hint: String,
+}
+
 /// Connect every configured server and register its tools, plus the
 /// resource tools when a server offers resources. Returns the number of
-/// tools registered and the connected servers.
+/// tools registered, the connected servers and the ones that failed.
 pub async fn register_mcp_tools(
     executor: &mut ToolExecutor,
     config: &Config,
-) -> (usize, Vec<McpServerHandle>) {
+) -> (usize, Vec<McpServerHandle>, Vec<McpFailure>) {
     register_mcp_tools_within(executor, config, SERVER_START_TIMEOUT).await
 }
 
@@ -94,7 +103,7 @@ async fn register_mcp_tools_within(
     executor: &mut ToolExecutor,
     config: &Config,
     limit: Duration,
-) -> (usize, Vec<McpServerHandle>) {
+) -> (usize, Vec<McpServerHandle>, Vec<McpFailure>) {
     // Start all servers concurrently so multi-MCP cold start is
     // max(latency), not sum.
     let data_dir = whycodes_core::paths::data_dir();
@@ -116,6 +125,7 @@ async fn register_mcp_tools_within(
 
     let mut count = 0usize;
     let mut servers = Vec::new();
+    let mut failures = Vec::new();
     for (server_name, server, result) in connected {
         match result {
             Ok((client, tools)) => {
@@ -171,11 +181,16 @@ async fn register_mcp_tools_within(
                     hint,
                     "Failed to connect MCP server"
                 );
+                failures.push(McpFailure {
+                    server: server_name,
+                    error: e.to_string(),
+                    hint,
+                });
             }
         }
     }
     count += crate::mcp_content::register_resource_tools(executor, &servers).await;
-    (count, servers)
+    (count, servers, failures)
 }
 
 /// Connect `server` and list its tools, giving up after `limit` so a server

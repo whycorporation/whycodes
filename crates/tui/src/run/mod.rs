@@ -2157,7 +2157,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 None => steer_or_reclaim(&mut app, &mut rt, &project_dir),
             }
 
-            mcp.poll(&mut rt, &mut runtimes);
+            mcp.poll(&mut app, &mut rt, &mut runtimes);
 
             // ── Start turn if needed ──────────────────────────────────
             if !rt.agent_busy

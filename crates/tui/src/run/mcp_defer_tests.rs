@@ -72,7 +72,7 @@ async fn no_servers_load_inline() {
     let mut rt = test_runtime();
     let mut mcp = PendingMcp::start(&mut rt, &Config::default()).await;
     assert!(mcp.0.is_none());
-    mcp.poll(&mut rt, &mut []);
+    mcp.poll(&mut app(), &mut rt, &mut []);
     mcp.wait(&mut app(), &mut rt, &mut [], TURN_WAIT).await;
     assert!(rt.agent.mcp_servers().is_empty());
 }
@@ -90,21 +90,21 @@ async fn poll_installs_once_finished_and_every_session_is_idle() {
     until_finished(&mcp).await;
 
     rt.agent_busy = true;
-    mcp.poll(&mut rt, &mut others);
+    mcp.poll(&mut app(), &mut rt, &mut others);
     assert!(
         mcp.0.is_some(),
         "the active session's agent is out on a turn"
     );
     rt.agent_busy = false;
     others[0].agent_busy = true;
-    mcp.poll(&mut rt, &mut others);
+    mcp.poll(&mut app(), &mut rt, &mut others);
     assert!(
         mcp.0.is_some(),
         "a background session's agent is out on a turn"
     );
     others[0].agent_busy = false;
 
-    mcp.poll(&mut rt, &mut others);
+    mcp.poll(&mut app(), &mut rt, &mut others);
     assert!(mcp.0.is_none());
     assert_eq!(rt.agent.mcp_servers().len(), 1);
     assert_eq!(others[0].agent.mcp_servers().len(), 1);
@@ -234,6 +234,37 @@ time.sleep(2)
     assert!(rt.agent.mcp_servers().is_empty());
 
     until_finished(&mcp).await;
-    mcp.poll(&mut rt, &mut []);
+    mcp.poll(&mut app, &mut rt, &mut []);
     assert_eq!(rt.agent.mcp_servers().len(), 1);
+}
+
+#[test]
+fn servers_that_did_not_connect_are_reported_in_the_chat() {
+    use whycodes_agent::mcp_load::McpFailure;
+    let mut app = app();
+    report_failures(&mut app, &[]);
+    assert!(app.messages.is_empty());
+    report_failures(
+        &mut app,
+        &[
+            McpFailure {
+                server: "git".into(),
+                error: "no answer within 60 s".into(),
+                hint: "run it in a terminal".into(),
+            },
+            McpFailure {
+                server: "docs".into(),
+                error: "connection refused".into(),
+                hint: String::new(),
+            },
+        ],
+    );
+    let lines: Vec<&str> = app.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(
+        lines,
+        [
+            "MCP server `git` did not connect: no answer within 60 s — run it in a terminal",
+            "MCP server `docs` did not connect: connection refused",
+        ]
+    );
 }

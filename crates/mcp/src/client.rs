@@ -38,6 +38,10 @@ enum Transport {
         reader: AsyncBufReader<ChildStdout>,
         next_id: u64,
         stderr_tail: StderrTail,
+        /// Never read: dropping it ends the server's whole process tree.
+        #[cfg(windows)]
+        #[allow(dead_code)]
+        tree: Option<KillTree>,
     },
     StreamableHttp(StreamableHttpTransport),
     LegacySse(LegacySseTransport),
@@ -83,6 +87,13 @@ impl McpClient {
         let mut child = cmd
             .spawn()
             .map_err(|e| McpError::msg(&format!("failed to spawn MCP server {command:?}: {e}")))?;
+        // Before anything can fail or time out: a dropped connect must end
+        // node too, not only the `npx.cmd` shim `kill_on_drop` reaches.
+        #[cfg(windows)]
+        let tree = child
+            .raw_handle()
+            .and_then(whycodes_sandbox::ProcessTree::adopt)
+            .map(KillTree);
         let (writer, stdout) = take_stdio_pipes(&mut child)?;
         let reader = AsyncBufReader::new(stdout);
         let stderr_tail = StderrTail::default();
@@ -100,6 +111,8 @@ impl McpClient {
                 reader,
                 next_id: 1,
                 stderr_tail,
+                #[cfg(windows)]
+                tree,
             },
             capabilities: ServerCapabilities::default(),
         };
@@ -346,6 +359,19 @@ impl McpClient {
     #[cfg(test)]
     async fn notify(&mut self, method: &str, params: Option<serde_json::Value>) -> Result<()> {
         self.send_notification(method, params).await
+    }
+}
+
+/// Windows: `kill_on_drop` ends only the direct child, which for `npx` is
+/// the `cmd.exe` running `npx.cmd`; node and npm (or a half-done download)
+/// lived on after a connect timed out. The job holds them all.
+#[cfg(windows)]
+struct KillTree(whycodes_sandbox::ProcessTree);
+
+#[cfg(windows)]
+impl Drop for KillTree {
+    fn drop(&mut self) {
+        self.0.kill();
     }
 }
 

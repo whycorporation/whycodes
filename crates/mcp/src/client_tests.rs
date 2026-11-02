@@ -856,3 +856,43 @@ async fn read_stdio_response_skips_a_line_that_is_not_utf8() {
     let value = read_stdio_response(&mut stdout, &mut out, 1).await.unwrap();
     assert_eq!(value["ok"], true);
 }
+
+/// A server that started a child of its own and never answered: giving up
+/// on the connect must end the child too, not only the direct process.
+#[cfg(windows)]
+#[tokio::test]
+async fn a_dropped_stdio_connect_ends_the_servers_children() {
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("child.pid");
+    let script = dir.path().join("server.py");
+    let body = format!(
+        "import subprocess, sys, time\n\
+         child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n\
+         open(r'{}', 'w').write(str(child.pid))\n\
+         time.sleep(60)\n",
+        pid_file.display()
+    );
+    std::fs::write(&script, body).unwrap();
+    let script = script.to_string_lossy().into_owned();
+    let args = ["-u", script.as_str()];
+    let connect = McpClient::connect_stdio(python(), &args);
+    let gave_up = tokio::time::timeout(std::time::Duration::from_secs(5), connect).await;
+    assert!(gave_up.is_err(), "the server never answers");
+
+    let pid = std::fs::read_to_string(&pid_file).expect("child started");
+    let alive = |pid: &str| {
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid.trim()), "/NH"])
+            .output()
+            .expect("tasklist");
+        String::from_utf8_lossy(&out.stdout).contains(pid.trim())
+    };
+    let t0 = std::time::Instant::now();
+    while alive(&pid) && t0.elapsed() < std::time::Duration::from_secs(5) {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(
+        !alive(&pid),
+        "grandchild {pid} outlived the dropped connect"
+    );
+}
