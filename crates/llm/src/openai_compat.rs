@@ -286,6 +286,13 @@ impl Stream for ChatSse {
                     this.buffer.push(&bytes);
                     this.drain_buffer_lines();
                 }
+                Poll::Ready(Some(Err(e))) if this.finished => {
+                    // The answer already ended (`finish_reason`); a gateway
+                    // that resets before `[DONE]` must not cost the reply.
+                    tracing::debug!(error = %e, "stream error after finish_reason; ending");
+                    this.flush_think();
+                    this.done = true;
+                }
                 Poll::Ready(Some(Err(e))) => {
                     return Poll::Ready(Some(Err(stream_chunk_error(&this.provider, e))));
                 }
