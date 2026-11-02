@@ -275,6 +275,17 @@ pub(super) fn apply_goal_check(
     app.toasts.push(toast, line);
 }
 
+/// A parked session's turn ended. Nothing there can queue the goal's next
+/// turn, so an active goal pauses until the user comes back and prompts;
+/// left active it would sit unevaluated with no sign it stopped. Returns
+/// the line for the session's transcript when it paused.
+pub(super) fn pause_parked_goal(rt: &mut SessionRuntime, why: &str) -> Option<String> {
+    let goal = rt.goal.as_mut().filter(|g| g.paused.is_none())?;
+    goal.pause(why);
+    crate::goal::save(rt.db.as_ref(), &rt.session.id, Some(goal));
+    Some(format!("◎ goal paused: {why}. {GOAL_RESUME_HINT}"))
+}
+
 /// Background session: nothing to queue into, so not met pauses until the
 /// user switches back and prompts. Met / impossible still clear the goal.
 pub(super) fn drain_background_goal(rt: &mut SessionRuntime) {
