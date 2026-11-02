@@ -560,11 +560,27 @@ async fn oauth_bearer_is_added_to_remote_servers_only() {
 #[test]
 fn unauthorized_connects_suggest_login() {
     assert_eq!(
-        login_hint(
+        connect_hint(
             "docs",
             "MCP HTTP error 401 Unauthorized for method 'initialize'"
         ),
         "run `whycodes mcp login docs`"
     );
-    assert_eq!(login_hint("docs", "connection refused"), "");
+    assert_eq!(connect_hint("docs", "connection refused"), "");
+    let spawn = connect_hint(
+        "git",
+        r#"failed to spawn MCP server "npx": program not found"#,
+    );
+    assert!(spawn.contains("full path"), "{spawn}");
+    let silent = connect_hint("git", "no answer within 60 s");
+    assert!(silent.contains("whycodes mcp remove git"), "{silent}");
+}
+
+#[tokio::test]
+async fn a_package_runner_without_a_package_fails_at_once() {
+    let mut bare = server(McpTransportKind::Stdio);
+    bare.command = Some("npx".into());
+    bare.args = Vec::new();
+    let err = connect_mcp_server(&bare).await.err().expect("refused");
+    assert!(err.to_string().contains("needs the package"), "{err}");
 }

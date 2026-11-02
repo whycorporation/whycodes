@@ -620,6 +620,39 @@ fn cli_parser_rejects_invalid_commands_before_dispatch() {
 }
 
 #[test]
+fn cli_parser_takes_mcp_add_arguments_that_start_with_a_dash() {
+    let add = |argv: &[&str]| match Cli::try_parse_from(argv).unwrap().command {
+        Some(Commands::Mcp {
+            cmd: McpCmd::Add {
+                command_args, args, ..
+            },
+        }) => (command_args, args),
+        other => panic!("unexpected parsed command: {other:?}"),
+    };
+    let (after_dashes, _) = add(&[
+        "whycodes",
+        "mcp",
+        "add",
+        "git",
+        "npx",
+        "--",
+        "-y",
+        "@scope/server-git",
+    ]);
+    assert_eq!(after_dashes, ["-y", "@scope/server-git"]);
+    let (_, joined) = add(&[
+        "whycodes",
+        "mcp",
+        "add",
+        "git",
+        "npx",
+        "--args",
+        "-y @scope/server-git",
+    ]);
+    assert_eq!(joined.as_deref(), Some("-y @scope/server-git"));
+}
+
+#[test]
 fn cli_parser_maps_mcp_add_without_interpreting_values() {
     let parsed = Cli::try_parse_from([
         "whycodes",
@@ -644,6 +677,7 @@ fn cli_parser_maps_mcp_add_without_interpreting_values() {
                 McpCmd::Add {
                     name,
                     command,
+                    command_args,
                     args,
                     url,
                     transport,
@@ -652,6 +686,7 @@ fn cli_parser_maps_mcp_add_without_interpreting_values() {
         }) => {
             assert_eq!(name, "docs");
             assert_eq!(command.as_deref(), Some("node"));
+            assert!(command_args.is_empty());
             assert_eq!(args.as_deref(), Some("server.js --quiet"));
             assert_eq!(url, None);
             assert_eq!(transport.as_deref(), Some("local"));
@@ -2565,6 +2600,7 @@ async fn mcp_add_list_remove_transports() {
     cmd_mcp(&McpCmd::Add {
         name: "local".into(),
         command: Some("npx".into()),
+        command_args: Vec::new(),
         args: Some("-y demo".into()),
         url: None,
         transport: Some("stdio".into()),
@@ -2575,6 +2611,7 @@ async fn mcp_add_list_remove_transports() {
     cmd_mcp(&McpCmd::Add {
         name: "remote".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: Some("https://example.com/mcp".into()),
         transport: Some("http".into()),
@@ -2586,6 +2623,7 @@ async fn mcp_add_list_remove_transports() {
     let bad = cmd_mcp(&McpCmd::Add {
         name: "bad".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: None,
         transport: Some("ftp".into()),
@@ -4128,6 +4166,7 @@ async fn mcp_remaining_transports_and_validation() {
     cmd_mcp(&McpCmd::Add {
         name: "sse".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: Some("https://example.com/sse".into()),
         transport: Some("sse".into()),
@@ -4138,6 +4177,7 @@ async fn mcp_remaining_transports_and_validation() {
     cmd_mcp(&McpCmd::Add {
         name: "auto".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: Some("https://example.com/mcp".into()),
         transport: Some("auto".into()),
@@ -4147,7 +4187,8 @@ async fn mcp_remaining_transports_and_validation() {
     .unwrap();
     cmd_mcp(&McpCmd::Add {
         name: "local".into(),
-        command: Some("npx".into()),
+        command: Some("node".into()),
+        command_args: Vec::new(),
         args: None,
         url: None,
         transport: Some("local".into()),
@@ -4158,6 +4199,7 @@ async fn mcp_remaining_transports_and_validation() {
     cmd_mcp(&McpCmd::Add {
         name: "stream".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: Some("https://example.com/s".into()),
         transport: Some("streamable-http".into()),
@@ -4168,6 +4210,7 @@ async fn mcp_remaining_transports_and_validation() {
     cmd_mcp(&McpCmd::Add {
         name: "remote".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: Some("https://example.com/r".into()),
         transport: Some("remote".into()),
@@ -4179,6 +4222,7 @@ async fn mcp_remaining_transports_and_validation() {
     let both = cmd_mcp(&McpCmd::Add {
         name: "both".into(),
         command: Some("npx".into()),
+        command_args: Vec::new(),
         args: None,
         url: Some("https://example.com".into()),
         transport: None,
@@ -4189,6 +4233,7 @@ async fn mcp_remaining_transports_and_validation() {
     let header = cmd_mcp(&McpCmd::Add {
         name: "hdr".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: Some("https://example.com".into()),
         transport: Some("http".into()),
@@ -5704,6 +5749,7 @@ async fn mcp_list_empty_and_stdio_without_command() {
     let err = cmd_mcp(&McpCmd::Add {
         name: "stdio-no-cmd".into(),
         command: None,
+        command_args: Vec::new(),
         args: None,
         url: Some("https://example.com/mcp".into()),
         transport: Some("stdio".into()),

@@ -45,6 +45,10 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
     let headers = server.headers.as_ref().unwrap_or(&empty_headers);
     match kind {
         McpTransportKind::Stdio => {
+            // Fail now, not after the connect timeout.
+            if let Some(problem) = server.stdio_problem() {
+                anyhow::bail!(problem);
+            }
             // `resolved_transport` already requires `command` for stdio.
             let command = stdio_command(server.command.as_deref());
             let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
@@ -159,7 +163,7 @@ async fn register_mcp_tools_within(
                     Ok(_) => format!("url={}", server.url.as_deref().unwrap_or("?")),
                     Err(msg) => msg,
                 };
-                let hint = login_hint(&server_name, &e.to_string());
+                let hint = connect_hint(&server_name, &e.to_string());
                 warn!(
                     server = %server_name,
                     %detail,
@@ -213,10 +217,19 @@ pub(crate) async fn with_oauth_header(
     server
 }
 
-/// What to do about a connect error: a 401 means the server wants OAuth.
-pub(crate) fn login_hint(server: &str, error: &str) -> String {
+/// What to do about a connect error: a 401 means the server wants OAuth;
+/// a program that would not start or a server that never answered points
+/// at its `command` / `args`.
+pub(crate) fn connect_hint(server: &str, error: &str) -> String {
     if error.contains("401") {
         format!("run `whycodes mcp login {server}`")
+    } else if error.contains("failed to spawn") {
+        "install the program, or put its full path in `command`".into()
+    } else if error.contains("no answer within") {
+        format!(
+            "run its `command` and `args` in a terminal to see why it hangs, \
+             or `whycodes mcp remove {server}`"
+        )
     } else {
         String::new()
     }
