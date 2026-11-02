@@ -145,6 +145,7 @@ such table at the top level. `model_id` and `provider_id` are required.
 |---|---|---|---|
 | `max_context_tokens` | `200000` | `WHYCODES_MAX_TURNS` | Context budget in tokens when the model has no `context_window`. `0` is reported by validation (it disables context). The environment variable name is historical; it writes this field when it parses as an integer. |
 | `compaction_threshold` | `150000` | — | Token count at which the transcript is compacted automatically. |
+| `compaction_buffer_percent` | — | — | Share of the model's context window (1–90) kept free. Auto-compaction fires at the lower of `compaction_threshold` and `window × (100 − p) / 100`, using the model's `context_window`, then the built-in catalog, then `max_context_tokens`. Unset uses `compaction_threshold` alone. |
 | `store_path` | — | — | Intended session-store location. No runtime code reads it in this version; the CLI always opens `<data dir>/whycodes.db`. |
 | `auto_title` | `true` | — | Auto-name sessions: project placeholder → first-message heuristic → small-model refine after the first turn. |
 | `title_model` | — | — | Model used to refine titles, as `provider/model` or a bare id on the session provider. Unset picks a known small sibling (haiku / mini / flash). |

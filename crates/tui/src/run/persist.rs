@@ -783,6 +783,8 @@ pub(super) fn doctor_report(
         "  compaction:   threshold={}",
         config.session.compaction_threshold
     ));
+    let installs = installs_on_path(&std::env::var_os("PATH").unwrap_or_default());
+    lines.push(format!("  installs:     {}", installs_label(&installs)));
     lines.push(format!(
         "  context:      {} / {} ({}%)",
         format_token_count(app.context_used),
@@ -798,6 +800,9 @@ pub(super) fn doctor_report(
     if !project_dir.is_dir() {
         issues.push("project directory missing");
     }
+    if installs.len() > 1 {
+        issues.push("several whycodes installs on PATH");
+    }
     if issues.is_empty() {
         lines.push("  status:       ok".into());
     } else {
@@ -805,6 +810,41 @@ pub(super) fn doctor_report(
     }
 
     lines.join("\n")
+}
+
+/// Every `whycodes` executable on `path`, in lookup order, with links
+/// resolved so one install reached through two directories counts once.
+pub(super) fn installs_on_path(path: &std::ffi::OsStr) -> Vec<std::path::PathBuf> {
+    let exe = format!("whycodes{}", std::env::consts::EXE_SUFFIX);
+    let mut found: Vec<std::path::PathBuf> = Vec::new();
+    for dir in std::env::split_paths(path) {
+        let candidate = dir.join(&exe);
+        if !candidate.is_file() {
+            continue;
+        }
+        let real = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+        if !found.contains(&real) {
+            found.push(real);
+        }
+    }
+    found
+}
+
+/// `/doctor` line for [`installs_on_path`]: the count, and every path when
+/// there is more than one (the first one is what a shell runs).
+pub(super) fn installs_label(installs: &[std::path::PathBuf]) -> String {
+    match installs {
+        [] => "none on PATH".into(),
+        [one] => one.display().to_string(),
+        many => {
+            let paths: Vec<String> = many.iter().map(|p| p.display().to_string()).collect();
+            format!(
+                "{} on PATH, the first one runs: {}",
+                many.len(),
+                paths.join(", ")
+            )
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]

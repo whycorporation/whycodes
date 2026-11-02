@@ -176,6 +176,9 @@ impl Config {
         if other.session.compaction_threshold != default_compaction_threshold() {
             self.session.compaction_threshold = other.session.compaction_threshold;
         }
+        if other.session.compaction_buffer_percent.is_some() {
+            self.session.compaction_buffer_percent = other.session.compaction_buffer_percent;
+        }
         if other.session.store_path.is_some() {
             self.session.store_path = other.session.store_path.clone();
         }

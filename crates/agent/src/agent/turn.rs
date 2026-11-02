@@ -253,17 +253,18 @@ impl Agent {
                 tracing::debug!(spilled, "spilled old tool results to scratch artifacts");
             }
             let _pruned = session.prune_old_tool_results();
-            if self.compaction_threshold > 0
-                && session.token_count_cached() > self.compaction_threshold.saturating_mul(3) / 4
+            let compaction_threshold = self.compaction_threshold_for(provider_name, model);
+            if compaction_threshold > 0
+                && session.token_count_cached() > compaction_threshold.saturating_mul(3) / 4
             {
                 let shaken = session.shake_old_tool_results();
                 if shaken > 0 {
                     tracing::debug!(shaken, "shook old tool results before LLM step");
                 }
             }
-            if self.compaction_threshold > 0 && !compact_paused {
+            if compaction_threshold > 0 && !compact_paused {
                 let before = session.token_count_cached();
-                if before > self.compaction_threshold {
+                if before > compaction_threshold {
                     let outcome = match self.take_speculative_summary(session).await {
                         Some(summary) => {
                             tracing::info!(
@@ -297,7 +298,7 @@ impl Agent {
                     }
                     compact_failures = next_compact_failures(
                         compact_failures,
-                        outcome.still_over(self.compaction_threshold),
+                        outcome.still_over(compaction_threshold),
                     );
                     if compact_failures >= MAX_CONSECUTIVE_COMPACT_FAILURES && !compact_paused {
                         compact_paused = true;
@@ -316,9 +317,7 @@ impl Agent {
                         );
                     }
                 } else if before.saturating_mul(100)
-                    >= self
-                        .compaction_threshold
-                        .saturating_mul(super::compact::SPECULATIVE_LEAD_PERCENT)
+                    >= compaction_threshold.saturating_mul(super::compact::SPECULATIVE_LEAD_PERCENT)
                     && self.maybe_spawn_speculative_summary(session, provider_name, model, &api_key)
                 {
                     tracing::debug!(

@@ -2122,6 +2122,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Active key bindings and conflicts",
     },
     SlashCommand {
+        name: "/copy",
+        hint: "Copy the latest reply to the clipboard",
+    },
+    SlashCommand {
         name: "/diff",
         hint: "Git status + diff --stat for the project",
     },
@@ -3570,10 +3574,32 @@ impl TuiApp {
         if text.trim().is_empty() {
             return false;
         }
-        if crate::clipboard::copy_text(&text) {
+        self.copy_with_toast(&text, "message")
+    }
+
+    /// `/copy`: put the text of the latest assistant reply on the clipboard,
+    /// without its thinking or tool calls.
+    pub fn copy_last_reply(&mut self) -> bool {
+        let reply = self
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == ChatRole::Assistant && !m.content.trim().is_empty())
+            .map(|m| m.content.clone());
+        match reply {
+            Some(text) => self.copy_with_toast(&text, "reply"),
+            None => {
+                self.status_message = "No reply to copy yet.".into();
+                false
+            }
+        }
+    }
+
+    fn copy_with_toast(&mut self, text: &str, what: &str) -> bool {
+        if crate::clipboard::copy_text(text) {
             self.toasts.push(
                 crate::toast::ToastKind::Info,
-                format!("Copied message ({} chars)", text.chars().count()),
+                format!("Copied {what} ({} chars)", text.chars().count()),
             );
             true
         } else {

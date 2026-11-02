@@ -1405,6 +1405,11 @@ pub struct SessionConfig {
     pub max_context_tokens: usize,
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: usize,
+    /// Share of the model's context window to keep free. Auto-compaction
+    /// fires at the lower of `compaction_threshold` and
+    /// `window × (100 − p) / 100`. Unset uses `compaction_threshold` alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_buffer_percent: Option<u8>,
     #[serde(default)]
     pub store_path: Option<PathBuf>,
     /// Auto-name sessions: project placeholder → first-message heuristic →
@@ -1696,6 +1701,7 @@ impl Default for SessionConfig {
         Self {
             max_context_tokens: default_max_tokens(),
             compaction_threshold: default_compaction_threshold(),
+            compaction_buffer_percent: None,
             store_path: None,
             auto_title: true,
             title_model: None,

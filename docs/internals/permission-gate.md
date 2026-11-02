@@ -253,6 +253,18 @@ overlay, `crates/config/src/load.rs`). Fail-closed installs
 `AutoApprovePrompter`. `question` always gets `AutoAnswerPrompter`. The
 `text` format keeps `default_prompter`.
 
+### Audit log
+
+Every call a gate refuses or asks about writes one `safety` record to
+`unified.jsonl` (`safety_event` in `gate.rs`). `ctx` holds `tool`,
+`call_id`, `gate` (`risk`, `shell_rule`, `intent`, `path_rule`,
+`permission`, `hook`) and `outcome`: `refused` for a rule, classifier or
+hook stop with no prompt, or `approved` / `denied` / `replied` after a
+prompt (headless auto-approve and auto-deny prompters included). Asks that
+the approval-mode overlay skips write nothing. Tool arguments are never
+logged, since a command or file body can hold secrets. The subagent path
+below does not emit these records.
+
 ### Subagents
 
 `SubagentRunner::execute_tool_call` (`crates/agent/src/subagent.rs`) is a
