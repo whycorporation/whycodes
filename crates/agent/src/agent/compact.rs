@@ -1,6 +1,7 @@
 //! Full-replace session compaction.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use whycodes_core::types::{ContentBlock, LlmResponse};
 use whycodes_llm::provider::ProviderRegistry;
@@ -148,6 +149,17 @@ impl Agent {
     }
 }
 
+/// How long compaction keeps to the local summary after a model-written
+/// one failed, so a slow or exhausted provider does not stall every step.
+pub(crate) const SUMMARY_COOLDOWN: Duration = Duration::from_secs(600);
+
+/// When a model-written summary last failed (shared with background jobs).
+pub(crate) type SummaryFailure = Arc<Mutex<Option<Instant>>>;
+
+fn cooling_down(failed_at: &SummaryFailure) -> bool {
+    super::recover_lock(failed_at).is_some_and(|t| t.elapsed() < SUMMARY_COOLDOWN)
+}
+
 /// Share of `compaction_threshold` at which a summary of the current prefix
 /// is prepared in the background, so the compaction at the threshold does not
 /// wait for a model call.
@@ -177,6 +189,7 @@ impl Agent {
         // threshold pass asks the provider directly instead.
         if !self.compaction_llm
             || api_key.is_empty()
+            || cooling_down(&self.summary_failed_at)
             || self.native_compaction_enabled(provider_name, model, api_key)
         {
             return false;
@@ -196,6 +209,7 @@ impl Agent {
         }
         let registry = Arc::clone(&self.provider_registry);
         let redactor = self.secrets.clone();
+        let failed_at = Arc::clone(&self.summary_failed_at);
         let provider_name = provider_name.to_string();
         let model = model.to_string();
         let api_key = api_key.to_string();
@@ -203,6 +217,7 @@ impl Agent {
             summarize_with_model(
                 &registry,
                 redactor,
+                &failed_at,
                 &transcript,
                 &provider_name,
                 &model,
@@ -356,11 +371,18 @@ impl Agent {
 
         let transcript = session.transcript_for_full_summary(0);
         let local = session.local_full_replace_summary();
-        let want_llm = self.compaction_llm && !api_key.is_empty() && !transcript.trim().is_empty();
+        // Nothing before the last user turn: the cut keeps every message, so
+        // a model call could not shrink anything.
+        let want_llm = self.compaction_llm
+            && !api_key.is_empty()
+            && !transcript.trim().is_empty()
+            && session.prefix_transcript_for_summary().is_some()
+            && !cooling_down(&self.summary_failed_at);
         let summary = if want_llm {
             summarize_with_model(
                 &self.provider_registry,
                 self.secrets.clone(),
+                &self.summary_failed_at,
                 &transcript,
                 provider_name,
                 model,
@@ -379,9 +401,11 @@ impl Agent {
 
 /// Structured summarizer used by full-replace compact (session model). Free
 /// of `Agent` so a speculative job can run it from a background task.
+#[allow(clippy::too_many_arguments)]
 async fn summarize_with_model(
     registry: &ProviderRegistry,
     redactor: Option<Arc<whycodes_llm::Redactor>>,
+    failed_at: &SummaryFailure,
     transcript: &str,
     provider_name: &str,
     model: &str,
@@ -412,10 +436,10 @@ async fn summarize_with_model(
             top_p: None,
             top_k: None,
             stop_sequences: None,
-            thinking: None,
+            thinking: whycodes_llm::ThinkingConfig::side_call_thinking(provider_name, model),
             use_prompt_cache: false,
         };
-        let transport = summary_transport(redactor, std::time::Duration::from_secs(60));
+        let transport = summary_transport(redactor, Duration::from_secs(60));
         match transport.complete(provider, &request, api_key, model).await {
             Ok(resp) => {
                 let text = resp
@@ -433,6 +457,7 @@ async fn summarize_with_model(
             }
             Err(e) => {
                 tracing::warn!(error = %e, "LLM compact summary failed");
+                *super::recover_lock(failed_at) = Some(Instant::now());
                 None
             }
         }

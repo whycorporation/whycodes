@@ -298,6 +298,11 @@ pub fn is_compact_summary_text(text: &str) -> bool {
     t.starts_with("[Compacted") || t.starts_with("This session is being continued")
 }
 
+/// A user-role compact-summary carrier left by an earlier compaction.
+fn is_carrier(m: &Message) -> bool {
+    m.role == Role::User && m.content.as_text().is_some_and(is_compact_summary_text)
+}
+
 /// Clean a compaction-model reply into a plain summary body.
 pub fn format_compact_summary(raw: &str) -> String {
     let mut result = raw.trim().to_string();
@@ -900,11 +905,22 @@ impl Session {
 
     /// Add a user message
     pub fn add_user_message(&mut self, content: &str) {
+        self.push_user_text(content, None);
+    }
+
+    /// Append a user-role note the agent wrote itself (recovery hint,
+    /// reminder, job notice). Compaction never treats it as the user's turn.
+    pub fn add_agent_note(&mut self, content: &str) {
+        let name = whycodes_core::types::AGENT_NOTE_NAME.to_string();
+        self.push_user_text(content, Some(name));
+    }
+
+    fn push_user_text(&mut self, content: &str, name: Option<String>) {
         let msg = Message {
             role: Role::User,
             content: MessageContent::Text(content.to_string()),
             tool_call_id: None,
-            name: None,
+            name,
             created_at: None,
         }
         .stamp();
@@ -1401,10 +1417,11 @@ impl Session {
         ))
     }
 
-    /// Index of the last real user turn (skips compact-summary carriers).
+    /// Index of the last real user turn (skips compact-summary carriers and
+    /// notes the agent wrote itself).
     fn last_real_user_index(&self) -> Option<usize> {
         self.messages.iter().enumerate().rev().find_map(|(i, m)| {
-            if m.role != Role::User {
+            if m.role != Role::User || m.is_agent_note() {
                 return None;
             }
             match &m.content {
@@ -1449,8 +1466,15 @@ impl Session {
             messages_transcript(&self.messages[..prefix_end], DROPPED_TRANSCRIPT_MAX_CHARS);
         let last_user_query =
             last_idx.and_then(|i| self.messages[i].content.as_text().map(str::to_string));
-        let recent = last_idx
-            .map(|i| self.messages[i + 1..].to_vec())
+        // An earlier pass's carrier is superseded by the one appended below.
+        let recent: Vec<Message> = last_idx
+            .map(|i| {
+                self.messages[i + 1..]
+                    .iter()
+                    .filter(|m| !is_carrier(m))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
 
         let mut body = format_compact_summary_content(summary);
@@ -2594,6 +2618,43 @@ mod tests {
             "{last}"
         );
         assert!(last.contains("fix the login bug"), "{last}");
+    }
+
+    #[test]
+    fn full_replace_cuts_at_the_user_turn_not_at_agent_notes() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("old task");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "done".into(),
+        }]);
+        session.add_user_message("fix the login bug");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "reading auth.rs".into(),
+        }]);
+        session.add_agent_note("The tool failed with error: not found");
+        assert!(session.messages.last().unwrap().is_agent_note());
+        assert_eq!(session.compaction_prefix_end(), Some(2));
+
+        session.apply_full_replace("<summary>first pass</summary>");
+        let texts = |s: &Session| -> Vec<String> {
+            s.messages
+                .iter()
+                .filter_map(|m| m.content.as_text().map(str::to_string))
+                .collect()
+        };
+        let first = texts(&session);
+        assert_eq!(first[0], "fix the login bug");
+        assert!(first.iter().any(|t| t.contains("tool failed")), "{first:?}");
+
+        // A second pass replaces the earlier carrier instead of stacking one.
+        session.apply_full_replace("<summary>second pass</summary>");
+        let second = texts(&session);
+        let carriers: Vec<&String> = second
+            .iter()
+            .filter(|t| is_compact_summary_text(t))
+            .collect();
+        assert_eq!(carriers.len(), 1, "{second:?}");
+        assert!(carriers[0].contains("second pass"), "{second:?}");
     }
 
     #[test]

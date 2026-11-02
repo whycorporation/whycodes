@@ -265,17 +265,28 @@ impl Agent {
             if compaction_threshold > 0 && !compact_paused {
                 let before = session.token_count_cached();
                 if before > compaction_threshold {
-                    let outcome = match self.take_speculative_summary(session).await {
-                        Some(summary) => {
-                            tracing::info!(
-                                "compacting with the summary prepared before the threshold"
-                            );
-                            self.compact_with_summary(session, &summary).await
+                    emit(&events, TurnEvent::Status("Compacting context…".into()));
+                    let compact = async {
+                        match self.take_speculative_summary(session).await {
+                            Some(summary) => {
+                                tracing::info!(
+                                    "compacting with the summary prepared before the threshold"
+                                );
+                                self.compact_with_summary(session, &summary).await
+                            }
+                            None => {
+                                self.compact_session(session, provider_name, model, &api_key, None)
+                                    .await
+                            }
                         }
-                        None => {
-                            self.compact_session(session, provider_name, model, &api_key, None)
-                                .await
+                    };
+                    let outcome = tokio::select! {
+                        biased;
+                        _ = wait_until_cancelled(&cancel) => {
+                            emit(&events, TurnEvent::Cancelled);
+                            return Err(whycodes_core::Error::Agent("Cancelled".into()));
                         }
+                        outcome = compact => outcome,
                     };
                     if outcome.reduced() || outcome.dropped_messages() {
                         emit(
@@ -876,7 +887,7 @@ impl Agent {
 
             if cut_off {
                 crate::speculative_read::abort_all(&mut speculative_reads);
-                session.add_user_message(CUT_OFF_NOTE);
+                session.add_agent_note(CUT_OFF_NOTE);
                 continue;
             }
 
@@ -894,7 +905,7 @@ impl Agent {
                     &events,
                     TurnEvent::Status("Todo list still has open items — continuing".into()),
                 );
-                session.add_user_message(&note);
+                session.add_agent_note(&note);
                 continue;
             }
 
@@ -1092,7 +1103,7 @@ impl Agent {
 
             if !failed_tools.is_empty() {
                 let recovery_msg = failed_tools.join("\n");
-                session.add_user_message(&recovery_msg);
+                session.add_agent_note(&recovery_msg);
             }
         }
 
@@ -1259,7 +1270,7 @@ fn check_stream_rules(
         TurnEvent::Status(format!("Stream rule `{name}` interrupted the draft")),
     );
     session.stream_rules.record(name);
-    session.add_user_message(&format!(
+    session.add_agent_note(&format!(
         "<whycodes_rule name=\"{name}\">\n{hint}\n\
          The previous draft was discarded. Continue without violating this rule.\n\
          </whycodes_rule>"
