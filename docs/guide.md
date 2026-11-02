@@ -409,6 +409,7 @@ Both TUI and `--plain`:
 | `/review` | AI review of git changes (read-only) |
 | `/security-review` | Security-focused review of changes |
 | `/commit` | Draft (and optionally create) a git commit |
+| `/copy` | Copy the latest reply (text only) to the clipboard |
 | `/diff` | Git status + `diff --stat` |
 | `/undo` | Undo the last turn and restore files via git. Steps back up to `[session] undo_depth` turns (default 50); past that it says "Nothing older to undo (undo_depth = N)" |
 | `/redo` | Redo the last undone turn |
@@ -437,7 +438,7 @@ Both TUI and `--plain`:
 | `/themes` | Theme picker (TUI) / list names (plain) |
 | `/tools` | List tools for the current agent |
 | `/info` `/details` | Session details: model, context, token usage, and lines added/removed by this session's `write`/`edit`/`apply_patch` results (approximate: block counts, not a minimal diff) |
-| `/doctor` | Environment / config diagnostics |
+| `/doctor` | Environment / config diagnostics, including several `whycodes` installs on PATH |
 | `/terminal-setup` | TUI: what this terminal delivers (kitty keyboard protocol, tmux, its config) and, inside tmux, an offer to add the missing settings to `~/.tmux.conf` |
 | `/keys` | TUI: active key bindings (defaults and `[tui.key_bindings]`) and the ones that cannot work in this terminal |
 

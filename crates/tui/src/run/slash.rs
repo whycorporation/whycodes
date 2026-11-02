@@ -758,6 +758,9 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 crate::input::open_dialog(ctx.app, DialogKind::SessionList);
             }
         }
+        "/copy" => {
+            ctx.app.copy_last_reply();
+        }
         "/models" if rest.is_empty() => {
             ctx.app.model_selection.models = configured_models(ctx.config);
             crate::input::open_model_dialog(ctx.app);

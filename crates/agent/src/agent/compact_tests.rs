@@ -573,3 +573,47 @@ fn compaction_method_auto_turns_native_compaction_on() {
     agent.apply_config(&cfg);
     assert!(agent.compaction_native);
 }
+
+#[test]
+fn buffered_threshold_keeps_the_buffer_free() {
+    assert_eq!(buffered_threshold(150_000, 20, 128_000), 102_400);
+    assert_eq!(buffered_threshold(150_000, 20, 1_000_000), 150_000);
+    assert_eq!(buffered_threshold(0, 20, 128_000), 0);
+    assert_eq!(
+        buffered_threshold(usize::MAX, 0, u64::MAX),
+        usize::try_from(u64::MAX / 100).unwrap_or(usize::MAX)
+    );
+}
+
+fn model_cfg(provider: &str, model: &str, window: u32) -> whycodes_core::types::ModelConfig {
+    whycodes_core::types::ModelConfig {
+        model_id: model.into(),
+        provider_id: provider.into(),
+        max_tokens: None,
+        context_window: Some(window),
+        temperature: None,
+        top_p: None,
+        thinking: None,
+        supports_tools: None,
+        supports_images: None,
+    }
+}
+
+#[test]
+fn compaction_threshold_for_uses_the_configured_window() {
+    let mut agent = Agent::new(info());
+    assert_eq!(agent.compaction_threshold_for("custom", "m"), 150_000);
+
+    let mut cfg = whycodes_config::Config::default();
+    cfg.session.compaction_buffer_percent = Some(20);
+    cfg.models
+        .insert("small".into(), model_cfg("custom", "small", 100_000));
+    cfg.default_model = Some(model_cfg("", "bare", 50_000));
+    agent.apply_config(&cfg);
+    assert_eq!(agent.compaction_threshold_for("custom", "small"), 80_000);
+    assert_eq!(agent.compaction_threshold_for("other", "bare"), 40_000);
+
+    cfg.session.compaction_buffer_percent = Some(95);
+    agent.apply_config(&cfg);
+    assert_eq!(agent.compaction_threshold_for("custom", "small"), 150_000);
+}

@@ -275,6 +275,7 @@ Stated as absences, not plans:
 | knob | where | effect |
 |---|---|---|
 | `compaction_threshold` (default 150 000) | `[session]` config, `crates/config/src/types.rs:1331-1332`, `1544-1546` | autocompact when heuristic tokens exceed it; `0` disables autocompact and the shake (`turn.rs:214`, `222`) |
+| `compaction_buffer_percent` (unset) | `[session]` config | lowers the threshold to `window × (100 − p) / 100` when that is smaller (`Agent::compaction_threshold_for`, `compact.rs`); the window comes from the model's `context_window`, the built-in catalog, then `max_context_tokens`; the live `/v1/models` window is not consulted |
 | `compaction_llm` (`"auto"` default; `off`/`false`/`0`/`none`/`local`) | `[session]`, `types.rs:1394-1398`; parsed in `crates/agent/src/agent/mod.rs:614-621` | `off` keeps the local stub only (and disables native compaction) |
 | `compaction_method` (`"local"` default; `"auto"`), env `WHYCODES_COMPACTION_METHOD` | `[session]`, `crates/config/src/types.rs`; parsed in `Agent::apply_config` | `auto` tries provider-native compaction first (§4a) |
 | `/compact [note]`, `/summarize` | slash command (TUI + REPL) | full-replace now, note forwarded to the prompt |

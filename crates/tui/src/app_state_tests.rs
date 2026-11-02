@@ -1603,3 +1603,35 @@ fn chat_messages_from_session_paints_a_provider_summary_as_a_system_card() {
     assert_eq!(msgs[0].role, ChatRole::System);
     assert!(msgs[0].content.contains("what happened so far"));
 }
+
+#[test]
+fn copy_last_reply_takes_the_latest_assistant_text() {
+    let mut state = app();
+    assert!(!state.copy_last_reply());
+    assert!(
+        state.status_message.contains("No reply"),
+        "{}",
+        state.status_message
+    );
+
+    state.add_message(ChatRole::Assistant, "first answer");
+    state.add_message(ChatRole::User, "thanks");
+    state.add_message(ChatRole::Assistant, "  ");
+    crate::clipboard::with_copy_stub(true, || {
+        assert!(state.copy_last_reply());
+    });
+    assert!(
+        state
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message == "Copied reply (12 chars)"),
+        "{:?}",
+        state
+            .toasts
+            .visible()
+            .iter()
+            .map(|t| t.message.as_str())
+            .collect::<Vec<_>>()
+    );
+}

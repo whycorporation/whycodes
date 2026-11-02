@@ -1735,3 +1735,21 @@ async fn whycodes_agent_writes_config_but_not_project_source() {
         );
     }
 }
+
+#[test]
+fn safety_ctx_names_the_gate_and_never_the_arguments() {
+    let call = tc("bash", json!({"command": "echo SECRET_TOKEN"}));
+    let ctx = safety_ctx(&call, "risk", "refused");
+    assert_eq!(ctx["tool"], "bash");
+    assert_eq!(ctx["call_id"], call.id.as_str());
+    assert_eq!(ctx["gate"], "risk");
+    assert_eq!(ctx["outcome"], "refused");
+    assert!(!ctx.to_string().contains("SECRET_TOKEN"), "{ctx}");
+}
+
+#[test]
+fn reply_outcome_covers_every_reply() {
+    assert_eq!(reply_outcome(PermissionReply::Allow), "approved");
+    assert_eq!(reply_outcome(PermissionReply::Deny), "denied");
+    assert_eq!(reply_outcome(PermissionReply::Replied), "replied");
+}

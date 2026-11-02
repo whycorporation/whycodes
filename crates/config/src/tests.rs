@@ -743,6 +743,7 @@ fn merge_with_session_and_tui_fields() {
     let mut overlay = Config::default();
     overlay.session.max_context_tokens = 123_456;
     overlay.session.compaction_threshold = 99_999;
+    overlay.session.compaction_buffer_percent = Some(20);
     overlay.session.store_path = Some(PathBuf::from("/tmp/store"));
     overlay.session.auto_title = false;
     overlay.session.title_model = Some("claude-haiku".into());
@@ -779,6 +780,7 @@ fn merge_with_session_and_tui_fields() {
     let merged = base.merge_with(&overlay);
     assert_eq!(merged.session.max_context_tokens, 123_456);
     assert_eq!(merged.session.compaction_threshold, 99_999);
+    assert_eq!(merged.session.compaction_buffer_percent, Some(20));
     assert_eq!(
         merged.session.store_path.as_deref(),
         Some(Path::new("/tmp/store"))
@@ -1421,6 +1423,25 @@ fn validate_long_stream_retry_secs_fails() {
     cfg.session.stream_retry_secs = 601;
     let err = cfg.validate().unwrap_err();
     assert!(err.to_string().contains("stream_retry_secs"), "{err}");
+}
+
+#[test]
+fn validate_compaction_buffer_percent_range() {
+    for bad in [0, 91] {
+        let mut cfg = Config::default();
+        cfg.session.compaction_buffer_percent = Some(bad);
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("compaction_buffer_percent"),
+            "{err}"
+        );
+    }
+    let mut cfg = Config::default();
+    cfg.session.compaction_buffer_percent = Some(20);
+    let msg = cfg
+        .validate()
+        .map_or_else(|e| e.to_string(), |_| String::new());
+    assert!(!msg.contains("compaction_buffer_percent"), "{msg}");
 }
 
 // ── apply_env_overrides ─────────────────────────────────────────────

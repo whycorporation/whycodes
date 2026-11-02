@@ -155,6 +155,13 @@ impl Config {
                 "session.max_context_tokens is set to 0. This will disable context.".to_string(),
             );
         }
+        if let Some(p) = self.session.compaction_buffer_percent
+            && !(1..=90).contains(&p)
+        {
+            issues.push(format!(
+                "session.compaction_buffer_percent is {p} (expected 1–90)."
+            ));
+        }
         if self.session.race_after_ms > 30_000 {
             issues.push(format!(
                 "session.race_after_ms is {} (>30s). First-token race will wait a long time.",

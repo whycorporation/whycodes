@@ -28,6 +28,38 @@ fn session_has_open_todos(session: &Session) -> bool {
     has_open(&load_todos(&session.project_path, sid))
 }
 
+/// The `ctx` of a `safety` log line. Tool arguments stay out: a shell
+/// command or file body can hold secrets, and the log is plain text.
+fn safety_ctx(tc: &ToolCall, gate: &str, outcome: &str) -> serde_json::Value {
+    serde_json::json!({
+        "tool": tc.name,
+        "call_id": tc.id,
+        "gate": gate,
+        "outcome": outcome,
+    })
+}
+
+/// One `safety` line in the unified log for each tool call a gate refused
+/// or asked about, so blocked and approved calls can be audited later.
+fn safety_event(session_id: &str, tc: &ToolCall, gate: &str, outcome: &str) {
+    whycodes_core::logging::emit_sid(
+        "agent",
+        "info",
+        "safety",
+        Some(session_id),
+        Some(safety_ctx(tc, gate, outcome)),
+    );
+}
+
+/// The `outcome` of a prompt the user (or a headless default) answered.
+fn reply_outcome(reply: PermissionReply) -> &'static str {
+    match reply {
+        PermissionReply::Allow => "approved",
+        PermissionReply::Deny => "denied",
+        PermissionReply::Replied => "replied",
+    }
+}
+
 fn refuse_question_open_work(tool_call_id: &str, detail: &str) -> ToolResult {
     ToolResult {
         tool_call_id: tool_call_id.to_string(),
@@ -439,13 +471,17 @@ impl Agent {
     async fn ask_permission(
         &self,
         tc: &ToolCall,
+        session_id: &str,
+        gate: &str,
         working_dir: &str,
         detail: &str,
     ) -> PermissionReply {
         if self.approval_skips_ask(tc, working_dir) {
             return PermissionReply::Allow;
         }
-        self.permission_prompter.ask_reply(&tc.name, detail).await
+        let reply = self.permission_prompter.ask_reply(&tc.name, detail).await;
+        safety_event(session_id, tc, gate, reply_outcome(reply));
+        reply
     }
 
     fn denied_permission_result(
@@ -597,6 +633,7 @@ impl Agent {
                 Decision::Allow => skip_retry_status(),
                 Decision::Refuse { reason } => {
                     tracing::warn!(command, reason, "refused catastrophic shell command");
+                    safety_event(&session.id, tc, "risk", "refused");
                     return ToolResult {
                         tool_call_id: tc.id.clone(),
                         content: format!(
@@ -611,7 +648,7 @@ impl Agent {
                     // Structured for the TUI permission dialog (see format_permission_detail).
                     let detail = format_shell_risk_detail(command, &reason);
                     let reply = self
-                        .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                        .ask_permission(tc, &session.id, "risk", &tool_ctx.working_dir, &detail)
                         .await;
                     if !reply.allowed() {
                         return self.denied_permission_result(tc, reply, "");
@@ -624,6 +661,7 @@ impl Agent {
             match self.info.permission.action_for_shell(command) {
                 Some(shell_act) => match shell_act {
                     PermissionAction::Deny => {
+                        safety_event(&session.id, tc, "shell_rule", "refused");
                         return ToolResult {
                             tool_call_id: tc.id.clone(),
                             content: format!(
@@ -644,7 +682,13 @@ impl Agent {
                             let detail =
                                 format!("Shell rule requires confirmation\n\nCommand:\n{command}");
                             let reply = self
-                                .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                                .ask_permission(
+                                    tc,
+                                    &session.id,
+                                    "shell_rule",
+                                    &tool_ctx.working_dir,
+                                    &detail,
+                                )
                                 .await;
                             if !reply.allowed() {
                                 return self.denied_permission_result(tc, reply, "");
@@ -672,6 +716,7 @@ impl Agent {
         };
         match intent_body {
             IntentGate::Refuse(reason) => {
+                safety_event(&session.id, tc, "intent", "refused");
                 return ToolResult {
                     tool_call_id: tc.id.clone(),
                     content: format!("Refused (intent): {reason}"),
@@ -680,7 +725,9 @@ impl Agent {
             }
             IntentGate::Confirm(body) => {
                 if !risk_confirmed {
-                    let reply = self.ask_permission(tc, &tool_ctx.working_dir, &body).await;
+                    let reply = self
+                        .ask_permission(tc, &session.id, "intent", &tool_ctx.working_dir, &body)
+                        .await;
                     if !reply.allowed() {
                         return self.denied_permission_result(tc, reply, "(intent gate).");
                     }
@@ -697,6 +744,7 @@ impl Agent {
         };
         match path_rule {
             PathRuleGate::Deny { path } => {
+                safety_event(&session.id, tc, "path_rule", "refused");
                 return ToolResult {
                     tool_call_id: tc.id.clone(),
                     content: format!(
@@ -715,7 +763,7 @@ impl Agent {
                     tc.name
                 );
                 let reply = self
-                    .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                    .ask_permission(tc, &session.id, "path_rule", &tool_ctx.working_dir, &detail)
                     .await;
                 if !reply.allowed() {
                     return self.denied_permission_result(tc, reply, "");
@@ -727,6 +775,7 @@ impl Agent {
 
         match self.info.permission.action_for(&tc.name) {
             PermissionAction::Deny => {
+                safety_event(&session.id, tc, "permission", "refused");
                 return ToolResult {
                     tool_call_id: tc.id.clone(),
                     content: format!(
@@ -743,7 +792,13 @@ impl Agent {
                 } else {
                     let detail = permission_detail_for(tc, &tool_ctx.working_dir);
                     let reply = self
-                        .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                        .ask_permission(
+                            tc,
+                            &session.id,
+                            "permission",
+                            &tool_ctx.working_dir,
+                            &detail,
+                        )
                         .await;
                     if !reply.allowed() {
                         return self.denied_permission_result(tc, reply, "");
@@ -765,6 +820,7 @@ impl Agent {
         match run_pre_hooks(&self.hooks, &pre_ctx).await {
             PreHookDecision::Allow => skip_retry_status(),
             PreHookDecision::Block { reason } => {
+                safety_event(&session.id, tc, "hook", "refused");
                 return ToolResult {
                     tool_call_id: tc.id.clone(),
                     content: reason,

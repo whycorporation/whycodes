@@ -61,6 +61,14 @@ pub struct Agent {
     /// When session estimate exceeds this, compact before the next LLM call
     /// `0` disables auto-compact.
     compaction_threshold: usize,
+    /// `[session] compaction_buffer_percent`: share of the model's context
+    /// window kept free; lowers the threshold for small-window models.
+    compaction_buffer_percent: Option<u8>,
+    /// Explicit `context_window` from config, keyed `provider/model`
+    /// (`/model` for a default model with no provider).
+    configured_windows: std::collections::HashMap<String, u32>,
+    /// `[session] max_context_tokens`: the window when nothing else knows it.
+    fallback_context_tokens: u64,
     /// `"auto"` = LLM summary on compact (full-replace); `"off"` = local stub.
     compaction_llm: bool,
     /// `[session] compaction_method = "auto"`: try the provider's own
@@ -429,6 +437,9 @@ impl Agent {
             notify: NotifyConfig::default(),
             // Match config default when `with_config` is not used.
             compaction_threshold: 150_000,
+            compaction_buffer_percent: None,
+            configured_windows: std::collections::HashMap::new(),
+            fallback_context_tokens: 200_000,
             compaction_llm: true,
             compaction_native: false,
             tool_profile: ToolProfile::Core,
@@ -669,6 +680,22 @@ impl Agent {
         self.hooks = config.hooks.clone();
         self.notify = config.notify.clone();
         self.compaction_threshold = config.session.compaction_threshold;
+        self.compaction_buffer_percent = config
+            .session
+            .compaction_buffer_percent
+            .filter(|p| (1..=90).contains(p));
+        self.configured_windows = config
+            .default_model
+            .iter()
+            .chain(config.models.values())
+            .filter_map(|m| {
+                Some((
+                    format!("{}/{}", m.provider_id, m.model_id),
+                    m.context_window?,
+                ))
+            })
+            .collect();
+        self.fallback_context_tokens = config.session.max_context_tokens as u64;
         self.compaction_llm = !matches!(
             config
                 .session

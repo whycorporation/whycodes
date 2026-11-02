@@ -116,6 +116,38 @@ fn summary_transport(
     }
 }
 
+/// `threshold`, lowered so `percent` of a `window`-token context stays free.
+/// `0` (auto-compact off) stays `0`.
+pub(crate) fn buffered_threshold(threshold: usize, percent: u8, window: u64) -> usize {
+    let cap = window.saturating_mul(u64::from(100u8.saturating_sub(percent))) / 100;
+    threshold.min(usize::try_from(cap).unwrap_or(usize::MAX))
+}
+
+impl Agent {
+    /// The token count that triggers auto-compaction for `provider/model`:
+    /// `compaction_threshold`, or lower when `compaction_buffer_percent` is
+    /// set and the model's window (config, then built-in catalog, then
+    /// `max_context_tokens`) is too small to hold it plus the buffer.
+    pub(crate) fn compaction_threshold_for(&self, provider: &str, model: &str) -> usize {
+        let Some(percent) = self.compaction_buffer_percent else {
+            return self.compaction_threshold;
+        };
+        let configured = self
+            .configured_windows
+            .get(&format!("{provider}/{model}"))
+            .or_else(|| self.configured_windows.get(&format!("/{model}")))
+            .copied();
+        let window = whycodes_llm::resolve_context_window(
+            provider,
+            model,
+            configured,
+            None,
+            self.fallback_context_tokens,
+        );
+        buffered_threshold(self.compaction_threshold, percent, window)
+    }
+}
+
 /// Share of `compaction_threshold` at which a summary of the current prefix
 /// is prepared in the background, so the compaction at the threshold does not
 /// wait for a model call.

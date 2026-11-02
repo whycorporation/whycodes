@@ -307,3 +307,31 @@ fn cost_line_reports_only_known_prices() {
     let app = TuiApp::new(TuiAppConfig::default());
     assert!(cost_report(&session, &app, None).contains("~$0.0200 this run"));
 }
+
+#[test]
+fn installs_on_path_lists_each_install_once_in_order() {
+    let exe = format!("whycodes{}", std::env::consts::EXE_SUFFIX);
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+    std::fs::write(a.path().join(&exe), b"").unwrap();
+    std::fs::write(b.path().join(&exe), b"").unwrap();
+
+    let one = std::env::join_paths([empty.path(), a.path(), a.path()]).unwrap();
+    let found = installs_on_path(&one);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(installs_label(&found), found[0].display().to_string());
+
+    let two = std::env::join_paths([b.path(), a.path()]).unwrap();
+    let found = installs_on_path(&two);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].starts_with(std::fs::canonicalize(b.path()).unwrap()));
+    let label = installs_label(&found);
+    assert!(
+        label.starts_with("2 on PATH, the first one runs: "),
+        "{label}"
+    );
+
+    assert!(installs_on_path(std::ffi::OsStr::new("")).is_empty());
+    assert_eq!(installs_label(&[]), "none on PATH");
+}
