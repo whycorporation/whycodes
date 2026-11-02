@@ -3706,16 +3706,19 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                     whycodes_config::NotifyEvent::TurnDone,
                     &crate::desktop_notify::turn_done_body(&text),
                 );
-                if !text.is_empty() {
-                    with_view_scratch(&mut rt.view, |scratch| {
-                        if let Some(last) = scratch.messages.last_mut()
-                            && last.role == ChatRole::Assistant
-                            && last.content.is_empty()
-                        {
-                            last.content = text;
-                        }
-                    });
-                }
+                let goal_note = pause_parked_goal(rt, "session was in the background");
+                with_view_scratch(&mut rt.view, |scratch| {
+                    if !text.is_empty()
+                        && let Some(last) = scratch.messages.last_mut()
+                        && last.role == ChatRole::Assistant
+                        && last.content.is_empty()
+                    {
+                        last.content = text;
+                    }
+                    if let Some(note) = goal_note {
+                        scratch.add_message(ChatRole::System, note);
+                    }
+                });
             }
             TurnOutcome::Remote { text, error, .. } => {
                 rt.last_error = error.is_some();
@@ -3744,7 +3747,19 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                 rt.agent = a;
                 rt.session = s;
                 rt.last_error = !cancelled;
+                let why = if cancelled {
+                    "turn cancelled"
+                } else {
+                    "turn failed"
+                };
+                let goal_note = pause_parked_goal(rt, why);
                 with_view_scratch(&mut rt.view, |scratch| {
+                    // Same as the visible session: no more /loop prompts
+                    // after a failed or cancelled turn.
+                    stop_loop_after_error(scratch, why);
+                    if let Some(note) = goal_note {
+                        scratch.add_message(ChatRole::System, note);
+                    }
                     if cancelled {
                         scratch.add_message(ChatRole::System, "⏹ Generation cancelled.");
                     } else {
@@ -5448,6 +5463,10 @@ fn take_turn_owner(rt: &mut SessionRuntime, project_dir: &std::path::Path) -> (A
     // the session mid-turn kills its jobs through `rt.agent`, and a fresh
     // registry there left them running.
     let jobs = rt.agent.background_registry().clone();
+    // It keeps the session's tools too: Ctrl+N mid-turn builds the new
+    // session from `rt.agent.shared_tools()`, and an empty executor there
+    // left it without MCP servers or plugins.
+    let tools = rt.agent.shared_tools();
     let ag = std::mem::replace(
         &mut rt.agent,
         Agent::new(whycodes_core::types::AgentInfo {
@@ -5460,7 +5479,8 @@ fn take_turn_owner(rt: &mut SessionRuntime, project_dir: &std::path::Path) -> (A
             temperature: None,
             top_p: None,
         })
-        .with_background_registry(jobs),
+        .with_background_registry(jobs)
+        .with_shared_tools(tools),
     );
     rt.session_backup = Some(rt.session.clone());
     let sess = std::mem::replace(

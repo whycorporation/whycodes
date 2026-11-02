@@ -12186,3 +12186,69 @@ fn the_turn_placeholder_shares_the_sessions_job_registry() {
     rt.agent.background_registry().set_max_jobs(5);
     assert_eq!(agent.background_registry().max_jobs(), 5);
 }
+
+#[test]
+fn a_parked_sessions_turn_pauses_its_goal_and_ends_its_loop_on_failure() {
+    let ok = |rt: &mut SessionRuntime| {
+        let session = Session::new(PathBuf::from("/work"), "sys".into());
+        rt.done_tx
+            .send(TurnOutcome::Ok {
+                text: "done".into(),
+                agent: Agent::new(dummy_info("ok")),
+                session,
+                work_ms: 1,
+            })
+            .unwrap();
+    };
+    let mut rt = test_runtime();
+    rt.goal = Some(crate::goal::Goal::new("ship it", 0));
+    ok(&mut rt);
+    drain_background_runtime(&mut rt);
+    let paused = rt.goal.as_ref().and_then(|g| g.paused.clone());
+    assert_eq!(paused.as_deref(), Some("session was in the background"));
+    assert!(
+        rt.view
+            .messages
+            .iter()
+            .any(|m| m.content.contains("goal paused")),
+        "the user sees why the goal stopped"
+    );
+    // Already paused: no second note.
+    ok(&mut rt);
+    drain_background_runtime(&mut rt);
+    let notes = rt
+        .view
+        .messages
+        .iter()
+        .filter(|m| m.content.contains("goal paused"));
+    assert_eq!(notes.count(), 1);
+
+    let mut rt = test_runtime();
+    rt.goal = Some(crate::goal::Goal::new("ship it", 0));
+    rt.view.pending_auto_prompts.push_back("again".into());
+    rt.done_tx
+        .send(TurnOutcome::Err {
+            error: "boom".into(),
+            agent: Agent::new(dummy_info("err")),
+            session: Session::new(PathBuf::from("/work"), "sys".into()),
+            cancelled: false,
+            work_ms: 1,
+        })
+        .unwrap();
+    drain_background_runtime(&mut rt);
+    assert!(rt.view.pending_auto_prompts.is_empty());
+    let paused = rt.goal.as_ref().and_then(|g| g.paused.clone());
+    assert_eq!(paused.as_deref(), Some("turn failed"));
+}
+
+#[test]
+fn the_turn_placeholder_keeps_the_sessions_tools() {
+    let mut rt = test_runtime();
+    let before = rt.agent.mcp_servers().len();
+    let _owner = take_turn_owner(&mut rt, PathBuf::from("/work").as_path());
+    assert_eq!(rt.agent.info.name, "_pending");
+    assert_eq!(rt.agent.mcp_servers().len(), before);
+    let tools = rt.agent.shared_tools();
+    let probe = Agent::new(dummy_info("probe")).with_shared_tools(tools);
+    assert_eq!(probe.mcp_servers().len(), before);
+}
