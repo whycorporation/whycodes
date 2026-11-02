@@ -630,6 +630,13 @@ fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
                 "text": text,
             })
         }
+        TurnEvent::DraftDiscarded { text, thinking } => {
+            serde_json::json!({
+                "type": "draft_discarded",
+                "text": text,
+                "thinking": thinking,
+            })
+        }
         TurnEvent::SwarmMessage { from, to, text } => {
             serde_json::json!({
                 "type": "swarm_message",

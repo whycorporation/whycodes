@@ -4000,6 +4000,38 @@ impl TuiApp {
         self.mark_dirty();
     }
 
+    /// Take a dropped step's draft (`text`, `thinking`) back off the end of
+    /// the last assistant message, so the retried step does not appear after
+    /// a half-written copy of itself. Leaves anything it does not end with.
+    pub fn discard_draft(&mut self, text: &str, thinking: &str) {
+        let Some(last) = self.messages.last_mut() else {
+            return;
+        };
+        if last.role != ChatRole::Assistant {
+            return;
+        }
+        if !text.is_empty() && last.content.ends_with(text) {
+            let keep = last.content.len() - text.len();
+            last.content.truncate(keep);
+        }
+        if !thinking.is_empty()
+            && let Some(pos) = last
+                .blocks
+                .iter()
+                .rposition(|b| matches!(b, ChatBlock::Thinking(_)))
+            && let ChatBlock::Thinking(t) = &mut last.blocks[pos]
+            && t.text.ends_with(thinking.trim_end())
+        {
+            let keep = t.text.len() - thinking.trim_end().len();
+            t.text.truncate(keep);
+            if t.text.trim().is_empty() {
+                last.blocks.remove(pos);
+            }
+        }
+        last.invalidate_layout();
+        self.mark_dirty();
+    }
+
     /// Append a thinking block to the last assistant message.
     ///
     /// Empty / whitespace-only fragments are ignored (no empty "Thinking…"

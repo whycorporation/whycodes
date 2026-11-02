@@ -1193,6 +1193,15 @@ fn turn_event_to_ci_remaining_variants() {
         })
     );
     assert_eq!(
+        turn_event_to_ci(TE::DraftDiscarded {
+            text: "héllo".into(),
+            thinking: "ab".into()
+        }),
+        Some(CiEvent::Status {
+            message: "draft_discarded text_chars=5 thinking_chars=2".into()
+        })
+    );
+    assert_eq!(
         turn_event_to_ci(TE::SwarmMessage {
             from: "a".into(),
             to: "b".into(),

@@ -3596,3 +3596,42 @@ async fn esc_mid_batch_keeps_the_results_of_calls_that_finished() {
     assert!(answered[0].1.contains("main.rs"), "{answered:?}");
     assert_eq!(answered[1], ("b2", NOT_RUN));
 }
+
+#[tokio::test]
+async fn a_dropped_draft_is_taken_back_before_the_retry_streams() {
+    let agent = drop_once_agent(std::time::Duration::from_secs(30));
+    let mut session = session_user("please explain rust ownership");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "drop-once",
+                model: "drop-once-discard-unique",
+                api_key: "k",
+                max_turns: Some(2),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await
+        .expect("retry after mid-stream drop");
+    let mut seen = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        match ev {
+            TurnEvent::TextDelta(t) => seen.push(format!("text:{t}")),
+            TurnEvent::DraftDiscarded { text, thinking } => {
+                seen.push(format!("discard:{text}|{thinking}"));
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        seen,
+        [
+            "text:partial drop",
+            "discard:partial drop|",
+            "text:after drop"
+        ]
+    );
+}

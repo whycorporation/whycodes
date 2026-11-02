@@ -1125,6 +1125,14 @@ pub(crate) fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
         TurnEvent::EnqueuePrompt { text } => Some(CiEvent::Status {
             message: format!("enqueue_prompt: {text}"),
         }),
+        // CI streams cannot take text back: say how much to drop instead.
+        TurnEvent::DraftDiscarded { text, thinking } => Some(CiEvent::Status {
+            message: format!(
+                "draft_discarded text_chars={} thinking_chars={}",
+                text.chars().count(),
+                thinking.chars().count()
+            ),
+        }),
         TurnEvent::SwarmMessage { from, to, text } => Some(CiEvent::Status {
             message: format!("swarm_msg from={from} to={to}: {text}"),
         }),
