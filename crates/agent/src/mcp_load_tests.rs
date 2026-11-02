@@ -661,3 +661,20 @@ async fn a_slow_server_joins_in_a_second_stage_instead_of_holding_the_others() {
         .await;
     assert!(only.take_later().is_none());
 }
+
+#[tokio::test]
+async fn all_connects_waits_for_the_rest() {
+    let rest: McpRest = Box::pin(async {
+        let mut later = McpConnects::default();
+        later.failures.push(McpFailure {
+            server: "slow".into(),
+            error: "no answer within 60 s".into(),
+            hint: String::new(),
+        });
+        later
+    });
+    let all = all_connects(McpConnects::default(), Some(rest)).await;
+    assert_eq!(all.failures.len(), 1);
+    let none = all_connects(McpConnects::default(), None).await;
+    assert!(none.failures.is_empty());
+}
