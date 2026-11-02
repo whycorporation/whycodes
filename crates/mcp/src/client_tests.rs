@@ -845,3 +845,14 @@ fn init_result_rpc(id: u64) -> String {
     })
     .to_string()
 }
+
+#[tokio::test]
+async fn read_stdio_response_skips_a_line_that_is_not_utf8() {
+    // `npm` banner in cp1254 ("Yükleniyor"), then the real answer.
+    let mut bytes = b"Y\xfckleniyor...\r\n".to_vec();
+    bytes.extend_from_slice(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n");
+    let mut stdout = Cursor::new(bytes);
+    let mut out = Vec::new();
+    let value = read_stdio_response(&mut stdout, &mut out, 1).await.unwrap();
+    assert_eq!(value["ok"], true);
+}
