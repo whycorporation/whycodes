@@ -27,7 +27,17 @@ pub struct Message {
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// `name` on a user-role message the agent wrote itself (a recovery note, a
+/// reminder, a background-job notice), not something the user typed.
+/// Compaction never cuts at such a message, and providers never see the name.
+pub const AGENT_NOTE_NAME: &str = "whycodes_note";
+
 impl Message {
+    /// A user-role message the agent wrote itself (see [`AGENT_NOTE_NAME`]).
+    pub fn is_agent_note(&self) -> bool {
+        self.role == Role::User && self.name.as_deref() == Some(AGENT_NOTE_NAME)
+    }
+
     /// Stamp `created_at` if it is still empty (new user / assistant / tool rows).
     pub fn stamp(mut self) -> Self {
         if self.created_at.is_none() {
@@ -1226,6 +1236,23 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn agent_note_is_a_named_user_message() {
+        let mut m = Message {
+            role: Role::User,
+            content: MessageContent::Text("note".into()),
+            tool_call_id: None,
+            name: Some(AGENT_NOTE_NAME.into()),
+            created_at: None,
+        };
+        assert!(m.is_agent_note());
+        m.role = Role::Tool;
+        assert!(!m.is_agent_note());
+        m.role = Role::User;
+        m.name = None;
+        assert!(!m.is_agent_note());
+    }
     use std::collections::HashMap;
 
     fn env_none(_key: &str) -> Option<String> {

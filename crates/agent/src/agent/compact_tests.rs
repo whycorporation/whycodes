@@ -165,6 +165,7 @@ async fn llm_compact_summary_empty_transcript_is_none() {
             summarize_with_model(
                 &agent.provider_registry,
                 None,
+                &agent.summary_failed_at,
                 transcript,
                 "script",
                 "m",
@@ -317,6 +318,10 @@ async fn speculative_summary_is_dropped_when_stale_or_unavailable() {
     let session = fat_session();
     assert!(failing.maybe_spawn_speculative_summary(&session, "script", "spec-fails-unique", "k"));
     assert!(failing.take_speculative_summary(&session).await.is_none());
+
+    // That failure starts the cooldown: no new job until it passes.
+    assert!(!failing.maybe_spawn_speculative_summary(&session, "script", "spec-cooling", "k"));
+    *super::super::recover_lock(&failing.summary_failed_at) = None;
 
     // An unknown provider: the job runs and finds nothing to call.
     assert!(failing.maybe_spawn_speculative_summary(&session, "nope", "spec-no-provider", "k"));
@@ -616,4 +621,69 @@ fn compaction_threshold_for_uses_the_configured_window() {
     cfg.session.compaction_buffer_percent = Some(95);
     agent.apply_config(&cfg);
     assert_eq!(agent.compaction_threshold_for("custom", "small"), 150_000);
+}
+
+#[tokio::test]
+async fn compact_session_skips_the_model_when_it_cannot_help() {
+    let mut agent = Agent::new(info()).with_provider_registry(prepared_registry());
+    agent.compaction_llm = true;
+    let carrier = |session: &Session| {
+        let last = session.messages.last().unwrap();
+        last.content.as_text().unwrap().to_string()
+    };
+
+    // Nothing before the only user turn: no model call, local summary.
+    let mut bare = Session::new(std::path::PathBuf::from("/work/proj"), "test".into());
+    bare.add_user_message("only one ask");
+    bare.add_assistant_message(vec![ContentBlock::Text {
+        text: "on it".into(),
+    }]);
+    agent
+        .compact_session(&mut bare, "script", "skip-bare-unique", "k", None)
+        .await;
+    assert!(
+        !carrier(&bare).contains("prepared earlier"),
+        "{}",
+        carrier(&bare)
+    );
+
+    // With a prefix the model writes the summary...
+    let mut session = fat_session();
+    agent
+        .compact_session(&mut session, "script", "skip-prefix-unique", "k", None)
+        .await;
+    assert!(
+        carrier(&session).contains("prepared earlier"),
+        "{}",
+        carrier(&session)
+    );
+
+    // ...but not while a recent failure keeps it cooling down.
+    *super::super::recover_lock(&agent.summary_failed_at) = Some(std::time::Instant::now());
+    let mut session = fat_session();
+    agent
+        .compact_session(&mut session, "script", "skip-cooling-unique", "k", None)
+        .await;
+    assert!(
+        !carrier(&session).contains("prepared earlier"),
+        "{}",
+        carrier(&session)
+    );
+}
+
+#[tokio::test]
+async fn a_failed_summary_starts_the_cooldown() {
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        vec![whycodes_llm::ScriptedStep::Error("timed out".into())],
+    )));
+    let mut agent = Agent::new(info()).with_provider_registry(registry);
+    agent.compaction_llm = true;
+    assert!(!cooling_down(&agent.summary_failed_at));
+    let mut session = fat_session();
+    agent
+        .compact_session(&mut session, "script", "cooldown-starts-unique", "k", None)
+        .await;
+    assert!(cooling_down(&agent.summary_failed_at));
 }

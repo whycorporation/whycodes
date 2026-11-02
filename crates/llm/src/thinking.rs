@@ -201,6 +201,15 @@ impl ThinkingConfig {
         }
     }
 
+    /// `thinking` for a background side call (a compaction summary): the
+    /// lowest effort the model accepts, so a model that otherwise reasons at
+    /// length (GLM-5+ at `high`) answers inside the side call's deadline.
+    /// `None` when the model takes no `reasoning_effort`.
+    pub fn side_call_thinking(provider: &str, model: &str) -> Option<serde_json::Value> {
+        let lowest = Self::supported_efforts(provider, model).first()?;
+        Some(serde_json::json!({ "enabled": true, "reasoning_effort": lowest.as_str() }))
+    }
+
     /// User override, else the family default, clamped to what the model allows.
     pub fn resolve_effort(
         provider: &str,
