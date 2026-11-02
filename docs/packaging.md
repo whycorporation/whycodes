@@ -102,6 +102,24 @@ A push to `scripts/install.sh` / `install.ps1` on `main` also runs
 - Code signing / notarization (Gatekeeper warning stays until then)
 - winget / scoop, AUR, Nix flakes
 
+## crates.io
+
+Every crate carries the metadata crates.io requires (`description`,
+`license`, `repository`), and every internal `[dependencies]` /
+`[build-dependencies]` edge has `version = "0.6"` next to its `path`. Dev
+dependencies stay path-only; `cargo publish` strips them.
+
+- Check that all 27 crates package (no publish):
+  `cargo package --workspace --no-verify`. Drop `--no-verify` to also build
+  each crate from its tarball (slow).
+- Publish in dependency order with `cargo publish --workspace` after
+  `cargo login`. A published version can only be yanked, never deleted.
+- When `[workspace.package] version` leaves `0.6.x`, bump the internal
+  `version = "0.6"` requirements in `crates/*/Cargo.toml` in the same PR.
+- Files a crate embeds (`include_str!`) must live inside that crate's
+  directory, or packaging fails: the default system prompt therefore sits in
+  `crates/session/prompts/`, next to the only code that reads it.
+
 ## Install scripts (already production)
 
 See `scripts/install.sh`, `install.ps1`, and `whycodes upgrade`. Those remain

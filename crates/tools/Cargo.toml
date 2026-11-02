@@ -1,5 +1,6 @@
 [package]
 name = "whycodes-tools"
+description = "Built-in tools for WhyCodes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -23,14 +24,14 @@ ast-tools = [
 ]
 
 [dependencies]
-whycodes-core = { path = "../core" }
-whycodes-index = { path = "../index" }
-whycodes-format = { path = "../format" }
-whycodes-skill = { path = "../skill" }
-whycodes-plugin = { path = "../plugin" }
-whycodes-lsp = { path = "../lsp" }
-whycodes-sandbox = { path = "../sandbox" }
-whycodes-memory = { path = "../memory" }
+whycodes-core = { path = "../core", version = "0.6" }
+whycodes-index = { path = "../index", version = "0.6" }
+whycodes-format = { path = "../format", version = "0.6" }
+whycodes-skill = { path = "../skill", version = "0.6" }
+whycodes-plugin = { path = "../plugin", version = "0.6" }
+whycodes-lsp = { path = "../lsp", version = "0.6" }
+whycodes-sandbox = { path = "../sandbox", version = "0.6" }
+whycodes-memory = { path = "../memory", version = "0.6" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"] }

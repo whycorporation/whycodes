@@ -1,10 +1,15 @@
 [package]
 name = "whycodes-cli"
+description = "WhyCodes: a fast, provider-independent coding agent for the terminal"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://why.codes"
+readme = "../../README.md"
+keywords = ["ai", "agent", "llm", "cli", "tui"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "whycodes"
@@ -43,25 +48,25 @@ bundled-sqlite = ["whycodes-storage/bundled"]
 ast-tools = ["whycodes-tools/ast-tools"]
 
 [dependencies]
-whycodes-core = { path = "../core" }
-whycodes-index = { path = "../index" }
-whycodes-auth = { path = "../auth" }
-whycodes-import = { path = "../import" }
-whycodes-config = { path = "../config" }
-whycodes-llm = { path = "../llm" }
-whycodes-tools = { path = "../tools" }
-whycodes-skill = { path = "../skill" }
-whycodes-mcp = { path = "../mcp" }
-whycodes-session = { path = "../session" }
-whycodes-agent = { path = "../agent" }
-whycodes-storage = { path = "../storage" }
-whycodes-memory = { path = "../memory" }
-whycodes-server = { path = "../server", optional = true }
-whycodes-protocol = { path = "../protocol" }
-whycodes-tui = { path = "../tui" }
-whycodes-format = { path = "../format" }
-whycodes-plugin = { path = "../plugin" }
-whycodes-slop = { path = "../slop" }
+whycodes-core = { path = "../core", version = "0.6" }
+whycodes-index = { path = "../index", version = "0.6" }
+whycodes-auth = { path = "../auth", version = "0.6" }
+whycodes-import = { path = "../import", version = "0.6" }
+whycodes-config = { path = "../config", version = "0.6" }
+whycodes-llm = { path = "../llm", version = "0.6" }
+whycodes-tools = { path = "../tools", version = "0.6" }
+whycodes-skill = { path = "../skill", version = "0.6" }
+whycodes-mcp = { path = "../mcp", version = "0.6" }
+whycodes-session = { path = "../session", version = "0.6" }
+whycodes-agent = { path = "../agent", version = "0.6" }
+whycodes-storage = { path = "../storage", version = "0.6" }
+whycodes-memory = { path = "../memory", version = "0.6" }
+whycodes-server = { path = "../server", optional = true, version = "0.6" }
+whycodes-protocol = { path = "../protocol", version = "0.6" }
+whycodes-tui = { path = "../tui", version = "0.6" }
+whycodes-format = { path = "../format", version = "0.6" }
+whycodes-plugin = { path = "../plugin", version = "0.6" }
+whycodes-slop = { path = "../slop", version = "0.6" }
 clap = { workspace = true, features = ["derive", "string"] }
 clap_complete.workspace = true
 toml.workspace = true
@@ -84,8 +89,8 @@ tar = { version = "0.4", optional = true }
 zip = { version = "9", default-features = false, features = ["deflate"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
-whycodes-shell = { path = "../shell", optional = true }
-whycodes-sandbox = { path = "../sandbox", optional = true }
+whycodes-shell = { path = "../shell", optional = true, version = "0.6" }
+whycodes-sandbox = { path = "../sandbox", optional = true, version = "0.6" }
 
 [dev-dependencies]
 whycodes-sdk = { path = "../sdk" }

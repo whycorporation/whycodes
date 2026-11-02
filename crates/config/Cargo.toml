@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Configuration load, merge, and validation for WhyCodes"
 
 [dependencies]
-whycodes-core = { path = "../core" }
+whycodes-core = { path = "../core", version = "0.6" }
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
