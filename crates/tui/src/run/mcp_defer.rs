@@ -31,13 +31,18 @@ impl PendingMcp {
     }
 
     /// Install a finished load once no session has its agent out on a turn.
-    pub(super) fn poll(&mut self, rt: &mut SessionRuntime, runtimes: &mut [SessionRuntime]) {
+    pub(super) fn poll(
+        &mut self,
+        app: &mut TuiApp,
+        rt: &mut SessionRuntime,
+        runtimes: &mut [SessionRuntime],
+    ) {
         let ready = self.0.as_ref().is_some_and(JoinHandle::is_finished);
         if !ready || rt.agent_busy || runtimes.iter().any(|r| r.agent_busy) {
             return;
         }
         if let Some(joined) = self.0.take().and_then(futures::FutureExt::now_or_never) {
-            install(joined, rt, runtimes);
+            install(joined, app, rt, runtimes);
         }
     }
 
@@ -57,7 +62,7 @@ impl PendingMcp {
         match tokio::time::timeout(limit, handle).await {
             Ok(joined) => {
                 self.0 = None;
-                install(joined, rt, runtimes);
+                install(joined, app, rt, runtimes);
             }
             Err(elapsed) => {
                 tracing::debug!(%elapsed, "MCP servers still connecting");
@@ -78,6 +83,7 @@ pub(super) fn reads_mcp_servers(slash: &str) -> bool {
 /// Sessions share one tool set, so every idle session gets the load.
 fn install(
     joined: Result<McpLoad, tokio::task::JoinError>,
+    app: &mut TuiApp,
     rt: &mut SessionRuntime,
     runtimes: &mut [SessionRuntime],
 ) {
@@ -88,10 +94,36 @@ fn install(
             return;
         }
     };
+    report_failures(app, loaded.failures());
     for r in std::iter::once(rt).chain(runtimes.iter_mut()) {
         if !r.agent_busy {
             r.agent.finish_mcp_load(loaded.clone());
         }
+    }
+}
+
+/// A server that did not connect used to show up only in the log, while
+/// the sidebar still listed it as configured. Say so in the chat, with the
+/// hint, and once in a toast.
+fn report_failures(app: &mut TuiApp, failures: &[whycodes_agent::mcp_load::McpFailure]) {
+    for failure in failures {
+        let mut line = format!(
+            "MCP server `{}` did not connect: {}",
+            failure.server, failure.error
+        );
+        if !failure.hint.is_empty() {
+            line.push_str(&format!(" — {}", failure.hint));
+        }
+        app.add_message(crate::app::ChatRole::System, line);
+    }
+    if !failures.is_empty() {
+        app.toasts.push(
+            crate::toast::ToastKind::Warning,
+            format!(
+                "{} MCP server(s) did not connect — see chat",
+                failures.len()
+            ),
+        );
     }
 }
 

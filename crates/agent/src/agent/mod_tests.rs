@@ -4384,3 +4384,25 @@ async fn a_background_true_job_is_announced_when_it_ends() {
     a.inject_background_completions(&mut session);
     assert_eq!(session.messages.len(), before + 1, "announced once");
 }
+
+#[tokio::test]
+async fn a_server_that_cannot_start_is_reported_by_the_load() {
+    let mut config = whycodes_config::Config::default();
+    config.mcp_servers.insert(
+        "git".into(),
+        whycodes_config::McpServerConfig {
+            transport: None,
+            command: Some("npx".into()),
+            args: Vec::new(),
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        },
+    );
+    let mut agent = test_agent();
+    let loaded = agent.begin_mcp_load(&config).await;
+    assert_eq!(loaded.failures().len(), 1);
+    assert_eq!(loaded.failures()[0].server, "git");
+    assert!(loaded.failures()[0].error.contains("needs the package"));
+}

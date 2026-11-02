@@ -67,6 +67,7 @@
   "mcp": [
     "auth",
     "core",
+    "sandbox",
     "tools"
   ],
   "memory": [

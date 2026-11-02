@@ -21,6 +21,10 @@ whycodes-auth = { path = "../auth" }
 whycodes-core = { path = "../core" }
 whycodes-tools = { path = "../tools" }
 
+# Job Object so a dropped stdio server takes its whole process tree along.
+[target.'cfg(windows)'.dependencies]
+whycodes-sandbox = { path = "../sandbox" }
+
 [dev-dependencies]
 axum = { version = "0.8", features = ["macros"] }
 async-stream = "0.3"
