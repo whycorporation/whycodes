@@ -53,3 +53,6 @@ lcov.info
 .cov-*/
 .tmp-cov-*/
 .agents/
+
+# Local tool state in the repo root (e.g. a proxy's key file); never commit
+/data/

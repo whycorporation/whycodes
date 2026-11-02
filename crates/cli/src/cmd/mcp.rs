@@ -222,10 +222,7 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                 anyhow::bail!("use either a local <command> or --url, not both");
             }
 
-            let mut arg_vec: Vec<String> = args
-                .as_deref()
-                .map(|s| s.split_whitespace().map(|a| a.to_string()).collect())
-                .unwrap_or_default();
+            let mut arg_vec: Vec<String> = args.as_deref().map(split_args).unwrap_or_default();
             arg_vec.extend(command_args.iter().cloned());
 
             let server = whycodes_config::McpServerConfig {
@@ -290,3 +287,37 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
 #[cfg(test)]
 #[path = "mcp_tests.rs"]
 mod tests;
+
+/// `--args` as one string: split on whitespace, but a "double" or 'single'
+/// quoted part stays one argument (a path with spaces). Backslashes are
+/// kept as written: they are Windows path separators, not escapes.
+pub(crate) fn split_args(raw: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut started = false;
+    for c in raw.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), c) => current.push(c),
+            (None, '"' | '\'') => {
+                quote = Some(c);
+                started = true;
+            }
+            (None, c) if c.is_whitespace() => {
+                if started {
+                    args.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            (None, c) => {
+                current.push(c);
+                started = true;
+            }
+        }
+    }
+    if started {
+        args.push(current);
+    }
+    args
+}

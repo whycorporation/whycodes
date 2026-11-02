@@ -2043,14 +2043,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
             if app.pending_import && !rt.agent_busy {
                 app.pending_import = false;
-                apply_pending_import(
+                let wrote = apply_pending_import(
                     &mut app,
                     &mut rt.agent,
                     &mut config,
                     &project_dir,
                     &file_index,
-                )
-                .await;
+                );
+                if wrote {
+                    mcp = PendingMcp::start(&mut rt, &config).await;
+                }
             }
 
             // Deferred / idle catalog: never race the first (or any) user turn.
@@ -4189,7 +4191,13 @@ fn resume_or_switch_session(
     config: &Config,
 ) {
     if rt.agent_busy {
+        // Switching mid-turn would leave it behind; the switch waits, and
+        // the user is told so instead of it happening out of nowhere later.
         app.pending_session_id = Some(id);
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            "Switches to that session when this turn ends",
+        );
         return;
     }
     if let Some(idx) = runtimes.iter().position(|b| b.session.id == id) {

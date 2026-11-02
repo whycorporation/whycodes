@@ -229,23 +229,27 @@ pub(super) fn prepare_import_preview(filter: Option<&Product>) -> anyhow::Result
     Ok(PreviewOutcome::Ready { plan })
 }
 
-/// Apply the pending import: approve New sources, merge, save, reload live config.
-pub(super) async fn apply_pending_import(
+/// Apply the pending import: approve New sources, merge, save, reload live
+/// config. Returns whether config was written: the caller then reloads the
+/// MCP servers in the background (awaiting them here froze the UI for up to
+/// a minute on a slow server).
+pub(super) fn apply_pending_import(
     app: &mut TuiApp,
     agent: &mut Agent,
     config: &mut Config,
     project_dir: &Path,
     file_index: &std::sync::Arc<whycodes_index::WorkspaceIndex>,
-) {
+) -> bool {
     let selected =
         (!app.import_picker.items.is_empty()).then_some(app.import_picker.checked.as_slice());
     let outcome = apply_import_now(config, project_dir, selected);
-    if matches!(&outcome, Ok(ApplyOutcome::Wrote { .. })) {
+    let wrote = matches!(&outcome, Ok(ApplyOutcome::Wrote { .. }));
+    if wrote {
         agent.apply_config(config);
-        agent.load_mcp(config).await;
         refresh_sidebar(app, config, file_index);
     }
     apply_import_outcome(app, outcome);
+    wrote
 }
 
 pub(super) fn apply_import_outcome(app: &mut TuiApp, outcome: anyhow::Result<ApplyOutcome>) {

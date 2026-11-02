@@ -234,6 +234,13 @@ impl Agent {
         true
     }
 
+    /// Drop a background summary nobody will read (the turn was cancelled).
+    pub(crate) fn abort_speculative_summary(&self) {
+        if let Some(job) = super::recover_lock(&self.speculative_summary).take() {
+            job.handle.abort();
+        }
+    }
+
     /// The prepared summary when it still describes the session's prefix.
     /// Consumes the job; a stale one (other session, or the prefix moved) is
     /// aborted and `None` is returned.

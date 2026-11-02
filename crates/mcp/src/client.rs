@@ -501,8 +501,19 @@ fn spawnable_program(command: &str) -> std::path::PathBuf {
 #[cfg(windows)]
 fn resolve_on_path(command: &str, dirs: &std::ffi::OsStr, exts: &str) -> std::path::PathBuf {
     let path = std::path::Path::new(command);
-    if path.extension().is_some() || path.components().count() > 1 {
+    if path.extension().is_some() || path.is_file() {
         return path.to_path_buf();
+    }
+    let with_ext = |base: String| {
+        exts.split(';')
+            .filter(|e| !e.is_empty())
+            .map(move |ext| std::path::PathBuf::from(format!("{base}{ext}")))
+    };
+    // A full path without its `.cmd` (`C:/nodejs/npx`): Windows needs it.
+    if path.components().count() > 1 {
+        return with_ext(command.to_string())
+            .find(|candidate| candidate.is_file())
+            .unwrap_or_else(|| path.to_path_buf());
     }
     std::env::split_paths(dirs)
         .flat_map(|dir| {

@@ -104,12 +104,23 @@ async fn register_mcp_tools_within(
     config: &Config,
     limit: Duration,
 ) -> (usize, Vec<McpServerHandle>, Vec<McpFailure>) {
-    let (mut connects, rest) = connect_servers(config, limit, limit).await;
-    if let Some(rest) = rest {
-        connects.absorb(rest.await);
-    }
+    // Every server ends by `limit` (it times out); the window outlasts it,
+    // so this waits for all of them without racing their timeouts.
+    let (connects, rest) = connect_servers(config, limit, limit + WINDOW_MARGIN).await;
+    let connects = all_connects(connects, rest).await;
     let count = connects.register(executor).await;
     (count, connects.handles(), connects.failures)
+}
+
+/// Room past the per-server limit before a whole-load window closes.
+const WINDOW_MARGIN: Duration = Duration::from_secs(1);
+
+/// `first` with the servers still connecting in `rest` once they are done.
+async fn all_connects(mut first: McpConnects, rest: Option<McpRest>) -> McpConnects {
+    if let Some(rest) = rest {
+        first.absorb(rest.await);
+    }
+    first
 }
 
 /// A connected server with the tools it listed.
