@@ -3457,3 +3457,13 @@ fn a_schema_bump_changes_only_schema_version() {
         );
     });
 }
+
+#[test]
+fn update_global_without_a_file_writes_the_whole_config() {
+    with_isolated_home(|home| {
+        assert!(!home.join("config.toml").exists());
+        Config::update_global(&mut |global| global.default_agent = "plan".into()).unwrap();
+        let raw = Config::load_global_raw().unwrap();
+        assert_eq!(raw.default_agent, "plan");
+    });
+}

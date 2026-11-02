@@ -14,7 +14,7 @@ use crate::load::toml_err;
 
 /// `text` with the changes from `before` to `after` applied.
 pub(crate) fn patched_text(text: &str, before: &Value, after: &Value) -> Result<String> {
-    let mut doc: DocumentMut = text.parse().map_err(|e| toml_err(format!("{e}")))?;
+    let mut doc = parse_doc(text)?;
     if let (Value::Table(before), Value::Table(after)) = (before, after) {
         patch_table(doc.as_table_mut(), before, after)?;
     }
@@ -52,9 +52,12 @@ fn patch_table(doc: &mut dyn TableLike, before: &toml::Table, after: &toml::Tabl
 fn to_item(value: &Value) -> Result<Item> {
     let mut wrap = toml::Table::new();
     wrap.insert("v".into(), value.clone());
-    let text = toml::to_string(&wrap).map_err(|e| toml_err(e.to_string()))?;
-    let mut doc: DocumentMut = text.parse().map_err(|e| toml_err(format!("{e}")))?;
+    let mut doc = parse_doc(&wrap.to_string())?;
     Ok(doc.remove("v").unwrap_or_default())
+}
+
+fn parse_doc(text: &str) -> Result<DocumentMut> {
+    text.parse().map_err(|e| toml_err(format!("{e}")))
 }
 
 #[cfg(test)]
