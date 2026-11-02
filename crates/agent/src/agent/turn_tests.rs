@@ -3539,3 +3539,60 @@ async fn esc_stops_a_compaction_that_waits_on_the_model() {
         "{status:?}"
     );
 }
+
+/// Esc while the second call of a sequential batch runs: the first call
+/// finished, so the model must see its real result, not "not run".
+#[tokio::test]
+async fn esc_mid_batch_keeps_the_results_of_calls_that_finished() {
+    let call = |id: &str, name: &str, input: serde_json::Value| ScriptedStep::ToolCall {
+        id: id.into(),
+        name: name.into(),
+        input,
+    };
+    let agent = batched([vec![
+        call("g1", "glob", json!({"pattern": "*.rs"})),
+        call("b2", "bash", json!({"command": "sleep 30"})),
+    ]]);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").unwrap();
+    let mut session = session_at(dir.path(), "look around");
+    let cancel = crate::events::new_cancel_flag();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let flag = cancel.clone();
+    tokio::spawn(async move {
+        // Cancel once the second call has started.
+        while let Some(ev) = rx.recv().await {
+            if matches!(&ev, TurnEvent::Status(s) if s.contains("`bash`")) {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                crate::events::request_cancel(&flag);
+            }
+        }
+    });
+    let err = agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                cancel: Some(cancel),
+                ..opts(Some(tx))
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Cancelled"), "{err}");
+
+    let answered: Vec<(&str, &str)> = session
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .map(|m| {
+            (
+                m.tool_call_id.as_deref().unwrap_or(""),
+                m.content.as_text().unwrap_or(""),
+            )
+        })
+        .collect();
+    assert_eq!(answered.len(), 2, "{answered:?}");
+    assert_eq!(answered[0].0, "g1");
+    assert!(answered[0].1.contains("main.rs"), "{answered:?}");
+    assert_eq!(answered[1], ("b2", NOT_RUN));
+}

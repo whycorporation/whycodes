@@ -140,6 +140,7 @@ impl Agent {
     ///
     /// `speculative` holds early `read` jobs started while args were still
     /// streaming; matching calls skip a second disk pass.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute_tool_calls(
         &self,
@@ -154,8 +155,40 @@ impl Agent {
         turn_intent: Option<&crate::intent::IntentAssessment>,
         speculative: &mut Vec<crate::speculative_read::SpeculativeRead>,
     ) -> whycodes_core::Result<Vec<ToolResult>> {
+        let mut done = Vec::with_capacity(tool_calls.len());
+        self.run_tool_calls(
+            tool_calls,
+            session,
+            tool_ctx,
+            (provider_name, model, api_key),
+            events,
+            cancel,
+            turn_intent,
+            speculative,
+            &mut done,
+        )
+        .await?;
+        Ok(done)
+    }
+
+    /// [`Self::execute_tool_calls`] into `done`, which keeps the results of
+    /// the calls that finished when an Esc interrupts a sequential batch: a
+    /// call that ran (an edit, a push) must not be reported as never run.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn run_tool_calls(
+        &self,
+        tool_calls: &[ToolCall],
+        session: &Session,
+        tool_ctx: &ToolContext,
+        (provider_name, model, api_key): (&str, &str, &str),
+        events: &Option<EventSink>,
+        cancel: &Option<CancelFlag>,
+        turn_intent: Option<&crate::intent::IntentAssessment>,
+        speculative: &mut Vec<crate::speculative_read::SpeculativeRead>,
+        done: &mut Vec<ToolResult>,
+    ) -> whycodes_core::Result<()> {
         if tool_calls.is_empty() {
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         // Single call — no fan-out overhead.
@@ -200,7 +233,8 @@ impl Agent {
                     is_error: result.is_error,
                 },
             );
-            return Ok(vec![result]);
+            done.push(result);
+            return Ok(());
         }
 
         let all_parallel = tool_calls
@@ -272,11 +306,12 @@ impl Agent {
                     },
                 );
             }
-            return Ok(results);
+            done.extend(results);
+            return Ok(());
         }
 
         // Mixed or unsafe batch — sequential (correct + simple).
-        let mut results = Vec::with_capacity(tool_calls.len());
+        let results = done;
         for (i, tc) in tool_calls.iter().enumerate() {
             if is_cancelled(cancel) {
                 emit(events, TurnEvent::Cancelled);
@@ -326,7 +361,7 @@ impl Agent {
             );
             results.push(result);
         }
-        Ok(results)
+        Ok(())
     }
 
     /// Use a speculative early `read` if path/window still match the final call.
