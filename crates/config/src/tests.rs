@@ -3467,3 +3467,36 @@ fn update_global_without_a_file_writes_the_whole_config() {
         assert_eq!(raw.default_agent, "plan");
     });
 }
+
+#[test]
+fn write_atomic_reports_a_destination_it_cannot_replace() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("config.toml");
+    std::fs::create_dir(&target).unwrap();
+    assert!(crate::load::write_atomic(&target, b"x = 1\n").is_err());
+}
+
+#[test]
+fn an_old_project_schema_is_read_as_current() {
+    let path = std::path::Path::new("/p/.whycodes/config.toml");
+    let cfg = crate::load::parse_project_text("schema_version = 0\n", path).unwrap();
+    assert_eq!(cfg.schema_version, CONFIG_SCHEMA_VERSION);
+}
+
+#[test]
+fn command_and_prompt_files_load_from_home_and_project() {
+    with_isolated_home(|home| {
+        std::fs::create_dir_all(home.join("commands")).unwrap();
+        std::fs::write(home.join("commands/hello.md"), "Say hello").unwrap();
+        std::fs::create_dir_all(home.join("prompts")).unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.load_command_files(project.path());
+        assert!(
+            cfg.commands.contains_key("hello"),
+            "{:?}",
+            cfg.commands.keys()
+        );
+        cfg.load_prompt_files(project.path());
+    });
+}
