@@ -87,6 +87,17 @@ brew install whycodes
 
 </details>
 
+### Cargo (crates.io)
+
+```bash
+cargo install whycodes-cli --locked
+```
+
+Builds the `whycodes` binary from source (Rust 1.91+) into `~/.cargo/bin`.
+Linux and macOS link the system libsqlite3 (pkg-config); add
+`--features bundled-sqlite` to build SQLite in instead. Update by running the
+same command again.
+
 ### From source
 
 ```bash

@@ -84,6 +84,16 @@ brew install whycodes
 
 </details>
 
+### Cargo（crates.io）
+
+```bash
+cargo install whycodes-cli --locked
+```
+
+从源码构建 `whycodes` 二进制（需要 Rust 1.91+）并安装到 `~/.cargo/bin`。
+Linux 和 macOS 链接系统的 libsqlite3（pkg-config）；加上
+`--features bundled-sqlite` 可改为内置 SQLite。再次运行同一命令即可更新。
+
 ### 从源码构建
 
 ```bash
