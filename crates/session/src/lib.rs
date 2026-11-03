@@ -8,10 +8,11 @@ pub mod session;
 pub mod stream_rules;
 pub mod title;
 pub mod tree;
+mod worktree_snapshot;
 
 pub use edit_stats::EditStats;
 pub use error::{Result, SessionError};
-pub use history::{SessionHistory, StashSlot};
+pub use history::{Restored, SessionHistory, StashSlot};
 pub use import::{ImportKind, import_messages};
 pub use search::{SessionSearchHit, query_terms, search_sessions};
 pub use session::{
@@ -22,6 +23,7 @@ pub use session::{
 pub use stream_rules::StreamRuleLedger;
 pub use title::{TitleSource, default_title, heuristic_title, sanitize_title};
 pub use tree::{Branch, BranchError, TreeRow, TreeTarget};
+pub use worktree_snapshot::{GitTree, TreeSnapshot};
 
 #[cfg(test)]
 mod tests {

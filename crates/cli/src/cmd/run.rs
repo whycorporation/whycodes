@@ -242,6 +242,17 @@ pub(crate) fn redid_turn_line(n: usize) -> String {
     format!("{} Redid turn ({n} messages).", "↪".cyan())
 }
 
+/// `/undo` / `/redo` moved the conversation but not the files.
+pub(crate) fn files_note_line(note: &str) -> String {
+    format!("{} {note}", "warning:".yellow())
+}
+
+fn print_files_note(note: Option<String>) {
+    if let Some(note) = note {
+        println!("{}", files_note_line(&note));
+    }
+}
+
 pub(crate) fn compact_ok_line(
     messages_before: usize,
     messages_after: usize,
@@ -1048,9 +1059,10 @@ pub(crate) async fn cmd_run(
                     continue;
                 }
                 "/undo" => {
-                    if let Some(msgs) = history.undo(&session.messages, &project_dir) {
-                        session.set_messages(msgs);
+                    if let Some(undone) = history.undo(&session.messages, &project_dir) {
+                        session.set_messages(undone.messages);
                         println!("{}", undid_turn_line(session.messages.len()));
+                        print_files_note(undone.files_note);
                     } else if let Some(depth) = history.exhausted_depth() {
                         println!("{}", nothing_older_to_undo_line(depth));
                     } else if session.undo_last_turn() > 0 {
@@ -1061,9 +1073,10 @@ pub(crate) async fn cmd_run(
                     continue;
                 }
                 "/redo" => {
-                    if let Some(msgs) = history.redo(&session.messages, &project_dir) {
-                        session.set_messages(msgs);
+                    if let Some(redone) = history.redo(&session.messages, &project_dir) {
+                        session.set_messages(redone.messages);
                         println!("{}", redid_turn_line(session.messages.len()));
+                        print_files_note(redone.files_note);
                     } else {
                         println!("{}", nothing_to_redo_line());
                     }

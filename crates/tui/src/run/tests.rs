@@ -2708,10 +2708,10 @@ async fn prepare_turn_builds_memory_and_finishes_the_stash() {
     );
     assert_eq!(
         stash.wait(),
-        None,
+        whycodes_session::TreeSnapshot::NoRepo,
         "outside a repo the stash finished empty"
     );
-    note_stash_join(Ok(None));
+    note_stash_join(Ok(whycodes_session::TreeSnapshot::NoRepo));
 }
 
 #[test]
@@ -2734,7 +2734,7 @@ fn record_user_turn_leaves_memory_to_the_turn_task() {
         rt.session.system_prompt, "hydrated",
         "no memory rebuild on the event loop"
     );
-    assert_eq!(stash.wait(), None);
+    assert_eq!(stash.wait(), whycodes_session::TreeSnapshot::NoRepo);
 }
 
 #[test]

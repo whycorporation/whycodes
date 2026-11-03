@@ -368,3 +368,17 @@ fn busy_agents_opens_the_hub_mid_turn() {
         Some(crate::app::DialogKind::Agents)
     ));
 }
+
+#[test]
+fn undo_files_note_becomes_a_warning_toast() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    warn_files_note(&mut app, None);
+    assert!(app.toasts.visible().is_empty());
+    warn_files_note(&mut app, Some("files not restored: locked".into()));
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message == "files not restored: locked")
+    );
+}

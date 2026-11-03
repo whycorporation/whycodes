@@ -470,10 +470,11 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             }
         }
         "/undo" => {
-            if let Some(msgs) = ctx.history.undo(&ctx.session.messages, ctx.project_dir) {
-                ctx.session.set_messages(msgs);
+            if let Some(undone) = ctx.history.undo(&ctx.session.messages, ctx.project_dir) {
+                ctx.session.set_messages(undone.messages);
                 ctx.app.load_messages_from_session(ctx.session);
                 ctx.app.status_message = "Undid last turn".into();
+                warn_files_note(ctx.app, undone.files_note);
             } else if let Some(depth) = ctx.history.exhausted_depth() {
                 ctx.app.status_message = format!("Nothing older to undo (undo_depth = {depth})");
             } else if ctx.session.undo_last_turn() > 0 {
@@ -484,10 +485,11 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             }
         }
         "/redo" => {
-            if let Some(msgs) = ctx.history.redo(&ctx.session.messages, ctx.project_dir) {
-                ctx.session.set_messages(msgs);
+            if let Some(redone) = ctx.history.redo(&ctx.session.messages, ctx.project_dir) {
+                ctx.session.set_messages(redone.messages);
                 ctx.app.load_messages_from_session(ctx.session);
                 ctx.app.status_message = "Redid turn".into();
+                warn_files_note(ctx.app, redone.files_note);
             } else {
                 ctx.app.status_message = "Nothing to redo".into();
             }
@@ -1246,3 +1248,10 @@ pub(super) fn suggestion_text_from_blocks(
 #[cfg(test)]
 #[path = "slash_tests.rs"]
 mod tests;
+
+/// `/undo` / `/redo` moved the conversation but not the files: say so.
+fn warn_files_note(app: &mut TuiApp, note: Option<String>) {
+    if let Some(note) = note {
+        app.toasts.push(crate::toast::ToastKind::Warning, note);
+    }
+}
