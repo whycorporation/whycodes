@@ -1,5 +1,6 @@
 [package]
 name = "whycodes-tui"
+description = "Full-screen terminal UI for WhyCodes (ratatui)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,19 +19,19 @@ futures.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 chrono.workspace = true
-whycodes-core = { path = "../core" }
-whycodes-auth = { path = "../auth" }
-whycodes-config = { path = "../config" }
-whycodes-session = { path = "../session" }
-whycodes-agent = { path = "../agent" }
-whycodes-llm = { path = "../llm" }
-whycodes-tools = { path = "../tools" }
-whycodes-format = { path = "../format" }
-whycodes-storage = { path = "../storage" }
-whycodes-memory = { path = "../memory" }
-whycodes-index = { path = "../index" }
-whycodes-import = { path = "../import" }
-whycodes-slop = { path = "../slop" }
+whycodes-core = { path = "../core", version = "0.6" }
+whycodes-auth = { path = "../auth", version = "0.6" }
+whycodes-config = { path = "../config", version = "0.6" }
+whycodes-session = { path = "../session", version = "0.6" }
+whycodes-agent = { path = "../agent", version = "0.6" }
+whycodes-llm = { path = "../llm", version = "0.6" }
+whycodes-tools = { path = "../tools", version = "0.6" }
+whycodes-format = { path = "../format", version = "0.6" }
+whycodes-storage = { path = "../storage", version = "0.6" }
+whycodes-memory = { path = "../memory", version = "0.6" }
+whycodes-index = { path = "../index", version = "0.6" }
+whycodes-import = { path = "../import", version = "0.6" }
+whycodes-slop = { path = "../slop", version = "0.6" }
 unicode-width = "0.2"
 base64.workspace = true
 regex.workspace = true

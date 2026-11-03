@@ -14,9 +14,9 @@ onnx = ["dep:tract-onnx", "dep:tokenizers"]
 bundled-sqlite = ["whycodes-storage/bundled"]
 
 [dependencies]
-whycodes-core = { path = "../core" }
-whycodes-index = { path = "../index" }
-whycodes-storage = { path = "../storage" }
+whycodes-core = { path = "../core", version = "0.6" }
+whycodes-index = { path = "../index", version = "0.6" }
+whycodes-storage = { path = "../storage", version = "0.6" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

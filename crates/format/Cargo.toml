@@ -1,5 +1,6 @@
 [package]
 name = "whycodes-format"
+description = "Markdown, syntax highlighting, diff and table rendering for WhyCodes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,7 +17,7 @@ mermaid = ["dep:mermaid-text"]
 extended-syntax = ["dep:two-face"]
 
 [dependencies]
-whycodes-core = { path = "../core" }
+whycodes-core = { path = "../core", version = "0.6" }
 serde.workspace = true
 rustc-hash.workspace = true
 # TextMate highlighting on the Oniguruma regex engine (two-face matches it).
