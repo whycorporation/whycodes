@@ -1,19 +1,20 @@
 //! Session undo/redo with optional git file restore.
 
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use whycodes_core::types::Message;
 
-/// A `git stash create` ref that may still be computing on its own thread.
+use crate::worktree_snapshot::{TreeSnapshot, restore_files, snapshot};
+
+/// A working-tree snapshot that may still be computing on its own thread.
 ///
-/// Two `git` spawns cost ~150 ms on Windows, and the TUI ran them on its
+/// The `git` spawns cost ~150 ms on Windows, and the TUI ran them on its
 /// event loop at every submit. The snapshot owns the thread: an undo after a
-/// cancelled or force-stopped turn still waits for the real ref instead of
-/// falling back to `git checkout -- .`, which would drop uncommitted work.
+/// cancelled or force-stopped turn still waits for the real snapshot.
 #[derive(Debug, Clone)]
 pub struct StashSlot(Arc<Mutex<Stash>>);
 
@@ -23,27 +24,10 @@ enum Stash {
     Done(TreeSnapshot),
 }
 
-/// What `git stash create` recorded of the working tree before a turn.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TreeSnapshot {
-    /// Uncommitted changes, saved as this stash commit.
-    Stash(String),
-    /// Nothing uncommitted, so `git checkout -- .` puts the tree back.
-    Clean,
-    /// Not inside a git work tree; undo leaves files alone, as before.
-    NoRepo,
-    /// A repository, but git could not take the snapshot (a held
-    /// `index.lock`, no first commit yet). Undo must leave files alone:
-    /// `git checkout -- .` would throw away the uncommitted work it missed.
-    Failed(String),
-}
-
 impl StashSlot {
     fn spawn(project_path: &Path) -> Self {
         let dir = project_path.to_path_buf();
-        Self::with(Stash::Running(std::thread::spawn(move || {
-            git_stash_create(&dir)
-        })))
+        Self::with(Stash::Running(std::thread::spawn(move || snapshot(&dir))))
     }
 
     fn done(stash: TreeSnapshot) -> Self {
@@ -92,8 +76,6 @@ struct HistorySnapshot {
     len: usize,
     /// The tree before the turn (see [`StashSlot`]).
     stash: StashSlot,
-    /// Absolute paths of untracked files created during the turn
-    new_files: Vec<PathBuf>,
 }
 
 /// One copy of the transcript that snapshots index into by length.
@@ -164,9 +146,9 @@ impl SessionHistory {
         (self.dropped && self.undo_stack.is_empty()).then_some(self.depth)
     }
 
-    /// Capture current messages before a user turn and start `git stash
-    /// create` on a background thread. Wait on the returned slot before the
-    /// turn can edit files, so the stash shows the tree the user had.
+    /// Capture current messages before a user turn and start the working
+    /// tree snapshot on a background thread. Wait on the returned slot
+    /// before the turn can edit files, so it shows the tree the user had.
     pub fn push_before_turn(&mut self, messages: &[Message], project_path: &Path) -> StashSlot {
         let stash = StashSlot::spawn(project_path);
         self.record_turn(messages, stash.clone());
@@ -176,63 +158,48 @@ impl SessionHistory {
     fn record_turn(&mut self, messages: &[Message], stash: StashSlot) {
         self.redo_stack.clear();
         let (store, len) = self.capture(messages);
-        self.push_undo(HistorySnapshot {
-            store,
-            len,
-            stash,
-            new_files: Vec::new(), // filled after turn via mark_new_files if needed
-        });
+        self.push_undo(HistorySnapshot { store, len, stash });
         self.gc();
     }
 
-    /// Record untracked files created during the last turn (for cleanup on undo).
-    pub fn mark_new_files(&mut self, files: Vec<PathBuf>) {
-        if let Some(snap) = self.undo_stack.back_mut() {
-            snap.new_files = files;
-        }
-    }
-
-    /// Pop undo: returns previous messages. Restores git working tree if possible.
+    /// Pop undo: returns previous messages. Puts files back as they were
+    /// before that turn, new files removed, when git can do so safely.
     pub fn undo(&mut self, current_messages: &[Message], project_path: &Path) -> Option<Restored> {
         let snap = self.undo_stack.pop_back()?;
         // Copy out before `capture` may reuse the log past this prefix.
         let messages = self.messages_of(&snap);
-        // Save current state for redo
+        // Save current state for redo, files included: the undo below may
+        // delete files the turn created, and redo brings them back.
         let (store, len) = self.capture(current_messages);
+        let now = snapshot(project_path);
         self.redo_stack.push(HistorySnapshot {
             store,
             len,
-            stash: StashSlot::done(git_stash_create(project_path)),
-            new_files: Vec::new(),
+            stash: StashSlot::done(now.clone()),
         });
         self.gc();
 
-        let files_note = restore_tree(&snap.stash.wait(), project_path);
-
-        for f in &snap.new_files {
-            let _ = std::fs::remove_file(f);
-        }
-
+        let files_note = restore_files(&snap.stash.wait(), &now, project_path);
         Some(Restored {
             messages,
             files_note,
         })
     }
 
-    /// Pop redo: returns messages after redo. Restores git if possible.
+    /// Pop redo: returns messages after redo, files put back the same way.
     pub fn redo(&mut self, current_messages: &[Message], project_path: &Path) -> Option<Restored> {
         let snap = self.redo_stack.pop()?;
         let messages = self.messages_of(&snap);
         let (store, len) = self.capture(current_messages);
+        let now = snapshot(project_path);
         self.push_undo(HistorySnapshot {
             store,
             len,
-            stash: StashSlot::done(git_stash_create(project_path)),
-            new_files: Vec::new(),
+            stash: StashSlot::done(now.clone()),
         });
         self.gc();
 
-        let files_note = restore_tree(&snap.stash.wait(), project_path);
+        let files_note = restore_files(&snap.stash.wait(), &now, project_path);
         Some(Restored {
             messages,
             files_note,
@@ -301,58 +268,6 @@ impl SessionHistory {
             Some(store.id) == live || undo.iter().chain(redo).any(|snap| snap.store == store.id)
         });
     }
-}
-
-/// Snapshot the working tree as a stash commit without modifying it.
-///
-/// One spawn per turn: a `rev-parse --is-inside-work-tree` probe runs only
-/// when `git stash create` fails, to tell "not a repo" from a real failure.
-/// The probe used to run every turn (~40 ms on Windows).
-fn git_stash_create(project_path: &Path) -> TreeSnapshot {
-    match git(project_path, &["stash", "create"]) {
-        Ok(hash) if hash.is_empty() => TreeSnapshot::Clean,
-        Ok(hash) => TreeSnapshot::Stash(hash),
-        Err(why) => {
-            if git(project_path, &["rev-parse", "--is-inside-work-tree"]).is_ok() {
-                TreeSnapshot::Failed(why)
-            } else {
-                TreeSnapshot::NoRepo
-            }
-        }
-    }
-}
-
-/// Put the working tree back to `snapshot`. Returns why it was left as it
-/// is, when it was.
-fn restore_tree(snapshot: &TreeSnapshot, project_path: &Path) -> Option<String> {
-    let args = match snapshot {
-        TreeSnapshot::Stash(stash) => vec!["checkout", stash.as_str(), "--", "."],
-        TreeSnapshot::Clean => vec!["checkout", "--", "."],
-        TreeSnapshot::NoRepo => return None,
-        TreeSnapshot::Failed(why) => {
-            return Some(format!(
-                "files left as they are: git could not snapshot them before the turn ({why})"
-            ));
-        }
-    };
-    let why = git(project_path, &args).err()?;
-    Some(format!("files not restored: git checkout failed ({why})"))
-}
-
-/// Run `git` in `dir`: trimmed stdout, or the first stderr line on failure.
-fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git").args(args).current_dir(dir).output();
-    let output = output.map_err(|e| e.to_string())?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(stderr
-        .lines()
-        .next()
-        .unwrap_or("git failed")
-        .trim()
-        .to_string())
 }
 
 /// List untracked + modified files relative to project (for diagnostics).
@@ -594,21 +509,6 @@ mod tests {
     }
 
     #[test]
-    fn mark_new_files_removes_created_files_on_undo() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let new_file = dir.path().join("scratch.txt");
-        std::fs::write(&new_file, "data").expect("write");
-        assert!(new_file.exists());
-
-        let mut h = SessionHistory::new();
-        h.push_before_turn(&[msg("m")], dir.path());
-        h.mark_new_files(vec![new_file.clone()]);
-
-        let _ = h.undo(&[msg("m"), msg("m2")], dir.path());
-        assert!(!new_file.exists(), "undo must remove marked new files");
-    }
-
-    #[test]
     fn git_changed_files_empty_outside_repo() {
         let dir = tempfile::tempdir().expect("tempdir");
         // No git repo (or no git binary) → empty diagnostic list, no panic.
@@ -616,50 +516,8 @@ mod tests {
     }
 
     #[test]
-    fn undo_with_stash_restores_tree_when_git_available() {
-        assert!(git_available(), "git is required by the session test suite");
-        let dir = tempfile::tempdir().expect("tempdir");
-        assert!(run_git(dir.path(), &["init", "-q"]), "git init");
-        let f = dir.path().join("a.txt");
-        std::fs::write(&f, "v1").expect("write v1");
-        assert!(run_git(dir.path(), &["add", "a.txt"]), "git add");
-        assert!(
-            run_git(
-                dir.path(),
-                &[
-                    "-c",
-                    "user.name=t",
-                    "-c",
-                    "user.email=t@example.com",
-                    "commit",
-                    "-q",
-                    "-m",
-                    "init",
-                ],
-            ),
-            "git commit"
-        );
-
-        // Pre-turn state: uncommitted edit. A turn then changes the file again.
-        std::fs::write(&f, "v2").expect("write v2");
-        let mut h = SessionHistory::new();
-        // Callers wait before the turn can edit (TUI `prepare_turn`, CLI).
-        let stash = h.push_before_turn(&[msg("m")], dir.path()).wait();
-        assert!(
-            matches!(stash, TreeSnapshot::Stash(_)),
-            "dirty tree yields a stash ref"
-        );
-        std::fs::write(&f, "v3").expect("write v3");
-
-        let restored = h.undo(&[msg("m"), msg("m2")], dir.path());
-        assert_eq!(restored.expect("undo").files_note, None);
-        let content = std::fs::read_to_string(&f).unwrap_or_default();
-        assert_eq!(content, "v2", "undo checks out the pre-turn tree");
-    }
-
-    #[test]
     fn stash_slot_wait_survives_a_poisoned_lock() {
-        let slot = StashSlot::done(TreeSnapshot::Stash("kept".into()));
+        let slot = StashSlot::done(TreeSnapshot::Failed("kept".into()));
         let held = slot.clone();
         let poisoned = std::thread::spawn(move || {
             let _guard = held.0.lock().expect("first lock");
@@ -667,7 +525,7 @@ mod tests {
         })
         .join();
         assert!(poisoned.is_err());
-        assert_eq!(slot.wait(), TreeSnapshot::Stash("kept".into()));
+        assert_eq!(slot.wait(), TreeSnapshot::Failed("kept".into()));
     }
 
     #[test]
@@ -675,20 +533,21 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut h = SessionHistory::new();
         let slot = h.push_before_turn(&[msg("m")], dir.path());
-        // Outside a repo the background `git` yields no ref; a second wait
-        // reads the stored result instead of joining again.
+        // Outside a repo the background `git` yields no snapshot; a second
+        // wait reads the stored result instead of joining again.
         assert_eq!(slot.wait(), TreeSnapshot::NoRepo);
         assert_eq!(slot.wait(), TreeSnapshot::NoRepo);
-        let done = StashSlot::done(TreeSnapshot::Stash("abc".into()));
-        assert_eq!(done.clone().wait(), TreeSnapshot::Stash("abc".into()));
-        assert_eq!(done.wait(), TreeSnapshot::Stash("abc".into()));
+        let done = StashSlot::done(TreeSnapshot::Failed("abc".into()));
+        assert_eq!(done.clone().wait(), TreeSnapshot::Failed("abc".into()));
+        assert_eq!(done.wait(), TreeSnapshot::Failed("abc".into()));
     }
 
     #[test]
-    fn mark_new_files_without_snapshot_is_a_noop() {
-        let mut history = SessionHistory::new();
-        history.mark_new_files(vec![PathBuf::from("unused")]);
-        assert!(!history.can_undo());
+    fn panicked_snapshot_thread_counts_as_failed() {
+        let slot = StashSlot::with(Stash::Running(std::thread::spawn(|| -> TreeSnapshot {
+            panic!("git thread died")
+        })));
+        assert!(matches!(slot.wait(), TreeSnapshot::Failed(_)));
     }
 
     #[test]
@@ -702,191 +561,334 @@ mod tests {
     }
 
     #[test]
-    fn redo_restores_its_stashed_tree_when_available() {
-        assert!(git_available(), "git is required by the session test suite");
-        let dir = tempfile::tempdir().expect("tempdir");
-        assert!(run_git(dir.path(), &["init", "-q"]));
-        let file = dir.path().join("a.txt");
-        std::fs::write(&file, "v1").unwrap();
-        assert!(run_git(dir.path(), &["add", "a.txt"]));
-        assert!(run_git(
-            dir.path(),
-            &[
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@example.com",
-                "commit",
-                "-q",
-                "-m",
-                "init"
-            ]
-        ));
-
-        let mut history = SessionHistory::new();
-        history
-            .push_before_turn(&[msg("before")], dir.path())
-            .wait();
-        std::fs::write(&file, "after").unwrap();
-        let _ = history.undo(&[msg("after")], dir.path());
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v1");
-        let restored = history.redo(&[msg("before")], dir.path()).unwrap();
-        assert_eq!(restored.messages[0].content.as_text(), Some("after"));
-        assert_eq!(restored.files_note, None);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "after");
-    }
-
-    #[test]
     fn git_helpers_handle_disappearing_working_directory() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().to_path_buf();
         drop(dir);
-        assert_eq!(git_stash_create(&path), TreeSnapshot::NoRepo);
         assert!(git_changed_files(&path).is_empty());
 
         let mut history = SessionHistory::new();
         history.push_before_turn(&[msg("before")], &path);
-        assert_eq!(
-            history.undo(&[msg("after")], &path).unwrap().messages.len(),
-            1
-        );
-        assert_eq!(
-            history
-                .redo(&[msg("before")], &path)
-                .unwrap()
-                .messages
-                .len(),
-            1
-        );
+        let undone = history.undo(&[msg("after")], &path).unwrap();
+        assert_eq!((undone.messages.len(), undone.files_note), (1, None));
+        let redone = history.redo(&[msg("before")], &path).unwrap();
+        assert_eq!((redone.messages.len(), redone.files_note), (1, None));
     }
 
-    #[test]
-    fn stash_creation_failure_in_damaged_repo_is_a_failure() {
-        assert!(git_available(), "git is required by the session test suite");
-        let dir = tempfile::tempdir().unwrap();
-        assert!(run_git(dir.path(), &["init", "-q"]));
-        std::fs::write(dir.path().join("tracked"), "data").unwrap();
-        assert!(run_git(dir.path(), &["add", "tracked"]));
-        assert!(run_git(
-            dir.path(),
-            &[
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@example.com",
-                "commit",
-                "-q",
-                "-m",
-                "init"
-            ]
-        ));
-        std::fs::write(dir.path().join("tracked"), "changed").unwrap();
-        std::fs::remove_file(dir.path().join(".git/index")).unwrap();
-        std::fs::create_dir(dir.path().join(".git/index")).unwrap();
-        assert!(matches!(
-            git_stash_create(dir.path()),
-            TreeSnapshot::Failed(_)
-        ));
+    // --- Working tree restore against real git -------------------------
+
+    /// `git` in `dir` with a fixed identity; panics with stderr on failure.
+    fn git_ok(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("spawn git");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "git {args:?}: {stderr}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
-    fn committed_repo() -> tempfile::TempDir {
+    /// `git status` including every untracked and ignored file.
+    fn status(dir: &Path) -> String {
+        git_ok(
+            dir,
+            &[
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--ignored",
+            ],
+        )
+    }
+
+    fn write(dir: &Path, rel: &str, body: &str) {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    fn read(dir: &Path, rel: &str) -> Option<String> {
+        std::fs::read_to_string(dir.join(rel)).ok()
+    }
+
+    /// A repository with `a.txt` committed and `*.log` ignored.
+    fn repo() -> tempfile::TempDir {
         assert!(git_available(), "git is required by the session test suite");
         let dir = tempfile::tempdir().unwrap();
-        assert!(run_git(dir.path(), &["init", "-q"]));
-        std::fs::write(dir.path().join("a.txt"), "v1").unwrap();
-        assert!(run_git(dir.path(), &["add", "a.txt"]));
-        assert!(run_git(
-            dir.path(),
-            &[
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@example.com",
-                "commit",
-                "-q",
-                "-m",
-                "init"
-            ]
-        ));
+        git_ok(dir.path(), &["init", "-q"]);
+        git_ok(dir.path(), &["config", "core.autocrlf", "false"]);
+        write(dir.path(), "a.txt", "v1\n");
+        write(dir.path(), ".gitignore", "*.log\n");
+        git_ok(dir.path(), &["add", "-A"]);
+        git_ok(dir.path(), &["commit", "-q", "-m", "init"]);
         dir
     }
 
-    /// An editor's background `git status` holds `index.lock` as the turn
-    /// starts. Undo used to read the failed snapshot as a clean tree and run
-    /// `git checkout -- .`, wiping the user's uncommitted edit.
-    #[test]
-    fn undo_keeps_uncommitted_work_when_the_snapshot_failed() {
-        let dir = committed_repo();
-        let file = dir.path().join("a.txt");
-        std::fs::write(&file, "user wip").unwrap();
-        let lock = dir.path().join(".git/index.lock");
-        std::fs::write(&lock, "").unwrap();
-
+    /// One turn: snapshot, let `edit` change files, return the history.
+    fn turn(dir: &Path, edit: impl FnOnce(&Path)) -> SessionHistory {
         let mut h = SessionHistory::new();
-        let snapshot = h.push_before_turn(&[msg("m")], dir.path()).wait();
-        assert!(matches!(snapshot, TreeSnapshot::Failed(_)), "{snapshot:?}");
-        std::fs::remove_file(&lock).unwrap();
-        std::fs::write(&file, "user wip + turn edit").unwrap();
+        let before = h.push_before_turn(&[msg("m")], dir).wait();
+        assert!(matches!(before, TreeSnapshot::Git(_)), "{before:?}");
+        edit(dir);
+        h
+    }
 
-        let undone = h.undo(&[msg("m"), msg("m2")], dir.path()).unwrap();
-        assert_eq!(texts(&undone.messages), ["m"]);
-        let note = undone.files_note.expect("undo says files stayed");
-        assert!(note.starts_with("files left as they are"), "{note}");
+    fn undo_files(h: &mut SessionHistory, dir: &Path) -> Option<String> {
+        h.undo(&[msg("m"), msg("m2")], dir).unwrap().files_note
+    }
+
+    fn redo_files(h: &mut SessionHistory, dir: &Path) -> Option<String> {
+        h.redo(&[msg("m")], dir).unwrap().files_note
+    }
+
+    #[test]
+    fn undo_restores_the_whole_tree_and_redo_brings_the_turn_back() {
+        let dir = repo();
+        let d = dir.path();
+        // The user's own state before the turn: an unstaged edit, a staged
+        // file, an untracked file and an ignored one.
+        write(d, "a.txt", "user wip\n");
+        write(d, "s.txt", "staged\n");
+        git_ok(d, &["add", "s.txt"]);
+        write(d, "mine.txt", "untracked\n");
+        write(d, "keep.log", "ignored\n");
+        let before = status(d);
+
+        let mut h = turn(d, |d| {
+            write(d, "a.txt", "turn edit\n");
+            write(d, "new/deep/n.txt", "created\n");
+            write(d, "name with space ü.txt", "created\n");
+            std::fs::remove_file(d.join("mine.txt")).unwrap();
+            write(d, "added.txt", "staged by the turn\n");
+            git_ok(d, &["add", "added.txt"]);
+            write(d, "build.log", "ignored, made by the turn\n");
+        });
+        let after = status(d);
+
+        assert_eq!(undo_files(&mut h, d), None);
+        assert_eq!(read(d, "a.txt").as_deref(), Some("user wip\n"));
+        assert_eq!(read(d, "mine.txt").as_deref(), Some("untracked\n"));
+        assert_eq!(read(d, "s.txt").as_deref(), Some("staged\n"));
+        assert!(!d.join("new").exists(), "created directories go too");
+        assert!(!d.join("name with space ü.txt").exists());
+        assert!(!d.join("added.txt").exists());
         assert_eq!(
-            std::fs::read_to_string(&file).unwrap(),
-            "user wip + turn edit",
-            "nothing was checked out over the user's work"
+            read(d, "build.log").as_deref(),
+            Some("ignored, made by the turn\n"),
+            "ignored files are never touched"
         );
+        std::fs::remove_file(d.join("build.log")).unwrap();
+        assert_eq!(status(d), before);
+        write(d, "build.log", "ignored, made by the turn\n");
+
+        assert_eq!(redo_files(&mut h, d), None);
+        assert_eq!(status(d), after);
+        assert_eq!(read(d, "a.txt").as_deref(), Some("turn edit\n"));
+        assert_eq!(read(d, "new/deep/n.txt").as_deref(), Some("created\n"));
+        assert!(!d.join("mine.txt").exists());
     }
 
-    /// `git stash create` needs a first commit; before it, the fallback
-    /// `git checkout -- .` reset files to the index.
+    /// An editor's background `git status` holds `index.lock` as the turn
+    /// starts. The snapshot reads a copy of the index, so it still works.
     #[test]
-    fn undo_keeps_files_in_a_repo_without_commits() {
-        assert!(git_available(), "git is required by the session test suite");
-        let dir = tempfile::tempdir().unwrap();
-        assert!(run_git(dir.path(), &["init", "-q"]));
-        let file = dir.path().join("b.txt");
-        std::fs::write(&file, "staged").unwrap();
-        assert!(run_git(dir.path(), &["add", "b.txt"]));
-        std::fs::write(&file, "staged + unstaged").unwrap();
-
-        let mut h = SessionHistory::new();
-        h.push_before_turn(&[msg("m")], dir.path()).wait();
-        let undone = h.undo(&[msg("m"), msg("m2")], dir.path()).unwrap();
-        assert!(undone.files_note.is_some());
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "staged + unstaged");
-    }
-
-    #[test]
-    fn clean_tree_snapshot_restores_head_on_undo() {
-        let dir = committed_repo();
-        let file = dir.path().join("a.txt");
-        let mut h = SessionHistory::new();
-        let snapshot = h.push_before_turn(&[msg("m")], dir.path()).wait();
-        assert_eq!(snapshot, TreeSnapshot::Clean);
-        std::fs::write(&file, "turn edit").unwrap();
-        let undone = h.undo(&[msg("m"), msg("m2")], dir.path()).unwrap();
-        assert_eq!(undone.files_note, None);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v1");
+    fn a_held_index_lock_does_not_stop_the_snapshot() {
+        let dir = repo();
+        let d = dir.path();
+        write(d, "a.txt", "user wip\n");
+        let lock = d.join(".git/index.lock");
+        std::fs::write(&lock, "").unwrap();
+        let mut h = turn(d, |d| write(d, "a.txt", "turn edit\n"));
+        std::fs::remove_file(&lock).unwrap();
+        assert_eq!(undo_files(&mut h, d), None);
+        assert_eq!(read(d, "a.txt").as_deref(), Some("user wip\n"));
     }
 
     #[test]
-    fn failed_checkout_is_reported_not_swallowed() {
-        let dir = committed_repo();
-        let missing = TreeSnapshot::Stash("0".repeat(40));
-        let note = restore_tree(&missing, dir.path()).expect("checkout fails");
+    fn a_held_index_lock_at_undo_leaves_files_alone() {
+        let dir = repo();
+        let d = dir.path();
+        let mut h = turn(d, |d| {
+            write(d, "a.txt", "turn edit\n");
+            git_ok(d, &["add", "a.txt"]);
+        });
+        std::fs::write(d.join(".git/index.lock"), "").unwrap();
+        let note = undo_files(&mut h, d).expect("undo explains");
         assert!(
-            note.starts_with("files not restored: git checkout failed ("),
+            note.starts_with("files left as they are: could not restore the staging area"),
             "{note}"
         );
+        assert_eq!(read(d, "a.txt").as_deref(), Some("turn edit\n"));
     }
 
     #[test]
-    fn panicked_snapshot_thread_counts_as_failed() {
-        let slot = StashSlot::with(Stash::Running(std::thread::spawn(|| -> TreeSnapshot {
-            panic!("git thread died")
-        })));
-        assert!(matches!(slot.wait(), TreeSnapshot::Failed(_)));
+    fn a_repo_without_commits_restores_too() {
+        assert!(git_available(), "git is required by the session test suite");
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        git_ok(d, &["init", "-q"]);
+        write(d, "b.txt", "staged\n");
+        git_ok(d, &["add", "b.txt"]);
+        write(d, "b.txt", "staged + unstaged\n");
+        let before = status(d);
+        let mut h = turn(d, |d| {
+            write(d, "b.txt", "turn edit\n");
+            write(d, "c.txt", "created\n");
+        });
+        assert_eq!(undo_files(&mut h, d), None);
+        assert_eq!(read(d, "b.txt").as_deref(), Some("staged + unstaged\n"));
+        assert!(!d.join("c.txt").exists());
+        assert_eq!(status(d), before);
+    }
+
+    #[test]
+    fn a_failed_snapshot_leaves_files_alone() {
+        let dir = repo();
+        let d = dir.path();
+        write(d, "a.txt", "user wip\n");
+        // An index git cannot read: the snapshot must fail, not guess.
+        std::fs::remove_file(d.join(".git/index")).unwrap();
+        std::fs::create_dir(d.join(".git/index")).unwrap();
+        let mut h = SessionHistory::new();
+        let before = h.push_before_turn(&[msg("m")], d).wait();
+        assert!(matches!(before, TreeSnapshot::Failed(_)), "{before:?}");
+        write(d, "a.txt", "turn edit\n");
+        let note = undo_files(&mut h, d).expect("undo explains");
+        assert!(
+            note.starts_with("files left as they are: git could not snapshot"),
+            "{note}"
+        );
+        assert_eq!(read(d, "a.txt").as_deref(), Some("turn edit\n"));
+    }
+
+    #[test]
+    fn undo_refuses_after_head_moved() {
+        let dir = repo();
+        let d = dir.path();
+        let mut h = turn(d, |d| {
+            write(d, "a.txt", "committed by the turn\n");
+            write(d, "new.txt", "created\n");
+            git_ok(d, &["commit", "-qam", "turn"]);
+        });
+        let note = undo_files(&mut h, d).expect("undo explains");
+        assert!(note.contains("HEAD moved"), "{note}");
+        assert_eq!(read(d, "a.txt").as_deref(), Some("committed by the turn\n"));
+        assert!(d.join("new.txt").exists());
+    }
+
+    /// `side` adds `side.txt`; with `conflict` both branches change `a.txt`.
+    fn diverged_repo(conflict: bool) -> tempfile::TempDir {
+        let dir = repo();
+        let d = dir.path();
+        git_ok(d, &["checkout", "-qb", "side"]);
+        write(d, "side.txt", "side\n");
+        if conflict {
+            write(d, "a.txt", "side\n");
+        }
+        git_ok(d, &["add", "-A"]);
+        git_ok(d, &["commit", "-qm", "side"]);
+        git_ok(d, &["checkout", "-q", "-"]);
+        write(d, "a.txt", "main\n");
+        git_ok(d, &["commit", "-qam", "main"]);
+        dir
+    }
+
+    #[test]
+    fn undo_refuses_while_a_merge_is_in_progress() {
+        let dir = diverged_repo(false);
+        let d = dir.path();
+        let mut h = turn(d, |d| write(d, "z.txt", "turn\n"));
+        git_ok(d, &["merge", "-q", "--no-commit", "--no-ff", "side"]);
+        let note = undo_files(&mut h, d).expect("undo explains");
+        assert!(note.contains("a merge is in progress"), "{note}");
+        assert!(d.join("z.txt").exists());
+        assert!(
+            d.join(".git/MERGE_HEAD").exists(),
+            "the merge is left alone"
+        );
+    }
+
+    #[test]
+    fn undo_refuses_with_unmerged_paths() {
+        let dir = diverged_repo(true);
+        let d = dir.path();
+        let mut h = turn(d, |d| write(d, "z.txt", "turn\n"));
+        let merge = Command::new("git")
+            .args(["merge", "-q", "side"])
+            .current_dir(d)
+            .output()
+            .unwrap();
+        assert!(!merge.status.success(), "the merge conflicts");
+        let conflicted = read(d, "a.txt").unwrap();
+        let note = undo_files(&mut h, d).expect("undo explains");
+        assert!(
+            note.contains("could not snapshot the current files"),
+            "{note}"
+        );
+        assert_eq!(read(d, "a.txt").unwrap(), conflicted);
+        assert!(d.join("z.txt").exists());
+    }
+
+    #[test]
+    fn the_users_stash_list_is_never_touched() {
+        let dir = repo();
+        let d = dir.path();
+        write(d, "a.txt", "stashed by the user\n");
+        git_ok(d, &["stash", "-q"]);
+        let stash_list = git_ok(d, &["stash", "list"]);
+        write(d, "a.txt", "user wip\n");
+        let mut h = turn(d, |d| write(d, "a.txt", "turn\n"));
+        assert_eq!(undo_files(&mut h, d), None);
+        assert_eq!(redo_files(&mut h, d), None);
+        assert_eq!(undo_files(&mut h, d), None);
+        assert_eq!(git_ok(d, &["stash", "list"]), stash_list);
+        assert_eq!(read(d, "a.txt").as_deref(), Some("user wip\n"));
+        // The user's own entry still applies on top.
+        git_ok(d, &["checkout", "-q", "--", "a.txt"]);
+        git_ok(d, &["stash", "pop", "-q"]);
+        assert_eq!(read(d, "a.txt").as_deref(), Some("stashed by the user\n"));
+    }
+
+    #[test]
+    fn a_project_in_a_subdirectory_only_restores_its_own_files() {
+        let dir = repo();
+        let root = dir.path();
+        write(root, "app/main.txt", "v1\n");
+        git_ok(root, &["add", "-A"]);
+        git_ok(root, &["commit", "-qm", "app"]);
+        let app = root.join("app");
+        let mut h = turn(&app, |app| {
+            write(app, "main.txt", "turn\n");
+            write(app, "made.txt", "turn\n");
+        });
+        // Someone edits a file outside the project after the turn.
+        write(root, "a.txt", "outside\n");
+        assert_eq!(undo_files(&mut h, &app), None);
+        assert_eq!(read(&app, "main.txt").as_deref(), Some("v1\n"));
+        assert!(!app.join("made.txt").exists());
+        assert_eq!(read(root, "a.txt").as_deref(), Some("outside\n"));
+    }
+
+    /// `core.autocrlf=true` and an `eol=crlf` rule used to turn a restored LF
+    /// file into CRLF. Bytes come back exactly as they were.
+    #[test]
+    fn line_endings_come_back_byte_for_byte() {
+        let dir = repo();
+        let d = dir.path();
+        git_ok(d, &["config", "core.autocrlf", "true"]);
+        write(d, ".gitattributes", "*.txt text eol=crlf\n");
+        write(d, "lf.txt", "one\ntwo\n");
+        write(d, "crlf.txt", "one\r\ntwo\r\n");
+        let mut h = turn(d, |d| {
+            write(d, "lf.txt", "changed\n");
+            write(d, "crlf.txt", "changed\n");
+        });
+        assert_eq!(undo_files(&mut h, d), None);
+        assert_eq!(std::fs::read(d.join("lf.txt")).unwrap(), b"one\ntwo\n");
+        assert_eq!(
+            std::fs::read(d.join("crlf.txt")).unwrap(),
+            b"one\r\ntwo\r\n"
+        );
     }
 }

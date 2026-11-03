@@ -411,8 +411,8 @@ Both TUI and `--plain`:
 | `/commit` | Draft (and optionally create) a git commit |
 | `/copy` | Copy the latest reply (text only) to the clipboard |
 | `/diff` | Git status + `diff --stat` |
-| `/undo` | Undo the last turn and restore files via git. Steps back up to `[session] undo_depth` turns (default 50); past that it says "Nothing older to undo (undo_depth = N)" |
-| `/redo` | Redo the last undone turn |
+| `/undo` | Undo the last turn and put files back as they were before it: edits reverted, files the turn created removed, files it deleted restored, staging area restored. Ignored files, and untracked files over 20 MiB, are never touched. Steps back up to `[session] undo_depth` turns (default 50); past that it says "Nothing older to undo (undo_depth = N)". Files are restored only inside a git work tree, and not after HEAD moved or during a merge or rebase |
+| `/redo` | Redo the last undone turn, files included |
 | `/share` `/export` | Export the session and print its local share URL |
 | `/compact [context]` `/summarize` | Compact the conversation (LLM full-replace; optional note of what to keep) |
 | `/fresh` | Skip the provider prompt cache on the next turn (stale cache / wedged stream) |
