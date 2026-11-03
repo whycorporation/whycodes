@@ -8,7 +8,7 @@ repository.workspace = true
 description = "OS sandbox for shell tool execution (bubblewrap on Linux)"
 
 [dependencies]
-whycodes-core = { path = "../core" }
+whycodes-core = { path = "../core", version = "0.6" }
 thiserror.workspace = true
 tracing.workspace = true
 libc = "0.2"

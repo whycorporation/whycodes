@@ -1,5 +1,6 @@
 [package]
 name = "whycodes-lsp"
+description = "Language Server Protocol client for WhyCodes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-whycodes-core = { path = "../core" }
+whycodes-core = { path = "../core", version = "0.6" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }

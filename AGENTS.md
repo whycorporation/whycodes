@@ -83,6 +83,10 @@ Everything lands through a PR whose required checks actually run.
    `git tag -a vX.Y.Z <merge-sha> && git push origin vX.Y.Z`.
    That starts `.github/workflows/release.yml` (4 targets + publish + landing).
    Do **not** re-tag if a job fails.
+   Then publish the same commit to crates.io:
+   `git worktree add --detach ../whycodes-publish vX.Y.Z`, then
+   `cargo publish --workspace` inside it (needs
+   `cargo login`; see [`docs/packaging.md`](docs/packaging.md#cratesio)).
 4. **Homebrew job** pushes `Formula/whycodes.rb` straight to `main` over SSH
    with the `HOMEBREW_DEPLOY_KEY` deploy key; the ruleset bypasses deploy
    keys only (since v0.6.16). If it fails, run

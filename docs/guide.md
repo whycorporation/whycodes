@@ -24,6 +24,14 @@ brew install whycodes
 upgrade` is for the curl/PowerShell installers and will refuse to overwrite
 a Homebrew prefix.
 
+With Cargo (any platform, Rust 1.91+):
+
+```bash
+cargo install whycodes-cli --locked
+```
+
+Re-run the same command to update a Cargo install.
+
 ## Command line
 
 ```

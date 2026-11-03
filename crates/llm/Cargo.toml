@@ -1,5 +1,6 @@
 [package]
 name = "whycodes-llm"
+description = "LLM provider clients, model catalog and streaming for WhyCodes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,9 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-whycodes-core = { path = "../core" }
-whycodes-config = { path = "../config" }
-whycodes-auth = { path = "../auth" }
+whycodes-core = { path = "../core", version = "0.6" }
+whycodes-config = { path = "../config", version = "0.6" }
+whycodes-auth = { path = "../auth", version = "0.6" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

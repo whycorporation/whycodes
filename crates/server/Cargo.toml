@@ -1,25 +1,27 @@
 [package]
 name = "whycodes-server"
+description = "Local HTTP API server for WhyCodes (`whycodes serve`)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 axum = { version = "0.8", features = ["macros"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time", "test-util"] }
 serde.workspace = true
 serde_json.workspace = true
-whycodes-core = { path = "../core" }
-whycodes-config = { path = "../config" }
-whycodes-agent = { path = "../agent" }
-whycodes-session = { path = "../session" }
-whycodes-tools = { path = "../tools" }
-whycodes-llm = { path = "../llm" }
-whycodes-storage = { path = "../storage" }
-whycodes-auth = { path = "../auth" }
-whycodes-index = { path = "../index" }
-whycodes-protocol = { path = "../protocol" }
+whycodes-core = { path = "../core", version = "0.6" }
+whycodes-config = { path = "../config", version = "0.6" }
+whycodes-agent = { path = "../agent", version = "0.6" }
+whycodes-session = { path = "../session", version = "0.6" }
+whycodes-tools = { path = "../tools", version = "0.6" }
+whycodes-llm = { path = "../llm", version = "0.6" }
+whycodes-storage = { path = "../storage", version = "0.6" }
+whycodes-auth = { path = "../auth", version = "0.6" }
+whycodes-index = { path = "../index", version = "0.6" }
+whycodes-protocol = { path = "../protocol", version = "0.6" }
 tower-http = { version = "0.7", features = ["cors"] }
 tracing.workspace = true
 anyhow.workspace = true

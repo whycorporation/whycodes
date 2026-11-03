@@ -1,5 +1,6 @@
 [package]
 name = "whycodes-index"
+description = "Fast, gitignore-aware workspace file index for WhyCodes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

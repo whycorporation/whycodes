@@ -1,5 +1,6 @@
 [package]
 name = "whycodes-slop"
+description = "Deterministic code-sloppiness metrics for WhyCodes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

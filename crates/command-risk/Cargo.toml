@@ -1,5 +1,6 @@
 [package]
 name = "whycodes-command-risk"
+description = "Deterministic risk classification for shell commands in WhyCodes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

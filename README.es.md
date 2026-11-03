@@ -5,8 +5,10 @@
 <p align="center">
   <a href="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml"><img src="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/whycorporation/whycodes/releases"><img src="https://img.shields.io/github/v/release/whycorporation/whycodes" alt="Release"></a>
+  <a href="https://crates.io/crates/whycodes-cli"><img src="https://img.shields.io/crates/v/whycodes-cli" alt="crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://discord.gg/H2KsKYEdT8"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord de WhyCodes"></a>
+  <a href="https://ratatui.rs/"><img src="https://ratatui.rs/built-with-ratatui/badge.svg" alt="Built With Ratatui"></a>
 </p>
 
 <p align="center">
@@ -95,6 +97,17 @@ brew install whycodes
 ```
 
 </details>
+
+### Cargo (crates.io)
+
+```bash
+cargo install whycodes-cli --locked
+```
+
+Compila el binario `whycodes` desde el código fuente (requiere Rust 1.91+) y
+lo instala en `~/.cargo/bin`. En Linux y macOS enlaza la libsqlite3 del
+sistema (pkg-config); añade `--features bundled-sqlite` para incluir SQLite.
+Para actualizar, vuelve a ejecutar el mismo comando.
 
 ### Desde el código fuente
 

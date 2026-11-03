@@ -1,5 +1,6 @@
 [package]
 name = "whycodes-protocol"
+description = "Stream/CI envelopes and daemon protocol v1 for WhyCodes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +10,7 @@ repository.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-whycodes-core = { path = "../core" }
+whycodes-core = { path = "../core", version = "0.6" }
 
 [lints]
 workspace = true
