@@ -121,24 +121,27 @@ async fn unknown_provider_lists_builtins() {
 }
 
 #[tokio::test]
-async fn max_turns_exceeded_after_tool() {
+async fn max_turns_reached_after_a_tool_keeps_the_work_and_says_so() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("note.txt"), "secret").unwrap();
-    let agent = scripted([ScriptedStep::ToolCall {
-        id: "c1".into(),
-        name: "read".into(),
-        input: json!({"path": "note.txt"}),
-    }]);
+    let agent = scripted([
+        ScriptedStep::Text("Reading it.".into()),
+        ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "read".into(),
+            input: json!({"path": "note.txt"}),
+        },
+    ]);
     let mut session = session_at(dir.path(), "please read note.txt and summarize it");
-    let err = agent
+    let out = agent
         .run_turn(&mut session, "script", "m", "k", Some(1))
         .await
-        .expect_err("max turns");
+        .expect("the limit ends the turn, not the run");
+    assert!(out.starts_with("Reading it."), "{out}");
+    assert!(out.contains("step limit (1)"), "{out}");
     assert!(
-        err.to_string()
-            .to_lowercase()
-            .contains("exceeded maximum turns"),
-        "{err}"
+        session.messages.iter().any(|m| m.role == Role::Tool),
+        "the tool's result is kept"
     );
 }
 
@@ -3683,4 +3686,64 @@ async fn a_model_that_keeps_repeating_after_refusals_ends_the_turn() {
                 && m.content.as_text().is_some_and(|t| t.contains("Doom loop"))),
         "a refusal is not repeated as a recovery note"
     );
+}
+
+#[tokio::test]
+async fn a_call_still_cut_off_after_every_continuation_never_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = repeating([
+        ScriptedStep::Text("writing it".into()),
+        ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "write".into(),
+            input: json!({"path": "out.txt", "content": "half of the f"}),
+        },
+        ScriptedStep::MessageDelta(json!({"stop_reason": "length"})),
+    ]);
+    let mut session = session_at(dir.path(), "please write out.txt with the full text");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "script",
+                model: "still-cut-unique",
+                api_key: "k",
+                max_turns: Some(10),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await
+        .expect("the turn ends on the text");
+    assert!(
+        !dir.path().join("out.txt").exists(),
+        "the cut call never ran"
+    );
+    let status = drain_status(&mut rx);
+    assert!(
+        status.iter().any(|s| s.contains("kept hitting")),
+        "{status:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_stalled_stream_is_retried_like_a_dropped_one() {
+    let mut agent = batched([
+        vec![
+            ScriptedStep::Text("partial".into()),
+            ScriptedStep::Hang(std::time::Duration::from_secs(30)),
+        ],
+        vec![ScriptedStep::Text("after the stall".into())],
+    ]);
+    agent.stream_idle = std::time::Duration::from_millis(200);
+    agent.stream_retry = std::time::Duration::from_secs(30);
+    let mut session = session_user("please explain rust ownership");
+    let t0 = std::time::Instant::now();
+    let out = agent
+        .run_turn(&mut session, "script", "stall-unique", "k", Some(3))
+        .await
+        .expect("retried after the stall");
+    assert!(out.contains("after the stall"), "{out}");
+    assert!(t0.elapsed() < std::time::Duration::from_secs(20));
 }

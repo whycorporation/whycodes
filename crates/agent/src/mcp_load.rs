@@ -97,17 +97,149 @@ pub async fn register_mcp_tools(
 /// How long one server may take to connect and list its tools. `npx -y`
 /// can download the server first, so this is generous; nothing waits on it
 /// in the foreground for long (the TUI loads servers in the background).
-const SERVER_START_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const SERVER_START_TIMEOUT: Duration = Duration::from_secs(60);
 
 async fn register_mcp_tools_within(
     executor: &mut ToolExecutor,
     config: &Config,
     limit: Duration,
 ) -> (usize, Vec<McpServerHandle>, Vec<McpFailure>) {
-    // Start all servers concurrently so multi-MCP cold start is
-    // max(latency), not sum.
+    // Every server ends by `limit` (it times out); the window outlasts it,
+    // so this waits for all of them without racing their timeouts.
+    let (connects, rest) = connect_servers(config, limit, limit + WINDOW_MARGIN).await;
+    let connects = all_connects(connects, rest).await;
+    let count = connects.register(executor).await;
+    (count, connects.handles(), connects.failures)
+}
+
+/// Room past the per-server limit before a whole-load window closes.
+const WINDOW_MARGIN: Duration = Duration::from_secs(1);
+
+/// `first` with the servers still connecting in `rest` once they are done.
+async fn all_connects(mut first: McpConnects, rest: Option<McpRest>) -> McpConnects {
+    if let Some(rest) = rest {
+        first.absorb(rest.await);
+    }
+    first
+}
+
+/// A connected server with the tools it listed.
+struct Connected {
+    name: String,
+    transport: &'static str,
+    client: Arc<Mutex<McpClient>>,
+    tools: Vec<McpTool>,
+}
+
+/// The servers that finished connecting, one way or the other.
+#[derive(Default)]
+pub(crate) struct McpConnects {
+    connected: Vec<Connected>,
+    pub(crate) failures: Vec<McpFailure>,
+}
+
+/// Servers still connecting after the fast window; resolves when all are done.
+pub(crate) type McpRest = futures::future::BoxFuture<'static, McpConnects>;
+
+impl McpConnects {
+    fn add(&mut self, name: String, server: &McpServerConfig, result: StartResult) {
+        match result {
+            Ok((client, tools)) => self.connected.push(Connected {
+                name,
+                transport: client.transport_name(),
+                client: Arc::new(Mutex::new(client)),
+                tools,
+            }),
+            Err(e) => self.failures.push(failure(&name, server, &e)),
+        }
+    }
+
+    /// Fold a later batch in (its failures replace nothing: they are new).
+    pub(crate) fn absorb(&mut self, later: McpConnects) {
+        self.connected.extend(later.connected);
+        self.failures.extend(later.failures);
+    }
+
+    pub(crate) fn handles(&self) -> Vec<McpServerHandle> {
+        self.connected
+            .iter()
+            .map(|c| McpServerHandle {
+                name: c.name.clone(),
+                client: Arc::clone(&c.client),
+            })
+            .collect()
+    }
+
+    /// Register every connected server's tools (and resource tools) on
+    /// `executor`. Returns how many tools were registered.
+    pub(crate) async fn register(&self, executor: &mut ToolExecutor) -> usize {
+        let mut count = 0usize;
+        for server in &self.connected {
+            for tool in &server.tools {
+                register_bridge(executor, server, tool);
+                count += 1;
+            }
+        }
+        count + crate::mcp_content::register_resource_tools(executor, &self.handles()).await
+    }
+}
+
+fn register_bridge(executor: &mut ToolExecutor, server: &Connected, tool: &McpTool) {
+    let bridge_name = bridge_tool_name(&server.name, &tool.name);
+    let description = tool
+        .description
+        .clone()
+        .unwrap_or_else(|| format!("MCP tool from '{}'", server.name));
+    let schema = if tool.input_schema.is_null() {
+        serde_json::json!({"type": "object", "properties": {}})
+    } else {
+        tool.input_schema.clone()
+    };
+    let caller: Arc<dyn McpCaller> = Arc::new(SharedMcpCaller {
+        client: Arc::clone(&server.client),
+        remote_name: tool.name.clone(),
+    });
+    executor.register(Box::new(McpToolBridge::new(
+        caller,
+        bridge_name.clone(),
+        description,
+        schema,
+    )));
+    let (server_name, transport) = (&server.name, server.transport);
+    info!(server = %server_name, tool = %bridge_name, transport, "Registered MCP tool");
+}
+
+fn failure(server_name: &str, server: &McpServerConfig, e: &anyhow::Error) -> McpFailure {
+    let detail = match server.resolved_transport() {
+        Ok(McpTransportKind::Stdio) => {
+            format!("command={}", server.command.as_deref().unwrap_or("?"))
+        }
+        Ok(_) => format!("url={}", server.url.as_deref().unwrap_or("?")),
+        Err(msg) => msg,
+    };
+    let hint = connect_hint(server_name, &e.to_string());
+    warn!(server = %server_name, %detail, error = %e, hint, "Failed to connect MCP server");
+    McpFailure {
+        server: server_name.to_string(),
+        error: e.to_string(),
+        hint,
+    }
+}
+
+type StartResult = anyhow::Result<(McpClient, Vec<McpTool>)>;
+
+/// Start every configured server at once (cold start is the slowest one,
+/// not the sum). Returns the servers done within `fast`, and the rest as a
+/// future when any are still connecting: one hung server no longer holds
+/// back the tools of the servers that answered.
+pub(crate) async fn connect_servers(
+    config: &Config,
+    limit: Duration,
+    fast: Duration,
+) -> (McpConnects, Option<McpRest>) {
+    use futures::StreamExt;
     let data_dir = whycodes_core::paths::data_dir();
-    let connect_futs: Vec<_> = config
+    let mut pending: futures::stream::FuturesUnordered<_> = config
         .mcp_servers
         .iter()
         .map(|(server_name, server)| {
@@ -121,76 +253,26 @@ async fn register_mcp_tools_within(
             }
         })
         .collect();
-    let connected = futures::future::join_all(connect_futs).await;
-
-    let mut count = 0usize;
-    let mut servers = Vec::new();
-    let mut failures = Vec::new();
-    for (server_name, server, result) in connected {
-        match result {
-            Ok((client, tools)) => {
-                let transport = client.transport_name();
-                let client = Arc::new(Mutex::new(client));
-                servers.push(McpServerHandle {
-                    name: server_name.clone(),
-                    client: Arc::clone(&client),
-                });
-                for tool in tools {
-                    let bridge_name = bridge_tool_name(&server_name, &tool.name);
-                    let description = tool
-                        .description
-                        .clone()
-                        .unwrap_or_else(|| format!("MCP tool from '{}'", server_name));
-                    let schema = if tool.input_schema.is_null() {
-                        serde_json::json!({"type": "object", "properties": {}})
-                    } else {
-                        tool.input_schema.clone()
-                    };
-                    let caller: Arc<dyn McpCaller> = Arc::new(SharedMcpCaller {
-                        client: Arc::clone(&client),
-                        remote_name: tool.name.clone(),
-                    });
-                    executor.register(Box::new(McpToolBridge::new(
-                        caller,
-                        bridge_name.clone(),
-                        description,
-                        schema,
-                    )));
-                    count += 1;
-                    info!(
-                        server = %server_name,
-                        tool = %bridge_name,
-                        transport,
-                        "Registered MCP tool"
-                    );
-                }
-            }
-            Err(e) => {
-                let detail = match server.resolved_transport() {
-                    Ok(McpTransportKind::Stdio) => {
-                        format!("command={}", server.command.as_deref().unwrap_or("?"))
-                    }
-                    Ok(_) => format!("url={}", server.url.as_deref().unwrap_or("?")),
-                    Err(msg) => msg,
-                };
-                let hint = connect_hint(&server_name, &e.to_string());
-                warn!(
-                    server = %server_name,
-                    %detail,
-                    error = %e,
-                    hint,
-                    "Failed to connect MCP server"
-                );
-                failures.push(McpFailure {
-                    server: server_name,
-                    error: e.to_string(),
-                    hint,
-                });
-            }
+    let mut done = McpConnects::default();
+    let window = tokio::time::sleep(fast);
+    tokio::pin!(window);
+    loop {
+        tokio::select! {
+            next = pending.next() => match next {
+                Some((name, server, result)) => done.add(name, &server, result),
+                None => return (done, None),
+            },
+            _ = &mut window => break,
         }
     }
-    count += crate::mcp_content::register_resource_tools(executor, &servers).await;
-    (count, servers, failures)
+    let rest = async move {
+        let mut later = McpConnects::default();
+        while let Some((name, server, result)) = pending.next().await {
+            later.add(name, &server, result);
+        }
+        later
+    };
+    (done, Some(Box::pin(rest)))
 }
 
 /// Connect `server` and list its tools, giving up after `limit` so a server

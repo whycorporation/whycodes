@@ -78,7 +78,18 @@ impl Agent {
             .unwrap_or_default();
         self.run_prompt_hooks(session, &prompt).await?;
         let usage_before = session.usage.clone();
-        let reply = self.run_turn_steps(session, opts).await?;
+        let cancel = opts.cancel.clone();
+        let reply = match self.run_turn_steps(session, opts).await {
+            Ok(reply) => reply,
+            Err(e) => {
+                // Esc: the summary prepared for this turn's compaction would
+                // run on for up to a minute, paid for and never read.
+                if is_cancelled(&cancel) {
+                    self.abort_speculative_summary();
+                }
+                return Err(e);
+            }
+        };
         self.run_stop_hooks(session, &reply, &usage_before).await;
         Ok(reply)
     }
@@ -237,10 +248,17 @@ impl Agent {
             }
 
             let max = max_turns.unwrap_or(0);
+            // Out of steps: keep what was done (and say so) instead of an
+            // error that dropped the turn's text, as a subagent already does.
             if max_turns.is_some() && turn_count >= max {
-                return Err(whycodes_core::Error::Agent(format!(
-                    "Exceeded maximum turns ({max})"
-                )));
+                let note = format!(
+                    "Stopped at the step limit ({max}) before a final answer; \
+                     raise --max-turns to let it finish."
+                );
+                tracing::warn!(max, "turn reached its step limit");
+                emit(&events, TurnEvent::Status(note.clone()));
+                append_step_text(&mut final_text, &format!("[{note}]"));
+                break;
             }
 
             // Always shrink oversized / old tool dumps before prefill (cheap).
@@ -536,6 +554,12 @@ impl Agent {
                         return Err(whycodes_core::Error::Agent("Cancelled".into()));
                     }
                     next = event_stream.next() => next,
+                    _ = tokio::time::sleep(self.stream_idle) => {
+                        let secs = self.stream_idle.as_secs();
+                        let stalled = format!("stream stalled: no data for {secs} s");
+                        let kind = whycodes_core::ErrorKind::Timeout;
+                        Some(Err(whycodes_core::Error::llm_kind(kind, stalled)))
+                    }
                 };
 
                 let Some(event) = event else {
@@ -787,6 +811,19 @@ impl Agent {
                 emit(
                     &events,
                     TurnEvent::Status("Response hit the output token limit — continuing…".into()),
+                );
+                tool_calls.clear();
+            } else if hit_output_limit {
+                // Still cut off after every continuation: keep the text as
+                // the answer, but a call cut mid-arguments must not run.
+                let dropped = tool_calls.len();
+                tracing::warn!(
+                    dropped_tool_calls = dropped,
+                    "still cut off; keeping the text"
+                );
+                emit(
+                    &events,
+                    TurnEvent::Status("Response kept hitting the output token limit".into()),
                 );
                 tool_calls.clear();
             } else {

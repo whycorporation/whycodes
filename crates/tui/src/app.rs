@@ -756,6 +756,9 @@ pub struct ChatMessage {
     /// Live-tail markdown freeze (checkpoint). Only the growing
     /// assistant bubble uses this; closed messages sit in `line_cache`.
     pub stream_md: Option<crate::md_stream::IncrementalMarkdown>,
+    /// Byte offset in `content` where the turn's last step began (after its
+    /// last tool call). Steps share one bubble; `/copy` takes this tail.
+    pub last_step_at: usize,
 }
 
 impl ChatMessage {
@@ -802,6 +805,18 @@ impl ChatMessage {
             layout_cache_alt: None,
             line_cache: None,
             stream_md: None,
+            last_step_at: 0,
+        }
+    }
+
+    /// The text of the turn's last step: the answer after the tool calls,
+    /// or the whole message when that step wrote nothing.
+    pub fn last_step_text(&self) -> &str {
+        let tail = self.content.get(self.last_step_at..).unwrap_or_default();
+        if tail.trim().is_empty() {
+            &self.content
+        } else {
+            tail
         }
     }
 }
@@ -912,7 +927,8 @@ pub enum ChatBlock {
     },
     ToolResult {
         id: String,
-        content: String,
+        /// Shared with the call's `result`: one copy of up to 512 KiB.
+        content: std::sync::Arc<str>,
         is_error: bool,
     },
     /// Compact subagent lifecycle row in the parent scrollback.
@@ -961,6 +977,9 @@ impl BgJobUi {
         )
     }
 }
+
+/// Worker rows kept in the tasks panel per session.
+pub(crate) const SUBAGENT_ROWS: usize = 16;
 
 /// One child session shown in the sticky tasks panel / framed view.
 #[derive(Debug, Clone)]
@@ -1340,7 +1359,7 @@ pub struct ChatToolCall {
     pub name: String,
     pub arguments: serde_json::Value,
     pub collapsed: bool,
-    pub result: Option<String>,
+    pub result: Option<std::sync::Arc<str>>,
     pub is_error: bool,
 }
 
@@ -1564,6 +1583,9 @@ pub struct TuiApp {
     pub(crate) bg_jobs: Vec<BgJobUi>,
     /// Model switch from the picker dialog: `(provider, model)`.
     pub(crate) pending_model: Option<(String, String)>,
+    /// A Ctrl+V image read running off the UI thread.
+    pub(crate) clipboard_read:
+        Option<std::sync::mpsc::Receiver<Result<crate::clipboard_image::PromptClipboard, String>>>,
     /// A model / effort / mode picked mid-turn waits for the turn to end;
     /// set once its "applies after this turn" note was shown.
     pub(crate) picker_wait_noted: bool,
@@ -2409,6 +2431,7 @@ impl TuiApp {
             goal_chip: None,
             bg_jobs: Vec::new(),
             pending_model: None,
+            clipboard_read: None,
             picker_wait_noted: false,
             pending_effort: None,
             effort_picker_selected: 0,
@@ -2525,6 +2548,14 @@ impl TuiApp {
                 output,
                 tokens: 0,
             });
+        }
+        // Bounded like `bg_jobs`: each row keeps the worker's full output.
+        // Finished rows go first; running ones always stay.
+        while self.subagents.len() > SUBAGENT_ROWS {
+            let Some(pos) = self.subagents.iter().position(SubagentUi::is_terminal) else {
+                break;
+            };
+            self.subagents.remove(pos);
         }
         if self.open_subagent.as_deref() == Some(id.as_str()) {
             self.load_subagent_view_file();
@@ -3589,7 +3620,7 @@ impl TuiApp {
             .iter()
             .rev()
             .find(|m| m.role == ChatRole::Assistant && !m.content.trim().is_empty())
-            .map(|m| m.content.clone());
+            .map(|m| m.last_step_text().trim().to_string());
         match reply {
             Some(text) => self.copy_with_toast(&text, "reply"),
             None => {
@@ -3820,6 +3851,7 @@ impl TuiApp {
         view.todos = self.todos.clone();
         view.todos_collapsed = self.todos_collapsed;
         view.todos_scroll = self.todos_scroll;
+        view.subagents = self.subagents.clone();
     }
 
     /// Restore a previously saved per-session view state (switching back).
@@ -3844,6 +3876,7 @@ impl TuiApp {
         self.todos = view.todos.clone();
         self.todos_collapsed = view.todos_collapsed;
         self.todos_scroll = view.todos_scroll;
+        self.subagents = view.subagents.clone();
         self.dialogs.clear();
         self.mark_dirty();
         self.request_full_clear(2);
@@ -3879,6 +3912,9 @@ impl TuiApp {
         self.todos = std::mem::take(&mut view.todos);
         self.todos_collapsed = view.todos_collapsed;
         self.todos_scroll = view.todos_scroll;
+        // Workers belong to the session that started them: B must not list
+        // A's, and A's updates while parked land in A's snapshot.
+        self.subagents = std::mem::take(&mut view.subagents);
         // The footer and a force-stop rebuild read `agent_name`: it must be
         // this session's agent, not the one picked in the session left.
         if let Some((name, idx)) = view.agent.take() {
@@ -3914,6 +3950,7 @@ impl TuiApp {
         view.todos_collapsed = self.todos_collapsed;
         view.todos_scroll = self.todos_scroll;
         self.todos_scroll = 0;
+        view.subagents = std::mem::take(&mut self.subagents);
         view.agent = Some((self.agent_name.clone(), self.agent_cycle_idx));
     }
 
@@ -4089,6 +4126,7 @@ impl TuiApp {
             if !last.content.trim().is_empty() && !last.content.ends_with("\n\n") {
                 last.content.push_str("\n\n");
             }
+            last.last_step_at = last.content.len();
             last.blocks.push(ChatBlock::ToolUse {
                 id: tc.id.clone(),
                 name: tc.name.clone(),
@@ -4126,7 +4164,7 @@ impl TuiApp {
         content: impl Into<String>,
         is_error: bool,
     ) {
-        let content = cap_tool_view(content.into());
+        let content: std::sync::Arc<str> = cap_tool_view(content.into()).into();
         // Search backwards for the matching tool-call
         for msg in self.messages.iter_mut().rev() {
             for tc in msg.tool_calls.iter_mut() {
@@ -4260,7 +4298,8 @@ pub fn chat_messages_from_session(
                 for m in out.iter_mut().rev() {
                     for tc in m.tool_calls.iter_mut() {
                         if tc.id == id {
-                            let content = cap_tool_view(content.clone());
+                            let content: std::sync::Arc<str> =
+                                cap_tool_view(content.clone()).into();
                             tc.result = Some(content.clone());
                             m.blocks.push(ChatBlock::ToolResult {
                                 id: id.to_string(),
@@ -4342,7 +4381,7 @@ pub fn chat_messages_from_session(
                             is_error,
                         } => {
                             let err = is_error.unwrap_or(false);
-                            let c = cap_tool_view(c.clone());
+                            let c: std::sync::Arc<str> = cap_tool_view(c.clone()).into();
                             if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == *tool_use_id) {
                                 tc.result = Some(c.clone());
                                 tc.is_error = err;

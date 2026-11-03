@@ -273,9 +273,11 @@ pub fn format_turn_error(err: &whycodes_core::Error) -> String {
     // If classification already cleaned it, use that; else keep original Llm payload trimmed.
     match c.kind {
         crate::error_class::ErrorKind::Unknown => {
-            // Strip redundant "LLM error: " prefix if present.
+            // Strip redundant "LLM error: " prefix if present; a JSON body
+            // shows its reason, and nothing runs on for screens.
             let s = err.to_string();
-            s.strip_prefix("LLM error: ").unwrap_or(&s).to_string()
+            let s = s.strip_prefix("LLM error: ").unwrap_or(&s);
+            crate::error_class::readable_reason(s)
         }
         _ => summary,
     }

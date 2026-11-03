@@ -89,6 +89,10 @@ pub struct Agent {
     /// `[session] stream_retry_secs`: window for re-sending a step whose
     /// stream dropped mid-response (default 60s). Zero = off.
     stream_retry: std::time::Duration,
+    /// Longest silence between stream events before the step counts as a
+    /// dropped stream (retried like one). A proxy that stops sending without
+    /// closing used to hold the turn until Esc.
+    stream_idle: std::time::Duration,
     /// `[session] fallback_models`: `provider/model` tried when a stream fails to open.
     fallback_models: Vec<String>,
     /// Config `api_key` per provider, for fallback targets on another provider.
@@ -188,12 +192,65 @@ pub struct McpLoad {
     executor: Option<Arc<ToolExecutor>>,
     mcp_servers: Option<Vec<crate::mcp_load::McpServerHandle>>,
     failures: Vec<crate::mcp_load::McpFailure>,
+    /// Servers still connecting when this load was made: resolves to a
+    /// complete load (every server) once they are done. Shared so clones
+    /// of this load hand it out once.
+    later: Option<Arc<Mutex<Option<LaterMcpLoad>>>>,
 }
+
+/// The rest of a staged [`McpLoad`]; see [`McpLoad::take_later`].
+pub type LaterMcpLoad = futures::future::BoxFuture<'static, McpLoad>;
 
 impl McpLoad {
     /// Configured servers that did not connect, for the UI to report.
     pub fn failures(&self) -> &[crate::mcp_load::McpFailure] {
         &self.failures
+    }
+
+    /// The load to install once the servers that were slower than the fast
+    /// window are done; `None` when every server was in this load.
+    pub fn take_later(&self) -> Option<LaterMcpLoad> {
+        recover_lock(self.later.as_ref()?).take()
+    }
+}
+
+/// What a fresh tool executor needs, so the second stage of a staged MCP
+/// load can build one off the agent.
+#[derive(Clone)]
+struct ExecutorRecipe {
+    lsp_overlay: whycodes_tools::LspSettings,
+    format_after_write: bool,
+    websearch: whycodes_tools::search::WebSearchSettings,
+    project: Option<std::path::PathBuf>,
+}
+
+impl ExecutorRecipe {
+    fn apply(&self, exec: &mut ToolExecutor) {
+        exec.set_format_after_write(self.format_after_write);
+        exec.set_websearch(self.websearch.clone());
+        if lsp_overlay_is_custom(&self.lsp_overlay) {
+            exec.configure_lsp(&self.lsp_overlay);
+        }
+    }
+
+    /// Built-ins, plugins and the MCP tools of `connects`.
+    async fn load(&self, connects: &crate::mcp_load::McpConnects, has_mcp: bool) -> McpLoad {
+        let mut full = ToolExecutor::new();
+        self.apply(&mut full);
+        let n_plug = full.register_config_plugins(self.project.as_deref());
+        let n_mcp = connects.register(&mut full).await;
+        let custom_lsp = lsp_overlay_is_custom(&self.lsp_overlay);
+        let executor = (n_plug > 0 || n_mcp > 0 || custom_lsp).then(|| {
+            log_registered_count(n_plug, "shell plugins registered");
+            log_registered_count(n_mcp, "MCP tools registered");
+            Arc::new(full)
+        });
+        McpLoad {
+            executor,
+            mcp_servers: has_mcp.then(|| connects.handles()),
+            failures: connects.failures.clone(),
+            later: None,
+        }
     }
 }
 
@@ -201,6 +258,10 @@ impl McpLoad {
 pub(crate) fn recover_lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
+
+/// Default [`Agent::stream_idle`]: generous, since some models think for
+/// minutes without streaming a token.
+pub(crate) const STREAM_IDLE: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Stop auto-compact after this many consecutive ineffective passes.
 pub(crate) const MAX_CONSECUTIVE_COMPACT_FAILURES: u32 = 3;
@@ -460,6 +521,7 @@ impl Agent {
             model_race: "off".into(),
             race_after: std::time::Duration::from_millis(800),
             stream_retry: std::time::Duration::from_secs(60),
+            stream_idle: STREAM_IDLE,
             fallback_models: Vec::new(),
             fallback_config_keys: std::collections::HashMap::new(),
             response_cache: true,
@@ -1146,32 +1208,61 @@ impl Agent {
         &mut self,
         config: &whycodes_config::Config,
     ) -> impl std::future::Future<Output = McpLoad> + Send + 'static {
+        self.begin_mcp_load_within(config, crate::mcp_load::SERVER_START_TIMEOUT)
+    }
+
+    /// [`Self::begin_mcp_load`] that waits at most `fast` for the servers:
+    /// those done by then are in the load, and [`McpLoad::take_later`]
+    /// yields a complete load once the slower ones finish. One server that
+    /// never answers no longer holds back the tools of the others.
+    pub fn begin_mcp_load_within(
+        &mut self,
+        config: &whycodes_config::Config,
+        fast: std::time::Duration,
+    ) -> impl std::future::Future<Output = McpLoad> + Send + 'static {
+        self.begin_mcp_load_staged(config, crate::mcp_load::SERVER_START_TIMEOUT, fast)
+    }
+
+    /// [`Self::begin_mcp_load_within`] with the per-server `limit` (tests).
+    pub(crate) fn begin_mcp_load_staged(
+        &mut self,
+        config: &whycodes_config::Config,
+        limit: std::time::Duration,
+        fast: std::time::Duration,
+    ) -> impl std::future::Future<Output = McpLoad> + Send + 'static {
         self.lsp_overlay = lsp_overlay_from_config(&config.lsp);
-        let project = config.general.project_path.as_deref();
-        let mut full = ToolExecutor::new();
-        self.apply_lsp_overlay(&mut full);
-        let n_plug = full.register_config_plugins(project);
-        let custom_lsp = lsp_overlay_is_custom(&self.lsp_overlay);
+        let recipe = self.executor_recipe(config.general.project_path.clone());
         let config = (!config.mcp_servers.is_empty()).then(|| config.clone());
         async move {
-            let (n_mcp, mcp_servers, failures) = match config {
-                Some(config) => {
-                    let (n, servers, failures) =
-                        crate::mcp_load::register_mcp_tools(&mut full, &config).await;
-                    (n, Some(servers), failures)
-                }
-                None => (0, None, Vec::new()),
+            let Some(config) = config else {
+                return recipe.load(&Default::default(), false).await;
             };
-            let executor = (n_plug > 0 || n_mcp > 0 || custom_lsp).then(|| {
-                log_registered_count(n_plug, "shell plugins registered");
-                log_registered_count(n_mcp, "MCP tools registered");
-                Arc::new(full)
-            });
-            McpLoad {
-                executor,
-                mcp_servers,
-                failures,
+            let (connects, rest) = crate::mcp_load::connect_servers(&config, limit, fast).await;
+            let mut load = recipe.load(&connects, true).await;
+            if let Some(rest) = rest {
+                let later: LaterMcpLoad = Box::pin(async move {
+                    let mut all = connects;
+                    let slower = rest.await;
+                    let failures = slower.failures.clone();
+                    all.absorb(slower);
+                    // The first stage reported its own failures; only the
+                    // slow servers' are new.
+                    let mut complete = recipe.load(&all, true).await;
+                    complete.failures = failures;
+                    complete
+                });
+                load.later = Some(Arc::new(Mutex::new(Some(later))));
             }
+            load
+        }
+    }
+
+    fn executor_recipe(&self, project: Option<std::path::PathBuf>) -> ExecutorRecipe {
+        ExecutorRecipe {
+            lsp_overlay: self.lsp_overlay.clone(),
+            format_after_write: self.format_after_write,
+            websearch: self.websearch.clone(),
+            project,
         }
     }
 
@@ -1216,12 +1307,7 @@ impl Agent {
     }
 
     fn apply_lsp_overlay(&self, exec: &mut ToolExecutor) {
-        exec.set_format_after_write(self.format_after_write);
-        exec.set_websearch(self.websearch.clone());
-        if !lsp_overlay_is_custom(&self.lsp_overlay) {
-            return;
-        }
-        exec.configure_lsp(&self.lsp_overlay);
+        self.executor_recipe(None).apply(exec);
     }
 
     /// Get the system prompt for this agent (includes runtime context such as today's date).

@@ -594,3 +594,87 @@ async fn a_package_runner_without_a_package_fails_at_once() {
     let err = connect_mcp_server(&bare).await.err().expect("refused");
     assert!(err.to_string().contains("needs the package"), "{err}");
 }
+
+#[tokio::test]
+async fn a_slow_server_joins_in_a_second_stage_instead_of_holding_the_others() {
+    let dir = tempfile::tempdir().unwrap();
+    let silent = write_stdio_script(dir.path(), "import time\ntime.sleep(60)\n");
+    let echo_dir = tempfile::tempdir().unwrap();
+    let echo = write_stdio_script(echo_dir.path(), &stdio_echo_script());
+    let mut config = Config::default();
+    config
+        .mcp_servers
+        .insert("silent".into(), stdio_config(dir.path(), &silent));
+    config
+        .mcp_servers
+        .insert("ghost".into(), stdio_config(echo_dir.path(), &echo));
+    let info = config.get_agent("build").cloned().unwrap();
+    let mut agent = crate::Agent::new(info);
+    let started = std::time::Instant::now();
+    let first = agent
+        .begin_mcp_load_staged(&config, Duration::from_secs(6), Duration::from_secs(3))
+        .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "did not wait for the slow one"
+    );
+    assert!(first.failures().is_empty(), "{:?}", first.failures());
+    agent.finish_mcp_load(first.clone());
+    assert!(
+        agent
+            .tool_executor_defs_readonly()
+            .iter()
+            .any(|d| d.name == "ghost_echo"),
+        "fast tools are in"
+    );
+    let names = |a: &crate::Agent| {
+        a.mcp_servers()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&agent), ["ghost"]);
+
+    let later = first
+        .take_later()
+        .expect("the slow server is still connecting");
+    assert!(first.take_later().is_none(), "handed out once");
+    let complete = later.await;
+    assert_eq!(complete.failures().len(), 1);
+    assert_eq!(complete.failures()[0].server, "silent");
+    agent.finish_mcp_load(complete);
+    assert!(
+        agent
+            .tool_executor_defs_readonly()
+            .iter()
+            .any(|d| d.name == "ghost_echo"),
+        "kept in the full load"
+    );
+
+    // Everything done inside the window: one stage.
+    let mut quick = Config::default();
+    quick
+        .mcp_servers
+        .insert("ghost".into(), stdio_config(echo_dir.path(), &echo));
+    let only = agent
+        .begin_mcp_load_staged(&quick, Duration::from_secs(10), Duration::from_secs(10))
+        .await;
+    assert!(only.take_later().is_none());
+}
+
+#[tokio::test]
+async fn all_connects_waits_for_the_rest() {
+    let rest: McpRest = Box::pin(async {
+        let mut later = McpConnects::default();
+        later.failures.push(McpFailure {
+            server: "slow".into(),
+            error: "no answer within 60 s".into(),
+            hint: String::new(),
+        });
+        later
+    });
+    let all = all_connects(McpConnects::default(), Some(rest)).await;
+    assert_eq!(all.failures.len(), 1);
+    let none = all_connects(McpConnects::default(), None).await;
+    assert!(none.failures.is_empty());
+}

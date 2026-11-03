@@ -89,7 +89,7 @@ fn tool_result_truncated_and_error_colored() {
         "",
         vec![ChatBlock::ToolResult {
             id: "r1".into(),
-            content: long.clone(),
+            content: long.clone().into(),
             is_error: false,
         }],
     );
@@ -107,7 +107,7 @@ fn tool_result_truncated_and_error_colored() {
         "",
         vec![ChatBlock::ToolResult {
             id: "r-utf8".into(),
-            content: utf8,
+            content: utf8.into(),
             is_error: false,
         }],
     );

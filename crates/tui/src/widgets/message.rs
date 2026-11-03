@@ -110,7 +110,7 @@ impl MessageWidget {
                             &content[..content.floor_char_boundary(500)]
                         )
                     } else {
-                        content.clone()
+                        content.to_string()
                     };
                     lines.push(Line::from(Span::styled(
                         format!("    ↳ {}", truncated),

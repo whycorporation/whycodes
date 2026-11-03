@@ -2043,14 +2043,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
             if app.pending_import && !rt.agent_busy {
                 app.pending_import = false;
-                apply_pending_import(
+                let wrote = apply_pending_import(
                     &mut app,
                     &mut rt.agent,
                     &mut config,
                     &project_dir,
                     &file_index,
-                )
-                .await;
+                );
+                if wrote {
+                    mcp = PendingMcp::start(&mut rt, &config).await;
+                }
             }
 
             // Deferred / idle catalog: never race the first (or any) user turn.
@@ -2158,6 +2160,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             }
 
             mcp.poll(&mut app, &mut rt, &mut runtimes);
+            // A Ctrl+V image read finishes off the UI thread.
+            crate::input::poll_clipboard_paste(&mut app);
 
             // ── Start turn if needed ──────────────────────────────────
             if !rt.agent_busy
@@ -3316,6 +3320,11 @@ fn force_stop_turn(
     // start right after it, and a /goal must not judge a turn it never saw.
     stop_loop_after_error(app, "turn stopped");
     pause_goal_after_error(app, rt, true);
+    // The aborted turn took its workers with it; a row left `running` kept
+    // the fast poll rate on for good.
+    for row in app.subagents.iter_mut().filter(|s| s.is_running()) {
+        row.status = "cancelled".into();
+    }
     persist_session_best_effort(&rt.session, "force_cancelled");
     close_interactive_overlays(app);
     app.mark_dirty();
@@ -4182,7 +4191,13 @@ fn resume_or_switch_session(
     config: &Config,
 ) {
     if rt.agent_busy {
+        // Switching mid-turn would leave it behind; the switch waits, and
+        // the user is told so instead of it happening out of nowhere later.
         app.pending_session_id = Some(id);
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            "Switches to that session when this turn ends",
+        );
         return;
     }
     if let Some(idx) = runtimes.iter().position(|b| b.session.id == id) {

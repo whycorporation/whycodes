@@ -896,3 +896,28 @@ async fn a_dropped_stdio_connect_ends_the_servers_children() {
         "grandchild {pid} outlived the dropped connect"
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn a_full_path_without_its_extension_finds_the_launcher() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("npx.cmd"), "@echo off\r\n").unwrap();
+    std::fs::write(dir.path().join("plain"), "data").unwrap();
+    let full = dir.path().join("npx").to_string_lossy().into_owned();
+    let found = resolve_on_path(&full, std::ffi::OsStr::new(""), ".EXE;.CMD");
+    assert!(
+        found
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with("npx.cmd"),
+        "{found:?}"
+    );
+    // A file that exists as written is used as written.
+    let plain = dir.path().join("plain");
+    let same = resolve_on_path(&plain.to_string_lossy(), std::ffi::OsStr::new(""), ".EXE");
+    assert_eq!(same, plain);
+    // Nothing matches: the path as written, for the spawn error to name.
+    let gone = dir.path().join("gone").to_string_lossy().into_owned();
+    let missing = resolve_on_path(&gone, std::ffi::OsStr::new(""), ".EXE");
+    assert_eq!(missing, std::path::PathBuf::from(&gone));
+}

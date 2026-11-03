@@ -16,6 +16,11 @@ use crate::session_runtime::SessionRuntime;
 /// for that long is worse than a first turn without those tools.
 pub(super) const TURN_WAIT: Duration = Duration::from_secs(5);
 
+/// Servers connected within this window are installed together; slower
+/// ones join in a second install when they finish, so one server that
+/// hangs for its full minute no longer holds back the others' tools.
+pub(super) const FAST_WINDOW: Duration = Duration::from_secs(8);
+
 /// A spawned [`whycodes_agent::agent::Agent::begin_mcp_load`], if any.
 #[derive(Default)]
 pub(super) struct PendingMcp(Option<JoinHandle<McpLoad>>);
@@ -27,7 +32,8 @@ impl PendingMcp {
             rt.agent.load_mcp(config).await;
             return Self(None);
         }
-        Self(Some(tokio::spawn(rt.agent.begin_mcp_load(config))))
+        let load = rt.agent.begin_mcp_load_within(config, FAST_WINDOW);
+        Self(Some(tokio::spawn(load)))
     }
 
     /// Install a finished load once no session has its agent out on a turn.
@@ -42,7 +48,7 @@ impl PendingMcp {
             return;
         }
         if let Some(joined) = self.0.take().and_then(futures::FutureExt::now_or_never) {
-            install(joined, app, rt, runtimes);
+            self.0 = install(joined, app, rt, runtimes).map(tokio::spawn);
         }
     }
 
@@ -61,8 +67,7 @@ impl PendingMcp {
         };
         match tokio::time::timeout(limit, handle).await {
             Ok(joined) => {
-                self.0 = None;
-                install(joined, app, rt, runtimes);
+                self.0 = install(joined, app, rt, runtimes).map(tokio::spawn);
             }
             Err(elapsed) => {
                 tracing::debug!(%elapsed, "MCP servers still connecting");
@@ -81,17 +86,18 @@ pub(super) fn reads_mcp_servers(slash: &str) -> bool {
 }
 
 /// Sessions share one tool set, so every idle session gets the load.
+/// Returns the second stage when slower servers are still connecting.
 fn install(
     joined: Result<McpLoad, tokio::task::JoinError>,
     app: &mut TuiApp,
     rt: &mut SessionRuntime,
     runtimes: &mut [SessionRuntime],
-) {
+) -> Option<whycodes_agent::agent::LaterMcpLoad> {
     let loaded = match joined {
         Ok(loaded) => loaded,
         Err(e) => {
             tracing::warn!(error = %e, "MCP load task failed");
-            return;
+            return None;
         }
     };
     report_failures(app, loaded.failures());
@@ -100,6 +106,7 @@ fn install(
             r.agent.finish_mcp_load(loaded.clone());
         }
     }
+    loaded.take_later()
 }
 
 /// A server that did not connect used to show up only in the log, while
