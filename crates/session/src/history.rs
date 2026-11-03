@@ -814,12 +814,16 @@ mod tests {
         let dir = diverged_repo(true);
         let d = dir.path();
         let mut h = turn(d, |d| write(d, "z.txt", "turn\n"));
+        // CI runners have no global identity; without one `git merge` stops
+        // before it starts and leaves no merge state behind.
         let merge = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
             .args(["merge", "-q", "side"])
             .current_dir(d)
             .output()
             .unwrap();
         assert!(!merge.status.success(), "the merge conflicts");
+        assert!(d.join(".git/MERGE_HEAD").exists(), "a conflicted merge");
         let conflicted = read(d, "a.txt").unwrap();
         let note = undo_files(&mut h, d).expect("undo explains");
         assert!(
