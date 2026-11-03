@@ -4848,7 +4848,7 @@ async fn prepare_turn(
     note_stash_join(stash_done.await);
 }
 
-fn note_stash_join(joined: Result<Option<String>, tokio::task::JoinError>) {
+fn note_stash_join(joined: Result<whycodes_session::TreeSnapshot, tokio::task::JoinError>) {
     if let Err(e) = joined {
         tracing::debug!(error = %e, "undo stash wait failed");
     }

@@ -198,6 +198,7 @@ fn slash_printer_helpers_cover_repl_status_lines() {
     assert!(renamed_line("n").contains("n"));
     assert!(undid_turn_line(3).contains("3"));
     assert!(redid_turn_line(4).contains("4"));
+    assert!(files_note_line("files not restored").ends_with("files not restored"));
     let compact = compact_ok_line(10, 2, 100, 20);
     assert!(compact.contains("10"));
     assert!(compact.contains("2"));

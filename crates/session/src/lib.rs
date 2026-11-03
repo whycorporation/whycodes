@@ -11,7 +11,7 @@ pub mod tree;
 
 pub use edit_stats::EditStats;
 pub use error::{Result, SessionError};
-pub use history::{SessionHistory, StashSlot};
+pub use history::{Restored, SessionHistory, StashSlot, TreeSnapshot};
 pub use import::{ImportKind, import_messages};
 pub use search::{SessionSearchHit, query_terms, search_sessions};
 pub use session::{
