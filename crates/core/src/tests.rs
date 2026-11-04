@@ -1386,6 +1386,27 @@ mod paths_tests {
     }
 
     #[test]
+    fn create_scratch_dir_ignores_itself_in_git() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let scratch = create_scratch_dir(dir.path()).unwrap();
+        assert_eq!(scratch, project_scratch_dir(dir.path()));
+        let ignore = scratch.join(SCRATCH_GITIGNORE);
+        let text = std::fs::read_to_string(&ignore).unwrap();
+        assert!(text.lines().any(|l| l == "*"), "{text}");
+        // An existing ignore file is left as the user wrote it.
+        std::fs::write(&ignore, "custom").unwrap();
+        create_scratch_dir(dir.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(&ignore).unwrap(), "custom");
+    }
+
+    #[test]
+    fn create_scratch_dir_reports_an_uncreatable_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join(".whycodes"), "a file, not a dir").unwrap();
+        assert!(create_scratch_dir(dir.path()).is_err());
+    }
+
+    #[test]
     fn default_instance_is_home_dot_whycodes() {
         let _g = recover_paths_lock();
         let prev_home = std::env::var_os("WHYCODES_HOME");

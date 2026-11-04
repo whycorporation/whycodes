@@ -104,6 +104,24 @@ pub fn project_scratch_dir(working_dir: &Path) -> PathBuf {
     project_dir(working_dir).join("scratch")
 }
 
+/// Ignore file every scratch dir carries so `git status` never lists it.
+pub const SCRATCH_GITIGNORE: &str = ".gitignore";
+
+const SCRATCH_GITIGNORE_BODY: &str = "# WhyCodes scratch files; safe to delete.\n*\n";
+
+/// Create the scratch dir of `working_dir` and return it. The dir gets a
+/// `.gitignore` of `*` the first time, so throwaway agent files never show
+/// up as untracked changes in the user's repository.
+pub fn create_scratch_dir(working_dir: &Path) -> std::io::Result<PathBuf> {
+    let dir = project_scratch_dir(working_dir);
+    std::fs::create_dir_all(&dir)?;
+    let ignore = dir.join(SCRATCH_GITIGNORE);
+    if !ignore.exists() {
+        std::fs::write(&ignore, SCRATCH_GITIGNORE_BODY)?;
+    }
+    Ok(dir)
+}
+
 /// Directories of per-topic project rule files, with the extension each one
 /// holds, in precedence order. The context loader appends every file in them
 /// to the system prompt and `read rule://<name>` serves one by file stem.
