@@ -1753,3 +1753,50 @@ fn reply_outcome_covers_every_reply() {
     assert_eq!(reply_outcome(PermissionReply::Deny), "denied");
     assert_eq!(reply_outcome(PermissionReply::Replied), "replied");
 }
+
+/// Headless run of a one-shot task whose wording reads as "plan" to the
+/// intent heuristic: the write must run, not end as `denied:headless`.
+#[tokio::test]
+async fn headless_plan_intent_does_not_deny_the_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut a = Agent::new(info("build"));
+    a.set_fail_closed_ask(true);
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let plan = crate::intent::classify_user_intent(
+        "In this task you will implement a batching scheduler and produce a plan \
+         in out/plan.json. Write the file.",
+    );
+    assert_eq!(plan.intent, crate::intent::UserIntent::Plan);
+    let result = a
+        .execute_with_permission(
+            &tc("write", json!({"path": "plan.json", "content": "[3,5,8]"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            Some(&plan),
+            None,
+        )
+        .await;
+    assert!(!result.is_error, "{result:?}");
+    assert!(dir.path().join("plan.json").is_file());
+
+    // A real question still fails closed headless.
+    let q = crate::intent::classify_user_intent("how does auth work?");
+    let denied = a
+        .execute_with_permission(
+            &tc("write", json!({"path": "q.md", "content": "x"})),
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            Some(&q),
+            None,
+        )
+        .await;
+    assert!(denied.content.contains("denied:headless"), "{denied:?}");
+    assert!(!dir.path().join("q.md").exists());
+}

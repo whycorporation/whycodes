@@ -758,6 +758,15 @@ impl Agent {
                     is_error: true,
                 };
             }
+            // Headless: nobody can answer, and the one-shot prompt is the whole
+            // instruction. "Implement X and write the plan to plan.json" is
+            // not a planning request to refuse; a question still fails closed.
+            IntentGate::Confirm(_)
+                if self.fail_closed_ask
+                    && turn_intent.is_some_and(|i| i.intent == crate::intent::UserIntent::Plan) =>
+            {
+                safety_event(&session.id, tc, "intent", "skipped:headless-plan");
+            }
             IntentGate::Confirm(body) => {
                 if !risk_confirmed {
                     let reply = self
