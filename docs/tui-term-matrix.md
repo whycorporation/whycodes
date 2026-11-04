@@ -71,7 +71,7 @@ Do these in the window that just opened. Mark fail + host in the PR / issue.
 | 7 | Paste 5 lines at once → one block, not key-spam (bracketed paste) | |
 | 7b | Paste `iyi ışık istanbul` → every `i` and `ı` stays (no vim `i` steal) | |
 | 8 | Drag a `.png` onto the window → image chip on the prompt | |
-| 8b | Copy a screenshot (or browser image) → **Ctrl+V** attaches a chip. Empty clipboard is silent. Needs `wl-clipboard` / `xclip` on Linux | |
+| 8b | Copy a screenshot (or browser image) → **Ctrl+V** (or **Alt+V** where the terminal binds Ctrl+V to its own paste, e.g. Windows Terminal) attaches a chip. Empty clipboard is silent. Needs `wl-clipboard` / `xclip` on Linux | |
 | 9 | **Shift+Enter** inserts a newline (GPU hosts). VTE: often unsupported | |
 | 10 | Resize the window; layout reflows. 0×0 must not happen (`tui.size_fallback`) | |
 | 11 | Hover chrome updates (message / button highlight) | |

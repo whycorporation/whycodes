@@ -95,7 +95,7 @@ pub enum Action {
     JumpNextTurn,
     /// Copy selected message (y in scrollback)
     CopySelection,
-    /// Ctrl+V — attach a bitmap from the OS clipboard (screenshot / browser copy).
+    /// Ctrl+V / Alt+V — attach a bitmap from the OS clipboard (screenshot / browser copy).
     /// Text paste stays on bracketed `Event::Paste` so hosts that intercept
     /// Ctrl+V do not double-insert.
     PasteClipboard,
@@ -454,6 +454,9 @@ impl Keymap {
                     (true, KeyCode::Char('c')) => return Some(Action::Quit),
                     (true, KeyCode::Char('q')) => return Some(Action::ForceQuit),
                     (true, KeyCode::Char('v')) => return Some(Action::PasteClipboard),
+                    // Terminals that bind Ctrl+V to their own paste never forward
+                    // it when the clipboard holds only an image.
+                    (false, KeyCode::Char('v')) if alt => return Some(Action::PasteClipboard),
                     (false, KeyCode::Esc) => return Some(Action::EscapeMode),
                     (true, KeyCode::Char('b')) => return Some(Action::ToggleSidebar),
                     (true, KeyCode::Char('g')) => return Some(Action::ToggleTasksPane),
@@ -699,7 +702,7 @@ fn normal_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("Ctrl+←/→", "Move by word (prompt)", KeymapContext::Normal),
         KeyBinding::new("y", "Copy selected message", KeymapContext::Normal),
         KeyBinding::new(
-            "Ctrl+V",
+            "Ctrl+V / Alt+V",
             "Paste image from clipboard (prompt)",
             KeymapContext::Normal,
         ),

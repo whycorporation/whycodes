@@ -21,6 +21,12 @@ pub fn handle_event(app: &mut TuiApp, event: Event) -> bool {
     match event {
         Event::Key(key) => handle_key(app, key),
         Event::Mouse(mouse) => handle_mouse(app, mouse),
+        // An empty bracketed paste is what some hosts send for Ctrl+V when
+        // the clipboard holds only an image: read the bitmap instead.
+        Event::Paste(data) if data.is_empty() => {
+            paste_os_clipboard(app);
+            true
+        }
         Event::Paste(data) => {
             handle_paste(app, &data);
             true
@@ -35,7 +41,7 @@ pub fn handle_event(app: &mut TuiApp, event: Event) -> bool {
     }
 }
 
-/// Ctrl+V: OS clipboard bitmap (screenshot / browser copy). Text stays on
+/// Ctrl+V / Alt+V: OS clipboard bitmap (screenshot / browser copy). Text stays on
 /// bracketed `Event::Paste` so hosts that intercept Ctrl+V do not double-insert.
 fn paste_os_clipboard(app: &mut TuiApp) {
     if app.mode != AppMode::Normal && app.mode != AppMode::Session {
