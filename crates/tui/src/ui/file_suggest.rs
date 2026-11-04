@@ -342,13 +342,14 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
     // stays legible instead of flickering closed mid-scan.
     let rows = (total.max(1) as u16).min(MAX_ROWS);
     let height = rows + 2; // hairline + items + hairline
-    if prompt_area.y < height || prompt_area.width < 8 {
+    let box_top = crate::ui::prompt::box_top(prompt_area);
+    if box_top < height || prompt_area.width < 8 {
         app.file_suggest.list_hit = None;
         return;
     }
     let area = Rect {
         x: prompt_area.x,
-        y: prompt_area.y.saturating_sub(height),
+        y: box_top - height,
         width: prompt_area.width,
         height,
     };
