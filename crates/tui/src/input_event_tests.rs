@@ -6751,3 +6751,136 @@ fn tree_picker_moves_and_confirms_by_key_and_mouse() {
     assert_eq!(a.tree_selected, 0);
     assert!(a.pending_tree_target.is_none());
 }
+
+/// The paste from the field report: two lines, Turkish text, ~200 chars.
+const SPLIT_PASTE: &str = "./autoclawpi.exe serve --port 19654 --web-password autoclaw\nError: Normal olarak her yuva adresi (iletişim kuralı/ağ adresi/bağlantı noktası) için yalnızca bir kullanıma izin veriliyor. (os error 10048)";
+
+fn type_chars(a: &mut TuiApp, text: &str) {
+    for c in text.chars() {
+        let ev = if c == '\n' {
+            key(KeyCode::Enter)
+        } else {
+            key(KeyCode::Char(c))
+        };
+        assert!(handle_event(a, ev));
+    }
+}
+
+#[test]
+fn split_paste_chip_then_typed_tail_becomes_one_chip() {
+    // The Windows console cut the flood in two batches: the first folded
+    // into a chip, the short tail arrived as plain keys and was typed.
+    let mut a = app();
+    a.paste_enter_guard = true;
+    let (head, tail) = SPLIT_PASTE.split_at(SPLIT_PASTE.find("(os error").unwrap());
+    a.input_batch_seq = 1;
+    assert!(handle_event(&mut a, Event::Paste(head.to_string())));
+    a.input_batch_seq = 2;
+    type_chars(&mut a, tail);
+    assert_eq!(crate::paste::find_placeholders(&a.input_buffer).len(), 1);
+    assert!(a.input_buffer.starts_with("[pasted #") && a.input_buffer.ends_with(" ~ 2 lines]"));
+    assert_eq!(a.input_cursor, a.input_buffer.len());
+    assert_eq!(a.expand_input(), SPLIT_PASTE);
+    assert_eq!(a.pending_pastes.len(), 1, "the head's block is dropped");
+}
+
+#[test]
+fn split_paste_typed_head_then_chip_becomes_one_chip() {
+    let mut a = app();
+    a.paste_enter_guard = true;
+    let (head, tail) = SPLIT_PASTE.split_at(20);
+    a.input_batch_seq = 1;
+    type_chars(&mut a, head);
+    a.input_batch_seq = 2;
+    assert!(handle_event(&mut a, Event::Paste(tail.to_string())));
+    assert_eq!(crate::paste::find_placeholders(&a.input_buffer).len(), 1);
+    assert!(
+        a.input_buffer.starts_with("[pasted #"),
+        "{}",
+        a.input_buffer
+    );
+    assert_eq!(a.expand_input(), SPLIT_PASTE);
+}
+
+#[test]
+fn split_paste_in_many_batches_keeps_text_around_it() {
+    // Draft text before the paste stays outside the chip; every later part
+    // of the flood (keys, a guarded newline, folded parts) joins it.
+    let mut a = app();
+    a.paste_enter_guard = true;
+    a.input_batch_seq = 1;
+    type_chars(&mut a, "bak: ");
+    a.last_prompt_insert_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+    let (first, rest) = SPLIT_PASTE.split_at(SPLIT_PASTE.find('\n').unwrap());
+    let (middle, last) = rest.split_at(rest.find("(os").unwrap());
+    a.input_batch_seq = 2;
+    assert!(handle_event(&mut a, Event::Paste(first.to_string())));
+    a.input_batch_seq = 3;
+    type_chars(&mut a, &middle[..10]);
+    a.input_batch_seq = 4;
+    assert!(handle_event(&mut a, Event::Paste(middle[10..].to_string())));
+    a.input_batch_seq = 5;
+    type_chars(&mut a, last);
+    assert!(
+        a.input_buffer.starts_with("bak: [pasted #"),
+        "{}",
+        a.input_buffer
+    );
+    assert_eq!(crate::paste::find_placeholders(&a.input_buffer).len(), 1);
+    assert_eq!(a.expand_input(), format!("bak: {SPLIT_PASTE}"));
+}
+
+#[test]
+fn typing_after_a_paste_is_not_pulled_into_its_chip() {
+    // A human pause (outside the flood window) ends the run.
+    let mut a = app();
+    a.paste_enter_guard = true;
+    a.input_batch_seq = 1;
+    assert!(handle_event(&mut a, Event::Paste(SPLIT_PASTE.to_string())));
+    let chip = a.input_buffer.clone();
+    a.last_prompt_insert_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+    a.input_batch_seq = 2;
+    type_chars(&mut a, " ok");
+    assert_eq!(a.input_buffer, format!("{chip} ok"));
+
+    // Without the live Windows guard nothing is merged either.
+    let mut b = app();
+    b.input_batch_seq = 1;
+    assert!(handle_event(&mut b, Event::Paste(SPLIT_PASTE.to_string())));
+    let chip = b.input_buffer.clone();
+    b.input_batch_seq = 2;
+    type_chars(&mut b, "x");
+    assert_eq!(b.input_buffer, format!("{chip}x"));
+}
+
+#[test]
+fn a_short_flood_with_a_folded_part_stays_plain_text() {
+    // Tab-as-`i` folds a short batch; under the chip size nothing collapses.
+    let mut a = app();
+    a.paste_enter_guard = true;
+    a.input_batch_seq = 1;
+    assert!(handle_event(&mut a, Event::Paste("kisa".into())));
+    a.input_batch_seq = 2;
+    type_chars(&mut a, " metin");
+    assert_eq!(a.input_buffer, "kisa metin");
+    assert!(a.pending_pastes.is_empty());
+}
+
+#[test]
+fn a_paste_run_whose_span_went_stale_is_dropped() {
+    let mut a = app();
+    a.paste_enter_guard = true;
+    a.input_buffer = "x".into();
+    a.input_cursor = 1;
+    a.input_batch_seq = 1;
+    a.last_prompt_insert_batch = 1;
+    // A run that no longer fits the buffer (start past its end).
+    a.paste_run = Some(crate::input::PasteRun {
+        start: 5,
+        end: 1,
+        folded: true,
+    });
+    type_chars(&mut a, "y");
+    assert_eq!(a.input_buffer, "xy");
+    assert_eq!(a.paste_run, None);
+}

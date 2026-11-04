@@ -1468,6 +1468,9 @@ pub struct TuiApp {
     /// as keys — often one per poll — so a mid-paste Enter used to submit
     /// half the clipboard and start a turn.
     pub(crate) paste_enter_guard: bool,
+    /// Prompt span written by the unbracketed paste flood in flight, so a
+    /// paste that arrives over several batches ends up as one chip.
+    pub(crate) paste_run: Option<crate::input::PasteRun>,
     /// Partial CSI mouse report leaked as key chars (`<65;NaN;NaNM`).
     /// Windows ConPTY sometimes fails to parse SGR mouse after a turn error
     /// and types the sequence into the prompt instead of `Event::Mouse`.
@@ -2374,6 +2377,7 @@ impl TuiApp {
             input_batch_seq: 0,
             last_prompt_insert_batch: 0,
             paste_enter_guard: false,
+            paste_run: None,
             leaked_mouse_csi: String::new(),
             last_mouse_csi_at: None,
             pending_images: vec![],

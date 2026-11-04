@@ -165,7 +165,9 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
     }
     // Large pastes collapse to `[pasted #N ~ L lines]` so the
     // prompt does not reflow/flicker; full body is restored on submit.
+    let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
     app.insert_paste_text(&text);
+    track_paste_run(app, pos, true);
     app.last_prompt_insert_at = Some(Instant::now());
     app.last_prompt_insert_batch = app.input_batch_seq;
     app.slash_suggest.refresh(&app.input_buffer);
@@ -391,6 +393,73 @@ fn log_paste_key_dropped(app: &TuiApp, key: &KeyEvent) {
     );
 }
 
+/// The prompt span one unbracketed paste flood has written so far.
+///
+/// The Windows console delivers a paste as keys, and the batch reader cuts
+/// that flood wherever the host pauses (or at its time cap). Each part was
+/// folded on its own, so a long paste came out as a chip followed by plain
+/// text, or plain text followed by a chip. Every insert that continues the
+/// flood extends this run; once any part of it was a paste, the whole run is
+/// re-collapsed into one chip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PasteRun {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    /// Some part of the run arrived as a folded paste, not as typed keys.
+    pub(crate) folded: bool,
+}
+
+/// Record a prompt insert that wrote `pos..cursor`. Call it after the insert
+/// and before `last_prompt_insert_*` move, so the flood checks see the
+/// previous insert.
+fn track_paste_run(app: &mut TuiApp, pos: usize, folded: bool) {
+    let continues = app.paste_enter_guard
+        && app.paste_run.is_some_and(|run| run.end == pos)
+        && (app.last_prompt_insert_batch == app.input_batch_seq || in_paste_flood(app));
+    let run = match app.paste_run {
+        Some(run) if continues => PasteRun {
+            start: run.start,
+            end: app.input_cursor,
+            folded: run.folded || folded,
+        },
+        _ => PasteRun {
+            start: pos,
+            end: app.input_cursor,
+            folded,
+        },
+    };
+    app.paste_run = Some(run);
+    if run.folded {
+        collapse_paste_run(app, run);
+    }
+}
+
+/// Replace the run with a single chip once its full text is chip-sized.
+fn collapse_paste_run(app: &mut TuiApp, run: PasteRun) {
+    let Some(span) = app.input_buffer.get(run.start..run.end) else {
+        app.paste_run = None;
+        return;
+    };
+    let single_chip = crate::paste::find_placeholders(span)
+        .first()
+        .is_some_and(|p| p.start == 0 && p.end == span.len());
+    if single_chip {
+        return;
+    }
+    let text = crate::paste::expand(span, &app.pending_pastes);
+    if !crate::paste::should_collapse(&text) {
+        return;
+    }
+    app.input_buffer.replace_range(run.start..run.end, "");
+    app.input_cursor = run.start;
+    app.insert_paste_text(&text);
+    app.paste_run = Some(PasteRun {
+        start: run.start,
+        end: app.input_cursor,
+        folded: true,
+    });
+}
+
 /// True while a one-key-per-poll unbracketed paste flood is in flight:
 /// the last prompt insert came from an *earlier* live batch and landed
 /// within [`WINDOWS_PASTE_I_WINDOW`]. Armed only for the live Windows
@@ -416,6 +485,7 @@ fn insert_paste_newline(app: &mut TuiApp) {
     let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
     app.input_buffer.insert(pos, '\n');
     app.input_cursor = pos + 1;
+    track_paste_run(app, pos, false);
     // The newline terminates a `/command` or `@token` draft — close any
     // popup so the rest of the flood does not complete/accept into it.
     app.slash_suggest.refresh(&app.input_buffer);
@@ -452,6 +522,7 @@ fn recover_windows_paste_i(app: &mut TuiApp, key: &KeyEvent) -> bool {
     let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
     app.input_buffer.insert(pos, 'i');
     app.input_cursor = pos + 1;
+    track_paste_run(app, pos, false);
     app.last_prompt_insert_at = Some(Instant::now());
     app.last_prompt_insert_batch = app.input_batch_seq;
     app.slash_suggest.refresh(&app.input_buffer);
@@ -954,6 +1025,7 @@ fn dispatch_resolved_action(app: &mut TuiApp, action: Option<Action>, key: &KeyE
                         let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
                         app.input_buffer.insert(pos, c);
                         app.input_cursor = pos + c.len_utf8();
+                        track_paste_run(app, pos, false);
                         app.last_prompt_insert_at = Some(Instant::now());
                         app.last_prompt_insert_batch = app.input_batch_seq;
                         app.slash_suggest.refresh(&app.input_buffer);

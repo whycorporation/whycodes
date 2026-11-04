@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-11-04 — Long Windows paste came out as a chip plus plain text
+
+**Symptom:** Pasting a two-line error (~200 chars, Turkish text) into the
+prompt on Windows collapsed only the first part into `[pasted #N ~ L
+lines]`; the rest was typed out as normal text after the chip.
+
+**Root cause:** The console delivers an unbracketed paste as keys, and
+`read_event_batch` ends a batch at a 12 ms gap or the 400 ms linger cap.
+`coalesce_unbracketed_paste` folds each batch on its own, so the first
+batch became a chip and the short tail was below the chip size and typed.
+The reverse split (typed head, chip tail) happened too.
+
+**Fix:** `input::PasteRun` tracks the prompt span one flood has written.
+Every insert that continues it (same batch, or `in_paste_flood`, at the
+run's end) extends the run; once any part of it was a folded paste and
+the expanded text is chip-sized, the whole run is replaced with one chip.
+Live Windows console only (`paste_enter_guard`); a human pause ends the
+run, and text typed before the paste stays outside the chip.
+
+**Prevention:** A paste can arrive in any number of batches; never decide
+its shape from one batch. Tests: `split_paste_*`,
+`typing_after_a_paste_is_not_pulled_into_its_chip`.
+
 ### 2026-10-17 — Tests shelled out to the real gh
 
 **Symptom:** `cargo test -p whycodes-cli --bin whycodes` on a developer machine printed real GitHub CLI output (`aborted: you must first push the current branch to a remote…`, a list of real issues). The tests were running `gh pr create --fill`, `gh pr list/view`, `gh issue list/view` against the developer's account and the checkout's repository; a pushed branch would have got a real pull request.
