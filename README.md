@@ -9,6 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://discord.gg/H2KsKYEdT8"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Join the WhyCodes Discord"></a>
   <a href="https://ratatui.rs/"><img src="https://ratatui.rs/built-with-ratatui/badge.svg" alt="Built With Ratatui"></a>
+  <a href="https://github.com/ratatui/awesome-ratatui"><img src="https://awesome.re/mentioned-badge.svg" alt="Mentioned in Awesome Ratatui"></a>
 </p>
 
 <p align="center">
