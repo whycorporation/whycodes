@@ -120,6 +120,27 @@ fn ctrl_v_attaches_stubbed_clipboard_image() {
 }
 
 #[test]
+fn alt_v_and_empty_paste_attach_the_clipboard_image() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shot.png");
+    std::fs::write(&path, b"\x89PNG\r\n\x1a\nhello").unwrap();
+    let alt_v = Event::Key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT));
+    for event in [alt_v, Event::Paste(String::new())] {
+        crate::clipboard_image::with_stub(
+            Ok(crate::clipboard_image::PromptClipboard::ImagePaths(vec![
+                path.clone(),
+            ])),
+            || {
+                let mut a = app();
+                assert!(handle_event(&mut a, event.clone()));
+                assert_eq!(a.pending_images.len(), 1, "{event:?}");
+                assert!(a.input_buffer.is_empty(), "{event:?}");
+            },
+        );
+    }
+}
+
+#[test]
 fn ctrl_v_empty_clipboard_is_silent() {
     crate::clipboard_image::with_stub(Ok(crate::clipboard_image::PromptClipboard::Empty), || {
         let mut a = app();
