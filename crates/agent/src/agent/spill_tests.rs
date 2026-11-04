@@ -9,6 +9,7 @@ fn store_writes_once_and_points_at_the_project_relative_file() {
         .path()
         .join(".whycodes/scratch/artifacts/toolu_01AB_cd_ef.txt");
     assert_eq!(std::fs::read_to_string(&path).unwrap().len(), 5_000);
+    assert!(dir.path().join(".whycodes/scratch/.gitignore").is_file());
 
     // A second body under the same id does not overwrite the first.
     assert!(store_artifact(dir.path(), "toolu_01AB/cd.ef", "later").is_some());
