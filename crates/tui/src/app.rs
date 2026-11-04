@@ -3809,6 +3809,7 @@ impl TuiApp {
     pub fn load_messages_from_session(&mut self, session: &whycodes_session::session::Session) {
         self.chat_extent = None;
         self.messages = chat_messages_from_session(session);
+        self.seed_input_history_from_messages();
         self.session_title = session.title.clone();
         self.session_id = session.id.clone();
         self.replace_todos(whycodes_core::todo::load_todos(
@@ -4155,6 +4156,29 @@ impl TuiApp {
         self.input_history.push(text);
         let excess = self.input_history.len().saturating_sub(INPUT_HISTORY_MAX);
         self.input_history.drain(..excess);
+    }
+
+    /// Put the loaded transcript's prompts under ↑ so a resumed session
+    /// recalls them; prompts typed earlier in this process stay newer.
+    fn seed_input_history_from_messages(&mut self) {
+        let mut seeded: Vec<String> = self
+            .messages
+            .iter()
+            .filter(|m| m.role == ChatRole::User)
+            .filter(|m| {
+                !m.blocks
+                    .iter()
+                    .any(|b| matches!(b, ChatBlock::ToolResult { .. }))
+            })
+            .map(|m| m.content.trim())
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect();
+        seeded.append(&mut self.input_history);
+        let excess = seeded.len().saturating_sub(INPUT_HISTORY_MAX);
+        seeded.drain(..excess);
+        self.input_history = seeded;
+        self.input_history_idx = self.input_history.len();
     }
 
     /// Add a tool result to the most recent tool-call.
