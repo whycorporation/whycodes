@@ -3327,6 +3327,20 @@ Follow-up 2026-09-13: `RUNNER_TEMP` + `rm -rf` also threw away instrumented rlib
 
 **Prevention:** In `whycodes-tools`, a test that resolves any program through `PATH` (`rustfmt`, `git`, `sh`, …) either holds `ENV_LOCK` or uses an absolute path. Repro: run the tools test binary with `PATH=/nonexistent`.
 
+## `/undo` wiped uncommitted work and kept files the turn created
+
+**Date:** 2026-11-04 · **Area:** `crates/session` `history.rs` / `worktree_snapshot.rs` (#398)
+
+**Symptom:** After `/undo`, edits the user had made *before* the turn were gone. Separately, files a turn created stayed after `/undo`, and `/redo` could not bring back a file `/undo` had removed. `/undo` always said "Undid last turn".
+
+**JSONL / crash:** none.
+
+**Root cause:** The pre-turn snapshot was `git stash create`. It returns nothing both for a clean tree and when it *fails* (an editor holding `.git/index.lock`, a repo with no commit yet). Undo read "nothing" as "clean" and ran `git checkout -- .`, which reset files to the index. Its result was dropped with `let _ =`. `stash create` also never sees untracked files, and `mark_new_files` (meant to delete created files) had no production caller.
+
+**Fix:** A snapshot now writes the staging area and the whole working tree (untracked included, ignored skipped) as git trees through throwaway copies of the index: `git add -A` + `write-tree`, with `core.autocrlf` off and `--attr-source` at the empty tree so bytes round-trip exactly. HEAD, refs, `refs/stash` and the real index are never written. Untracked files over 20 MiB stay out: the scratch index starts from the real one, so git would re-hash them before every turn. Undo/redo snapshot the current files first (that is the redo point), then write back only the paths that differ, delete the ones the target lacks, and restore the staging area. They refuse, with a note shown in the TUI and REPL, when HEAD moved, a merge/rebase/cherry-pick/revert is in progress, or either snapshot failed.
+
+**Prevention:** Never treat a failed snapshot like an empty one. Before code overwrites files, it must hold a snapshot of what it overwrites. Each git spawn costs ~50 ms from Rust on Windows (~130 ms from Git Bash): the two trees are written side by side, and HEAD comes from the same `rev-parse` as the git paths. Tests: `undo_restores_the_whole_tree_and_redo_brings_the_turn_back`, `a_held_index_lock_does_not_stop_the_snapshot`, `line_endings_come_back_byte_for_byte`, `undo_refuses_after_head_moved`.
+
 ## Local `cargo llvm-cov report` mixed in stale test binaries
 
 **Date:** 2026-10-14 · **Area:** coverage tooling (local only)
