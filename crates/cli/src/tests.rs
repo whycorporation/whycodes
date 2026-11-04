@@ -3226,6 +3226,7 @@ async fn cmd_run_plain_repl_slash_commands() {
         "/diff",
         "/cost",
         "/usage",
+        "/stats",
         "/slop",
         "/context",
         "/doctor",

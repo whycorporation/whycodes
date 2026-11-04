@@ -460,6 +460,7 @@ pub(crate) fn print_slash_help() {
     println!("  /security-review       — Security-focused review");
     println!("  /commit                — Draft a git commit");
     println!("  /cost, /usage          — Session token usage");
+    println!("  /stats                 — Requests by model, tool calls, subagents, todos");
     println!("  /slop                  — ΔLOC / verbosity / erosion vs git base");
     println!("  /doctor                — Environment diagnostics");
     println!("  /remember <text>       — Save a durable project memory");

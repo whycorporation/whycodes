@@ -112,6 +112,7 @@ impl Agent {
     ) {
         session.add_usage(usage);
         session.cost.add(self.step_cost(provider, model, usage));
+        session.run_stats.record_request(provider, model, usage);
     }
 }
 

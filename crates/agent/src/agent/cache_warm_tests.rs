@@ -153,4 +153,8 @@ fn recorded_keep_alive_adds_usage_and_cost() {
     };
     a.record_cache_warm(&mut session, "script", "unpriced-model", &usage);
     assert_eq!(session.cost.unpriced_steps, 1);
+    assert_eq!(
+        session.run_stats.models["script/unpriced-model"].requests,
+        1
+    );
 }
