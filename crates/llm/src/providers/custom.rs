@@ -57,14 +57,10 @@ impl CustomProvider {
                 .unwrap_or("https://api.openai.com/v1"),
         );
 
-        let mut headers = config.headers.clone().unwrap_or_default();
-        // Add auth header if not already present
-        if !headers.contains_key("Authorization")
-            && let Some(key) = &config.api_key
-            && !key.is_empty()
-        {
-            headers.insert("Authorization".to_string(), format!("Bearer {key}"));
-        }
+        // A configured `Authorization` header wins; otherwise `build_request`
+        // adds the key resolved for this call (env var, named credential or
+        // config `api_key`).
+        let headers = config.headers.clone().unwrap_or_default();
 
         Self {
             name: config.name.clone(),
@@ -90,7 +86,7 @@ impl CustomProvider {
         crate::openai_compat::convert_messages_with_format(request, self.tool_arguments)
     }
 
-    fn build_request(&self, body: &Value) -> reqwest::RequestBuilder {
+    fn build_request(&self, body: &Value, api_key: &str) -> reqwest::RequestBuilder {
         // Identity first; config `headers` may override (e.g. custom User-Agent).
         let mut req = crate::client_identity::post(&self.base_url).json(body);
 
@@ -98,12 +94,15 @@ impl CustomProvider {
             req = req.header(key, value);
         }
 
-        // Fallback auth if no Authorization header set
-        if !self.headers.contains_key("Authorization")
-            && let Some(key) = &self.api_key
-            && !key.is_empty()
-        {
-            req = req.header("Authorization", format!("Bearer {key}"));
+        // No configured Authorization header: prefer the key the caller
+        // resolved (e.g. `<PROVIDER>_API_KEY`), then the config key.
+        if !self.headers.contains_key("Authorization") {
+            let key = Some(api_key.trim())
+                .filter(|k| !k.is_empty())
+                .or(self.api_key.as_deref().filter(|k| !k.is_empty()));
+            if let Some(key) = key {
+                req = req.header("Authorization", format!("Bearer {key}"));
+            }
         }
 
         req
@@ -136,7 +135,7 @@ impl LlmProvider for CustomProvider {
     fn complete<'a>(
         &'a self,
         request: &'a LlmRequest,
-        _api_key: &'a str,
+        api_key: &'a str,
         model: &'a str,
     ) -> ProviderResponseFuture<'a> {
         Box::pin(async move {
@@ -144,7 +143,7 @@ impl LlmProvider for CustomProvider {
             body["stream"] = Value::Bool(false);
 
             let resp = self
-                .build_request(&body)
+                .build_request(&body, api_key)
                 .send()
                 .await
                 .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
@@ -180,14 +179,14 @@ impl LlmProvider for CustomProvider {
     fn stream<'a>(
         &'a self,
         request: &'a LlmRequest,
-        _api_key: &'a str,
+        api_key: &'a str,
         model: &'a str,
     ) -> ProviderStreamFuture<'a> {
         Box::pin(async move {
             let mut body = self.build_body(request, model);
             crate::openai_compat::attach_stream_usage_option(&mut body);
             let resp = self
-                .build_request(&body)
+                .build_request(&body, api_key)
                 .send()
                 .await
                 .map_err(|e| whycodes_core::Error::llm(format!("HTTP: {e}")))?;
