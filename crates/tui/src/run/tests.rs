@@ -2487,6 +2487,13 @@ async fn handle_slash_covers_local_commands() {
     h.run("/diff").await;
     h.run("/context").await;
     h.run("/cost").await;
+    h.run("/stats").await;
+    assert!(
+        h.app
+            .messages
+            .last()
+            .is_some_and(|m| m.content.starts_with("Session stats"))
+    );
     h.run("/slop").await;
     h.run("/init").await;
     assert!(h.app.pending_prompt().is_some());

@@ -764,7 +764,7 @@ fn claim_job_log(next_id: &AtomicU64, working_dir: &Path) -> (String, Option<Scr
     let dir = whycodes_core::project_scratch_dir(working_dir);
     loop {
         let id = format!("bg-{}", next_id.fetch_add(1, Ordering::SeqCst));
-        let opened = std::fs::create_dir_all(&dir).and_then(|()| {
+        let opened = whycodes_core::create_scratch_dir(working_dir).and_then(|_| {
             std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)

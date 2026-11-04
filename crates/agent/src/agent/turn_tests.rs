@@ -358,6 +358,12 @@ async fn file_tool_results_feed_the_session_edit_stats() {
     assert_eq!(session.edit_stats.added, 4, "{:?}", session.edit_stats);
     assert_eq!(session.edit_stats.removed, 1, "{:?}", session.edit_stats);
     assert!(session.edit_stats.approximate);
+    // `/stats`: two model requests, three tool calls, the missing-file edit failed.
+    let run = &session.run_stats;
+    assert_eq!(run.models["script/gpt-5"].requests, 2, "{run:?}");
+    assert_eq!(run.tools["write"].calls, 1, "{run:?}");
+    assert_eq!(run.tools["edit"].calls, 2, "{run:?}");
+    assert_eq!(run.tools["edit"].errors, 1, "{run:?}");
 }
 
 #[tokio::test]

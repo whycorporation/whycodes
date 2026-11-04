@@ -56,6 +56,7 @@ fn scratch_env_names_and_creates_the_absolute_scratch_dir() {
         vec![(SCRATCH_ENV.to_string(), want.clone().into_os_string())]
     );
     assert!(want.is_dir(), "{}", want.display());
+    assert_eq!(names(&want), vec![".gitignore"]);
     // Second sighting: already pruned this process, no new thread.
     assert_eq!(scratch_env(dir.path()), env);
 }
@@ -223,4 +224,14 @@ fn prune_once_recovers_from_a_poisoned_lock() {
             .unwrap_or_else(|e| e.into_inner())
             .contains(dir.path())
     );
+}
+
+#[test]
+fn prune_keeps_the_scratch_gitignore() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = SystemTime::now();
+    write_aged(&dir.path().join(".gitignore"), 10, now - 30 * DAY);
+    write_aged(&dir.path().join("old.log"), 10, now - 30 * DAY);
+    assert_eq!(prune_scratch_dir(dir.path(), now, SCRATCH_MAX_AGE, 0), 1);
+    assert_eq!(names(dir.path()), vec![".gitignore"]);
 }

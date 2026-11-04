@@ -95,14 +95,15 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
     let rows = (total as u16).min(MAX_ROWS);
     // hairline + items + hairline
     let height = rows + 2;
-    if prompt_area.y < height || prompt_area.width < 8 {
+    let box_top = crate::ui::prompt::box_top(prompt_area);
+    if box_top < height || prompt_area.width < 8 {
         app.slash_suggest.list_hit = None;
         return;
     }
-    // Sit just above the prompt, full prompt width (anchored to prompt).
+    // Sit right on the box (`╭─╮`), full prompt width.
     let area = Rect {
         x: prompt_area.x,
-        y: prompt_area.y.saturating_sub(height),
+        y: box_top - height,
         width: prompt_area.width,
         height,
     };

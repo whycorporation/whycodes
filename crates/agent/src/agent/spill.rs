@@ -20,7 +20,9 @@ pub(crate) fn artifact_store(project: PathBuf) -> impl FnMut(&str, &str) -> Opti
 pub(crate) fn store_artifact(project: &Path, id: &str, body: &str) -> Option<String> {
     let name = format!("{}.txt", safe_file_stem(id));
     let dir = whycodes_core::project_scratch_dir(project).join(ARTIFACT_DIR);
-    if let Err(err) = std::fs::create_dir_all(&dir) {
+    if let Err(err) =
+        whycodes_core::create_scratch_dir(project).and_then(|_| std::fs::create_dir_all(&dir))
+    {
         tracing::debug!(error = %err, "tool artifact dir not created; body stays in the transcript");
         return None;
     }

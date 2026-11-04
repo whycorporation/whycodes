@@ -895,6 +895,9 @@ impl Agent {
 
             // The stream finished: this step counts.
             turn_count += 1;
+            session
+                .run_stats
+                .record_request(provider_name, model, &turn_usage);
 
             let mut blocks: Vec<ContentBlock> = thinking_acc.into_blocks();
 
@@ -1110,6 +1113,7 @@ impl Agent {
             }
 
             session.record_edit_results(&tool_calls, &results);
+            session.run_stats.record_tools(&tool_calls, &results);
             session.add_tool_results(results);
             let goal = checkpoint_goal.unwrap_or_default();
             if !goal.is_empty() {

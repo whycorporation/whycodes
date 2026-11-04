@@ -34,8 +34,8 @@ static PRUNED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
 pub(crate) fn scratch_env(working_dir: &Path) -> Vec<(String, OsString)> {
     let dir = whycodes_core::project_scratch_dir(&absolute(working_dir));
     if working_dir.is_dir() {
-        match std::fs::create_dir_all(&dir) {
-            Ok(()) => prune_once(&dir),
+        match whycodes_core::create_scratch_dir(&absolute(working_dir)) {
+            Ok(_) => prune_once(&dir),
             Err(e) => not_created(&dir, &e),
         }
     }
@@ -90,6 +90,7 @@ pub(crate) fn prune_scratch_dir(
 ) -> usize {
     let mut entries: Vec<Entry> = list(dir)
         .into_iter()
+        .filter(|(path, _)| !path.ends_with(whycodes_core::SCRATCH_GITIGNORE))
         .map(|(path, meta)| measure(path, &meta))
         .collect();
     let cutoff = now.checked_sub(max_age).unwrap_or(SystemTime::UNIX_EPOCH);

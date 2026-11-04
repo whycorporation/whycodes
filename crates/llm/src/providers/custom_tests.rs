@@ -279,3 +279,85 @@ fn extra_body_reaches_openai_and_anthropic_requests() {
     assert_eq!(body["model"], "claude-opus-4-7");
     assert!(!body["system"].is_null(), "system kept");
 }
+
+/// Serve one 200 response and hand back the request's `authorization` header.
+fn serve_capturing_auth() -> (String, std::sync::mpsc::Receiver<Option<String>>) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{}}"#;
+    std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let auth = req
+                .lines()
+                .find_map(|l| l.strip_prefix("authorization: ").map(str::to_string));
+            let _ = tx.send(auth);
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(reply.as_bytes());
+        }
+    });
+    (format!("http://{addr}/v1"), rx)
+}
+
+fn keyed_config(api_key: Option<&str>, url: &str) -> whycodes_core::types::ProviderConfig {
+    whycodes_core::types::ProviderConfig {
+        name: "gw".into(),
+        api_key: api_key.map(str::to_string),
+        api_base: None,
+        base_url: Some(url.into()),
+        headers: None,
+        models: vec![],
+        tool_arguments: None,
+        extra: Default::default(),
+        credentials: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn call_time_key_beats_config_key() {
+    use crate::provider::LlmProvider;
+    let (url, rx) = serve_capturing_auth();
+    let p = CustomProvider::from_config(&keyed_config(Some("sk-config"), &url));
+    p.complete(&make_req(), "sk-env", "m").await.unwrap();
+    assert_eq!(rx.recv().unwrap().as_deref(), Some("Bearer sk-env"));
+}
+
+#[tokio::test]
+async fn empty_call_time_key_falls_back_to_config_key() {
+    use crate::provider::LlmProvider;
+    let (url, rx) = serve_capturing_auth();
+    let p = CustomProvider::from_config(&keyed_config(Some("sk-config"), &url));
+    p.complete(&make_req(), " ", "m").await.unwrap();
+    assert_eq!(rx.recv().unwrap().as_deref(), Some("Bearer sk-config"));
+}
+
+#[tokio::test]
+async fn env_key_alone_authenticates() {
+    use crate::provider::LlmProvider;
+    let (url, rx) = serve_capturing_auth();
+    let p = CustomProvider::from_config(&keyed_config(None, &url));
+    p.complete(&make_req(), "sk-env", "m").await.unwrap();
+    assert_eq!(rx.recv().unwrap().as_deref(), Some("Bearer sk-env"));
+}
+
+#[tokio::test]
+async fn configured_authorization_header_beats_call_time_key() {
+    use crate::provider::LlmProvider;
+    let (url, rx) = serve_capturing_auth();
+    let mut pc = keyed_config(Some("sk-config"), &url);
+    pc.headers = Some(HashMap::from([(
+        "Authorization".into(),
+        "Bearer from-header".into(),
+    )]));
+    let p = CustomProvider::from_config(&pc);
+    p.complete(&make_req(), "sk-env", "m").await.unwrap();
+    assert_eq!(rx.recv().unwrap().as_deref(), Some("Bearer from-header"));
+}
