@@ -926,6 +926,12 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ),
             );
         }
+        "/stats" => {
+            ctx.app.add_message(
+                ChatRole::System,
+                whycodes_session::stats_report(ctx.session, &ctx.app.todos, chrono::Utc::now()),
+            );
+        }
         "/slop" => {
             ctx.app.add_message(
                 ChatRole::System,

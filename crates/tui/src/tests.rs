@@ -1531,6 +1531,36 @@ fn load_messages_from_session_restores_user_and_assistant() {
 }
 
 #[test]
+fn load_messages_from_session_seeds_up_arrow_history() {
+    use whycodes_core::types::{ContentBlock, MessageContent};
+    use whycodes_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.add_user_message("first prompt");
+    session.add_assistant_message(vec![ContentBlock::Text { text: "ok".into() }]);
+    // Provider-style tool results ride a user-role message; not a prompt.
+    session.add_user_message("carrier");
+    if let Some(carrier) = session.messages.last_mut() {
+        carrier.content = MessageContent::Blocks(vec![ContentBlock::ToolResult {
+            tool_use_id: "t1".into(),
+            content: "output".into(),
+            is_error: None,
+        }]);
+    }
+    session.add_user_message("  second prompt  ");
+
+    let mut app = TuiApp::new(test_config());
+    app.remember_input("typed live".into());
+    app.load_messages_from_session(&session);
+
+    assert_eq!(
+        app.input_history,
+        vec!["first prompt", "second prompt", "typed live"]
+    );
+    assert_eq!(app.input_history_idx, 3);
+}
+
+#[test]
 fn load_messages_renders_compact_carrier_as_system_summary() {
     use crate::app::{ChatRole, chat_messages_from_session};
     use whycodes_session::session::Session;
