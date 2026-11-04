@@ -347,3 +347,17 @@ async fn env_key_alone_authenticates() {
     p.complete(&make_req(), "sk-env", "m").await.unwrap();
     assert_eq!(rx.recv().unwrap().as_deref(), Some("Bearer sk-env"));
 }
+
+#[tokio::test]
+async fn configured_authorization_header_beats_call_time_key() {
+    use crate::provider::LlmProvider;
+    let (url, rx) = serve_capturing_auth();
+    let mut pc = keyed_config(Some("sk-config"), &url);
+    pc.headers = Some(HashMap::from([(
+        "Authorization".into(),
+        "Bearer from-header".into(),
+    )]));
+    let p = CustomProvider::from_config(&pc);
+    p.complete(&make_req(), "sk-env", "m").await.unwrap();
+    assert_eq!(rx.recv().unwrap().as_deref(), Some("Bearer from-header"));
+}
