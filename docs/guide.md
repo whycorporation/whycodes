@@ -432,6 +432,7 @@ Both TUI and `--plain`:
 | `/agents` | Agent hub (same as `Alt+A`), also while a turn runs. TUI only |
 | `/context` | Context window breakdown |
 | `/cost` `/usage` | Session + last-turn token usage (credential **name** only, never the secret) |
+| `/stats` | This session at a glance: duration, prompts, requests by model, tool calls (failed ones counted), subagents, todos, edits. Request and tool counts cover this run; a resumed session starts them at zero. All-session totals: `whycodes stats` |
 | `/slop` | ΔLOC / verbosity / erosion vs git base (not a test score) |
 | `/sessions [words]` | Session picker (Enter to resume); with words, only sessions whose messages mention all of them |
 | `/resume [id]` | Resume by id/prefix, or open the picker |

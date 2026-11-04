@@ -632,6 +632,10 @@ pub struct Session {
     /// the database, so a resumed session may fire each `once` rule again.
     #[serde(default, skip_serializing_if = "crate::StreamRuleLedger::is_empty")]
     pub stream_rules: crate::StreamRuleLedger,
+    /// Requests by model and calls by tool for `/stats`. In memory only,
+    /// like `cost`: a resumed session counts from zero.
+    #[serde(skip)]
+    pub run_stats: crate::RunStats,
 }
 
 /// Running USD estimate. Steps whose model has no known price are counted,
@@ -756,6 +760,7 @@ impl Session {
             turn_context: None,
             instruction_dirs: Default::default(),
             stream_rules: Default::default(),
+            run_stats: Default::default(),
         }
     }
 
@@ -878,6 +883,22 @@ impl Session {
             return Some(snippet);
         }
         None
+    }
+
+    /// Prompts the user sent: user-role text, minus agent notes and
+    /// compaction summaries.
+    pub fn prompt_count(&self) -> usize {
+        self.messages
+            .iter()
+            .filter(|m| m.role == Role::User && !m.is_agent_note())
+            .filter(|m| match &m.content {
+                MessageContent::Text(t) => !t.trim().is_empty() && !is_compact_summary_text(t),
+                MessageContent::Blocks(blocks) => blocks.iter().any(|b| {
+                    matches!(b, ContentBlock::Text { text } if !text.trim().is_empty())
+                        || matches!(b, ContentBlock::Image { .. })
+                }),
+            })
+            .count()
     }
 
     /// Fold a turn''s reported usage into the session total.
@@ -1777,6 +1798,7 @@ impl Session {
             turn_context: None,
             instruction_dirs: Default::default(),
             stream_rules: Default::default(),
+            run_stats: Default::default(),
         }))
     }
 

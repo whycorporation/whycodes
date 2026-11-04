@@ -2159,6 +2159,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Session + last-turn token usage",
     },
     SlashCommand {
+        name: "/stats",
+        hint: "Requests by model, tool calls, subagents, todos",
+    },
+    SlashCommand {
         name: "/slop",
         hint: "ΔLOC / verbosity / erosion vs git base",
     },

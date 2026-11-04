@@ -1210,6 +1210,14 @@ pub(crate) async fn cmd_run(
                     );
                     continue;
                 }
+                "/stats" => {
+                    let todos = whycodes_core::todo::load_todos(&project_dir, Some(&session.id));
+                    println!(
+                        "{}",
+                        whycodes_session::stats_report(&session, &todos, chrono::Utc::now())
+                    );
+                    continue;
+                }
                 "/context" => {
                     for line in context_report_lines(
                         session.messages.len(),

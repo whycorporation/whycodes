@@ -3,6 +3,7 @@ pub mod error;
 pub mod history;
 pub mod import;
 pub mod pairing;
+pub mod run_stats;
 pub mod search;
 pub mod session;
 pub mod stream_rules;
@@ -14,6 +15,7 @@ pub use edit_stats::EditStats;
 pub use error::{Result, SessionError};
 pub use history::{Restored, SessionHistory, StashSlot};
 pub use import::{ImportKind, import_messages};
+pub use run_stats::{ModelTally, RunStats, ToolTally, stats_report};
 pub use search::{SessionSearchHit, query_terms, search_sessions};
 pub use session::{
     COMPACT_CONTINUATION_PREAMBLE, CheckpointState, CompactOutcome, Session, SessionCost,
