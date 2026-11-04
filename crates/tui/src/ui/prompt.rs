@@ -53,6 +53,12 @@ const HINT_GAP: u16 = 1;
 
 /// Blank rows between chat/turn-strip and the top of the box.
 const OUTER_TOP_GAP: u16 = 2;
+
+/// Row of the box's `╭─╮` inside `area`: completion popups sit right on it,
+/// not above the blank gap.
+pub(crate) fn box_top(area: Rect) -> u16 {
+    area.y.saturating_add(OUTER_TOP_GAP.min(area.height))
+}
 /// Top border row (`╭─╮`).
 const VPAD_TOP: u16 = 1;
 /// Bottom border / info row (`╰─ model ─╯`).

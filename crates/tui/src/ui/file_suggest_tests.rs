@@ -274,7 +274,7 @@ fn render_inactive_clears_hit_and_paints_nothing() {
 fn render_too_short_prompt_skips_the_popup() {
     let mut app = TuiApp::new(crate::config::TuiAppConfig::default());
     app.file_suggest.active = true;
-    // prompt_area.y == 1 cannot fit height 3.
+    // The box starts at y=0+2=2; a 3-row popup cannot fit above it.
     use crate::theme::ThemeName;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -287,7 +287,7 @@ fn render_too_short_prompt_skips_the_popup() {
                 frame,
                 Rect {
                     x: 0,
-                    y: 1,
+                    y: 0,
                     width: 40,
                     height: 2,
                 },

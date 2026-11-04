@@ -247,9 +247,9 @@ fn render_inactive_or_empty_clears_hit_and_hover() {
 fn render_skips_when_prompt_leaves_no_room() {
     let mut app = app_with_matches(3);
     let p = palette();
-    // height = 3 rows + 2 hairlines = 5; y=3 < 5.
+    // height = 3 rows + 2 hairlines = 5; the box starts at y=2+2=4 < 5.
     let _ = paint(40, 8, |f| {
-        render(f, Rect::new(0, 3, 40, 2), &mut app, &p);
+        render(f, Rect::new(0, 2, 40, 2), &mut app, &p);
     });
     assert!(app.slash_suggest.list_hit.is_none());
 
@@ -352,4 +352,37 @@ fn the_name_column_fits_the_longest_command() {
             .collect()
     };
     assert_eq!(row(0).find("Quit"), row(1).find("Review"));
+}
+
+#[test]
+fn the_popup_sits_on_the_prompt_box_at_its_width() {
+    let mut app = app_with_matches(4);
+    app.input_buffer = "/".into();
+    let out = paint(60, 20, |f| {
+        let area = Rect {
+            x: 4,
+            y: 10,
+            width: 50,
+            height: 7,
+        };
+        crate::ui::prompt::render(f, area, &mut app, &palette());
+        render(f, area, &mut app, &palette());
+    });
+    let rows: Vec<&str> = out.lines().collect();
+    let top = rows
+        .iter()
+        .position(|r| r.contains('╭'))
+        .expect("box top border");
+    let rule = rows[top - 1];
+    // No blank gap: the popup's closing hairline is the row right above ╭.
+    assert!(rule.trim().chars().all(|c| c == '─'), "{out}");
+    // Same columns as the box: from ╭ to ╮.
+    let span = |row: &str, first: char, last: char| {
+        let cols: Vec<char> = row.chars().collect();
+        let a = cols.iter().position(|&c| c == first).expect("start");
+        let b = cols.iter().rposition(|&c| c == last).expect("end");
+        (a, b)
+    };
+    assert_eq!(span(rule, '─', '─'), span(rows[top], '╭', '╮'), "{out}");
+    assert!(rows[top - 5].contains("/exit"), "{out}");
 }
