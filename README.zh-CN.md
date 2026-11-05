@@ -231,7 +231,7 @@ TUI 仅在有变化时绘制，空闲会话不会重绘。恢复一个 3000 条�
 <p>
   <a href="https://discord.gg/H2KsKYEdT8"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="加入 WhyCodes Discord"></a>
   <a href="https://t.me/whycodesai"><img src="https://img.shields.io/badge/Telegram-whycodesai-26A5E4?logo=telegram&logoColor=white" alt="WhyCodes Telegram"></a>
-  <a href="https://x.com/whycodesai"><img src="https://img.shields.io/badge/X-@whycodesai-black" alt="在 X 上关注 @whycodesai"></a>
+  <a href="https://x.com/whydotcodes"><img src="https://img.shields.io/badge/X-@whydotcodes-black" alt="在 X 上关注 @whydotcodes"></a>
   <a href="https://www.youtube.com/@whycodesai"><img src="https://img.shields.io/badge/YouTube-@whycodesai-FF0000?logo=youtube&logoColor=white" alt="WhyCodes YouTube"></a>
   <a href="https://olud.ai/tool/whycodes.html"><img src="https://olud.ai/badge.php?tool=whycodes" alt="olud.ai"></a>
 </p>

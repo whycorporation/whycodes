@@ -250,7 +250,7 @@ CI падает при покрытии строк рабочей области
 <p>
   <a href="https://discord.gg/H2KsKYEdT8"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord WhyCodes"></a>
   <a href="https://t.me/whycodesai"><img src="https://img.shields.io/badge/Telegram-whycodesai-26A5E4?logo=telegram&logoColor=white" alt="Telegram WhyCodes"></a>
-  <a href="https://x.com/whycodesai"><img src="https://img.shields.io/badge/X-@whycodesai-black" alt="Подписаться на @whycodesai в X"></a>
+  <a href="https://x.com/whydotcodes"><img src="https://img.shields.io/badge/X-@whydotcodes-black" alt="Подписаться на @whydotcodes в X"></a>
   <a href="https://www.youtube.com/@whycodesai"><img src="https://img.shields.io/badge/YouTube-@whycodesai-FF0000?logo=youtube&logoColor=white" alt="YouTube WhyCodes"></a>
   <a href="https://olud.ai/tool/whycodes.html"><img src="https://olud.ai/badge.php?tool=whycodes" alt="olud.ai"></a>
 </p>

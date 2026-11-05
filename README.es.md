@@ -257,7 +257,7 @@ repositorio. Al participar aceptas el
 <p>
   <a href="https://discord.gg/H2KsKYEdT8"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord de WhyCodes"></a>
   <a href="https://t.me/whycodesai"><img src="https://img.shields.io/badge/Telegram-whycodesai-26A5E4?logo=telegram&logoColor=white" alt="Telegram de WhyCodes"></a>
-  <a href="https://x.com/whycodesai"><img src="https://img.shields.io/badge/X-@whycodesai-black" alt="Seguir a @whycodesai en X"></a>
+  <a href="https://x.com/whydotcodes"><img src="https://img.shields.io/badge/X-@whydotcodes-black" alt="Seguir a @whydotcodes en X"></a>
   <a href="https://www.youtube.com/@whycodesai"><img src="https://img.shields.io/badge/YouTube-@whycodesai-FF0000?logo=youtube&logoColor=white" alt="YouTube de WhyCodes"></a>
   <a href="https://olud.ai/tool/whycodes.html"><img src="https://olud.ai/badge.php?tool=whycodes" alt="olud.ai"></a>
 </p>
