@@ -2038,6 +2038,40 @@ fn migrate_legacy_instance_without_whycodes_home() {
 }
 
 #[test]
+fn migrate_legacy_instance_skips_settled_home() {
+    let _guard = lock_env();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join(".whycodes");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("config.toml"), "# mine\n").unwrap();
+    let prev_why = std::env::var_os("WHYCODES_HOME");
+    let prev_home = std::env::var_os("HOME");
+    let prev_up = std::env::var_os("USERPROFILE");
+    unsafe {
+        std::env::remove_var("WHYCODES_HOME");
+        std::env::set_var("HOME", dir.path());
+        std::env::set_var("USERPROFILE", dir.path());
+    }
+    crate::load::migrate_legacy_instance();
+    match prev_why {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+    }
+    match prev_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+    match prev_up {
+        Some(v) => unsafe { std::env::set_var("USERPROFILE", v) },
+        None => unsafe { std::env::remove_var("USERPROFILE") },
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("config.toml")).unwrap(),
+        "# mine\n"
+    );
+}
+
+#[test]
 fn copy_if_missing_skips_and_warns() {
     let src = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(src.path(), "hi").unwrap();

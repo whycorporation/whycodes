@@ -27,7 +27,27 @@ fn main() -> std::io::Result<()> {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         windows_version_resource()?;
     }
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        delay_load_dlls();
+    }
     Ok(())
+}
+
+/// Boot/TTFF on Windows: load these system DLLs on first call instead of at
+/// process start. Eagerly loading them cost ~6 ms of a ~16 ms
+/// `whycodes --version` (an empty Rust exe starts in ~10 ms on the same
+/// host), and short subcommands never call into most of them. They ship
+/// with every supported Windows, so the delay-load helper cannot fail to
+/// find them. Only the `whycodes` binary is affected, not test targets.
+const DELAY_LOAD_DLLS: &[&str] = &[
+    "advapi32", "bcrypt", "combase", "oleaut32", "shell32", "user32", "userenv", "ws2_32",
+];
+
+fn delay_load_dlls() {
+    for dll in DELAY_LOAD_DLLS {
+        println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}.dll");
+    }
+    println!("cargo:rustc-link-arg-bins=delayimp.lib");
 }
 
 /// Embed VERSIONINFO into `whycodes.exe`. FileVersion/ProductVersion (string
