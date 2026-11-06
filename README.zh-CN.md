@@ -155,6 +155,14 @@ whycodes -P ollama -m qwen2.5-coder               # Ollama
 whycodes provider discover --save                 # 查找 LM Studio、vLLM、llama.cpp
 ```
 
+使用 [OmniRoute](https://github.com/cheaper-inference/OmniRoute)？自 v3.8.53
+起，它已将 whycodes 内置为 CLI 智能体：
+
+```bash
+omniroute setup-whycodes                          # 为 OmniRoute 配置 whycodes
+omniroute run whycodes -P omniroute -m <model>    # 通过 OmniRoute 运行
+```
+
 订阅 OAuth 登录（`whycodes auth login <provider>`）仅在安装本地
 `kind: "auth"` 插件后可用 —— WhyCodes 不附带第三方 OAuth 客户端。见
 [docs/auth.md](docs/auth.md)。
