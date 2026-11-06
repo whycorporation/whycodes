@@ -174,6 +174,14 @@ whycodes -P ollama -m qwen2.5-coder               # Ollama
 whycodes provider discover --save                 # encuentra LM Studio, vLLM, llama.cpp
 ```
 
+¿Usas [OmniRoute](https://github.com/cheaper-inference/OmniRoute)? Desde
+la v3.8.53 incluye whycodes como agente CLI integrado:
+
+```bash
+omniroute setup-whycodes                          # configura whycodes para OmniRoute
+omniroute run whycodes -P omniroute -m <model>    # ejecuta a través de OmniRoute
+```
+
 El inicio de sesión OAuth de suscripción (`whycodes auth login <provider>`)
 solo está disponible tras instalar un plugin local `kind: "auth"` —
 WhyCodes no incluye clientes OAuth de terceros. Véase
