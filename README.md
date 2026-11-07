@@ -194,18 +194,19 @@ configuration — is in **[docs/guide.md](docs/guide.md)**.
 
 ## Performance
 
-Measured on one machine (Ryzen 7 3800X): Windows 11 natively on
-2026-11-07, Linux under WSL2 on 2026-10-16. Method, older runs and caveats
-in [docs/benchmarks.md](docs/benchmarks.md):
+Measured on a Ryzen 7 3800X (Windows 11 natively on 2026-11-07, Linux
+under WSL2 on 2026-10-16) and an Apple M2 MacBook Air (macOS 26.5,
+2026-11-07). Method, older runs and caveats in
+[docs/benchmarks.md](docs/benchmarks.md):
 
-| Metric | Windows | Linux (WSL2) |
-|---|---|---|
-| `--version` | **10.5 ms** | **1.4 ms** |
-| First frame (harness, in-proc) | **0.35 ms** | **0.08 ms** |
-| Idle redraws (3 s) | **0.0 /s** | **0.0 /s** |
-| 1 idle session PSS | — (`/proc` only) | **13.6 MB** |
-| 10 idle sessions PSS | — | **41.9 MB** (~3.1 MB each extra) |
-| Resumed 3000-message session PSS | — | **34.7 MB** |
+| Metric | Windows | Linux (WSL2) | macOS (M2) |
+|---|---|---|---|
+| `--version` | **10.5 ms** | **1.4 ms** | **4.0 ms** |
+| First frame (harness, in-proc) | **0.35 ms** | **0.08 ms** | **0.04 ms** |
+| Idle redraws (3 s) | **0.0 /s** | **0.0 /s** | **0.0 /s** |
+| 1 idle session PSS | — (`/proc` only) | **13.6 MB** | — (`/proc` only) |
+| 10 idle sessions PSS | — | **41.9 MB** (~3.1 MB each extra) | — |
+| Resumed 3000-message session PSS | — | **34.7 MB** | — |
 
 The TUI paints only when something changed, so an idle session draws
 nothing. A resumed 3000-message transcript holds 34.7 MB, down from

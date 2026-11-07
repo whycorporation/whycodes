@@ -768,6 +768,28 @@ Before and after, same boot, interleaved, 40 runs each (median):
 
 `--version` is now within 1 ms of an empty Rust executable on this host.
 
+### macOS, 2026-11-07 (Apple M2, release v0.6.35)
+
+MacBook Air, Apple M2 (8 cores, 8 GB), macOS 26.5.2. This is the released
+`aarch64-apple-darwin` binary from GitHub, not a local build. Multi-session
+PSS needs Linux `/proc` and was skipped.
+
+| Case | Median | p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **4.0 ms** | 4.8 ms | **0.8 MB** |
+| `--help` | **4.2 ms** | 4.9 ms | — |
+| `config show` | **5.4 ms** | 5.7 ms | **8.8 MB** |
+| `session list` | — | — | **7.8 MB** |
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs, pty) | **0.04 ms** in-proc | 0.0/s | spawn-to-exit **4.8 ms** |
+| Harness `--idle-ms 3000` (10 runs) | **0.18 ms** in-proc | **0.0/s** | |
+
+The Windows start-up fixes of this release target DLL loading, which macOS
+does not have. The clap fix shows here as well: on the same Mac, v0.6.33 to
+v0.6.34 took `--help` from 4.6 to 4.0 ms and `config show` from 5.4 to 5.0 ms.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
