@@ -454,7 +454,7 @@ async fn old_tool_outputs_are_spilled_to_scratch_before_the_step() {
     for i in 0..6 {
         session.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: format!("call_{i}"),
-            content: format!("log {i}\n{}", "line\n".repeat(1_000)),
+            content: format!("log {i}\n{}", "line\n".repeat(4_000)),
             is_error: false,
         }]);
     }

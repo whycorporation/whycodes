@@ -287,13 +287,15 @@ impl Agent {
             // Full-replace compact when over the configured token threshold —
             // and only while the circuit breaker has not tripped.
             let _truncated = session.truncate_large_tool_results();
-            let spilled = session.spill_old_tool_results(&mut super::spill::artifact_store(
-                session.project_path.clone(),
-            ));
-            if spilled > 0 {
-                tracing::debug!(spilled, "spilled old tool results to scratch artifacts");
+            // Old results shrink in batches: each pass rewrites the cached
+            // prefix, so one pass per step missed the cache every step.
+            if session.old_tool_results_due() {
+                let spilled = session.spill_old_tool_results(&mut super::spill::artifact_store(
+                    session.project_path.clone(),
+                ));
+                let pruned = session.prune_old_tool_results();
+                tracing::debug!(spilled, pruned, "shrank old tool results");
             }
-            let _pruned = session.prune_old_tool_results();
             let compaction_threshold = self.compaction_threshold_for(provider_name, model);
             if compaction_threshold > 0
                 && session.token_count_cached() > compaction_threshold.saturating_mul(3) / 4
