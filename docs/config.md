@@ -214,7 +214,7 @@ skipped. `whycodes rules list` shows each rule and whether it is active.
 | `max_index_bytes` | `25600` | — | Maximum bytes of `MEMORY.md` loaded into every session. |
 | `recall_top_k` | `5` | — | Maximum recalled facts injected per turn. |
 | `recall_min_score` | `0.28` | — | Minimum cosine similarity for a fact to be recalled. |
-| `recall_token_budget` | `800` | — | Token budget for recalled facts (characters ≈ tokens × 4). |
+| `recall_token_budget` | `800` | — | Token budget for one turn's recall (characters ≈ tokens × 4), shared by recalled memories, code context and past sessions in that order. `MEMORY.md` has its own cap (`max_index_bytes`). |
 | `embed_dim` | `256` | — | Hashing embedder dimension (stored vector width). |
 | `scope` | `"user"` | — | `user` keeps banks in the data dir; `project` keeps them in `.whycodes/memory` (shareable in git). |
 | `embed_backend` | `"hash"` | — | `hash` (local hashing embedder) or `onnx` (MiniLM; needs a build with `--features onnx`). |

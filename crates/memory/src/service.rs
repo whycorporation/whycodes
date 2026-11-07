@@ -480,145 +480,109 @@ impl MemoryService {
         Ok(self.inject_parts(query)?.1.join("\n\n"))
     }
 
-    /// `(MEMORY.md index block, recall blocks)`. The index still counts
-    /// against the recall budget so both callers recall the same hits.
+    /// `(MEMORY.md index block, recall blocks)`. The recall blocks share one
+    /// budget, `recall_token_budget`, in priority order: memories, code,
+    /// past sessions. The index has its own cap (`max_index_bytes`) and does
+    /// not change what is recalled, so both callers recall the same hits.
     fn inject_parts(&self, query: Option<&str>) -> Result<(Option<String>, Vec<String>)> {
         if !self.settings.enabled {
             return Ok((None, Vec::new()));
         }
-
-        let mut index_block: Option<String> = None;
-        let mut parts: Vec<String> = Vec::new();
-        let mut char_budget = self.settings.recall_char_budget()
-            + self
-                .settings
-                .max_index_bytes
-                .min(self.settings.recall_char_budget() * 2);
 
         let index = markdown::load_capped(
             &self.memory_md_path(),
             self.settings.max_index_lines,
             self.settings.max_index_bytes,
         );
-        if !index.is_empty() {
+        let index_block = (!index.is_empty()).then(|| {
             let scope = self.settings.scope.as_str();
             let bank = self.settings.agent_bank.as_deref().unwrap_or("main");
-            let block = format!(
+            format!(
                 "# Auto Memory\n\n\
                  Notes saved for this project (scope={scope}, bank={bank}). Prefer repo truth if stale.\n\n\
                  {index}"
-            );
-            char_budget = char_budget.saturating_sub(block.len());
-            index_block = Some(block);
+            )
+        });
+
+        let mut parts: Vec<String> = Vec::new();
+        let Some(q) = query
+            .map(str::trim)
+            .filter(|s| self.settings.auto_inject && !s.is_empty())
+        else {
+            return Ok((index_block, parts));
+        };
+        let mut recall = RecallBudget::new(self.settings.recall_char_budget());
+
+        let hits = self.search(
+            q,
+            self.settings.recall_top_k,
+            self.settings.recall_min_score,
+        )?;
+        let memories = hits.iter().map(|hit| {
+            format!(
+                "- [{:.2}] {} (id:{})\n",
+                hit.score,
+                hit.entry.text.trim(),
+                &hit.entry.id[..8.min(hit.entry.id.len())]
+            )
+        });
+        let kept = recall.section(
+            &mut parts,
+            "# Recalled Memories (from prior sessions; verify if stale)\n",
+            "",
+            memories,
+        );
+        let ids: Vec<String> = hits.iter().take(kept).map(|h| h.entry.id.clone()).collect();
+        if !ids.is_empty() {
+            self.bump_recall_counts(&ids);
         }
 
-        if self.settings.auto_inject
-            && let Some(q) = query.map(str::trim).filter(|s| !s.is_empty())
+        // Code RAG
+        if self.settings.code_inject
+            && let Ok(code_hits) =
+                self.search_code(q, self.settings.code_top_k, self.settings.code_min_score)
         {
-            let hits = self.search(
-                q,
-                self.settings.recall_top_k,
-                self.settings.recall_min_score,
-            )?;
-            if !hits.is_empty() {
-                let mut lines = Vec::new();
-                let mut used = 0usize;
-                let header = "# Recalled Memories (from prior sessions; verify if stale)\n";
-                used += header.len();
-                let mut ids = Vec::new();
-                for hit in &hits {
-                    let line = format!(
-                        "- [{:.2}] {} (id:{})\n",
-                        hit.score,
-                        hit.entry.text.trim(),
-                        &hit.entry.id[..8.min(hit.entry.id.len())]
-                    );
-                    if used + line.len() > char_budget && !lines.is_empty() {
-                        break;
-                    }
-                    used += line.len();
-                    lines.push(line);
-                    ids.push(hit.entry.id.clone());
-                }
-                if !lines.is_empty() {
-                    parts.push(format!("{header}{}", lines.join("")));
-                    self.bump_recall_counts(&ids);
-                }
-            }
-
-            // Code RAG
-            if self.settings.code_inject
-                && let Ok(code_hits) =
-                    self.search_code(q, self.settings.code_top_k, self.settings.code_min_score)
-                && !code_hits.is_empty()
-            {
-                let mut lines = Vec::new();
-                let mut used = 0usize;
-                let header = "# Code context (indexed; verify in repo)\n";
-                used += header.len();
-                for hit in &code_hits {
-                    let snippet = hit
-                        .entry
-                        .text
-                        .lines()
-                        .take(8)
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let line = format!(
-                        "### {} ({}-{}) [{:.2}]\n```\n{}\n```\n",
-                        hit.entry.path,
-                        hit.entry.start_line,
-                        hit.entry.end_line,
-                        hit.score,
-                        snippet
-                    );
-                    if used + line.len() > char_budget && !lines.is_empty() {
-                        break;
-                    }
-                    used += line.len();
-                    lines.push(line);
-                }
-                if !lines.is_empty() {
-                    parts.push(format!("{header}{}", lines.join("\n")));
-                }
-            }
-
-            if self.settings.session_inject
-                && let Ok(sess_hits) = self.search_sessions(
-                    q,
-                    self.settings.session_top_k,
-                    self.settings.session_min_score,
+            let code = code_hits.iter().map(|hit| {
+                format!(
+                    "### {} ({}-{}) [{:.2}]\n```\n{}\n```\n",
+                    hit.entry.path,
+                    hit.entry.start_line,
+                    hit.entry.end_line,
+                    hit.score,
+                    clipped_lines(&hit.entry.text, 8)
                 )
-                && !sess_hits.is_empty()
-            {
-                let mut lines = Vec::new();
-                let mut used = 0usize;
-                let header = "# Past sessions (related turns; verify if stale)\n";
-                used += header.len();
-                for hit in &sess_hits {
-                    let snippet = hit
-                        .entry
-                        .text
-                        .lines()
-                        .take(6)
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let sid = &hit.entry.session_id;
-                    let short = &sid[..8.min(sid.len())];
-                    let line = format!(
-                        "- [{:.2}] session {short} turn {}\n{}\n",
-                        hit.score, hit.entry.turn_index, snippet
-                    );
-                    if used + line.len() > char_budget && !lines.is_empty() {
-                        break;
-                    }
-                    used += line.len();
-                    lines.push(line);
-                }
-                if !lines.is_empty() {
-                    parts.push(format!("{header}{}", lines.join("\n")));
-                }
-            }
+            });
+            recall.section(
+                &mut parts,
+                "# Code context (indexed; verify in repo)\n",
+                "\n",
+                code,
+            );
+        }
+
+        if self.settings.session_inject
+            && let Ok(sess_hits) = self.search_sessions(
+                q,
+                self.settings.session_top_k,
+                self.settings.session_min_score,
+            )
+        {
+            let sessions = sess_hits.iter().map(|hit| {
+                let sid = &hit.entry.session_id;
+                let short = &sid[..8.min(sid.len())];
+                format!(
+                    "- [{:.2}] session {short} turn {}\n{}\n",
+                    hit.score,
+                    hit.entry.turn_index,
+                    clipped_lines(&hit.entry.text, 6)
+                )
+            });
+            recall.section(
+                &mut parts,
+                "# Past sessions (related turns; verify if stale)\n",
+                "\n",
+                sessions,
+            );
         }
 
         Ok((index_block, parts))
@@ -633,6 +597,64 @@ impl MemoryService {
         }
     }
 }
+
+/// Characters a recall block may still use, shared by every section of one
+/// turn's recall so the sections together stay inside `recall_token_budget`.
+struct RecallBudget {
+    left: usize,
+}
+
+impl RecallBudget {
+    fn new(chars: usize) -> Self {
+        Self { left: chars }
+    }
+
+    /// Push `header` + items (joined by `sep`) while they fit. The first item
+    /// always goes in so a section is never a bare header, unless an earlier
+    /// section already used the whole budget. Returns how many items went in.
+    fn section(
+        &mut self,
+        parts: &mut Vec<String>,
+        header: &str,
+        sep: &str,
+        items: impl Iterator<Item = String>,
+    ) -> usize {
+        if self.left == 0 {
+            return 0;
+        }
+        let mut used = header.len();
+        let mut kept: Vec<String> = Vec::new();
+        for item in items {
+            if used + item.len() > self.left && !kept.is_empty() {
+                break;
+            }
+            used += item.len();
+            kept.push(item);
+        }
+        if kept.is_empty() {
+            return 0;
+        }
+        self.left = self.left.saturating_sub(used);
+        parts.push(format!("{header}{}", kept.join(sep)));
+        kept.len()
+    }
+}
+
+/// First `max` lines of `text`, each cut to [`RECALL_LINE_CHARS`] chars: a
+/// minified line or a pasted log would otherwise fill the budget alone.
+fn clipped_lines(text: &str, max: usize) -> String {
+    text.lines()
+        .take(max)
+        .map(|line| match line.char_indices().nth(RECALL_LINE_CHARS) {
+            Some((cut, _)) => format!("{}…", &line[..cut]),
+            None => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Longest line a recalled code or session snippet keeps.
+const RECALL_LINE_CHARS: usize = 200;
 
 fn resolve_id(db: &Database, bank_key: &str, id_or_prefix: &str) -> Result<Option<String>> {
     let id_or_prefix = id_or_prefix.trim();
@@ -1881,6 +1903,51 @@ mod tests {
         assert!(both.starts_with("# Auto Memory"), "{both}");
         assert!(both.ends_with(&recall), "{both}");
         assert_eq!(svc.build_recall_block(None).unwrap(), "");
+    }
+
+    #[test]
+    fn recall_sections_share_one_budget() {
+        let mut parts = Vec::new();
+        let mut budget = RecallBudget::new(60);
+        let line = |c: char, n: usize| format!("{}\n", c.to_string().repeat(n));
+        // 4 + 31 fits; the second item would pass 60.
+        let a = [line('x', 30), line('y', 30)];
+        assert_eq!(budget.section(&mut parts, "# A\n", "", a.into_iter()), 1);
+        // 25 left: the next section gets what remains, not a fresh budget.
+        assert_eq!(
+            budget.section(&mut parts, "# B\n", "", [line('z', 10)].into_iter()),
+            1
+        );
+        // A first item over the remainder still goes in (no bare header) ...
+        assert_eq!(
+            budget.section(&mut parts, "# C\n", "", [line('w', 50)].into_iter()),
+            1
+        );
+        // ... and after that the budget is spent: nothing more is recalled.
+        assert_eq!(
+            budget.section(&mut parts, "# D\n", "", [line('v', 1)].into_iter()),
+            0
+        );
+        assert_eq!(parts.len(), 3);
+        let mut fresh = RecallBudget::new(60);
+        assert_eq!(
+            fresh.section(&mut parts, "# E\n", "", std::iter::empty()),
+            0
+        );
+        assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn clipped_lines_keeps_snippets_short() {
+        let long = "é".repeat(RECALL_LINE_CHARS + 5);
+        let text = format!("short\n{long}\nthird\nfourth");
+        let out = clipped_lines(&text, 3);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "short");
+        assert_eq!(lines[1].chars().count(), RECALL_LINE_CHARS + 1);
+        assert!(lines[1].ends_with('…'));
+        assert_eq!(lines[2], "third");
     }
 
     #[test]
