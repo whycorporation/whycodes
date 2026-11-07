@@ -209,6 +209,28 @@ fn parse_grep_hit_match_and_context() {
     assert!(!c.is_match);
     assert_eq!(c.lineno, "12");
     assert_eq!(c.content, "// context line");
+
+    // What the grep tool emits: a line tag after the number.
+    let t = parse_grep_hit("config/src/load.rs:148 vp:pub(crate) fn migrate() {").unwrap();
+    assert_eq!(t.path, "config/src/load.rs");
+    assert_eq!(t.lineno, "148");
+    assert!(t.is_match);
+    assert_eq!(t.content, "pub(crate) fn migrate() {");
+    let tc = parse_grep_hit("config/src/load.rs:147 k2-/// doc").unwrap();
+    assert!(!tc.is_match);
+    assert_eq!(tc.content, "/// doc");
+    // A space with no tag after it is not a hit.
+    assert!(parse_grep_hit("notes.txt:3 :x").is_none());
+}
+
+#[test]
+fn grep_summary_counts_tagged_hits() {
+    let body = "grep · pattern `m` · shown 3 of 3 · 2 files searched\n\
+                a.rs:1 x1:m\na.rs:2 y2:m\nb.rs:9 z3:m";
+    assert_eq!(
+        super::grep_match_summary(Some(body)),
+        "(3 matches in 2 files)"
+    );
 }
 
 #[test]

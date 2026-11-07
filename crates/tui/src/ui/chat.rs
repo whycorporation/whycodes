@@ -3145,7 +3145,9 @@ struct GrepHit<'a> {
     content: &'a str,
 }
 
-/// Parse `path:lineno:content` or context `path:lineno-content`.
+/// Parse `path:lineno:content` or context `path:lineno-content`, with or
+/// without the grep tool's line tag (`path:lineno tag:content`), which is the
+/// model's edit anchor and is dropped here.
 fn parse_grep_hit(line: &str) -> Option<GrepHit<'_>> {
     // Scan for `:digits:` or `:digits-` — path may contain `:` (rare / Windows).
     let bytes = line.as_bytes();
@@ -3155,7 +3157,16 @@ fn parse_grep_hit(line: &str) -> Option<GrepHit<'_>> {
             let rest = &line[i + 1..];
             let digit_end = rest.bytes().take_while(|c| c.is_ascii_digit()).count();
             if digit_end > 0 {
-                let after_digits = &rest[digit_end..];
+                let mut after_digits = &rest[digit_end..];
+                if let Some(tagged) = after_digits.strip_prefix(' ') {
+                    let tag_len = tagged
+                        .bytes()
+                        .take_while(|c| c.is_ascii_alphanumeric())
+                        .count();
+                    if tag_len > 0 {
+                        after_digits = &tagged[tag_len..];
+                    }
+                }
                 let mark = after_digits.chars().next()?;
                 if mark == ':' || mark == '-' {
                     let path = &line[..i];
