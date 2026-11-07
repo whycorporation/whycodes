@@ -806,16 +806,25 @@ libc, already loaded) and chrono's `Local` on Windows only. The workspace
 `chrono` dependency drops `clock`, so neither macOS nor Linux links
 `iana-time-zone`.
 
-Interleaved, 100 runs each, median:
+Two smaller fixes followed. First, the arm64 release now targets macOS 13
+(`MACOSX_DEPLOYMENT_TARGET`). From 13.0 the linker emits chained fixups,
+which the kernel applies lazily as pages fault in, instead of dyld rebasing
+the binary's ~29,000 pointers before `main`. Second, `-dead_strip_dylibs`
+drops libiconv, which the `libc` crate links on Apple targets and nothing
+calls. `otool -L` now lists libSystem only.
+
+Interleaved, 150 runs each, median (empty `main` built for 13.0 as well):
 
 | | v0.6.35 | after | change |
 |---|---|---|---|
-| empty Rust exe | 2.08 ms | — | floor |
-| `--version` | 3.74 ms | **2.83 ms** | −24% |
-| `--help` | 4.00 ms | **3.13 ms** | −22% |
+| empty Rust exe | 2.15 ms | — | floor |
+| `--version` | 3.81 ms | **2.64 ms** | −31% |
+| `--help` | 4.04 ms | **2.95 ms** | −27% |
+| `config show` | 4.96 ms | **3.87 ms** | −22% |
 
-The rest of the gap to the floor (0.75 ms) is the 17 MB binary itself: page-ins
-and fix-ups, with no further libraries to drop.
+Measured one at a time: dropping CoreFoundation gave −0.9 ms and chained fixups
+−0.23 ms. The remaining 0.49 ms over the floor is the 17 MB binary itself
+(page-ins of the code that runs), with no library or fix-up left to drop.
 
 ## Hot paths
 
