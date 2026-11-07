@@ -2059,6 +2059,152 @@ async fn turn_context_rides_on_the_user_message_at_every_step() {
     );
 }
 
+/// Records every request's messages, then delegates.
+struct HistoryRecordingProvider {
+    inner: ScriptedProvider,
+    seen: std::sync::Arc<std::sync::Mutex<Vec<Vec<whycodes_core::types::Message>>>>,
+}
+
+impl LlmProvider for HistoryRecordingProvider {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn default_base_url(&self) -> &str {
+        self.inner.default_base_url()
+    }
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        self.inner.complete(request, api_key, model)
+    }
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        self.seen
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(request.messages.to_vec());
+        self.inner.stream(request, api_key, model)
+    }
+}
+
+#[tokio::test]
+async fn turn_context_keeps_history_byte_stable_across_steps_and_turns() {
+    let dir = tempfile::tempdir().unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(HistoryRecordingProvider {
+        inner: ScriptedProvider::batched(
+            "script",
+            [
+                // Turn 1: a failing read (adds a recovery note), then an answer.
+                vec![ScriptedStep::ToolCall {
+                    id: "c1".into(),
+                    name: "read".into(),
+                    input: json!({"path": "missing-nope.txt"}),
+                }],
+                vec![ScriptedStep::Text("first answer".into())],
+                // Turn 2.
+                vec![ScriptedStep::Text("second answer".into())],
+            ],
+        ),
+        seen: std::sync::Arc::clone(&seen),
+    }));
+    let agent = Agent::new(info("build")).with_provider_registry(registry);
+    let mut session = session_at(dir.path(), "please read missing-nope.txt and explain it");
+    session.turn_context = Some("\n\n<recalled-context>\nfirst\n</recalled-context>".into());
+    agent
+        .run_turn(&mut session, "script", "m", "k", Some(4))
+        .await
+        .expect("turn 1");
+    session.add_user_message("now explain the retry loop in detail");
+    session.turn_context = Some("\n\n<recalled-context>\nsecond\n</recalled-context>".into());
+    agent
+        .run_turn(&mut session, "script", "m", "k", Some(4))
+        .await
+        .expect("turn 2");
+
+    let seen = seen.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert_eq!(seen.len(), 3, "two steps, then one: {}", seen.len());
+    // Each request starts with the previous one: the cached prefix holds
+    // across the recovery note and across the turn boundary.
+    assert_eq!(seen[1][..seen[0].len()], seen[0][..]);
+    assert_eq!(seen[2][..seen[1].len()], seen[1][..]);
+
+    let text =
+        |m: &whycodes_core::types::Message| m.content.as_text().unwrap_or_default().to_string();
+    let users: Vec<String> = seen[2]
+        .iter()
+        .filter(|m| m.role == whycodes_core::types::Role::User)
+        .map(text)
+        .collect();
+    assert!(users[0].ends_with("explain it\n\n<recalled-context>\nfirst\n</recalled-context>"));
+    let note = seen[2]
+        .iter()
+        .find(|m| m.name.as_deref() == Some(whycodes_core::types::AGENT_NOTE_NAME))
+        .map(text)
+        .expect("the failed read leaves a recovery note");
+    assert!(
+        !note.contains("recalled-context"),
+        "the note carries no recall"
+    );
+    assert!(users[2].ends_with("detail\n\n<recalled-context>\nsecond\n</recalled-context>"));
+    // The transcript keeps only what the user typed.
+    let stored: Vec<String> = session
+        .messages
+        .iter()
+        .filter(|m| m.role == whycodes_core::types::Role::User)
+        .map(text)
+        .collect();
+    assert!(
+        stored.iter().all(|t| !t.contains("recalled-context")),
+        "{stored:?}"
+    );
+}
+
+#[tokio::test]
+async fn unstamped_prompt_still_gets_turn_context_on_each_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(RecordingProvider {
+        inner: ScriptedProvider::batched("script", [vec![ScriptedStep::Text("answered".into())]]),
+        seen: std::sync::Arc::clone(&seen),
+    }));
+    let agent = Agent::new(info("build")).with_provider_registry(registry);
+    let mut session = session_at(dir.path(), "placeholder");
+    // A transcript resumed from before messages were stamped.
+    session.set_messages(vec![whycodes_core::types::Message {
+        role: whycodes_core::types::Role::User,
+        content: whycodes_core::types::MessageContent::Text(
+            "explain the retry loop in detail".into(),
+        ),
+        tool_call_id: None,
+        name: None,
+        created_at: None,
+    }]);
+    session.turn_context = Some("\n\n<recalled-context>\nfact\n</recalled-context>".into());
+    agent
+        .run_turn(&mut session, "script", "m", "k", Some(2))
+        .await
+        .expect("turn");
+    let seen = seen.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    assert!(session.pinned_suffixes.is_empty());
+    assert!(
+        seen[0]
+            .1
+            .ends_with("detail\n\n<recalled-context>\nfact\n</recalled-context>"),
+        "{:?}",
+        seen[0].1
+    );
+}
+
 /// Read-only tool that outlives the cancel in the test below.
 struct SlowGlob;
 

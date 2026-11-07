@@ -14,7 +14,7 @@ use crate::tool_stream::ToolCallAssembler;
 
 use super::{
     Agent, DOOM_LOOP_THRESHOLD, MAX_CONSECUTIVE_COMPACT_FAILURES, append_request_user_suffix,
-    append_turn_context, settle_checkpoint_rewind, tool_call_signature, would_doom_loop,
+    settle_checkpoint_rewind, tool_call_signature, would_doom_loop,
 };
 
 impl Agent {
@@ -172,6 +172,27 @@ impl Agent {
                 },
             );
         }
+
+        // Model-only text for this turn: memory recall, the intent posture and
+        // the magic-keyword notice. Pinned to the turn's prompt so every step,
+        // and every later turn, sends that message byte-identical; adding it to
+        // whichever user message came last moved it with each recovery note and
+        // dropped it at the next turn, breaking the cached prefix each time.
+        let mut turn_suffix = session.turn_context.clone().unwrap_or_default();
+        if crate::intent::should_inject(self.intent_guidance, &turn_intent)
+            && let Some(posture) = crate::intent::posture_suffix(&turn_intent, &self.info.name)
+        {
+            turn_suffix.push_str(&posture);
+            let intent = turn_intent.intent.as_str();
+            let confidence = turn_intent.confidence;
+            tracing::debug!(intent, confidence, agent = %self.info.name, "intent posture pinned");
+        }
+        if magic.any() {
+            turn_suffix.push_str(&magic.notice());
+            let (ultrathink, orchestrate) = (magic.ultrathink, magic.orchestrate);
+            tracing::debug!(ultrathink, orchestrate, "magic keyword notice pinned");
+        }
+        let mut turn_anchor = None;
 
         let provider = self
             .provider_registry
@@ -363,8 +384,18 @@ impl Agent {
                 TurnEvent::Status(format!("LLM request (step {})…", turn_count + 1)),
             );
 
+            // Pin once; again only when compaction replaced the pinned prompt.
+            if !turn_suffix.is_empty()
+                && !turn_anchor.is_some_and(|at| session.has_user_message_at(at))
+            {
+                turn_anchor = session.pin_prompt_suffix(&turn_suffix);
+            }
             let mut request = session.build_request(tools, None, self.info.temperature, Some(true));
-            append_turn_context(&mut request, session.turn_context.as_deref());
+            // No stamped prompt to pin to (an old resumed transcript): carry the
+            // text on the latest user message of each request instead.
+            if turn_anchor.is_none() && !turn_suffix.is_empty() {
+                append_request_user_suffix(&mut request, &turn_suffix);
+            }
             request.use_prompt_cache = self.use_prompt_cache && !skip_cache;
             crate::thinking_acc::attach_thinking_request(
                 &mut request,
@@ -375,32 +406,6 @@ impl Agent {
             );
             if magic.ultrathink {
                 crate::thinking_acc::apply_ultrathink(&mut request, model);
-            }
-
-            // First LLM step: ephemeral intent posture (not stored in session;
-            // keeps system prompt cache-stable). Notice is already on Intent event.
-            if turn_count == 0
-                && crate::intent::should_inject(self.intent_guidance, &turn_intent)
-                && let Some(suffix) = crate::intent::posture_suffix(&turn_intent, &self.info.name)
-            {
-                append_request_user_suffix(&mut request, &suffix);
-                let intent = turn_intent.intent.as_str();
-                let confidence = turn_intent.confidence;
-                tracing::debug!(
-                    intent,
-                    confidence,
-                    agent = %self.info.name,
-                    "intent posture injected into request"
-                );
-            }
-            if turn_count == 0 && magic.any() {
-                let notice = magic.notice();
-                append_request_user_suffix(&mut request, &notice);
-                tracing::debug!(
-                    ultrathink = magic.ultrathink,
-                    orchestrate = magic.orchestrate,
-                    "magic keyword notice injected into request"
-                );
             }
 
             let mut accumulated_text = String::new();

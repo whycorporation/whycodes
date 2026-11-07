@@ -25,7 +25,7 @@ run_turn_with_events
   │    └─ loop (step)
   │         ├─ inject background completions + steering messages
   │         ├─ tool-result hygiene, auto-compact
-  │         ├─ build request (+ turn context, intent posture, magic notice)
+  │         ├─ build request (+ pinned turn suffixes)
   │         ├─ open stream (cancel race, overflow/429/fallback handling)
   │         ├─ stream body (text / thinking / tool-call assembly / speculative reads)
   │         ├─ stream-rule or harmony retry → restart step
@@ -133,13 +133,14 @@ In order, at the top of the `loop`:
 `LlmRequest`; then, on the request copy only (the session transcript is not
 modified, which keeps the cached prefix stable):
 
-- `append_turn_context` adds `session.turn_context` (memory recall computed
-  by the host per prompt) to the latest user message.
+- At turn start, `session.turn_context` (memory recall computed by the host
+  per prompt), `intent::posture_suffix` (when `should_inject(intent_guidance,
+  assessment)` says so) and the magic-keyword notice are joined and pinned to
+  the turn's prompt (`Session::pin_prompt_suffix`); `build_request` applies
+  pinned suffixes to their own messages on every request.
 - `use_prompt_cache` unless `/fresh`.
 - `thinking_acc::attach_thinking_request` sets provider-specific thinking /
   reasoning-effort fields; `apply_ultrathink` when the keyword matched.
-- Step 1 only: `intent::posture_suffix` when `should_inject(intent_guidance,
-  assessment)` says so, and the magic-keyword notice (`<whycodes_keyword>`).
 
 The system prompt itself is built by the host (`Agent::system_prompt_for_route`,
 `with_agents_md`, memory injection) and stored on the `Session` before the turn;

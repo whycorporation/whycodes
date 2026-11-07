@@ -645,12 +645,19 @@ pub struct Session {
     /// Last rewind report, used to reject a second rewind with no new checkpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_rewind_report: Option<String>,
-    /// Model-facing context for the current user turn (memory recall).
-    /// Appended to the latest user message at request time, never stored in
-    /// `messages`, so the system prompt and history stay byte-stable for the
-    /// provider prompt cache. Not persisted.
+    /// Model-facing context for the current user turn (memory recall), set
+    /// before the turn runs. The agent pins it to the turn's prompt
+    /// ([`Self::pin_prompt_suffix`]); it is never stored in `messages`, so the
+    /// transcript, titles and memory retain see only what the user typed.
+    /// Not persisted.
     #[serde(skip)]
     pub turn_context: Option<String>,
+    /// Model-only text pinned to earlier user prompts (recall, intent
+    /// posture), re-applied to the same message on every request so the
+    /// history stays byte-stable across steps and turns. Not persisted: a
+    /// resumed session has a cold provider cache anyway.
+    #[serde(skip)]
+    pub pinned_suffixes: Vec<PinnedSuffix>,
     /// Directories below the project whose instruction files (`AGENTS.md`
     /// …) were already attached to a tool result this session. Not persisted:
     /// a resumed session sees each once more.
@@ -664,6 +671,25 @@ pub struct Session {
     /// like `cost`: a resumed session counts from zero.
     #[serde(skip)]
     pub run_stats: crate::RunStats,
+}
+
+/// Model-only text appended to one user message when requests are built.
+/// The message is found by its `created_at` stamp, so the suffix follows it
+/// through pruning and is dropped when compaction removes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PinnedSuffix {
+    pub anchor: chrono::DateTime<chrono::Utc>,
+    pub text: String,
+}
+
+/// Append model-only text to a message, as the request copy carries it.
+fn append_model_suffix(msg: &mut Message, suffix: &str) {
+    match &mut msg.content {
+        MessageContent::Text(t) => t.push_str(suffix),
+        MessageContent::Blocks(blocks) => blocks.push(ContentBlock::Text {
+            text: suffix.to_string(),
+        }),
+    }
 }
 
 /// Running USD estimate. Steps whose model has no known price are counted,
@@ -786,6 +812,7 @@ impl Session {
             checkpoint: None,
             last_rewind_report: None,
             turn_context: None,
+            pinned_suffixes: Vec::new(),
             instruction_dirs: Default::default(),
             stream_rules: Default::default(),
             run_stats: Default::default(),
@@ -1048,6 +1075,54 @@ impl Session {
         self.touch();
     }
 
+    /// Pin model-only `text` (recall, intent posture) to the latest user
+    /// prompt. Every later request carries it on that same message, so the
+    /// history stays byte-stable across steps and turns and the provider
+    /// keeps its cached prefix. Pinning the same prompt again replaces its
+    /// text. Pins whose prompt was compacted away are dropped.
+    ///
+    /// Returns the prompt's stamp, or `None` when there is no stamped user
+    /// prompt to pin to.
+    pub fn pin_prompt_suffix(&mut self, text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        let messages = &self.messages;
+        self.pinned_suffixes.retain(|p| {
+            messages
+                .iter()
+                .any(|m| m.role == Role::User && m.created_at == Some(p.anchor))
+        });
+        let note = Some(whycodes_core::types::AGENT_NOTE_NAME);
+        let Some(anchor) = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User && m.name.as_deref() != note)
+            .and_then(|m| m.created_at)
+        else {
+            return None;
+        };
+        self.pinned_suffixes.retain(|p| p.anchor != anchor);
+        self.pinned_suffixes.push(PinnedSuffix {
+            anchor,
+            text: text.to_string(),
+        });
+        Some(anchor)
+    }
+
+    /// Whether the user message stamped `at` is still in the transcript
+    /// (compaction can replace it).
+    pub fn has_user_message_at(&self, at: chrono::DateTime<chrono::Utc>) -> bool {
+        self.messages
+            .iter()
+            .any(|m| m.role == Role::User && m.created_at == Some(at))
+    }
+
+    /// Heuristic tokens of the pinned suffixes; part of what each request sends.
+    pub fn pinned_suffix_tokens(&self) -> usize {
+        self.pinned_suffixes
+            .iter()
+            .map(|p| estimate_tokens(&p.text))
+            .sum()
+    }
+
     /// Build an LLM request from the current conversation
     pub fn build_request(
         &self,
@@ -1057,10 +1132,25 @@ impl Session {
         _thinking: Option<bool>,
     ) -> LlmRequest {
         // Repair an unpaired tool call / result in the request copy only;
-        // a paired transcript (the common case) is not copied.
-        let messages = match crate::pairing::paired_messages(&self.messages) {
-            Some(fixed) => std::sync::Arc::from(fixed),
-            None => std::sync::Arc::from(self.messages.as_slice()),
+        // a paired transcript without pinned suffixes is not copied.
+        let repaired = crate::pairing::paired_messages(&self.messages);
+        let messages: std::sync::Arc<[Message]> = if self.pinned_suffixes.is_empty() {
+            match repaired {
+                Some(fixed) => std::sync::Arc::from(fixed),
+                None => std::sync::Arc::from(self.messages.as_slice()),
+            }
+        } else {
+            let mut copy = repaired.unwrap_or_else(|| self.messages.clone());
+            for pin in &self.pinned_suffixes {
+                let anchor = Some(pin.anchor);
+                if let Some(msg) = copy
+                    .iter_mut()
+                    .find(|m| m.role == Role::User && m.created_at == anchor)
+                {
+                    append_model_suffix(msg, &pin.text);
+                }
+            }
+            std::sync::Arc::from(copy)
         };
         LlmRequest {
             system: self.system_prompt.clone(),
@@ -1143,13 +1233,15 @@ impl Session {
     /// is valid; rebuilds after load or bulk mutation.
     pub fn token_count(&self) -> usize {
         if self.token_cache.valid && self.token_cache.per_msg.len() == self.messages.len() {
-            return self.token_cache.total;
+            return self.token_cache.total + self.pinned_suffix_tokens();
         }
         // `token_count` is `&self` on the hot path; rebuild without interior
         // mutability by recomputing. Callers that mutate should keep the cache
         // warm via push/rebuild helpers.
         let system = estimate_tokens(&self.system_prompt);
-        system + self.messages.iter().map(message_tokens).sum::<usize>()
+        system
+            + self.messages.iter().map(message_tokens).sum::<usize>()
+            + self.pinned_suffix_tokens()
     }
 
     /// Like [`token_count`] but refreshes the running cache when stale.
@@ -1158,7 +1250,7 @@ impl Session {
     /// rebuilt the cache stays O(1) for the rest of the step.
     pub fn token_count_cached(&mut self) -> usize {
         self.token_cache.ensure(&self.system_prompt, &self.messages);
-        self.token_cache.total
+        self.token_cache.total + self.pinned_suffix_tokens()
     }
 
     fn rebuild_token_cache(&mut self) {
@@ -1824,6 +1916,7 @@ impl Session {
             checkpoint: None,
             last_rewind_report: None,
             turn_context: None,
+            pinned_suffixes: Vec::new(),
             instruction_dirs: Default::default(),
             stream_rules: Default::default(),
             run_stats: Default::default(),
@@ -2220,6 +2313,64 @@ mod tests {
             "signature": "sig"
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn pinned_suffix_rides_its_prompt_in_every_request() {
+        let mut s = Session::new(test_project_path(), test_system_prompt());
+        assert_eq!(s.pin_prompt_suffix("ctx"), None, "no prompt yet");
+        s.add_user_message("first ask");
+        let first = s.pin_prompt_suffix(" +first").expect("stamped prompt");
+        s.add_agent_note("a tool failed");
+        // Pinning again for the same prompt (a retried turn) replaces the text;
+        // the agent note is never the anchor.
+        assert_eq!(s.pin_prompt_suffix(" +again"), Some(first));
+        assert_eq!(s.pinned_suffixes.len(), 1);
+        s.add_user_message_blocks(vec![ContentBlock::Text {
+            text: "second ask".into(),
+        }]);
+        let second = s.pin_prompt_suffix(" +second").expect("stamped prompt");
+        assert_ne!(first, second);
+        assert!(s.has_user_message_at(first) && s.has_user_message_at(second));
+
+        let req = s.build_request(Vec::new(), None, None, None);
+        let users: Vec<&Message> = req
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::User)
+            .collect();
+        assert_eq!(users[0].content.as_text(), Some("first ask +again"));
+        assert_eq!(users[1].content.as_text(), Some("a tool failed"));
+        assert!(matches!(&users[2].content, MessageContent::Blocks(b) if b.len() == 2));
+        // The transcript itself is untouched, and the count sees the pins.
+        assert_eq!(s.messages[0].content.as_text(), Some("first ask"));
+        let pinned = s.pinned_suffix_tokens();
+        assert!(pinned > 0);
+        let base = s.token_count_cached() - pinned;
+        assert_eq!(s.token_count(), base + pinned);
+        s.token_cache.valid = false;
+        assert_eq!(s.token_count(), base + pinned);
+
+        // A prompt compaction removed takes its pin with it.
+        s.messages.remove(0);
+        assert!(!s.has_user_message_at(first));
+        s.pin_prompt_suffix(" +second");
+        assert_eq!(s.pinned_suffixes.len(), 1);
+        assert_eq!(s.pinned_suffixes[0].anchor, second);
+    }
+
+    #[test]
+    fn unstamped_prompt_cannot_be_pinned() {
+        let mut s = Session::new(test_project_path(), test_system_prompt());
+        s.set_messages(vec![Message {
+            role: Role::User,
+            content: MessageContent::Text("old resumed ask".into()),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }]);
+        assert_eq!(s.pin_prompt_suffix("ctx"), None);
+        assert!(s.pinned_suffixes.is_empty());
     }
 
     #[test]

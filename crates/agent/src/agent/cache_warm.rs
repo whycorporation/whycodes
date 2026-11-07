@@ -14,7 +14,7 @@ use futures::StreamExt;
 use whycodes_core::types::{Role, StreamEvent, Usage};
 use whycodes_session::session::Session;
 
-use super::{Agent, append_turn_context};
+use super::Agent;
 
 /// Gap between keep-alives: inside the common five-minute cache TTL.
 pub const WARM_EVERY: Duration = Duration::from_secs(270);
@@ -55,7 +55,6 @@ impl Agent {
             .iter()
             .rposition(|m| m.role != Role::Assistant)?;
         request.messages = std::sync::Arc::from(&request.messages[..=keep]);
-        append_turn_context(&mut request, session.turn_context.as_deref());
         request.use_prompt_cache = true;
         crate::thinking_acc::attach_thinking_request(
             &mut request,
