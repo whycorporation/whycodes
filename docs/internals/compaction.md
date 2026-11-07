@@ -49,7 +49,10 @@ body is under the shake cap and carries `SPILL_MARK`, so later passes leave
 it alone.
 
 `turn.rs:212-221`; constants and bodies in `crates/session/src/session.rs:15-25`,
-`1048`, `1109-1158`, `1160-1208`. A cut body ends with `\n[N chars truncated]`
+`1048`, `1109-1158`, `1160-1208`. A fresh result over the cap keeps its first
+8,192 chars and its tail, with `\n[N chars omitted]\n` between them
+(`cap_tool_text_head_tail`): build and test output ends with the verdict. The
+later passes cut from the head only; such a body ends with `\n[N chars truncated]`
 (`session.rs:193-195`); re-cutting keeps the original omitted count
 (`split_truncation_notice`, `session.rs:202-225`). Token counts are the
 chars/4 heuristic (`whycodes_core::tokens::estimate_tokens`,

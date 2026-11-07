@@ -1099,15 +1099,18 @@ impl Agent {
             let (checkpoint_goal, rewind_report) =
                 settle_checkpoint_rewind(session, &tool_calls, &mut results);
 
-            // Capture failures before move — avoid cloning large tool bodies.
-            // A refusal already says what to do; repeating it as a recovery
-            // note only doubled it in the context.
+            // Name the failures; the output itself is already in the tool
+            // result. Copying it here put a red test run in context twice,
+            // uncapped, in a user message that pruning never shrinks.
             let mut failed_tools = Vec::new();
             for result in results.iter().filter(|_| !doom_loop) {
                 if result.is_error {
+                    let name = tool_calls
+                        .iter()
+                        .find(|c| c.id == result.tool_call_id)
+                        .map_or("tool", |c| c.name.as_str());
                     failed_tools.push(format!(
-                        "The tool failed with error: {content}. Please correct your approach.",
-                        content = result.content
+                        "`{name}` failed; its output is in the tool result above. Correct your approach."
                     ));
                 }
             }

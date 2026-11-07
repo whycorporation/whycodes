@@ -622,7 +622,20 @@ async fn failed_tool_injects_recovery_message() {
         .filter_map(|m| m.content.as_text().map(|s| s.to_string()))
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(joined.contains("The tool failed with error"), "{joined}");
+    assert!(
+        joined.contains("`read` failed; its output is in the tool result above"),
+        "{joined}"
+    );
+    // The note names the failure; the error text stays in the tool result only.
+    let tool_text: String = session
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .filter_map(|m| m.content.as_text().map(|s| s.to_string()))
+        .collect();
+    let error_line = tool_text.lines().next().unwrap_or_default();
+    assert!(!error_line.is_empty(), "tool result should carry the error");
+    assert!(!joined.contains(error_line), "{joined}");
 }
 
 #[tokio::test]
