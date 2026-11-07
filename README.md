@@ -278,3 +278,5 @@ Sponsor the project on [GitHub Sponsors](https://github.com/sponsors/whycorporat
 ## License
 
 [MIT](LICENSE)
+
+<!-- osai-verify: 5089067b15828dd8c922 -->
