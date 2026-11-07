@@ -2462,6 +2462,28 @@ async fn cmd_generate_empty_prompt_errors() {
 }
 
 #[tokio::test]
+async fn cmd_generate_refuses_resume_flags_instead_of_ignoring_them() {
+    let _home = IsolatedHome::new();
+    let prompt = ["summarize the repo".to_string()];
+    let base = cli(None);
+    assert_eq!(resume_flag_used(&base), None);
+    for flag in ["--continue", "--resume", "--fork"] {
+        let mut c = cli(None);
+        match flag {
+            "--continue" => c.continue_session = true,
+            "--resume" => c.resume = Some("abc".into()),
+            _ => c.fork_session = true,
+        }
+        assert_eq!(resume_flag_used(&c), Some(flag));
+        let err = cmd_generate(&c, &prompt, Some(1), 1, OutputFormat::Json, false)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(flag) && err.contains("not saved"), "{err}");
+    }
+}
+
+#[tokio::test]
 async fn ensure_api_key_false_without_credentials() {
     let _home = IsolatedHome::new();
     let config = Config::default();

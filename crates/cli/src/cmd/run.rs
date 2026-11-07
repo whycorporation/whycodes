@@ -1720,6 +1720,9 @@ async fn generate_prompts(
     format: OutputFormat,
     approve_tools: bool,
 ) -> anyhow::Result<()> {
+    if let Some(flag) = resume_flag_used(cli) {
+        return emit_headless_setup_error(format, &generate_resume_message(flag));
+    }
     let project_dir = resolve_dir(cli);
     let mut config = Config::load_layered(&project_dir)
         .or_else(|_| Config::load_or_create())
@@ -1841,6 +1844,28 @@ async fn generate_prompts(
         format,
     )
     .await
+}
+
+/// The first of `--continue` / `--resume` / `--fork` set on the command line.
+pub(crate) fn resume_flag_used(cli: &Cli) -> Option<&'static str> {
+    if cli.continue_session {
+        Some("--continue")
+    } else if cli.resume.is_some() {
+        Some("--resume")
+    } else if cli.fork_session {
+        Some("--fork")
+    } else {
+        None
+    }
+}
+
+/// `generate` runs one unsaved session, so it cannot pick up a saved one.
+/// Saying so beats running a fresh session the caller thinks is continued.
+pub(crate) fn generate_resume_message(flag: &str) -> String {
+    format!(
+        "`generate` runs a new session that is not saved, so {flag} does not apply; \
+         continue a saved session with `whycodes --plain {flag}` or in the TUI"
+    )
 }
 
 pub(crate) fn all_prompts_empty(prompts: &[String]) -> bool {
