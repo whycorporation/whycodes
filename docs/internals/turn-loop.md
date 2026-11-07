@@ -315,8 +315,9 @@ nested directory gets that directory's `AGENTS.md`-style files appended,
 `checkpoint` / `rewind` calls; failed results are collected;
 `session.add_tool_results`; `mark_checkpoint` / `apply_rewind`; pending
 subagent usage and cost are folded into the turn and session; finally, if any
-tool failed, a user message `The tool failed with error: … Please correct your
-approach.` is appended. Then the loop continues with the next step.
+tool failed, a one-line user note naming it (`` `bash` failed; its output is in
+the tool result above. Correct your approach.``) is appended. The error text is
+not copied into the note: it is already in the tool result. Then the loop continues with the next step.
 
 ### 12. Turn end
 

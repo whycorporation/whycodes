@@ -214,6 +214,34 @@ fn cap_tool_text(text: String) -> String {
     cap_tool_text_to(text, TOOL_RESULT_MAX_CHARS)
 }
 
+/// Leading chars a fresh tool result keeps when it is over the cap; the rest
+/// of [`TOOL_RESULT_MAX_CHARS`] goes to its tail.
+pub const TOOL_RESULT_HEAD_CHARS: usize = 8_192;
+/// Room reserved for the `[N chars omitted]` line between head and tail.
+const OMITTED_MARK_RESERVE: usize = 32;
+
+/// Cap a tool result the model has not seen yet, keeping its head and tail.
+///
+/// Build and test output ends with what matters (`failures:`, the last
+/// error, the exit code), and a head-only cut handed the model everything
+/// but that. The result is at most [`TOOL_RESULT_MAX_CHARS`] chars, so the
+/// later head-only passes leave it alone until it is old.
+fn cap_tool_text_head_tail(text: String) -> String {
+    if text.len() <= TOOL_RESULT_MAX_CHARS {
+        return text;
+    }
+    let total = text.chars().count();
+    if total <= TOOL_RESULT_MAX_CHARS {
+        return text;
+    }
+    let tail_chars = TOOL_RESULT_MAX_CHARS - TOOL_RESULT_HEAD_CHARS - OMITTED_MARK_RESERVE;
+    let omitted = total - TOOL_RESULT_HEAD_CHARS - tail_chars;
+    let mut out: String = text.chars().take(TOOL_RESULT_HEAD_CHARS).collect();
+    out.push_str(&format!("\n[{omitted} chars omitted]\n"));
+    out.extend(text.chars().skip(total - tail_chars));
+    out
+}
+
 /// Footer paid on every capped tool dump. `{n}` is the omitted scalar count.
 ///
 /// Kept short on purpose: this string sits in the model transcript, not just
@@ -999,7 +1027,7 @@ impl Session {
                     },
                 ])
             } else {
-                MessageContent::Text(cap_tool_text(result.content))
+                MessageContent::Text(cap_tool_text_head_tail(result.content))
             };
             let tool_call_id = if result.tool_call_id.is_empty() {
                 whycodes_core::fallback_tool_call_id(self.messages.len())
@@ -2710,16 +2738,44 @@ mod tests {
     #[test]
     fn test_add_tool_results_caps_huge_body() {
         let mut session = Session::new(test_project_path(), test_system_prompt());
-        let huge = "a".repeat(TOOL_RESULT_MAX_CHARS + 5000);
+        // A red test run: the verdict is the last line.
+        let huge = format!(
+            "START\n{}\nfailures: case_77 panicked",
+            "a".repeat(TOOL_RESULT_MAX_CHARS + 5000)
+        );
+        let total = huge.chars().count();
         session.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: "t1".into(),
             content: huge,
-            is_error: false,
+            is_error: true,
         }]);
         let text = session.messages[0].content.as_text().unwrap();
-        assert!(text.contains("chars truncated"));
-        assert!(text.ends_with("[5000 chars truncated]"));
-        assert!(text.chars().count() < TOOL_RESULT_MAX_CHARS + 40);
+        assert!(text.starts_with("START\n"), "head kept");
+        assert!(text.ends_with("failures: case_77 panicked"), "tail kept");
+        let tail = TOOL_RESULT_MAX_CHARS - TOOL_RESULT_HEAD_CHARS - OMITTED_MARK_RESERVE;
+        let omitted = total - TOOL_RESULT_HEAD_CHARS - tail;
+        assert!(
+            text.contains(&format!("\n[{omitted} chars omitted]\n")),
+            "{omitted}"
+        );
+        assert!(text.chars().count() <= TOOL_RESULT_MAX_CHARS);
+        // The per-step head-only pass leaves a fresh head+tail cut alone.
+        assert_eq!(session.truncate_large_tool_results(), 0);
+    }
+
+    #[test]
+    fn head_tail_cap_counts_chars_not_bytes() {
+        // Over the cap in bytes, under it in chars: kept whole.
+        let wide = "é".repeat(TOOL_RESULT_MAX_CHARS - 1);
+        assert_eq!(cap_tool_text_head_tail(wide.clone()), wide);
+        // Over in chars: the cut lands on char boundaries.
+        let wider = "é".repeat(TOOL_RESULT_MAX_CHARS + 100);
+        let out = cap_tool_text_head_tail(wider);
+        assert!(out.chars().count() <= TOOL_RESULT_MAX_CHARS);
+        assert!(out.starts_with('é') && out.ends_with('é'));
+        assert!(out.contains(" chars omitted]"));
+        // Short text is returned as is.
+        assert_eq!(cap_tool_text_head_tail("ok".into()), "ok");
     }
 
     #[test]
@@ -2889,22 +2945,19 @@ mod tests {
             is_error: Some(false),
         }]);
 
-        // Ingest already capped the tool-role body; only the assistant
-        // ToolResult block still needs a pass.
+        // Ingest already capped the tool-role body (head + tail); only the
+        // assistant ToolResult block still needs a pass.
         let modified = session.truncate_large_tool_results();
         assert_eq!(modified, 1);
         let tool_text = session.messages[1].content.as_text().unwrap();
-        assert!(tool_text.contains("chars truncated"));
-        assert!(
-            tool_text.chars().count() < TOOL_RESULT_MAX_CHARS + 40,
-            "kept chars + notice suffix"
-        );
+        assert!(tool_text.contains("chars omitted"));
+        assert!(tool_text.chars().count() <= TOOL_RESULT_MAX_CHARS);
 
         // running again is a no-op: the footer is stripped before the cap, so
         // the body stays at TOOL_RESULT_MAX_CHARS.
         assert_eq!(session.truncate_large_tool_results(), 0);
         let tool_text = session.messages[1].content.as_text().unwrap();
-        assert!(tool_text.chars().count() < TOOL_RESULT_MAX_CHARS + 40);
+        assert!(tool_text.chars().count() <= TOOL_RESULT_MAX_CHARS);
     }
 
     #[test]
