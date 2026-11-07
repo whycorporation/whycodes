@@ -790,6 +790,33 @@ The Windows start-up fixes of this release target DLL loading, which macOS
 does not have. The clap fix shows here as well: on the same Mac, v0.6.33 to
 v0.6.34 took `--help` from 4.6 to 4.0 ms and `config show` from 5.4 to 5.0 ms.
 
+### macOS start-up without CoreFoundation, 2026-11-07 (Apple M2)
+
+On the same Mac, an empty Rust `main` starts in 2.08 ms, and v0.6.35's
+`--version` took 3.74 ms. `otool -L` lists only three libraries: libSystem,
+libiconv and CoreFoundation. Built into an empty `main` one at a time,
+CoreFoundation alone added 0.9 ms and libiconv 0.03 ms. dyld loads a linked
+framework at launch whether or not the program calls it.
+
+CoreFoundation came from chrono's `clock` feature: `Local` finds the zone
+through `iana-time-zone`, which asks CoreFoundation. whycodes reads local time
+in two places (the Environment date and the TUI clocks). Those now go through
+`whycodes_core::local_time`, which uses `localtime_r` on Unix (libSystem /
+libc, already loaded) and chrono's `Local` on Windows only. The workspace
+`chrono` dependency drops `clock`, so neither macOS nor Linux links
+`iana-time-zone`.
+
+Interleaved, 100 runs each, median:
+
+| | v0.6.35 | after | change |
+|---|---|---|---|
+| empty Rust exe | 2.08 ms | — | floor |
+| `--version` | 3.74 ms | **2.83 ms** | −24% |
+| `--help` | 4.00 ms | **3.13 ms** | −22% |
+
+The rest of the gap to the floor (0.75 ms) is the 17 MB binary itself: page-ins
+and fix-ups, with no further libraries to drop.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
