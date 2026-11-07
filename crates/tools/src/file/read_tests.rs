@@ -515,8 +515,8 @@ async fn outline_caps_its_entries() {
         out.contains("[outline shows the first 400 of 450 declarations]"),
         "{out}"
     );
-    assert!(out.contains("\n   400 "), "{out}");
-    assert!(!out.contains("\n   401 "), "{out}");
+    assert!(out.contains("\n400 "), "{out}");
+    assert!(!out.contains("\n401 "), "{out}");
 }
 
 #[tokio::test]

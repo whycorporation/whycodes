@@ -64,9 +64,10 @@ fn content_tags_unique(lines: &[&str], tags: &[String]) -> bool {
     true
 }
 
-/// `     42 a3|contents`
+/// `42 a3|contents`. No column padding: the six-wide number cost two tokens
+/// a line (14% of a read) and only lined up text a model does not look at.
 pub fn format_read_line(n: usize, tag: &str, line: &str) -> String {
-    format!("{n:6} {tag}|{line}")
+    format!("{n} {tag}|{line}")
 }
 
 /// `path:12 a3:contents` or `path:12 a3-contents` for context rows.
