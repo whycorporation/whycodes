@@ -17,13 +17,19 @@ fn local_time_keeps_the_instant_and_has_a_sane_offset() {
     assert!((now.with_timezone(&Utc) - Utc::now()).num_seconds().abs() < 5);
 }
 
+// POSIX; the `libc` crate does not export it on every Unix (macOS).
+#[cfg(unix)]
+unsafe extern "C" {
+    fn tzset();
+}
+
 #[cfg(unix)]
 #[test]
 fn unix_offset_follows_tz() {
     // SAFETY: test-only; no other test in this crate reads TZ concurrently.
     unsafe {
         std::env::set_var("TZ", "UTC");
-        libc::tzset();
+        tzset();
     }
     let at = Utc
         .with_ymd_and_hms(2026, 1, 15, 12, 0, 0)
@@ -33,12 +39,12 @@ fn unix_offset_follows_tz() {
     // SAFETY: as above.
     unsafe {
         std::env::set_var("TZ", "Asia/Tokyo");
-        libc::tzset();
+        tzset();
     }
     assert_eq!(offset_at(at).local_minus_utc(), 9 * 3600);
     // SAFETY: as above.
     unsafe {
         std::env::remove_var("TZ");
-        libc::tzset();
+        tzset();
     }
 }
