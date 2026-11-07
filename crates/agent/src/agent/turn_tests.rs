@@ -2330,13 +2330,33 @@ async fn a_read_below_the_project_attaches_that_directory_s_agents_md_once() {
     };
     let first = tool_text("r1");
     assert!(first.contains("alpha"), "{first}");
-    assert!(first.contains("<nested-instructions>"), "{first}");
-    assert!(first.contains("Use tabs in pkg."), "{first}");
+    assert!(!first.contains("nested-instructions"), "{first}");
     let second = tool_text("r2");
     assert!(second.contains("beta"), "{second}");
+    // One agent note right after r1's result, none after r2's.
+    let notes: Vec<(usize, String)> = session
+        .messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.name.as_deref() == Some(whycodes_core::types::AGENT_NOTE_NAME))
+        .map(|(i, m)| (i, m.content.as_text().unwrap_or_default().to_string()))
+        .collect();
+    assert_eq!(notes.len(), 1, "once per directory: {notes:?}");
+    let (at, note) = &notes[0];
+    assert!(note.starts_with("<nested-instructions>"), "{note}");
+    assert!(note.contains("Use tabs in pkg."), "{note}");
+    assert_eq!(session.messages[at - 1].tool_call_id.as_deref(), Some("r1"));
+    // Shrinking old results (spill/prune) leaves the note alone.
+    session.add_assistant_message(vec![ContentBlock::Text { text: "ok".into() }]);
+    for _ in 0..6 {
+        session.prune_old_tool_results();
+    }
     assert!(
-        !second.contains("nested-instructions"),
-        "once per directory: {second}"
+        session.messages[*at]
+            .content
+            .as_text()
+            .unwrap_or_default()
+            .contains("Use tabs in pkg.")
     );
     assert!(session.system_prompt == "test", "system prompt untouched");
 }
