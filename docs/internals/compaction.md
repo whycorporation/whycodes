@@ -40,6 +40,11 @@ shake_old_tool_results        all but last 4 tool msgs <= 512    (TOOL_RESULT_SH
                               only when tokens > 3/4 * compaction_threshold
 ```
 
+"All but last 4" also never includes a result the model has not seen yet:
+the tool messages after the latest assistant message answer its calls and
+go out with the next request (`shrinkable_tool_indices`). Counting messages
+alone cut the first reads of a six-read batch before the model saw them.
+
 The spill runs before prune and shake, so a long old output is not cut in
 place and lost: the model can `read` the artifact instead of re-running the
 tool. The store lives in the agent (`crates/agent/src/agent/spill.rs`); the

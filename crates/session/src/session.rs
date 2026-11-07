@@ -1315,24 +1315,43 @@ impl Session {
     ///
     /// When already under budget after tool caps, the message list is not
     /// reshuffled (avoids churn on `/compact` for small sessions).
-    /// Shrink older tool outputs more aggressively.
-    ///
-    /// Keeps the last [`PRUNE_KEEP_RECENT_TOOLS`] tool-role messages at the
-    /// normal cap; everything older is cut to [`TOOL_RESULT_PRUNE_CHARS`].
-    pub fn prune_old_tool_results(&mut self) -> usize {
-        let tool_indices: Vec<usize> = self
+    /// Tool messages old enough to prune, shake or spill: all but the last
+    /// [`PRUNE_KEEP_RECENT_TOOLS`], and never one the model has not seen.
+    /// Results after the latest assistant message answer its calls and go
+    /// out with the next request; counting messages instead of steps cut the
+    /// first reads of a six-read batch before the model ever saw them.
+    fn shrinkable_tool_indices(&self) -> Vec<usize> {
+        let seen_before = self
+            .messages
+            .iter()
+            .rposition(|m| m.role == Role::Assistant)
+            .unwrap_or(0);
+        let tool: Vec<usize> = self
             .messages
             .iter()
             .enumerate()
             .filter(|(_, m)| m.role == Role::Tool)
             .map(|(i, _)| i)
             .collect();
-        if tool_indices.len() <= PRUNE_KEEP_RECENT_TOOLS {
+        let keep_from = tool.len().saturating_sub(PRUNE_KEEP_RECENT_TOOLS);
+        tool[..keep_from]
+            .iter()
+            .copied()
+            .filter(|&i| i < seen_before)
+            .collect()
+    }
+
+    /// Shrink older tool outputs more aggressively.
+    ///
+    /// Keeps the last [`PRUNE_KEEP_RECENT_TOOLS`] tool-role messages, and any
+    /// the model has not seen yet, at the normal cap; everything older is cut
+    /// to [`TOOL_RESULT_PRUNE_CHARS`].
+    pub fn prune_old_tool_results(&mut self) -> usize {
+        let old = self.shrinkable_tool_indices();
+        if old.is_empty() {
             return 0;
         }
-        let keep_from = tool_indices.len() - PRUNE_KEEP_RECENT_TOOLS;
-        let prune_set: std::collections::HashSet<usize> =
-            tool_indices[..keep_from].iter().copied().collect();
+        let prune_set: std::collections::HashSet<usize> = old.into_iter().collect();
         let mut n = 0;
         for (i, msg) in self.messages.iter_mut().enumerate() {
             if !prune_set.contains(&i) {
@@ -1371,19 +1390,11 @@ impl Session {
     /// Shrink older tool results to [`TOOL_RESULT_SHAKE_CHARS`] when prune was
     /// not enough to relieve context pressure.
     pub fn shake_old_tool_results(&mut self) -> usize {
-        let tool_indices: Vec<usize> = self
-            .messages
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| m.role == Role::Tool)
-            .map(|(i, _)| i)
-            .collect();
-        if tool_indices.len() <= PRUNE_KEEP_RECENT_TOOLS {
+        let old = self.shrinkable_tool_indices();
+        if old.is_empty() {
             return 0;
         }
-        let keep_from = tool_indices.len() - PRUNE_KEEP_RECENT_TOOLS;
-        let prune_set: std::collections::HashSet<usize> =
-            tool_indices[..keep_from].iter().copied().collect();
+        let prune_set: std::collections::HashSet<usize> = old.into_iter().collect();
         let mut n = 0;
         for (i, msg) in self.messages.iter_mut().enumerate() {
             if !prune_set.contains(&i) {
@@ -1423,26 +1434,20 @@ impl Session {
     /// the transcript through `store(id, body) -> Some(pointer)`: the message
     /// keeps the first [`SPILL_HEAD_CHARS`] chars plus a pointer line, so the
     /// model can `read` the full output instead of re-running the tool. The
-    /// last [`PRUNE_KEEP_RECENT_TOOLS`] tool messages, short bodies, bodies
+    /// last [`PRUNE_KEEP_RECENT_TOOLS`] tool messages, results the model has
+    /// not seen yet, short bodies, bodies
     /// already spilled and bodies `store` declines are left alone. Returns
     /// how many bodies were spilled.
     pub fn spill_old_tool_results(
         &mut self,
         store: &mut dyn FnMut(&str, &str) -> Option<String>,
     ) -> usize {
-        let tool_indices: Vec<usize> = self
-            .messages
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| m.role == Role::Tool)
-            .map(|(i, _)| i)
-            .collect();
-        if tool_indices.len() <= PRUNE_KEEP_RECENT_TOOLS {
+        let old = self.shrinkable_tool_indices();
+        if old.is_empty() {
             return 0;
         }
-        let keep_from = tool_indices.len() - PRUNE_KEEP_RECENT_TOOLS;
         let mut n = 0;
-        for &i in &tool_indices[..keep_from] {
+        for i in old {
             let fallback_id = self.messages[i]
                 .tool_call_id
                 .clone()
@@ -3109,6 +3114,41 @@ mod tests {
     }
 
     #[test]
+    fn unseen_tool_batch_is_never_shrunk() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("read the six files");
+        // One step that reads six files in parallel.
+        session.add_assistant_message(
+            (0..6)
+                .map(|i| ContentBlock::ToolUse {
+                    id: format!("t{i}"),
+                    name: "read".into(),
+                    input: serde_json::json!({"path": format!("f{i}.rs")}),
+                })
+                .collect(),
+        );
+        session.add_tool_results(
+            (0..6)
+                .map(|i| whycodes_core::types::ToolResult {
+                    tool_call_id: format!("t{i}"),
+                    content: format!("{i}{}", "z".repeat(5_000)),
+                    is_error: false,
+                })
+                .collect(),
+        );
+        // Before the next request the model has not seen any of them.
+        let mut store = |id: &str, _body: &str| Some(format!("{id}.txt"));
+        assert_eq!(session.spill_old_tool_results(&mut store), 0);
+        assert_eq!(session.prune_old_tool_results(), 0);
+        assert_eq!(session.shake_old_tool_results(), 0);
+        // Once it answered, all but the last four may shrink.
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "read them".into(),
+        }]);
+        assert_eq!(session.spill_old_tool_results(&mut store), 2);
+    }
+
+    #[test]
     fn prune_old_tool_results_keeps_recent_full() {
         let mut session = Session::new(test_project_path(), test_system_prompt());
         session.add_user_message("start");
@@ -3119,10 +3159,22 @@ mod tests {
                 is_error: false,
             }]);
         }
+        // The model has seen these results (its next reply came after).
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
+        }]);
         let pruned = session.prune_old_tool_results();
         assert!(pruned > 0, "old tool results should be cut");
         // recent kept at full size
-        let last = session.messages.last().unwrap().content.as_text().unwrap();
+        let last = session
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::Tool)
+            .unwrap()
+            .content
+            .as_text()
+            .unwrap();
         assert!(
             last.chars().count() > TOOL_RESULT_PRUNE_CHARS,
             "recent kept full"
@@ -3135,6 +3187,10 @@ mod tests {
             tool_call_id: "a".into(),
             content: "small".into(),
             is_error: false,
+        }]);
+        // The model has seen these results (its next reply came after).
+        small.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
         }]);
         assert_eq!(small.prune_old_tool_results(), 0);
     }
@@ -3150,6 +3206,10 @@ mod tests {
                 is_error: false,
             }]);
         }
+        // The model has seen these results (its next reply came after).
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
+        }]);
         assert!(session.prune_old_tool_results() > 0);
         assert!(
             session.token_cache.valid,
@@ -3174,6 +3234,10 @@ mod tests {
                 is_error: false,
             }]);
         }
+        // The model has seen these results (its next reply came after).
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
+        }]);
         let shaken = session.shake_old_tool_results();
         assert!(shaken > 0);
         let old = session.messages[1].content.as_text().unwrap();
@@ -3181,7 +3245,15 @@ mod tests {
         let old_chars = old.chars().count();
         assert!(old_chars <= TOOL_RESULT_SHAKE_CHARS + 80, "{old_chars}");
         assert!(old.contains("truncated"));
-        let last = session.messages.last().unwrap().content.as_text().unwrap();
+        let last = session
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::Tool)
+            .unwrap()
+            .content
+            .as_text()
+            .unwrap();
         assert!(
             last.chars().count() > TOOL_RESULT_SHAKE_CHARS,
             "recent kept larger than shake cap"
@@ -3191,6 +3263,10 @@ mod tests {
             tool_call_id: "a".into(),
             content: "tiny".into(),
             is_error: false,
+        }]);
+        // The model has seen these results (its next reply came after).
+        small.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
         }]);
         assert_eq!(small.shake_old_tool_results(), 0);
     }
@@ -3878,6 +3954,10 @@ mod tests {
                 created_at: None,
             });
         }
+        // The model has seen these results (its next reply came after).
+        pruning.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
+        }]);
         assert_eq!(pruning.prune_old_tool_results(), 2);
         assert_eq!(pruning.prune_old_tool_results(), 0);
         assert!(matches!(
@@ -3942,6 +4022,10 @@ mod tests {
                 created_at: None,
             });
         }
+        // The model has seen these results (its next reply came after).
+        shaking.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
+        }]);
         assert_eq!(shaking.shake_old_tool_results(), 2);
         assert_eq!(shaking.shake_old_tool_results(), 0);
         assert!(matches!(
@@ -4405,6 +4489,10 @@ mod tests {
             }
             Some(format!(".whycodes/scratch/artifacts/{id}.txt"))
         };
+        // The model has seen these results (its next reply came after).
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
+        }]);
         let spilled = session.spill_old_tool_results(&mut store);
         let stored_now = || stored.borrow().clone();
         // Seven tool messages; the last four (t2..t5) stay as they are.
@@ -4427,7 +4515,15 @@ mod tests {
         );
         assert!(first.chars().count() < TOOL_RESULT_SHAKE_CHARS);
         // The recent four are untouched.
-        let last = session.messages.last().unwrap().content.as_text().unwrap();
+        let last = session
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::Tool)
+            .unwrap()
+            .content
+            .as_text()
+            .unwrap();
         assert_eq!(last.chars().count(), 5_001);
         assert!(
             session.token_count_cached() < before_tokens,
@@ -4458,6 +4554,10 @@ mod tests {
             }]);
         }
         decline.set(true);
+        // The model has seen these results (its next reply came after).
+        fresh.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
+        }]);
         assert_eq!(fresh.spill_old_tool_results(&mut store), 0);
         assert_eq!(stored_now().len(), 5, "the store was asked and declined");
         assert_eq!(fresh.messages[0].content.as_text().unwrap().len(), 3_000);
@@ -4469,6 +4569,10 @@ mod tests {
             tool_call_id: "a".into(),
             content: "w".repeat(3_000),
             is_error: false,
+        }]);
+        // The model has seen these results (its next reply came after).
+        small.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
         }]);
         assert_eq!(small.spill_old_tool_results(&mut store), 0);
         assert_eq!(stored_now().len(), 5, "nothing old enough to store");
