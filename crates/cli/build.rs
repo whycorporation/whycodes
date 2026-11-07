@@ -30,6 +30,11 @@ fn main() -> std::io::Result<()> {
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         delay_load_dlls();
     }
+    if std::env::var("CARGO_CFG_TARGET_VENDOR").as_deref() == Ok("apple") {
+        // Drop dylibs nothing calls (the `libc` crate asks for libiconv on
+        // Apple targets): dyld loads every linked dylib at launch.
+        println!("cargo:rustc-link-arg-bins=-Wl,-dead_strip_dylibs");
+    }
     Ok(())
 }
 
