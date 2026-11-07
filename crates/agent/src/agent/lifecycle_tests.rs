@@ -458,6 +458,10 @@ async fn old_tool_outputs_are_spilled_to_scratch_before_the_step() {
             is_error: false,
         }]);
     }
+    // The model saw those results last turn.
+    session.add_assistant_message(vec![ContentBlock::Text {
+        text: "read the logs".into(),
+    }]);
     session.add_user_message("what do they say?");
     agent
         .run_turn(&mut session, "script", MODEL, "k", Some(2))
