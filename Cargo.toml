@@ -54,7 +54,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "regist
 thiserror = "2"
 anyhow = "1"
 directories = "6"
-chrono = { version = "0.4", features = ["serde"] }
+# No `clock`: its `Local` pulls iana-time-zone, which links CoreFoundation on
+# macOS (loaded at every start). Local time goes through
+# `whycodes_core::local_time`; core enables `clock` for Windows only.
+chrono = { version = "0.4", default-features = false, features = ["std", "now", "serde"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 futures = "0.3"
 async-stream = "0.3"
