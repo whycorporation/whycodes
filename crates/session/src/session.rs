@@ -1091,14 +1091,11 @@ impl Session {
                 .any(|m| m.role == Role::User && m.created_at == Some(p.anchor))
         });
         let note = Some(whycodes_core::types::AGENT_NOTE_NAME);
-        let Some(anchor) = messages
+        let anchor = messages
             .iter()
             .rev()
             .find(|m| m.role == Role::User && m.name.as_deref() != note)
-            .and_then(|m| m.created_at)
-        else {
-            return None;
-        };
+            .and_then(|m| m.created_at)?;
         self.pinned_suffixes.retain(|p| p.anchor != anchor);
         self.pinned_suffixes.push(PinnedSuffix {
             anchor,
