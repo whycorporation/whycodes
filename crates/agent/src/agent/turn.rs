@@ -1095,7 +1095,7 @@ impl Agent {
             };
 
             let mut results = results;
-            attach_nested_instructions(session, &tool_calls, &mut results);
+            let nested = nested_instructions_for(session, &tool_calls, &results);
             let (checkpoint_goal, rewind_report) =
                 settle_checkpoint_rewind(session, &tool_calls, &mut results);
 
@@ -1115,6 +1115,9 @@ impl Agent {
             session.record_edit_results(&tool_calls, &results);
             session.run_stats.record_tools(&tool_calls, &results);
             session.add_tool_results(results);
+            if !nested.is_empty() {
+                session.add_agent_note(nested.trim_start());
+            }
             let goal = checkpoint_goal.unwrap_or_default();
             if !goal.is_empty() {
                 session.mark_checkpoint(&goal);
@@ -1412,17 +1415,21 @@ fn defs_without_swarm(
         .collect()
 }
 
-/// Append the instruction files of a nested directory (its `AGENTS.md`, …)
-/// to the successful `read` that first reached it this session.
+/// The instruction files of nested directories (their `AGENTS.md`, …) that
+/// this step's successful `read`s reached for the first time this session.
 ///
-/// Attached to the tool result, not the system prompt, so the cached prefix
-/// stays byte-stable. See [`crate::context_files::nested_for`].
-fn attach_nested_instructions(
+/// They go into an agent note after the step's results, not into a result
+/// and not into the system prompt: the cached prefix stays byte-stable, and
+/// unlike a tool result the note is never spilled or pruned, so a
+/// directory's rules stay in context after later steps shrink the read (it
+/// is attached once per directory). See [`crate::context_files::nested_for`].
+fn nested_instructions_for(
     session: &mut Session,
     calls: &[whycodes_core::types::ToolCall],
-    results: &mut [whycodes_core::types::ToolResult],
-) {
-    for result in results.iter_mut() {
+    results: &[whycodes_core::types::ToolResult],
+) -> String {
+    let mut out = String::new();
+    for result in results {
         let path = read_path_for(calls, result);
         if path.is_empty() {
             continue;
@@ -1434,11 +1441,10 @@ fn attach_nested_instructions(
             &mut session.instruction_dirs,
         );
         if !found.is_empty() {
-            result
-                .content
-                .push_str(&crate::context_files::render_nested(&found));
+            out.push_str(&crate::context_files::render_nested(&found));
         }
     }
+    out
 }
 
 /// The `path` of the successful `read` call that produced `result`, or "".

@@ -309,11 +309,13 @@ providers, then the error propagates.
 
 ### 11. Appending results
 
-In order: `attach_nested_instructions` (the first successful `read` into a
-nested directory gets that directory's `AGENTS.md`-style files appended,
+In order: `nested_instructions_for` (the first successful `read` into a
+nested directory collects that directory's `AGENTS.md`-style files,
 `crates/agent/src/context_files.rs`); `settle_checkpoint_rewind` validates
 `checkpoint` / `rewind` calls; failed results are collected;
-`session.add_tool_results`; `mark_checkpoint` / `apply_rewind`; pending
+`session.add_tool_results`, then the nested instructions as one agent note
+(never spilled or pruned, unlike a tool result); `mark_checkpoint` /
+`apply_rewind`; pending
 subagent usage and cost are folded into the turn and session; finally, if any
 tool failed, a user message `The tool failed with error: … Please correct your
 approach.` is appended. Then the loop continues with the next step.
