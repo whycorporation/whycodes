@@ -113,8 +113,8 @@ pub fn format_edit_preview_at(
 pub fn format_write_preview(path: &str, content: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len();
-    let mut out = String::new();
-    out.push_str(&format!("Wrote {path}  ·  {total} lines\n\n"));
+    let mut out = format_write_summary(path, content);
+    out.push('\n');
     let trunc = total > PREVIEW_BODY_LINES;
     for (i, line) in lines.iter().take(PREVIEW_BODY_LINES).enumerate() {
         out.push_str(&numbered_diff_line(i + 1, '+', line));
@@ -127,6 +127,17 @@ pub fn format_write_preview(path: &str, content: &str) -> String {
         out.push_str("(empty file)\n");
     }
     out
+}
+
+/// Header line of [`format_write_preview`] alone: what a `write` returns to
+/// the model, which sent `content` itself. The TUI rebuilds the preview
+/// from the call's `content` argument.
+///
+/// ```text
+/// Wrote path/to/file.rs  ·  12 lines
+/// ```
+pub fn format_write_summary(path: &str, content: &str) -> String {
+    format!("Wrote {path}  ·  {} lines\n", content.lines().count())
 }
 
 /// Path from an edit/write preview header, if present.
