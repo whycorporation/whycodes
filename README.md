@@ -201,7 +201,7 @@ under WSL2 on 2026-10-16) and an Apple M2 MacBook Air (macOS 26.5,
 
 | Metric | Windows | Linux (WSL2) | macOS (M2) |
 |---|---|---|---|
-| `--version` | **10.5 ms** | **1.4 ms** | **4.0 ms** |
+| `--version` | **10.5 ms** | **1.4 ms** | **2.6 ms** |
 | First frame (harness, in-proc) | **0.35 ms** | **0.08 ms** | **0.04 ms** |
 | Idle redraws (3 s) | **0.0 /s** | **0.0 /s** | **0.0 /s** |
 | 1 idle session PSS | — (`/proc` only) | **13.6 MB** | — (`/proc` only) |

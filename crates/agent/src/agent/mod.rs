@@ -1382,7 +1382,7 @@ impl Agent {
         if system_prompt.contains("Today's date:") {
             return system_prompt.to_string();
         }
-        let today = chrono::Local::now().format("%Y-%m-%d");
+        let today = whycodes_core::local_time::now().format("%Y-%m-%d");
         let os = std::env::consts::OS;
         let shell = whycodes_sandbox::host_shell_name();
         let cwd = working_dir

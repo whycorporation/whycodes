@@ -2,6 +2,7 @@ pub mod edit_trailer;
 pub mod error;
 pub mod file_claims;
 pub mod harmony;
+pub mod local_time;
 pub mod logging;
 pub mod network;
 pub mod panel;

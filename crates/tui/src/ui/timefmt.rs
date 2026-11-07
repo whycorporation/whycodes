@@ -4,10 +4,11 @@
 //! History / welcome: `just now`, `5m ago`, `3h ago`, then the long absolute.
 
 use chrono::{Datelike, Timelike};
+use whycodes_core::local_time;
 
 /// Short bubble clock — `%-I:%M %p` (`2:32 PM`).
 pub fn format_clock(ts: chrono::DateTime<chrono::Utc>) -> String {
-    let local = ts.with_timezone(&chrono::Local);
+    let local = local_time::to_local(ts);
     let (pm, hour) = local.hour12();
     let ampm = if pm { "PM" } else { "AM" };
     format!("{hour}:{:02} {ampm}", local.minute())
@@ -15,7 +16,7 @@ pub fn format_clock(ts: chrono::DateTime<chrono::Utc>) -> String {
 
 /// Long absolute — session picker / welcome after a day (`August 15, 14:32`).
 pub fn format_absolute(ts: chrono::DateTime<chrono::Utc>) -> String {
-    let local = ts.with_timezone(&chrono::Local);
+    let local = local_time::to_local(ts);
     format!(
         "{} {}, {:02}:{:02}",
         local.format("%B"),
@@ -27,14 +28,14 @@ pub fn format_absolute(ts: chrono::DateTime<chrono::Utc>) -> String {
 
 /// Relative, then absolute — session picker / welcome list.
 pub fn format_relative(ts: chrono::DateTime<chrono::Utc>) -> String {
-    format_relative_at(ts, chrono::Local::now())
+    format_relative_at(ts, local_time::now())
 }
 
 pub fn format_relative_at(
     ts: chrono::DateTime<chrono::Utc>,
-    now: chrono::DateTime<chrono::Local>,
+    now: chrono::DateTime<chrono::FixedOffset>,
 ) -> String {
-    let local = ts.with_timezone(&chrono::Local);
+    let local = local_time::to_local(ts);
     let delta = now.signed_duration_since(local);
     let secs = delta.num_seconds();
     if secs < 60 {

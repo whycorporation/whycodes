@@ -18,6 +18,14 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 directories.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# chrono's `Local` (the `clock` feature) is only used on Windows; on macOS it
+# links CoreFoundation, which cost every process start ~0.9 ms (local_time.rs).
+[target.'cfg(windows)'.dependencies]
+chrono = { workspace = true, features = ["clock"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

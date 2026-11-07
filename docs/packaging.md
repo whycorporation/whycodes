@@ -58,8 +58,11 @@ Artifact names must stay aligned with `.github/workflows/release.yml`,
 `whycodes-<target>.tar.gz`. **v0.1.0** shipped as `whycode-*` with a `whycode`
 binary in the archive; the formula still installs that as `whycodes`.
 
-macOS release builds set `MACOSX_DEPLOYMENT_TARGET` (11.0 on arm64, 10.15 on
-Intel) so the prebuilt does not require the runner's latest SDK.
+macOS release builds set `MACOSX_DEPLOYMENT_TARGET` (13.0 on arm64, 10.15 on
+Intel) so the prebuilt does not require the runner's latest SDK. Apple Silicon
+needs macOS 13 or later: from 13.0 the linker emits chained fixups, which the
+kernel applies lazily at page-in instead of dyld rebasing every pointer before
+`main` (measured in `docs/benchmarks.md`, "macOS start-up").
 
 If `main` is protected against `GITHUB_TOKEN` pushes, the Homebrew job will
 fail after a successful release (GH013: PR required). Bump the formula

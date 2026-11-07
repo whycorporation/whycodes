@@ -1,11 +1,27 @@
 use super::*;
 use chrono::TimeZone;
 
-fn local(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<chrono::Local> {
-    chrono::Local
-        .with_ymd_and_hms(y, m, d, h, min, 0)
+/// A local wall-clock time, in the offset the formatters will use for it.
+fn local_s(
+    y: i32,
+    m: u32,
+    d: u32,
+    h: u32,
+    min: u32,
+    s: u32,
+) -> chrono::DateTime<chrono::FixedOffset> {
+    let naive = chrono::NaiveDate::from_ymd_opt(y, m, d)
+        .and_then(|day| day.and_hms_opt(h, min, s))
+        .expect("valid date");
+    let offset = whycodes_core::local_time::offset_at(naive.and_utc());
+    offset
+        .from_local_datetime(&naive)
         .single()
         .expect("valid local datetime")
+}
+
+fn local(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<chrono::FixedOffset> {
+    local_s(y, m, d, h, min, 0)
 }
 
 #[test]
@@ -32,11 +48,7 @@ fn absolute_is_month_day_clock() {
 #[test]
 fn relative_just_now_and_minutes() {
     let now = local(2026, 8, 15, 16, 0);
-    let fresh = chrono::Local
-        .with_ymd_and_hms(2026, 8, 15, 15, 59, 20)
-        .single()
-        .expect("valid local datetime")
-        .with_timezone(&chrono::Utc);
+    let fresh = local_s(2026, 8, 15, 15, 59, 20).with_timezone(&chrono::Utc);
     assert_eq!(format_relative_at(fresh, now), "just now");
     let mins = local(2026, 8, 15, 15, 10).with_timezone(&chrono::Utc);
     assert_eq!(format_relative_at(mins, now), "50m ago");

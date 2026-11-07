@@ -790,6 +790,42 @@ The Windows start-up fixes of this release target DLL loading, which macOS
 does not have. The clap fix shows here as well: on the same Mac, v0.6.33 to
 v0.6.34 took `--help` from 4.6 to 4.0 ms and `config show` from 5.4 to 5.0 ms.
 
+### macOS start-up without CoreFoundation, 2026-11-07 (Apple M2)
+
+On the same Mac, an empty Rust `main` starts in 2.08 ms, and v0.6.35's
+`--version` took 3.74 ms. `otool -L` lists only three libraries: libSystem,
+libiconv and CoreFoundation. Built into an empty `main` one at a time,
+CoreFoundation alone added 0.9 ms and libiconv 0.03 ms. dyld loads a linked
+framework at launch whether or not the program calls it.
+
+CoreFoundation came from chrono's `clock` feature: `Local` finds the zone
+through `iana-time-zone`, which asks CoreFoundation. whycodes reads local time
+in two places (the Environment date and the TUI clocks). Those now go through
+`whycodes_core::local_time`, which uses `localtime_r` on Unix (libSystem /
+libc, already loaded) and chrono's `Local` on Windows only. The workspace
+`chrono` dependency drops `clock`, so neither macOS nor Linux links
+`iana-time-zone`.
+
+Two smaller fixes followed. First, the arm64 release now targets macOS 13
+(`MACOSX_DEPLOYMENT_TARGET`). From 13.0 the linker emits chained fixups,
+which the kernel applies lazily as pages fault in, instead of dyld rebasing
+the binary's ~29,000 pointers before `main`. Second, `-dead_strip_dylibs`
+drops libiconv, which the `libc` crate links on Apple targets and nothing
+calls. `otool -L` now lists libSystem only.
+
+Interleaved, 150 runs each, median (empty `main` built for 13.0 as well):
+
+| | v0.6.35 | after | change |
+|---|---|---|---|
+| empty Rust exe | 2.15 ms | — | floor |
+| `--version` | 3.81 ms | **2.64 ms** | −31% |
+| `--help` | 4.04 ms | **2.95 ms** | −27% |
+| `config show` | 4.96 ms | **3.87 ms** | −22% |
+
+Measured one at a time: dropping CoreFoundation gave −0.9 ms and chained fixups
+−0.23 ms. The remaining 0.49 ms over the floor is the 17 MB binary itself
+(page-ins of the code that runs), with no library or fix-up left to drop.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
