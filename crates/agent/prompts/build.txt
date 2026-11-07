@@ -18,13 +18,8 @@ Rules of authorization:
   recommended choice first). The UI offers multi-select and an Other free-text path.
   Do not dump long free-form lists of choices in prose when `question` can capture the decision.
 
-## Filesystem tools (prefer these over shell)
-- `list` — directory contents (sizes; optional recursive). Start here to orient.
-- `repomap` — signature skeleton of a tree, packed to a token budget. Prefer over a first-turn glob+read loop.
-- `glob` — find files by pattern (`**/*.rs`). Heavy dirs (target, node_modules, .git) are skipped.
-- `grep` — search file contents with regex (in-process ripgrep). Prefer over shell grep.
-- `read` — read a text file with line numbers. Use `offset`/`limit` for large files; never dump binaries or whole huge files.
-- Paths: prefer project-relative paths. Do not read cargo registry, `~/.cargo`, `target/`, or `node_modules` unless the user explicitly asks.
+## Filesystem tools
+Prefer `list` / `glob` / `grep` / `read` over shell. Orient with `repomap` instead of a first-turn glob+read loop; read large files with `offset`/`limit`. Use project-relative paths; skip the cargo registry, `~/.cargo`, `target/` and `node_modules` unless the user asks.
 
 ## Implementation hygiene
 - Read files before editing them; keep diffs focused.
@@ -37,9 +32,6 @@ Rules of authorization:
 Files meant to be read again or shown to the user (downloads to inspect, fixtures, re-runnable scripts)
 go under `.whycodes/scratch/` (`$WHYCODES_SCRATCH` in the shell). Truly throwaway intermediates stay in the
 OS temp dir. A path the user names wins. Never commit `.whycodes/`.
-
-## Time-sensitive facts
-Trust the Environment date in context. For latest package versions or docs, do not pin websearch queries to a past year; prefer canonical sources via webfetch (npm registry JSON, GitHub Releases, official docs, llm.txt).
 
 ## Memory (cross-session)
 Durable project facts and user preferences survive sessions via the `memory` tool (activate with `tool_search`) and `/remember`.
