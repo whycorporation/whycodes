@@ -1363,6 +1363,26 @@ of both: spill and prune now run only once they can free at least
 cache cost for a small rise in total input. On the two-turn script above, it
 cuts uncached tokens a further 35% (49,657 → 32,401) for 2% more input.
 
+The threshold was then checked on two more workloads, captured the same way
+(each "every step" row is v0.6.34, each replay row uses the same requests, and
+"actual" is a v0.6.35 build), to rule out tuning to one session:
+
+| Workload | Policy | Total input | Uncached | Misses | Cost with cache | Last request |
+|---|---|---|---|---|---|---|
+| bash-heavy, 7 turns (1,500- and 600-line command output) | every step | 1,103,531 | 411,789 | 11 | 583,910 | 47,234 |
+| | **≥ 16 KiB (actual)** | 1,128,605 | 301,537 | 6 | **459,628** | 47,241 |
+| | never | 2,463,561 | 162,724 | 0 | 433,489 | 162,724 |
+| small reads, 8 turns (files under 2 KiB) | every step | 565,486 | 99,642 | 13 | 171,137 | 20,946 |
+| | **≥ 16 KiB (actual)** | 616,708 | 62,140 | 3 | **133,132** | 23,334 |
+| | ≥ 32 KiB (replay) | 716,464 | 61,211 | 2 | 142,039 | 20,946 |
+| | never | 901,227 | 45,107 | 0 | 141,996 | 45,107 |
+
+16 KiB cuts cache cost 21–23% against shrinking every step on all three
+workloads. It is the cheapest policy on the small-read session and within 5%
+of the cheapest on the other two. The only cheaper alternative, never
+shrinking the bash-heavy session, ends with a 163k-token request, which would
+trigger compaction long before. The actual builds match the replays to 0.1%.
+
 Reproduced on macOS 26.5 (Apple M2, release builds of v0.6.33, v0.6.34 and
 this change): two-turn uncached 151,711 → 49,723 → 32,418; six-turn cache
 misses 14 → 8 → 2 and cost with cache 441,571 → 172,007 → 132,675, within
