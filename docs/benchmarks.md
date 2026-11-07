@@ -1363,6 +1363,12 @@ of both: spill and prune now run only once they can free at least
 cache cost for a small rise in total input. On the two-turn script above, it
 cuts uncached tokens a further 35% (49,657 → 32,401) for 2% more input.
 
+Reproduced on macOS 26.5 (Apple M2, release builds of v0.6.33, v0.6.34 and
+this change): two-turn uncached 151,711 → 49,723 → 32,418; six-turn cache
+misses 14 → 8 → 2 and cost with cache 441,571 → 172,007 → 132,675, within
+0.5% of the Windows figures. Start-up on the same Mac: `--version` 3.8 ms,
+`--help` 4.6 → 4.0 ms, `config show` 5.4 → 5.0 ms (v0.6.33 → v0.6.34).
+
 ## Token accounting reconciliation (2026-08-14)
 
 Providers report usage; we persist those numbers (not the char/4 heuristic)
