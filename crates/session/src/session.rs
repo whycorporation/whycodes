@@ -30,6 +30,12 @@ pub const SPILL_MARK: &str = "full output saved: ";
 /// How many recent tool-role messages keep the large cap when pruning.
 const PRUNE_KEEP_RECENT_TOOLS: usize = 4;
 
+/// Chars old tool results must be able to give back before the per-step
+/// spill/prune pass runs ([`Session::old_tool_results_due`]). Picked on a
+/// captured 25-request session: 16 KiB cut prompt-cache cost 23% against
+/// shrinking every step, for 4% more input and 11% more context.
+pub const SHRINK_BATCH_CHARS: usize = 16_384;
+
 /// Minimum number of tail messages retained by [`Session::compact`].
 const MIN_KEEP_MESSAGES: usize = 4;
 
@@ -1339,6 +1345,41 @@ impl Session {
             .copied()
             .filter(|&i| i < seen_before)
             .collect()
+    }
+
+    /// Whether spill and prune would free at least [`SHRINK_BATCH_CHARS`]
+    /// from old tool results that are still full.
+    ///
+    /// Each pass rewrites messages inside the provider's cached prefix, so
+    /// running it every step (it shrank one result at a time) missed the
+    /// cache again and again: on a captured 25-request session, eight misses
+    /// cost more than never shrinking. Waiting for a batch keeps the context
+    /// almost as small with a fraction of the misses.
+    pub fn old_tool_results_due(&self) -> bool {
+        let mut freed = 0usize;
+        for i in self.shrinkable_tool_indices() {
+            let texts: Vec<&str> = match &self.messages[i].content {
+                MessageContent::Text(t) => vec![t.as_str()],
+                MessageContent::Blocks(blocks) => blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text }
+                        | ContentBlock::ToolResult { content: text, .. } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect(),
+            };
+            // Spill runs first and keeps a SPILL_HEAD_CHARS head of a long
+            // body, so that is what a pass gives back (prune only catches the
+            // bodies the store declines).
+            for text in texts.into_iter().filter(|t| !t.contains(SPILL_MARK)) {
+                let body = split_truncation_notice(text).0.chars().count();
+                if body > TOOL_RESULT_PRUNE_CHARS {
+                    freed += body - SPILL_HEAD_CHARS;
+                }
+            }
+        }
+        freed >= SHRINK_BATCH_CHARS
     }
 
     /// Shrink older tool outputs more aggressively.
@@ -3111,6 +3152,57 @@ mod tests {
         assert_eq!(session.truncate_large_tool_results(), 0);
         let tool_text = session.messages[1].content.as_text().unwrap();
         assert!(tool_text.chars().count() <= TOOL_RESULT_MAX_CHARS);
+    }
+
+    #[test]
+    fn old_results_shrink_in_batches() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("go");
+        let result = |id: String, n: usize| whycodes_core::types::ToolResult {
+            tool_call_id: id,
+            content: "z".repeat(n),
+            is_error: false,
+        };
+        // Five results of 6 KiB: only the oldest is past the keep window,
+        // and it would free ~4 KiB — not worth a cache miss yet.
+        for i in 0..5 {
+            session.add_tool_results(vec![result(format!("t{i}"), 6_000)]);
+        }
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
+        }]);
+        assert!(!session.old_tool_results_due());
+        // A block-shaped result and an already spilled one: the block counts,
+        // the spilled body does not.
+        session.messages.push(Message {
+            role: Role::Tool,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Text {
+                    text: "b".repeat(20_000),
+                },
+                ContentBlock::Image {
+                    source: whycodes_core::types::ImageSource::Base64 {
+                        media_type: "image/png".into(),
+                        data: "AAAA".into(),
+                    },
+                },
+            ]),
+            tool_call_id: Some("blk".into()),
+            name: None,
+            created_at: None,
+        });
+        session.add_tool_results(vec![result("s".into(), 0)]);
+        session.messages.last_mut().unwrap().content =
+            MessageContent::Text(format!("{}{SPILL_MARK}x", "q".repeat(30_000)));
+        for i in 5..9 {
+            session.add_tool_results(vec![result(format!("t{i}"), 10)]);
+        }
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "seen".into(),
+        }]);
+        assert!(session.old_tool_results_due(), "the batch is now worth it");
+        assert!(session.prune_old_tool_results() > 0);
+        assert!(!session.old_tool_results_due(), "nothing left to free");
     }
 
     #[test]

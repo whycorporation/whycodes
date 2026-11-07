@@ -483,6 +483,55 @@ async fn run_wraps_stream_error_as_failed_result() {
 }
 
 #[tokio::test]
+async fn worker_shrinks_old_results_once_a_batch_is_due() {
+    let dir = tempfile::tempdir().unwrap();
+    let body: String = (0..700)
+        .map(|i| format!("log line {i:04} {}\n", "x".repeat(20)))
+        .collect();
+    let mut steps = Vec::new();
+    for i in 0..7 {
+        std::fs::write(dir.path().join(format!("f{i}.txt")), &body).unwrap();
+        steps.push(vec![whycodes_llm::ScriptedStep::ToolCall {
+            id: format!("r{i}"),
+            name: "read".into(),
+            input: serde_json::json!({"path": format!("f{i}.txt")}),
+        }]);
+    }
+    steps.push(vec![whycodes_llm::ScriptedStep::Text(
+        "read them all".into(),
+    )]);
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "script", steps,
+    )));
+    let runner = SubagentRunner::new(
+        Arc::new(registry),
+        Arc::new(ToolExecutor::new()),
+        make_info(),
+        dir.path().to_path_buf(),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    )
+    .with_approval_mode(ApprovalMode::Auto);
+    let result = runner
+        .run(
+            SubagentTask {
+                goal: "read every file".into(),
+                context: None,
+                tools: Some(vec!["read".into()]),
+                max_turns: 10,
+                output_schema: None,
+            },
+            "script",
+            "m",
+            "k",
+        )
+        .await;
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output, "read them all");
+}
+
+#[tokio::test]
 async fn finished_worker_returns_its_report_not_every_step() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("n.txt"), "payload").unwrap();

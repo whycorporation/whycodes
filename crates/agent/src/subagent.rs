@@ -602,7 +602,9 @@ impl SubagentRunner {
             // Workers never compact: keep their tool dumps from filling the
             // window the way the main loop does before each step.
             session.truncate_large_tool_results();
-            session.prune_old_tool_results();
+            if session.old_tool_results_due() {
+                session.prune_old_tool_results();
+            }
 
             if let Some(hub) = &self.swarm_hub {
                 let id = self.agent_id.as_deref().unwrap_or("worker");

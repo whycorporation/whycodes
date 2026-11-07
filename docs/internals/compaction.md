@@ -40,6 +40,13 @@ shake_old_tool_results        all but last 4 tool msgs <= 512    (TOOL_RESULT_SH
                               only when tokens > 3/4 * compaction_threshold
 ```
 
+Spill and prune run only when the results they would shrink can free at
+least 16 KiB (`Session::old_tool_results_due`, `SHRINK_BATCH_CHARS`). Every pass
+rewrites messages inside the provider's cached prefix, so a pass per step
+missed the cache on most steps; batching keeps the context nearly as small with
+a fraction of the misses (measured in `docs/benchmarks.md`, "Context tokens per
+session"). The explicit `/compact` path still shrinks immediately.
+
 "All but last 4" also never includes a result the model has not seen yet:
 the tool messages after the latest assistant message answer its calls and
 go out with the next request (`shrinkable_tool_indices`). Counting messages

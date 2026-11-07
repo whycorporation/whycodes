@@ -1337,16 +1337,31 @@ Where it comes from:
   and intent suffix, so the cached prefix ended right after the tools and
   system prompt. Now the suffix stays pinned to that prompt (#419).
 
-Request 9 still misses the cache from the first tool result onward, by design.
-Once a result is more than four tool messages old (and the model has seen it,
-#420), spill and prune shrink it in place: the 13k-token test log and the
-4k-token outline become short heads. The rewrite costs one cache miss
-(~17.8k tokens processed again). It saves ~15k tokens on every later request.
-With prompt-cache pricing (read ≈ 0.1×, write ≈ 1.25× the base rate), the miss
-pays for itself after about a dozen requests; a typical session runs many
-more. Without a provider cache, it pays from the next request on. Shrinking
-less often would trade fewer misses for carrying that bulk on every request in
-between.
+Request 9 missed the cache from the first tool result onward. Spill and prune
+had just shrunk old results in place (#420 keeps unseen ones whole). That was
+the price of a smaller context, but the passes ran every step and shrank one
+result at a time, so a long session paid that miss again and again.
+
+A longer capture settled it: six turns, 25 requests, each extra turn reading
+two more modules and grepping. Cost is in base-rate units with prompt-cache
+pricing (cache read 0.1×, write 1.25×). "Never" replays the v0.6.34 requests
+with every shrunk result swapped back to its full text:
+
+| Shrinking old results | Total input | Uncached | Cache misses | Cost with cache | Last request |
+|---|---|---|---|---|---|
+| v0.6.33 | 1,120,750 | 287,390 | 14 | 442,574 | 51,902 |
+| v0.6.34, every step | 586,193 | 98,900 | 8 | 172,354 | 26,747 |
+| never | 828,982 | 48,811 | 0 | 139,031 | 48,811 |
+| **in batches of ≥ 16 KiB** | 610,840 | 62,463 | 2 | **132,916** | 29,609 |
+
+Shrinking every step kept the context smallest, but with a prompt cache it cost
+more than never shrinking. Never shrinking is the most expensive without a
+cache and lets the context grow without bound. Batching sits close to the best
+of both: spill and prune now run only once they can free at least
+`SHRINK_BATCH_CHARS` (16 KiB, `Session::old_tool_results_due`). Thresholds of
+4–64 KiB were replayed on the same requests first: 16 KiB gave the lowest
+cache cost for a small rise in total input. On the two-turn script above, it
+cuts uncached tokens a further 35% (49,657 → 32,401) for 2% more input.
 
 ## Token accounting reconciliation (2026-08-14)
 
