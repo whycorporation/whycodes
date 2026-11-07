@@ -483,6 +483,55 @@ async fn run_wraps_stream_error_as_failed_result() {
 }
 
 #[tokio::test]
+async fn finished_worker_returns_its_report_not_every_step() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "script",
+        [
+            vec![
+                whycodes_llm::ScriptedStep::Text("Let me read n.txt first.".into()),
+                whycodes_llm::ScriptedStep::ToolCall {
+                    id: "c1".into(),
+                    name: "read".into(),
+                    input: serde_json::json!({"path": "n.txt"}),
+                },
+            ],
+            vec![whycodes_llm::ScriptedStep::Text(
+                "n.txt holds `payload`.".into(),
+            )],
+        ],
+    )));
+    let runner = SubagentRunner::new(
+        Arc::new(registry),
+        Arc::new(ToolExecutor::new()),
+        make_info(),
+        dir.path().to_path_buf(),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    )
+    .with_approval_mode(ApprovalMode::Auto);
+    let result = runner
+        .run(
+            SubagentTask {
+                goal: "what is in n.txt".into(),
+                context: None,
+                tools: Some(vec!["read".into()]),
+                max_turns: 4,
+                output_schema: None,
+            },
+            "script",
+            "m",
+            "k",
+        )
+        .await;
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output, "n.txt holds `payload`.");
+    assert!(FINAL_REPORT_INSTRUCTION.contains("Only your final message reaches the parent"));
+}
+
+#[tokio::test]
 async fn run_tool_use_delta_then_text() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("n.txt"), "payload").unwrap();

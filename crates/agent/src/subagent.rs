@@ -66,6 +66,11 @@ pub const CANCELLED_BY_USER: &str = "cancelled by the user";
 /// Longest worker log carried on a progress event; older lines drop first.
 const MAX_WORKER_LOG: usize = 16_000;
 
+/// Every worker's system prompt ends with this: only its last message
+/// reaches the parent.
+pub const FINAL_REPORT_INSTRUCTION: &str = "\n\n# Report\nOnly your final message reaches the parent agent. \
+     Put every finding, path and result in it; earlier messages are not passed on.";
+
 /// Where a worker reports its steps (parent TUI agent hub).
 struct WorkerProgress {
     events: crate::events::EventSink,
@@ -352,6 +357,7 @@ impl SubagentRunner {
             &user_message,
             &self.memory,
         );
+        system_prompt.push_str(FINAL_REPORT_INSTRUCTION);
         if let Some(schema) = &task.output_schema {
             system_prompt.push_str(&structured_output::instruction(schema));
         }
@@ -704,7 +710,9 @@ impl SubagentRunner {
                 blocks.push(ContentBlock::Text {
                     text: accumulated_text.clone(),
                 });
-                final_text.push_str(&accumulated_text);
+                // The parent gets the report, not every step's narration
+                // ("Let me look at…"): the last step that said anything.
+                final_text.clone_from(&accumulated_text);
             }
 
             for tc in &tool_calls {
