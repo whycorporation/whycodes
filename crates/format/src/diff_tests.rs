@@ -95,6 +95,15 @@ fn edit_preview_multiline_and_truncation() {
 }
 
 #[test]
+fn write_summary_is_the_preview_header() {
+    let content = "fn main() {}\nfn other() {}\n";
+    let summary = format_write_summary("src/a.rs", content);
+    assert_eq!(summary, "Wrote src/a.rs  ·  2 lines\n");
+    assert!(format_write_preview("src/a.rs", content).starts_with(&format!("{summary}\n")));
+    assert_eq!(preview_file_path(&summary), Some("src/a.rs"));
+}
+
+#[test]
 fn write_preview_empty_and_truncated() {
     let empty = format_write_preview("e.rs", "");
     assert!(empty.contains("(empty file)"), "{empty}");

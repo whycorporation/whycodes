@@ -2,6 +2,7 @@ use super::{
     ToolOutHint, ToolPaint, ToolRef, ellipsize_bytes, hard_truncate_line, message_row_layout_mut,
     paint_tool_run, parse_grep_hit, prettify_tool_result, split_read_line, todo_list_summary,
     tool_block, tool_display_name, tool_out_hint, tool_result, tool_summary, visible_message_range,
+    write_result_preview,
 };
 use crate::app::{ChatRole, TuiApp};
 use crate::config::TuiAppConfig;
@@ -430,6 +431,55 @@ fn tool_block_grep_header_shows_match_chip() {
         "match summary, got {header}"
     );
     assert!(header.contains("foo"), "got {header}");
+}
+
+fn painted(lines: &[Line<'static>]) -> Vec<String> {
+    lines
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect()
+}
+
+#[test]
+fn write_block_paints_the_same_preview_from_its_content_argument() {
+    use whycodes_format::diff::{format_write_preview, format_write_summary};
+    let palette = ThemeName::DefaultDark.palette();
+    let content = "fn main() {}\nfn other() {}\n";
+    let input = json!({"path": "src/a.rs", "content": content});
+    let paint = || ToolPaint {
+        is_error: false,
+        palette: &palette,
+        expanded: true,
+        width: 100,
+        spin: 0,
+    };
+    // What the model now gets, and what older transcripts hold.
+    let compact = format!("{}[+2 -0]", format_write_summary("src/a.rs", content));
+    let full = format!("{}[+2 -0]", format_write_preview("src/a.rs", content));
+    let from_args = painted(&tool_block("write", &input, Some(&compact), paint()));
+    assert_eq!(
+        from_args,
+        painted(&tool_block("write", &input, Some(&full), paint()))
+    );
+    assert!(
+        from_args.iter().any(|l| l.contains("fn other()")),
+        "{from_args:?}"
+    );
+
+    // A stored full preview, an empty-file preview, an error or another tool
+    // is painted as it is.
+    assert_eq!(write_result_preview("write", &input, Some(&full)), None);
+    let empty = format!("{}[+0 -0]", format_write_preview("e.rs", ""));
+    assert_eq!(
+        write_result_preview("write", &json!({}), Some(&empty)),
+        None
+    );
+    assert_eq!(
+        write_result_preview("write", &input, Some("Error writing file: x")),
+        None
+    );
+    assert_eq!(write_result_preview("edit", &input, Some(&compact)), None);
+    assert_eq!(write_result_preview("write", &input, None), None);
 }
 
 #[test]

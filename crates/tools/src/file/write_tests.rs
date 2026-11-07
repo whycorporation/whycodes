@@ -26,8 +26,12 @@ async fn writes_relative_path_and_creates_parents() {
         )
         .await;
     assert!(!out.is_error, "{}", out.content);
-    assert!(out.content.contains("Wrote"), "{}", out.content);
-    assert!(out.content.ends_with("[+2 -0]"), "{}", out.content);
+    // The model sent the content: the result does not echo it back.
+    assert_eq!(
+        out.content, "Wrote nested/a.txt  ·  2 lines\n[+2 -0]",
+        "{}",
+        out.content
+    );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("nested/a.txt")).expect("read"),
         "hello\nworld"
@@ -63,7 +67,11 @@ async fn empty_content_writes_empty_file() {
         .execute(json!({ "path": "empty.txt" }), &ctx(dir.path()))
         .await;
     assert!(!out.is_error, "{}", out.content);
-    assert!(out.content.contains("(empty file)"), "{}", out.content);
+    assert!(
+        out.content.starts_with("Wrote empty.txt  ·  0 lines\n"),
+        "{}",
+        out.content
+    );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("empty.txt")).expect("read"),
         ""

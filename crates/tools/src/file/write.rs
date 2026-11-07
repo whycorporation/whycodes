@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::file::paths::display_path;
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
-use whycodes_format::diff::format_write_preview;
+use whycodes_format::diff::{format_write_preview, format_write_summary};
 
 pub struct WriteTool;
 
@@ -136,11 +136,13 @@ impl WriteTool {
         match crate::file::atomic::write_atomic(Path::new(&full_path), &bytes) {
             Ok(_) => ToolResult {
                 tool_call_id: String::new(),
-                // +lines preview so the TUI can paint add colours
-                // (and syntax-highlight when the path has a known extension).
+                // Header and counts only: the model sent `content` itself, so
+                // echoing its first 40 lines back cost ~500 tokens per write
+                // for nothing. The TUI rebuilds the coloured preview from the
+                // call's `content` argument.
                 content: format!(
                     "{}{}",
-                    format_write_preview(&shown, &content),
+                    format_write_summary(&shown, &content),
                     whycodes_core::edit_trailer(content.lines().count(), removed)
                 ),
                 is_error: false,

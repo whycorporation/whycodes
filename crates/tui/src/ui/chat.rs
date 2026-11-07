@@ -17,7 +17,9 @@ use ratatui::{
 };
 use std::sync::Arc;
 use unicode_width::UnicodeWidthStr;
-use whycodes_format::diff::{looks_like_diff, parse_diff_line, preview_file_path};
+use whycodes_format::diff::{
+    format_write_preview, looks_like_diff, parse_diff_line, preview_file_path,
+};
 use whycodes_format::highlight::{detect_language, highlight_code_spans};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
@@ -2052,12 +2054,36 @@ fn verb_group_line(run: &[ToolRef<'_>], paint: ToolPaint<'_>) -> Line<'static> {
 /// ┃ ok
 /// ┃ Thought for 2.1s
 /// ```
+/// A `write` result carries only `Wrote path  ·  N lines` and its `[+N -M]`
+/// trailer: the model sent the content itself. Paint the preview it used to
+/// carry, rebuilt from the call's `content` argument. A result that already
+/// holds a preview (an older transcript) is left as it is.
+fn write_result_preview(
+    name: &str,
+    input: &serde_json::Value,
+    result: Option<&str>,
+) -> Option<String> {
+    let result = result.filter(|_| name == "write")?;
+    let path = preview_file_path(result)?;
+    let rest = result.split_once('\n').map_or("", |(_, rest)| rest);
+    let has_preview = rest
+        .lines()
+        .any(|l| parse_diff_line(l).marker.is_some() || l.starts_with("(empty"));
+    if has_preview {
+        return None;
+    }
+    let content = input["content"].as_str().unwrap_or_default();
+    Some(format!("{}{rest}", format_write_preview(path, content)))
+}
+
 fn tool_block(
     name: &str,
     input: &serde_json::Value,
     result: Option<&str>,
     paint: ToolPaint<'_>,
 ) -> Vec<Line<'static>> {
+    let rebuilt = write_result_preview(name, input, result);
+    let result = rebuilt.as_deref().or(result);
     let mut lines = Vec::new();
     let running = result.is_none();
     let execute = is_execute_tool(name);
