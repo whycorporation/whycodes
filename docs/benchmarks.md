@@ -29,6 +29,17 @@ the previous run is per machine, and a shared runner would report noise as a
 regression. They are for changing the code in these paths and checking the
 before and after on one machine.
 
+Context sent to the model, per request, over a scripted two-turn session
+(local mock model, throwaway `WHYCODES_HOME`, nothing billed):
+
+```bash
+python scripts/bench_tokens.py --binary target/release/whycodes     --compare path/to/previous/whycodes   # optional side by side
+```
+
+Counts use tiktoken's o200k encoding when `tiktoken` is installed, chars/4
+otherwise. Use a release build (a Windows debug build overflows the stack in
+`--plain`). See [Context tokens per session](#context-tokens-per-session-2026-11-07).
+
 Optional process-level JSON for ceilings:
 
 ```bash
@@ -1286,6 +1297,56 @@ though it covered them.
 - **Memory during a turn.** A resumed long transcript is measured above
   (`bench_resume_memory.py`), but a live turn with streaming and tool output
   is not (it would need a provider key or a scripted provider).
+
+## Context tokens per session (2026-11-07)
+
+`scripts/bench_tokens.py` runs one fixed session against the repository. In
+turn 1 it reads a large file (`session.rs`, returned as an outline) and a small
+one, greps, writes a 60-line file, and runs a failing test that prints 4,000
+lines. In turn 2 it reads and greps again. A local mock plays the model and
+records every request. For each request the script counts the input and the
+part that repeats the previous request byte for byte from the start, which is
+what a provider prompt cache can serve. `uncached` is what has to be processed
+again, the figure behind cost and latency.
+
+v0.6.33 against v0.6.34 (the token-efficiency PRs #418–#428), Windows, o200k:
+
+| Request | v0.6.33 total | v0.6.33 uncached | v0.6.34 total | v0.6.34 uncached |
+|---|---|---|---|---|
+| 1 prompt | 8,471 | 8,471 | 8,319 | 8,319 |
+| 2 after large read | 13,217 | 4,746 | 12,651 | 4,332 |
+| 3 after small read | 14,145 | 928 | 13,473 | 822 |
+| 4 after grep | 14,895 | 750 | 14,223 | 750 |
+| 5 after write | 17,785 | 2,890 | 15,906 | 1,683 |
+| 6 after failing test | 58,161 | 40,376 | 29,437 | 13,531 |
+| 7 turn 1 answer → turn 2 | 58,971 | 810 | 29,975 | 538 |
+| 8 turn 2 after read | 60,290 | **47,018** | 31,733 | **1,758** |
+| 9 turn 2 after grep | 59,893 | 46,367 | 31,336 | 17,803 |
+| **Session** | **305,828** | **152,356** | **187,053 (−39%)** | **49,536 (−67%)** |
+
+Where it comes from:
+
+- **Request 1:** the build prompt no longer repeats the tool descriptions or the
+  Environment section (#421).
+- **Requests 2–3:** read lines lost their column padding (#424).
+- **Request 5:** `write` no longer echoes the file back (#422).
+- **Request 6:** a failed command's output was in context twice: once capped,
+  and once uncapped in a recovery note. It is now once, with head and tail kept
+  so the `failures:` line survives (#418).
+- **Request 8:** in v0.6.33 the turn-1 prompt was re-sent without its recall
+  and intent suffix, so the cached prefix ended right after the tools and
+  system prompt. Now the suffix stays pinned to that prompt (#419).
+
+Request 9 still misses the cache from the first tool result onward, by design.
+Once a result is more than four tool messages old (and the model has seen it,
+#420), spill and prune shrink it in place: the 13k-token test log and the
+4k-token outline become short heads. The rewrite costs one cache miss
+(~17.8k tokens processed again). It saves ~15k tokens on every later request.
+With prompt-cache pricing (read ≈ 0.1×, write ≈ 1.25× the base rate), the miss
+pays for itself after about a dozen requests; a typical session runs many
+more. Without a provider cache, it pays from the next request on. Shrinking
+less often would trade fewer misses for carrying that bulk on every request in
+between.
 
 ## Token accounting reconciliation (2026-08-14)
 
