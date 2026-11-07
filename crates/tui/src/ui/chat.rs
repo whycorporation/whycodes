@@ -3244,9 +3244,22 @@ fn split_read_line(line: &str) -> Option<(String, &str)> {
     for (sep, sep_len) in [('|', 1usize), ('│', '│'.len_utf8()), ('→', '→'.len_utf8())] {
         if let Some(pipe) = line.find(sep) {
             let (left, right) = line.split_at(pipe);
-            if !left.is_empty() && left.chars().all(|c| c.is_ascii_digit() || c == ' ') {
+            // `    12|code`, or a tagged read line `42 a3|code` (the model's
+            // edit anchor; noise for a person, so the gutter drops it and
+            // right-aligns the number the tool no longer pads).
+            let (num, tag) = left
+                .trim_start()
+                .split_once(' ')
+                .unwrap_or((left.trim_start(), ""));
+            let numeric = !num.is_empty() && num.chars().all(|c| c.is_ascii_digit());
+            if numeric && tag.chars().all(|c| c.is_ascii_alphanumeric()) {
                 // Normalise display separator to `|` so gutters stay uniform.
-                return Some((format!("{left}|"), &right[sep_len..]));
+                let gutter = if tag.is_empty() {
+                    format!("{left}|")
+                } else {
+                    format!("{num:>6}|")
+                };
+                return Some((gutter, &right[sep_len..]));
             }
         }
     }

@@ -219,6 +219,15 @@ fn split_read_line_accepts_pipe_and_arrow() {
     let (g2, code2) = split_read_line("     1→use foo;").unwrap();
     assert_eq!(g2, "     1|");
     assert_eq!(code2, "use foo;");
+    // Tagged read lines, unpadded (current) and padded (older transcripts):
+    // the tag is hidden and the number right-aligned.
+    for tagged in ["42 a3|let x = 1;", "    42 a3|let x = 1;"] {
+        let (g3, code3) = split_read_line(tagged).unwrap();
+        assert_eq!(g3, "    42|", "{tagged}");
+        assert_eq!(code3, "let x = 1;");
+    }
+    assert!(split_read_line("x 1|not a read line").is_none());
+    assert!(split_read_line("42 a-b|not a tag").is_none());
 }
 
 #[test]
