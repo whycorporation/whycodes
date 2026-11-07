@@ -194,14 +194,14 @@ configuration — is in **[docs/guide.md](docs/guide.md)**.
 
 ## Performance
 
-Measured 2026-10-16 on one machine (Ryzen 7 3800X): Windows 11 natively
-and Linux under WSL2. Method, older runs and caveats in
-[docs/benchmarks.md](docs/benchmarks.md):
+Measured on one machine (Ryzen 7 3800X): Windows 11 natively on
+2026-11-07, Linux under WSL2 on 2026-10-16. Method, older runs and caveats
+in [docs/benchmarks.md](docs/benchmarks.md):
 
 | Metric | Windows | Linux (WSL2) |
 |---|---|---|
-| `--version` | **12.9 ms** | **1.4 ms** |
-| First frame (harness, in-proc) | **0.25 ms** | **0.08 ms** |
+| `--version` | **10.5 ms** | **1.4 ms** |
+| First frame (harness, in-proc) | **0.35 ms** | **0.08 ms** |
 | Idle redraws (3 s) | **0.0 /s** | **0.0 /s** |
 | 1 idle session PSS | — (`/proc` only) | **13.6 MB** |
 | 10 idle sessions PSS | — | **41.9 MB** (~3.1 MB each extra) |

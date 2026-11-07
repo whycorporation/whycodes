@@ -52,12 +52,17 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
+    // `hide_possible_values` on every dynamic value parser: clap otherwise
+    // asks each one for its values while building the command (to decide
+    // whether long help exists), which read config.toml and opened the
+    // session database on every invocation (~9 ms on Windows). Shell
+    // completion reads the parsers directly and still offers them.
     /// Provider to use
-    #[arg(short = 'P', long, global = true, value_parser = ProviderValueParser)]
+    #[arg(short = 'P', long, global = true, value_parser = ProviderValueParser, hide_possible_values = true)]
     pub provider: Option<String>,
 
     /// Model to use
-    #[arg(short = 'm', long, global = true, value_parser = ModelValueParser)]
+    #[arg(short = 'm', long, global = true, value_parser = ModelValueParser, hide_possible_values = true)]
     pub model: Option<String>,
 
     /// Agent name to use
@@ -82,7 +87,8 @@ pub struct Cli {
         long = "resume",
         global = true,
         value_name = "SESSION_ID",
-        value_parser = SessionIdValueParser
+        value_parser = SessionIdValueParser,
+        hide_possible_values = true
     )]
     pub resume: Option<String>,
 
@@ -447,7 +453,7 @@ pub enum AuthCmd {
     /// Log in with a provider subscription (opens a browser)
     Login {
         /// Provider: anthropic | openai | github-copilot | google | google-antigravity | xai
-        #[arg(value_parser = AuthProviderValueParser)]
+        #[arg(value_parser = AuthProviderValueParser, hide_possible_values = true)]
         provider: String,
         /// Print the sign-in URL instead of opening a browser
         #[arg(long)]
@@ -456,7 +462,7 @@ pub enum AuthCmd {
     /// Remove stored OAuth credentials for a provider
     Logout {
         /// Provider: anthropic | openai | github-copilot | google | google-antigravity | xai
-        #[arg(value_parser = AuthProviderValueParser)]
+        #[arg(value_parser = AuthProviderValueParser, hide_possible_values = true)]
         provider: String,
     },
     /// Show which providers have stored OAuth credentials (never prints tokens)
@@ -632,19 +638,19 @@ pub enum SessionCmd {
     /// View a session's details
     View {
         /// Session ID
-        #[arg(value_parser = SessionIdValueParser)]
+        #[arg(value_parser = SessionIdValueParser, hide_possible_values = true)]
         id: String,
     },
     /// Delete a session
     Delete {
         /// Session ID
-        #[arg(value_parser = SessionIdValueParser)]
+        #[arg(value_parser = SessionIdValueParser, hide_possible_values = true)]
         id: String,
     },
     /// Rename a session
     Rename {
         /// Session ID
-        #[arg(value_parser = SessionIdValueParser)]
+        #[arg(value_parser = SessionIdValueParser, hide_possible_values = true)]
         id: String,
         /// New name for the session
         name: String,
@@ -662,7 +668,7 @@ pub enum SessionCmd {
     /// Export a session to JSON (shareable)
     Share {
         /// Session ID
-        #[arg(value_parser = SessionIdValueParser)]
+        #[arg(value_parser = SessionIdValueParser, hide_possible_values = true)]
         id: String,
     },
     /// Import a transcript (whycodes / Claude / Codex / OpenCode / Pi)

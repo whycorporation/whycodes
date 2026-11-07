@@ -704,6 +704,59 @@ TUI finished loading, so it is not comparable to the 2 s rows below it.
 **34.7 MB** both right after the first paint and after 75 s idle, against
 76.0 MB / 35.0 MB on 2026-10-15. The open figure now matches the idle one.
 
+### Re-measure and startup fixes, 2026-11-07 (Windows AMD64, release, HEAD `334b5ae`)
+
+Same machine (AMD Ryzen 7 3800X), Windows 11 Pro 10.0.26300, release,
+`--features bundled-sqlite`. Linux was not re-measured.
+
+The first run found `--version` at **17 ms** against 12.9 ms on 2026-10-16,
+and the binary at **28.8 MB** against 18.5 MB. The size is the Windows-only
+`embedded-shell` default (bundled bash + coreutils); a build without it is
+20.3 MB but starts no faster (16.6 vs 15.8–17.8 ms, interleaved), so the
+size did not cost startup. An empty Rust `main` starts in **9.6 ms** on this
+host, so whycodes spent about 7 ms before printing one line. Three causes:
+
+1. **System DLLs loaded at process start.** `user32`, `shell32`, `combase`,
+   `oleaut32`, `ws2_32`, `bcrypt`, `userenv` and `advapi32` cost ~6 ms
+   whether used or not: the empty `main` linked against the same eight DLLs
+   starts in 15.9 ms. They are now `/DELAYLOAD`ed (`crates/cli/build.rs`,
+   MSVC only) and load on first call.
+2. **clap built possible-value lists on every parse** (~8 ms). clap asks
+   each argument's value parser for its values while it decides whether long
+   help exists, and the `--provider` / `--model` / `--resume` / session-id
+   parsers read `config.toml` and opened the session database to answer.
+   They now set `hide_possible_values`; shell completion reads the parsers
+   directly and its scripts are byte-identical. `--help` no longer prints
+   the model list or local session ids.
+3. **Legacy install migration resolved known folders on every load**
+   (~9 ms, once (1) deferred the DLLs it needs). `Config::load` asked
+   Windows for the pre-0.7 `ProjectDirs` paths before checking whether
+   `~/.whycodes` already holds a config, which it does on every settled
+   install. The check now comes first.
+
+Before and after, same boot, interleaved, 40 runs each (median):
+
+| Case | Before | After | Change |
+|---|---|---|---|
+| `--version` | 17.5 ms | **10.5 ms** | −40% |
+| `--help` | 26.1 ms | **10.8 ms** | −58% |
+| `config show` | 42.2 ms | **23.2 ms** | −45% |
+| `session list` | 44.1 ms | **25.8 ms** | −41% |
+| `stats` | 40.1 ms | **24.6 ms** | −39% |
+
+| Peak RSS (5 runs, median) | Before | After |
+|---|---|---|
+| `--version` | 8.4 MB | **4.6 MB** |
+| `config show` | 14.2 MB | **7.6 MB** |
+| `session list` | 14.4 MB | **8.6 MB** |
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **0.35 ms** in-proc | 0.0/s | spawn-to-exit **12.5 ms** (was 20.0 ms before the fixes) |
+| Harness `--idle-ms 3000` (10 runs) | **0.35 ms** in-proc | **0.0/s** | |
+
+`--version` is now within 1 ms of an empty Rust executable on this host.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
@@ -992,6 +1045,37 @@ once.
 The ANSI path (`render_markdown`, used by `--plain` and the CLI) still
 highlights uncached at ~3.8 ms for a typical response. That one runs once per
 response rather than once per frame, so it is left alone.
+
+### Re-measure, 2026-11-07 (Windows, criterion sample-size 15)
+
+Same machine as 2026-09-11, HEAD `334b5ae`. Run each bench target by name
+(`cargo bench -p whycodes-format --bench render -- --sample-size 15`): the
+crate's libtest harness rejects criterion flags when the target is not named.
+
+| Case | 2026-09-11 | 2026-11-07 |
+|---|---|---|
+| `parse_markdown` typical | 7.4 µs | **6.1 µs** |
+| `parse_markdown` streaming 200 / 1000 / 4000 | 3.7 / 13.7 / 53.4 µs | **3.0 / 11.9 / 40.3 µs** |
+| highlight warm Rust 10 / 100 / 500 | 83 ns / 248 ns / 1.03 µs | **58 ns / 224 ns / 1.00 µs** |
+| highlight warm untagged 100 | 215 ns | **194 ns** |
+| `render_markdown` ANSI typical | 1.26 ms | **558 µs** |
+| `render_markdown` ANSI 200-line Rust | 40.9 ms | **14.2 ms** |
+| `assess` safe short | 890 ns | 1.92 µs |
+| `assess` safe build | 2.63 µs | 3.19 µs |
+| `assess` caution / destructive / catastrophic | 4.49 / 4.94 / 2.84 µs | 4.82 / 4.97 / 3.61 µs |
+| `assess` pipeline | 9.04 µs | 9.49 µs |
+| `assess` typical 200 chars / assignment + heredoc | — | 23.8 / 19.4 µs |
+| `assess_chain` 1 / 10 / 50 segments | — | 8.6 / 73 / 378 µs |
+| index walk 1 / 4 / 8 threads | 24.0 / 10.0 / 8.5 ms | **21.0 / 9.5 / 7.7 ms** |
+| index query warm / browse top / snapshot | 18 / 46 / 128 µs | **15 / 44 / 116 µs** |
+| index 20k query_now / settle | 17 / 17 µs | **16 / 15 µs** |
+
+Cold highlight (0.7 ms for 10 lines, 3.1 ms for 100, 3.8 ms for 500) stays
+too noisy to compare. The only slower rows are `assess` on short commands:
+the in-crate shell parser (#294) builds variants, substitution bodies and
+here-document scripts for every line, about 1 µs of fixed cost. It runs
+once per `bash` call, ahead of a process spawn of ~10 ms, and the 200-char
+case is 40× under its 1 ms budget, so it is left as is.
 
 ## Time to first frame, and idle redraws
 

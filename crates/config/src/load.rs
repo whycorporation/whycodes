@@ -150,6 +150,11 @@ pub(crate) fn migrate_legacy_instance() {
         return;
     }
     let dest = whycodes_core::paths::instance_root();
+    // Settled installs stop here: the legacy roots are a known-folder
+    // lookup (shell32 + COM on Windows, ~9 ms of a short command's start).
+    if dest_has_instance_files(&dest) {
+        return;
+    }
     let sources = whycodes_core::paths::legacy_instance_roots();
     migrate_legacy_into(&dest, &sources);
 }

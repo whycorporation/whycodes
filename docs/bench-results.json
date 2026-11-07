@@ -1,6 +1,6 @@
 {
-  "date": "2026-10-16",
-  "git": "9a756f2",
+  "date": "2026-11-07",
+  "git": "334b5ae",
   "machine": {
     "platform": "Windows AMD64",
     "cpu": "AMD Ryzen 7 3800X 8-Core Processor",
@@ -11,109 +11,115 @@
   "features": [
     "bundled-sqlite"
   ],
-  "binary_size_mb": 18.5,
-  "version_ms_p95": 17.44,
-  "version_rss_mb": 8.12,
+  "binary_size_mb": 28.9,
+  "version_ms_p95": 11.52,
+  "version_rss_mb": 4.61,
   "startup": {
     "version": {
       "runs": 20,
-      "median_ms": 12.86,
-      "p95_ms": 17.44,
-      "min_ms": 12.53,
-      "max_ms": 17.44
+      "median_ms": 10.61,
+      "p95_ms": 11.52,
+      "min_ms": 9.55,
+      "max_ms": 11.52
     },
     "help": {
       "runs": 20,
-      "median_ms": 29.86,
-      "p95_ms": 39.28,
-      "min_ms": 28.1,
-      "max_ms": 39.28
+      "median_ms": 11.41,
+      "p95_ms": 12.92,
+      "min_ms": 10.73,
+      "max_ms": 12.92
     },
     "config-show": {
       "runs": 20,
-      "median_ms": 41.3,
-      "p95_ms": 46.9,
-      "min_ms": 39.35,
-      "max_ms": 46.9
+      "median_ms": 24.05,
+      "p95_ms": 81.83,
+      "min_ms": 21.81,
+      "max_ms": 81.83
     }
   },
   "memory": {
     "version": {
       "runs": 5,
-      "median_mb": 8.12,
-      "max_mb": 8.12
+      "median_mb": 4.61,
+      "max_mb": 4.73
     },
     "config-show": {
       "runs": 5,
-      "median_mb": 13.77,
-      "max_mb": 13.8
+      "median_mb": 7.56,
+      "max_mb": 7.57
     },
     "session-list": {
       "runs": 5,
-      "median_mb": 13.8,
-      "max_mb": 13.84
+      "median_mb": 8.61,
+      "max_mb": 8.62
     }
   },
   "multi_session": {
     "skipped": true,
     "reason": "not-linux"
   },
-  "first_frame_note": "Windows 11, AMD Ryzen 7 3800X, HEAD 9a756f2 on main. Release binary built with --features bundled-sqlite. Windows has no stdlib ConPTY: bench_first_frame.py inherits the console, and the harness splash is one CSI burst, so in-proc TTFF is not comparable to a Linux PTY figure; spawn-to-exit (~14 ms) matches the --version floor. Idle draws over 3 s are 0.0/s. hot_paths and index are criterion results from 2026-09-11 (f5686a9) and were not re-run.",
+  "first_frame_note": "Windows 11, AMD Ryzen 7 3800X, HEAD 334b5ae plus the startup fixes of 2026-11-07 (delay-loaded system DLLs, hidden clap possible values, settled-install migration skip). Release binary built with --features bundled-sqlite (embedded-shell on by default). Windows has no stdlib ConPTY: bench_first_frame.py inherits the console, so in-proc TTFF is not comparable to a Linux PTY figure. hot_paths and index are criterion results from 2026-11-07.",
   "first_frame_harness": {
-    "median_ms": 0.25,
-    "min_ms": 0.22,
-    "max_ms": 0.57,
+    "median_ms": 0.35,
+    "min_ms": 0.26,
+    "max_ms": 0.4,
     "runs": 12,
     "idle_ms": 0,
-    "spawn_to_exit_median_ms": 13.78,
-    "spawn_to_exit_min_ms": 12.89,
-    "spawn_to_exit_max_ms": 14.73
+    "spawn_to_exit_median_ms": 12.5,
+    "spawn_to_exit_min_ms": 11.39,
+    "spawn_to_exit_max_ms": 14.88
   },
   "idle_draws_harness": {
     "median_per_s": 0.0,
     "window_ms": 3000,
-    "first_frame_median_ms": 0.29,
+    "first_frame_median_ms": 0.35,
     "runs": 10
   },
   "hot_paths": {
     "assess": {
-      "safe_short_ns": 890,
-      "safe_build_us": 2.63,
-      "caution_us": 4.49,
-      "destructive_us": 4.94,
-      "catastrophic_us": 2.84,
-      "pipeline_us": 9.04
+      "safe_short_ns": 1920,
+      "safe_build_us": 3.19,
+      "caution_us": 4.82,
+      "destructive_us": 4.97,
+      "catastrophic_us": 3.61,
+      "pipeline_us": 9.49,
+      "typical_200_us": 23.8,
+      "assign_heredoc_us": 19.4,
+      "chain_1_us": 8.63,
+      "chain_10_us": 73.3,
+      "chain_50_us": 378
     },
     "parse_markdown": {
-      "typical_us": 7.41,
-      "stream_200_us": 3.73,
-      "stream_1000_us": 13.7,
-      "stream_4000_us": 53.4
+      "typical_us": 6.08,
+      "stream_200_us": 2.95,
+      "stream_1000_us": 11.9,
+      "stream_4000_us": 40.3
     },
     "highlight_warm": {
-      "rust_10_ns": 83,
-      "rust_100_ns": 248,
-      "rust_500_us": 1.03,
-      "untagged_100_ns": 215
+      "rust_10_ns": 58,
+      "rust_100_ns": 224,
+      "rust_500_us": 1.0,
+      "untagged_100_ns": 194
     },
     "highlight_cold": {
-      "rust_10_ms": 1.98,
-      "rust_100_ms": 1.88
+      "rust_10_ms": 0.73,
+      "rust_100_ms": 3.09,
+      "rust_500_ms": 3.77
     },
     "render_markdown_ansi": {
-      "typical_ms": 1.26,
-      "code_200_ms": 40.9
+      "typical_ms": 0.558,
+      "code_200_ms": 14.2
     }
   },
   "index": {
-    "walk_root_t1_ms": 24.0,
-    "walk_root_t4_ms": 9.97,
-    "walk_root_t8_ms": 8.48,
-    "query_warm_us": 17.7,
-    "browse_top_us": 46.1,
-    "entries_snapshot_us": 128,
-    "query_now_nonblocking_20k_us": 17.0,
-    "query_settle_20k_us": 17.4
+    "walk_root_t1_ms": 21.0,
+    "walk_root_t4_ms": 9.51,
+    "walk_root_t8_ms": 7.67,
+    "query_warm_us": 14.9,
+    "browse_top_us": 43.8,
+    "entries_snapshot_us": 116,
+    "query_now_nonblocking_20k_us": 16.2,
+    "query_settle_20k_us": 15.5
   },
-  "hot_paths_date": "2026-09-11"
+  "hot_paths_date": "2026-11-07"
 }
