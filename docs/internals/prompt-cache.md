@@ -88,16 +88,23 @@ list in the system prompt: the catalog is returned by `tool_search list`
 (`crates/agent/src/agent/dispatch.rs:308-340`); `prompts/build.txt:45` only
 mentions `tool_search`.
 
-**Messages** — the session history, then request-time suffixes appended to
-the *last `Role::User` message* by `append_request_user_suffix`
-(`mod.rs:322-341`), never stored in the session:
+**Messages** — the session history. Model-only text for a turn is pinned
+to that turn's prompt (`Session::pin_prompt_suffix`, keyed by the message's
+`created_at`) and re-applied by `build_request` to the same message on every
+later request, never stored in the message itself:
 
-- `turn_context` recall block `<recalled-context>…</recalled-context>`,
-  every step of the turn (`append_turn_context`, `mod.rs:310-318`, `turn.rs:276`).
-- Intent posture `<whycodes_intent confidence=… kind=…>` — step 1 only
-  (`turn.rs:291-304`; `crates/agent/src/intent.rs:188-224`).
+- `turn_context` recall block `<recalled-context>…</recalled-context>`.
+- Intent posture `<whycodes_intent confidence=… kind=…>`
+  (`crates/agent/src/intent.rs`).
 - Magic keyword notice `<whycodes_keyword name="ultrathink"|"orchestrate">`
-  — step 1 only (`turn.rs:305-313`; `crates/agent/src/magic_keywords.rs:12-45`).
+  (`crates/agent/src/magic_keywords.rs`).
+
+The three are joined once at turn start (`turn.rs`). A recovery note,
+steering or a later turn adds messages after the prompt without moving the
+suffix, so every request starts with the previous one. If compaction removes
+the prompt, the suffix is pinned again to the latest prompt; a prompt with no
+`created_at` (an old resumed transcript) gets it on the request copy, on the
+latest user message, as before.
 
 Hook feedback (`<hook-context>`) is different: it is written into the stored
 user message before the first step (`crates/agent/src/agent/lifecycle.rs:70-87`).
@@ -130,7 +137,7 @@ Slash handlers: `crates/tui/src/run/slash.rs:366-372`,
 ### 6. Keep-alive (`cache_warm_minutes`)
 
 `Agent::cache_warm_job` (`crates/agent/src/agent/cache_warm.rs:40-103`)
-rebuilds the last step's request (same tools, system prompt, `turn_context`,
+rebuilds the last step's request (same tools, system prompt, pinned suffixes,
 thinking settings), truncates the messages to the last non-assistant one,
 opens a stream through `LlmTransport::stream` and hangs up on the first event
 that is not `Usage`/`CacheUsage`. It returns `None` when prompt caching is
@@ -174,8 +181,7 @@ turns of one session, where it sits, and what it invalidates.
 | 4 | `# Auto Memory` index | end of system | `MEMORY.md` edited (`/remember`, retain); rebuilt each non-trivial turn | `service.rs:494-512`, `helpers.rs:566` |
 | 5 | Provider/model overlays, role prompt | top of system | `/models`, `/agent`, model plan routing | `mod.rs:1099-1127`, `helpers.rs:562-563` |
 | 6 | Old tool results, in place | middle of messages | `truncate_large_tool_results` / `prune_old_tool_results` every step (first time a body exceeds the cap), `shake_old_tool_results` once over ¾ threshold, `apply_rewind`, compaction | `turn.rs:212-221`, `session.rs:1109-1208`, `turn.rs:863-869` |
-| 7 | `<recalled-context>` suffix | appended to the last stored `Role::User` message | same bytes on every step of a turn; but when a *new* user message is appended mid-turn (failed-tool recovery `turn.rs:886-889`, steering `mod.rs:856-865`, background completions `mod.rs:827-845`, stream-rule note `turn.rs:1028-1032`) the suffix migrates to that message, so the earlier prompt's bytes change and the prefix after it is lost | `mod.rs:322-341`, `turn.rs:276` |
-| 8 | `<whycodes_intent>` posture, `<whycodes_keyword>` notice | appended to the last user message, step 1 only | present on step 1, absent on step 2+ of the same turn: the user message is re-sent without them, so the step-1 cache entry for that message cannot be read on step 2 (tools + system still hit) | `turn.rs:291-313` |
+| 7 | Pinned turn suffix (`<recalled-context>`, `<whycodes_intent>`, `<whycodes_keyword>`) | appended to the turn's prompt at request time | stable: re-applied to the same message on every step and turn; changes only when compaction removes the prompt and it is pinned again | `session.rs` `pin_prompt_suffix` / `build_request`, `turn.rs` |
 | 9 | `cache_control` on the latest wire-user message | last message | moves forward every step by design | `cache.rs:147-190` |
 | 10 | Compaction carrier | rewrites the whole message list | any compaction | `session.rs:1295-1361` |
 
@@ -224,7 +230,7 @@ thresholds.
 - `crates/llm/src/providers/anthropic.rs` — `build_body` applies the policy; usage events carry cache counts.
 - `crates/llm/src/openai_compat.rs` — `split_prompt` turns subset `cached_tokens` into an additive cache read; `providers/codex.rs` leaves it unset.
 - `crates/session/src/session.rs` — `build_request`, `set_system_prompt`, in-place tool-result rewrites.
-- `crates/agent/src/agent/mod.rs` — `append_turn_context`, `append_request_user_suffix`, `note_cache_read`, `skip_prompt_cache_next`, `preconnect`, system prompt layering.
+- `crates/agent/src/agent/mod.rs` — `append_request_user_suffix` (unstamped-prompt fallback), `note_cache_read`, `skip_prompt_cache_next`, `preconnect`, system prompt layering.
 - `crates/agent/src/agent/turn.rs` — flag handling, suffix injection, usage fold, miss notice.
 - `crates/agent/src/cache_watch.rs` — `cache_miss_notice`.
 - `crates/agent/src/agent/cache_warm.rs`, `crates/server/src/keep_warm.rs`, `crates/tui/src/run/mod.rs` (`maybe_warm_cache`) — keep-alive.
