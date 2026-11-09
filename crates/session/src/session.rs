@@ -677,6 +677,10 @@ pub struct Session {
     /// like `cost`: a resumed session counts from zero.
     #[serde(skip)]
     pub run_stats: crate::RunStats,
+    /// Prompt-cache read of the last LLM step, for the cache-miss notice.
+    /// In memory only: it lives and dies with the session.
+    #[serde(skip)]
+    pub last_cache_read: Option<u64>,
 }
 
 /// Model-only text appended to one user message when requests are built.
@@ -822,6 +826,7 @@ impl Session {
             instruction_dirs: Default::default(),
             stream_rules: Default::default(),
             run_stats: Default::default(),
+            last_cache_read: None,
         }
     }
 
@@ -1963,6 +1968,7 @@ impl Session {
             instruction_dirs: Default::default(),
             stream_rules: Default::default(),
             run_stats: Default::default(),
+            last_cache_read: None,
         }))
     }
 

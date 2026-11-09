@@ -10,6 +10,7 @@ use std::sync::mpsc::Sender;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind};
 
+use crate::ignore_rules::is_rules_file;
 use crate::policy;
 
 /// Commands understood by the index scanner thread.
@@ -39,6 +40,9 @@ pub enum ChangeKind {
     Upsert,
     /// Deleted (or renamed away) — remove entry and descendants.
     Remove,
+    /// A `.gitignore` / `.ignore` changed — what belongs in the index may
+    /// have changed anywhere below it, so the scanner rescans.
+    Rules,
 }
 
 #[cfg(test)]
@@ -121,9 +125,16 @@ fn push_change(roots: &[PathBuf], path: &Path, kind: ChangeKind, out: &mut Vec<C
             continue;
         };
         let rel = rel.to_string_lossy().replace('\\', "/");
-        if rel.is_empty() || !policy::rel_path_allowed(&rel) {
+        let (dir, name) = rel.rsplit_once('/').unwrap_or(("", rel.as_str()));
+        // Checked before the name policy: `.ignore` is a hidden file the
+        // index itself never lists, yet editing it changes what it should.
+        let kind = if is_rules_file(name) && policy::rel_path_allowed(dir) {
+            ChangeKind::Rules
+        } else if rel.is_empty() || !policy::rel_path_allowed(&rel) {
             return;
-        }
+        } else {
+            kind
+        };
         out.push(Change {
             root: idx as u16,
             rel,

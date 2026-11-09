@@ -226,6 +226,13 @@
       "what": "largest file content-indexed, bytes"
     },
     {
+      "file": "crates/index/src/ignore_rules.rs",
+      "const": "MAX_RULE_DIRS",
+      "value": 4096,
+      "kind": "cache",
+      "what": "directories whose ignore files the watcher filter keeps loaded"
+    },
+    {
       "file": "crates/memory/src/service.rs",
       "const": "FTS_CANDIDATES",
       "value": 256,
