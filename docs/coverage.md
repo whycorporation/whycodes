@@ -84,9 +84,9 @@ after a Linux skip-expansions run prints `covered == total` for them.
 |---|---|---|
 | Workspace | **98.5%** lines | Every crate (`tests.rs` ignored) |
 | `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, `slop`, `tools` | **100%** lines, exact | Production files only (`tests.rs` ignored). `covered == total`; one missed line fails even though it rounds to 100.0% |
-| `tui` | **96.5%** lines | Production files only |
+| `tui` | **97.0%** lines | Production files only |
 | `cli` | **95.5%** lines | Production files only |
-| `shell` | **95.0%** lines | Production files only; misses are third-party utility error paths |
+| `shell` | **97.0%** lines | Production files only; misses are third-party utility error paths |
 
 Every floor is a ratchet: CI fails below it. When a run lands comfortably
 above a floor, raise it — `FAIL_UNDER` default in `scripts/coverage.sh` and
@@ -117,9 +117,9 @@ informational.
 |---|---|
 | function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, index | **100%** |
 | session, memory, llm, auth, agent, lsp, mcp, sdk, server, format, import, slop, tools | **100%** (`tools` `11188/11188`) |
-| tui | floor 96.5% (**97.3%**, `26214/26955`) |
+| tui | floor 97.0% (**97.3%**, `26214/26955`) |
 | cli | floor 95.5% (**95.7%**, `6753/7054`) |
-| shell | floor 95.0% (**98.3%**, `708/720`) |
+| shell | floor 97.0% (**98.3%**, `708/720`) |
 
 When re-measuring, update this breakdown and the dated workspace total here,
 then copy only the workspace percent into any README claim if it is mentioned.
