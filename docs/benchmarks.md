@@ -847,6 +847,12 @@ The binary grows 0.2 MB and no longer needs the VC++ redistributable.
 `config show`, `session list` (bundled SQLite, now `/MT`) and the embedded
 shell were smoke-tested on the static build.
 
+Released v0.6.37 (`x86_64-pc-windows-msvc` zip from GitHub, no CRT imports
+in `dumpbin /dependents`) vs installed v0.6.36, interleaved, 300 runs each,
+on a busier boot: **6.96 ms** vs 7.46 ms. A second round on the same boot
+gave 7.61 vs 8.07 ms. README's Windows `--version` row uses 7.0 ms; the
+10.5 ms it replaced was measured on a boot where an empty `main` took 9.6 ms.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
