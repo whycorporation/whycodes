@@ -220,6 +220,34 @@ dependencies = [{storage_deps}]
         # Unknown (no base to diff) stays conservative.
         self.assertTrue(affected.plan_for(paths, graph).workspace)
 
+    MANIFEST = """
+[workspace]
+members = ["crates/core"]
+
+[workspace.package]
+version = "{version}"
+edition = "2024"
+
+[workspace.dependencies]
+tokio = "{tokio}"
+"""
+
+    def test_release_version_bump_selects_nothing(self) -> None:
+        base = self.MANIFEST.format(version="0.6.35", tokio="1")
+        bump = self.MANIFEST.format(version="0.6.36", tokio="1")
+        self.assertTrue(affected.manifest_version_only(base, bump))
+        self.assertTrue(affected.manifest_version_only(base, base + "# note\n"))
+        both = self.MANIFEST.format(version="0.6.36", tokio="2")
+        self.assertFalse(affected.manifest_version_only(base, both))
+
+        graph = affected.direct_deps()
+        release = ["Cargo.lock", "Cargo.toml", "sdk/typescript/package.json"]
+        plan = affected.plan_for(release, graph, lock_bumps=[], root_version_only=True)
+        self.assertFalse(plan.workspace)
+        self.assertEqual(affected.cargo_lines(plan, locked=True, features=""), [])
+        # Any other root change (or no base to diff) still runs the workspace.
+        self.assertTrue(affected.plan_for(release, graph, lock_bumps=[]).workspace)
+
     def test_several_crates_build_once_with_qualified_features(self) -> None:
         graph = affected.direct_deps()
         plan = affected.plan_for(
