@@ -659,6 +659,115 @@ fn scanner_applies_batched_command() {
     assert!(appeared, "scanner_main must apply Command::Batch");
 }
 
+fn indexed(idx: &WorkspaceIndex, rel: &str) -> bool {
+    let mut found = false;
+    idx.visit(&mut |e| {
+        found |= &*e.rel == rel;
+        true
+    });
+    found
+}
+
+/// Files created under an ignored directory after the scan stay out of the
+/// index, as they would in a fresh scan. Before this, every shell command's
+/// `.whycodes/scratch/bg-N.log` was indexed and kept for the process life.
+#[test]
+fn watcher_upserts_under_ignored_paths_are_dropped() {
+    let dir = fixture();
+    fs::write(dir.path().join(".gitignore"), "out/\n").unwrap();
+    fs::create_dir_all(dir.path().join(".whycodes/scratch")).unwrap();
+    fs::write(dir.path().join(".whycodes/scratch/.gitignore"), "*\n").unwrap();
+    let idx = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+    fs::create_dir_all(dir.path().join("out")).unwrap();
+    fs::write(dir.path().join("out/app.bin"), "bin").unwrap();
+    fs::write(dir.path().join(".whycodes/scratch/bg-1.log"), "hello").unwrap();
+    fs::write(dir.path().join("src/kept.rs"), "// kept").unwrap();
+    let upsert = |rel: &str| Change {
+        root: 0,
+        rel: rel.into(),
+        kind: ChangeKind::Upsert,
+    };
+    idx.apply_test_changes(vec![
+        upsert("out"),
+        upsert("out/app.bin"),
+        upsert(".whycodes/scratch/bg-1.log"),
+        upsert("src/kept.rs"),
+    ]);
+    assert!(indexed(&idx, "src/kept.rs"));
+    for rel in ["out", "out/app.bin", ".whycodes/scratch/bg-1.log"] {
+        assert!(!indexed(&idx, rel), "{rel} is ignored");
+    }
+}
+
+/// A rules-file change is never applied as an entry: the scanner rescans,
+/// so paths the new rules ignore leave and paths they release arrive.
+#[test]
+fn rules_change_rescans_with_fresh_rules() {
+    let dir = fixture();
+    fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
+    fs::write(dir.path().join("a.log"), "x").unwrap();
+    let idx = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+    assert!(!indexed(&idx, "a.log"));
+    // Load the old rules into the watcher-side cache; a rules change applied
+    // directly leaves the store alone.
+    idx.apply_test_changes(vec![
+        Change {
+            root: 0,
+            rel: "a.log".into(),
+            kind: ChangeKind::Upsert,
+        },
+        Change {
+            root: 0,
+            rel: "src/main.rs".into(),
+            kind: ChangeKind::Rules,
+        },
+    ]);
+    assert!(!indexed(&idx, "a.log"));
+    assert!(indexed(&idx, "src/main.rs"));
+
+    fs::write(dir.path().join(".gitignore"), "src/nested/\n").unwrap();
+    idx.send_batch(vec![Change {
+        root: 0,
+        rel: ".gitignore".into(),
+        kind: ChangeKind::Rules,
+    }]);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !(indexed(&idx, "a.log") && !indexed(&idx, "src/nested/deep.rs"))
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(indexed(&idx, "a.log"), "released by the new rules");
+    assert!(
+        !indexed(&idx, "src/nested/deep.rs"),
+        "ignored by the new rules"
+    );
+    // The rescan also reset the watcher-side cache.
+    fs::write(dir.path().join("b.log"), "x").unwrap();
+    idx.apply_test_changes(vec![Change {
+        root: 0,
+        rel: "b.log".into(),
+        kind: ChangeKind::Upsert,
+    }]);
+    assert!(indexed(&idx, "b.log"));
+}
+
 #[test]
 fn lock_helpers_survive_poison() {
     fn poison<T: Send + 'static>(make: fn() -> T) {

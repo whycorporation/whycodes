@@ -13,6 +13,8 @@
 //! same engine ripgrep uses) plus the shared pruning [`policy`]. After the
 //! initial scan a `notify` watcher streams debounced deltas so the index
 //! stays warm as files are created, edited and deleted during a session.
+//! Deltas pass the same ignore rules as the walk; editing a `.gitignore` or
+//! `.ignore` triggers a rescan.
 //!
 //! ```no_run
 //! let index = whycodes_index::WorkspaceIndex::start(vec![".".into()]);
@@ -21,6 +23,7 @@
 
 mod content;
 mod fuzzy;
+mod ignore_rules;
 pub mod policy;
 mod store;
 pub mod walk;
@@ -101,6 +104,8 @@ struct RootState {
     store: RwLock<IndexStore>,
     fuzzy: Mutex<FuzzyEngine>,
     content: RwLock<ContentIndex>,
+    /// Ignore rules the watcher deltas are checked against.
+    ignore: Mutex<ignore_rules::IgnoreRules>,
 }
 
 /// State shared between the public handle and the scanner thread.
@@ -158,6 +163,7 @@ impl WorkspaceIndex {
                 store: RwLock::new(IndexStore::new()),
                 fuzzy: Mutex::new(FuzzyEngine::new(results_dirty.clone())),
                 content: RwLock::new(ContentIndex::new()),
+                ignore: Mutex::default(),
             })
             .collect();
         let (cmd_tx, cmd_rx) = mpsc::channel();
@@ -558,12 +564,13 @@ fn scanner_main(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
             RecvAct::Idle => {}
             RecvAct::Rescan => {
                 pending.clear();
-                full_scan(&shared);
-                if !shared.cancel.load(Ordering::Relaxed) {
-                    shared.state.store(STATE_READY, Ordering::Release);
-                }
+                rescan(&shared);
             }
             RecvAct::Batch(cs) => pending.extend(cs),
+        }
+        if pending.iter().any(|c| c.kind == ChangeKind::Rules) {
+            pending.clear();
+            rescan(&shared);
         }
         if !pending.is_empty() {
             apply_changes(&shared, std::mem::take(&mut pending));
@@ -594,6 +601,14 @@ pub(crate) fn log_unwatch_spawn(result: std::io::Result<std::thread::JoinHandle<
 
 /// Full (re)scan of every root: streams entries into the fuzzy engines
 /// (queries stay live during the scan) and fills the stores.
+/// Full scan from the scanner loop; the index is ready again unless cancelled.
+fn rescan(shared: &Arc<Shared>) {
+    full_scan(shared);
+    if !shared.cancel.load(Ordering::Relaxed) {
+        shared.state.store(STATE_READY, Ordering::Release);
+    }
+}
+
 fn full_scan(shared: &Arc<Shared>) {
     shared.scanned.store(0, Ordering::Relaxed);
     shared.truncated.store(false, Ordering::Relaxed);
@@ -605,6 +620,7 @@ fn full_scan(shared: &Arc<Shared>) {
         }
         write(&state.store).clear();
         write(&state.content).clear();
+        lock(&state.ignore).clear();
         let injector = {
             let mut fz = lock(&state.fuzzy);
             fz.restart();
@@ -685,10 +701,14 @@ pub(crate) fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
         let mut saw_removal = false;
         let mut upserts: Vec<(Box<str>, bool)> = Vec::new();
         {
+            // Lock order: ignore → store → content.
+            let mut ignore = lock(&state.ignore);
             let mut store = write(&state.store);
             let mut content = write(&state.content);
             for c in cs {
                 match c.kind {
+                    // The scanner rescans instead of applying such a batch.
+                    ChangeKind::Rules => {}
                     ChangeKind::Remove => {
                         store.remove_tree(root_idx, &c.rel);
                         content.remove_tree(&c.rel);
@@ -700,6 +720,10 @@ pub(crate) fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
                         match std::fs::symlink_metadata(root.join(&c.rel)) {
                             Ok(md) => {
                                 let is_dir = md.is_dir();
+                                // The full scan never lists these either.
+                                if ignore.is_ignored(root, &c.rel, is_dir) {
+                                    continue;
+                                }
                                 let size = if is_dir { 0 } else { md.len() };
                                 upserts.push((c.rel.clone().into_boxed_str(), is_dir));
                                 if is_dir {

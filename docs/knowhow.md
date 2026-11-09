@@ -144,6 +144,39 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-11-09 — Daemon heap grew with every session (index watcher ignored `.gitignore`)
+
+**Symptom:** A soak of `whycodes serve` (thousands of `/v1` sessions on a
+mock provider) never returned to its idle heap: after every session left
+memory the live heap was ~650 B higher, 8 allocations per session. Handles
+and threads stayed flat, so sessions themselves were freed.
+
+**Root cause:** Two long-lived structures keyed by things that only grow.
+(1) The index watcher filtered events by the name policy only. The full scan
+honours `.gitignore` / `.ignore` / `.git/info/exclude`, but every file
+created later under an ignored path was indexed (path, fuzzy item, content
+trigrams) until the next rescan. Each `bash` call writes
+`.whycodes/scratch/bg-N.log`; `.whycodes` is whitelisted and the scratch
+`.gitignore` of `*` was never consulted, so every log stayed in memory for
+the life of the process. Build output in ignored dirs not in `SKIP_DIRS`
+(`out/`, `bin/`, `obj/`, …) did the same. (2) `Agent::cache_reads` kept the
+last prompt-cache read for every session id the agent ever ran.
+
+**Fix:** `index::ignore_rules::IgnoreRules` checks each watcher upsert
+against the same rule files as the walker (deeper dir first, `.ignore`
+before `.gitignore`, then exclude and global; an ignored parent hides its
+children). A changed `.gitignore` / `.ignore` arrives as `ChangeKind::Rules`
+and triggers a rescan, so the index follows the new rules. The cache-read
+value moved to `Session::last_cache_read`.
+
+**Prevention:** A filter on the full scan must hold for watcher deltas too.
+State about one session belongs on the `Session`, not on the shared
+`Agent`. To find such growth, count live heap bytes and allocations per
+size with a wrapping `#[global_allocator]`, run load then idle cycles, and
+diff the size histograms between cycles. Tests:
+`watcher_upserts_under_ignored_paths_are_dropped`,
+`rules_change_rescans_with_fresh_rules`, `ignore_rules::tests::*`.
+
 ### 2026-11-04 — Long Windows paste came out as a chip plus plain text
 
 **Symptom:** Pasting a two-line error (~200 chars, Turkish text) into the
