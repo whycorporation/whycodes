@@ -74,7 +74,7 @@ Things to know about CI:
   line coverage, and the crates in `scripts/check_coverage_floors.py`
   `FULL_COVER_CRATES` are locked at 100% production lines (`tests.rs`
   ignored, `--skip-expansions`; every line, not a rounded 100.0%).
-  `whycodes-tui` (96.5%) and `whycodes-cli` (95.5%) have ratchet floors. Locally:
+  `whycodes-tui` (97.0%), `whycodes-cli` (95.5%) and `whycodes-shell` (97.0%) have ratchet floors. Locally:
   `scripts/coverage.sh` (needs `cargo-llvm-cov` + `llvm-tools-preview`, or
   `LLVM_COV` / `LLVM_PROFDATA` on a distro toolchain). Agents must have that
   wrapper green locally before pushing coverage-related changes
