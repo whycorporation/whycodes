@@ -86,6 +86,7 @@ after a Linux skip-expansions run prints `covered == total` for them.
 | `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent`, `lsp`, `mcp`, `sdk`, `server`, `format`, `import`, `slop`, `tools` | **100%** lines, exact | Production files only (`tests.rs` ignored). `covered == total`; one missed line fails even though it rounds to 100.0% |
 | `tui` | **96.5%** lines | Production files only |
 | `cli` | **95.5%** lines | Production files only |
+| `shell` | **95.0%** lines | Production files only; misses are third-party utility error paths |
 
 Every floor is a ratchet: CI fails below it. When a run lands comfortably
 above a floor, raise it — `FAIL_UNDER` default in `scripts/coverage.sh` and
@@ -93,11 +94,11 @@ above a floor, raise it — `FAIL_UNDER` default in `scripts/coverage.sh` and
 
 ## Last measurement
 
-Linux x86_64, 2026-10-10, CI Coverage job on PR #154
-([run 38063003726](https://github.com/whycorporation/whycodes/actions/runs/38063003726)).
-Workspace **98.7%** (`79460/80486`). `tui` is **96.7%** (`22841/23617`) and
-`cli` is **95.6%** (`5344/5592`). The checker prints their uncovered files on
-every run.
+Linux x86_64, 2026-11-07, CI Coverage job on the v0.6.36 push to `main`
+([run 42411600518](https://github.com/whycorporation/whycodes/actions/runs/42411600518)).
+Workspace **98.9%** (`99198/100252`). `tui` is **97.3%** (`26214/26955`),
+`cli` is **95.7%** (`6753/7054`) and `shell` is **98.3%** (`708/720`). The
+checker prints their uncovered files on every run.
 
 `core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
 (#48). Production modules also have local `#[cfg(test)]` next to the code (`error`,
@@ -115,9 +116,10 @@ informational.
 | Crate | Lines |
 |---|---|
 | function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, index | **100%** |
-| session, memory, llm, auth, agent, lsp, mcp, sdk, server, format, import, slop, tools | **100%** (`tools` `8716/8716`) |
-| tui | floor 96.5% (**96.7%**, `22841/23617`) |
-| cli | floor 95.5% (**95.6%**, `5344/5592`) |
+| session, memory, llm, auth, agent, lsp, mcp, sdk, server, format, import, slop, tools | **100%** (`tools` `11188/11188`) |
+| tui | floor 96.5% (**97.3%**, `26214/26955`) |
+| cli | floor 95.5% (**95.7%**, `6753/7054`) |
+| shell | floor 95.0% (**98.3%**, `708/720`) |
 
 When re-measuring, update this breakdown and the dated workspace total here,
 then copy only the workspace percent into any README claim if it is mentioned.
