@@ -199,8 +199,11 @@ jobs:
         # Changed files pick the crates and modules. A leaf edit does not
         # re-run the workspace. Root Cargo.toml means --workspace, and so
         # does Cargo.lock when an existing external package is bumped (same
-        # two WHYCODES_HOME skips as before). Several crates build in one
-        # `cargo test --no-run`, then each binary runs with its filters.
+        # two WHYCODES_HOME skips as before). A release bump (root version
+        # only, member-only lockfile) selects nothing: Coverage runs every
+        # test on that PR anyway, and --workspace at one rustc took 26-32m.
+        # Several crates build in one `cargo test --no-run`, then each
+        # binary runs with its filters.
         env:
           AFFECTED_BASE: origin/${{ github.base_ref }}
         run: |

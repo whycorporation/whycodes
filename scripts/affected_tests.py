@@ -26,7 +26,9 @@ so each one rebuilt serde/tokio/reqwest and most workspace crates again.
 `Cargo.lock` widens to the workspace only when an external package that
 already existed changes version or dependencies (a bump can reach every
 crate). Added or removed packages and workspace-member entries follow the
-crate manifests in the same diff.
+crate manifests in the same diff. A root `Cargo.toml` whose only change is
+`[workspace.package] version` (a release bump) selects nothing either:
+Coverage still runs every test on that pull request.
 
 Usage:
     python scripts/affected_tests.py [--base origin/main] [--execute]
@@ -373,13 +375,44 @@ def _lock_bumps(base: str) -> list[str] | None:
         return None
 
 
+def manifest_version_only(base_manifest: str, head_manifest: str) -> bool:
+    """True when the root manifests differ only in `[workspace.package] version`."""
+
+    def without_version(text: str) -> dict:
+        data = tomllib.loads(text)
+        data.get("workspace", {}).get("package", {}).pop("version", None)
+        return data
+
+    return without_version(base_manifest) == without_version(head_manifest)
+
+
+def _root_version_only(base: str) -> bool:
+    """`manifest_version_only` against `base`; False when either side is unreadable."""
+    if tomllib is None:
+        return False
+    old = subprocess.run(
+        ["git", "show", f"{base}:Cargo.toml"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    try:
+        new = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+        return old.returncode == 0 and manifest_version_only(old.stdout, new)
+    except (OSError, ValueError):
+        return False
+
+
 def plan_for(
     paths: list[str],
     graph: dict[str, set[str]],
     lock_bumps: list[str] | None = None,
+    root_version_only: bool = False,
 ) -> Plan:
     """`lock_bumps` is the external packages a `Cargo.lock` change bumped;
-    None (unknown) keeps the lockfile a workspace root."""
+    None (unknown) keeps the lockfile a workspace root. `root_version_only`
+    means the root `Cargo.toml` changed only its workspace version."""
     plan = Plan()
     rev = dependents_of(graph)
     if not paths:
@@ -389,6 +422,9 @@ def plan_for(
     for path in paths:
         if path == "Cargo.lock" and lock_bumps is not None and not lock_bumps:
             plan.reasons.append("Cargo.lock: no external version bumps; crate manifests decide")
+            continue
+        if path == "Cargo.toml" and root_version_only:
+            plan.reasons.append("Cargo.toml: workspace version bump only; Coverage runs every test")
             continue
         if path in WORKSPACE_ROOTS or path.startswith(".cargo/"):
             plan.workspace = True
@@ -742,9 +778,13 @@ def main(argv: list[str] | None = None) -> int:
     # Only a real base can say what the lockfile bumped; --paths/--stdin and
     # a push (base HEAD) keep Cargo.lock a workspace root.
     lock_bumps = None
-    if "Cargo.lock" in paths and not (args.paths or args.stdin) and args.base != "HEAD":
-        lock_bumps = _lock_bumps(args.base)
-    plan = plan_for(paths, graph, lock_bumps)
+    root_version_only = False
+    if not (args.paths or args.stdin) and args.base != "HEAD":
+        if "Cargo.lock" in paths:
+            lock_bumps = _lock_bumps(args.base)
+        if "Cargo.toml" in paths:
+            root_version_only = _root_version_only(args.base)
+    plan = plan_for(paths, graph, lock_bumps, root_version_only)
     lines = cargo_lines(plan, locked=args.locked, features=args.features)
 
     if not args.quiet:

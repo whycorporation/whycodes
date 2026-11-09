@@ -12,7 +12,10 @@ fn after_eviction_trims_only_when_something_left() {
     after_eviction(2);
 }
 
-#[tokio::test]
+// Paused clock: on a loaded runner both real sleeps could expire in the same
+// tick, the test aborted the task before its first `check`, and the server
+// 100% coverage floor missed that line.
+#[tokio::test(start_paused = true)]
 async fn watchdog_keeps_checking_until_aborted() {
     let task = spawn_retention_watchdog(Duration::from_millis(5), u64::MAX);
     tokio::time::sleep(Duration::from_millis(30)).await;
