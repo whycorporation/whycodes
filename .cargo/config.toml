@@ -14,3 +14,11 @@
 # faults pages it actually runs. Linux ELF only; other targets ignore this.
 [target.'cfg(target_os = "linux")']
 rustflags = ["-C", "relro-level=partial"]
+
+# Windows start-up: link the C runtime statically. A dynamic CRT loads
+# VCRUNTIME140 plus nine api-ms-win-crt-* DLLs before `main`; static, the
+# release `--version` went from 6.88 to 6.43 ms (interleaved, 2x300 runs)
+# and the binary no longer needs the VC++ redistributable. `cc` builds
+# (bundled SQLite, ring) follow the same flag and compile with /MT.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

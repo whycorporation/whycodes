@@ -826,6 +826,27 @@ Measured one at a time: dropping CoreFoundation gave −0.9 ms and chained fixup
 −0.23 ms. The remaining 0.49 ms over the floor is the 17 MB binary itself
 (page-ins of the code that runs), with no library or fix-up left to drop.
 
+### Windows static CRT, 2026-11-09 (x86_64, release)
+
+After #416 the eight system DLLs are delay-loaded, and `--version` sat
+~0.2 ms above an empty Rust `main` (6.75 ms on this boot). What still loaded
+before `main` was the dynamic C runtime: `VCRUNTIME140` plus nine
+`api-ms-win-crt-*` DLLs, which the empty `main` loads too. Linking the CRT
+statically (`+crt-static`, `.cargo/config.toml`, MSVC only) removes them;
+the empty `main` alone drops from 6.7 to 6.3 ms.
+
+Released v0.6.36 vs the same tree built with `+crt-static`, `--version`,
+interleaved, 2 rounds of 300 runs each:
+
+| Build | Median | p95 |
+|---|---|---|
+| v0.6.36 (dynamic CRT) | 6.88 ms | 7.75 ms |
+| static CRT | **6.43 ms** | **7.07 ms** |
+
+The binary grows 0.2 MB and no longer needs the VC++ redistributable.
+`config show`, `session list` (bundled SQLite, now `/MT`) and the embedded
+shell were smoke-tested on the static build.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
