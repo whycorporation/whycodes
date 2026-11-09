@@ -145,6 +145,34 @@ fn all_done_auto_collapses_and_can_reopen() {
 }
 
 #[test]
+fn forced_stop_cancels_running_rows_and_folds_panel() {
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.upsert_subagent(running("task-1", "explore", "scan"));
+    app.upsert_subagent(running("task-2", "explore", "grep"));
+    app.upsert_subagent(SubagentUpdate {
+        status: "completed".into(),
+        ..running("task-2", "explore", "grep")
+    });
+    assert!(!app.tasks_collapsed);
+
+    app.cancel_running_subagents();
+
+    assert!(app.tasks_collapsed);
+    assert_eq!(app.subagents[0].status, "cancelled");
+    assert_eq!(app.subagents[1].status, "completed");
+    let blocks: Vec<&str> = app
+        .messages
+        .iter()
+        .flat_map(|m| &m.blocks)
+        .filter_map(|b| match b {
+            crate::app::ChatBlock::Subagent { status, .. } => Some(status.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(blocks, ["cancelled", "completed"]);
+}
+
+#[test]
 fn overflow_line_when_many() {
     let mut app = TuiApp::new(TuiAppConfig::default());
     for i in 0..10 {

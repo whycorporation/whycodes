@@ -2645,6 +2645,33 @@ impl TuiApp {
         }
     }
 
+    /// Mark every running subagent cancelled — panel row and transcript
+    /// block — after a forced stop took the workers down with the turn.
+    pub fn cancel_running_subagents(&mut self) {
+        let was_all_done = self.all_tasks_terminal();
+        let mut ids = Vec::new();
+        for row in self.subagents.iter_mut().filter(|s| s.is_running()) {
+            row.status = "cancelled".into();
+            ids.push(row.id.clone());
+        }
+        for msg in &mut self.messages {
+            let mut touched = false;
+            for block in &mut msg.blocks {
+                if let ChatBlock::Subagent { id, status, .. } = block
+                    && ids.contains(id)
+                {
+                    *status = "cancelled".into();
+                    touched = true;
+                }
+            }
+            if touched {
+                msg.invalidate_layout();
+            }
+        }
+        self.sync_tasks_collapse(was_all_done);
+        self.mark_dirty();
+    }
+
     /// Insert or update a background job row in the sticky tasks panel.
     pub fn upsert_bg_job(
         &mut self,
