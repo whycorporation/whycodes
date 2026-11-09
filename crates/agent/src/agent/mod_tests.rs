@@ -3420,7 +3420,8 @@ fn which_python() -> Option<&'static str> {
 
 #[test]
 fn cache_read_notes_compare_with_the_last_step_of_the_same_session() {
-    let a = test_agent();
+    let mut s1 = Session::new(std::path::PathBuf::from("/p"), "s".into());
+    let mut s2 = Session::new(std::path::PathBuf::from("/p"), "s".into());
     let cached = whycodes_core::types::Usage {
         input_tokens: 100,
         cache_read_input_tokens: Some(30_000),
@@ -3430,19 +3431,17 @@ fn cache_read_notes_compare_with_the_last_step_of_the_same_session() {
         input_tokens: 31_000,
         ..Default::default()
     };
-    assert_eq!(a.note_cache_read("s1", &cached, false), None, "first step");
-    assert!(a.note_cache_read("s1", &missed, false).is_some());
+    let note = Agent::note_cache_read;
+    assert_eq!(note(&mut s1, &cached, false), None, "first step");
+    assert!(note(&mut s1, &missed, false).is_some());
+    assert_eq!(note(&mut s2, &missed, false), None, "other session");
+    note(&mut s1, &cached, false);
     assert_eq!(
-        a.note_cache_read("s2", &missed, false),
-        None,
-        "other session"
-    );
-    a.note_cache_read("s1", &cached, false);
-    assert_eq!(
-        a.note_cache_read("s1", &missed, true),
+        note(&mut s1, &missed, true),
         None,
         "/fresh misses on purpose"
     );
+    assert_eq!(s1.last_cache_read, Some(0), "the session holds the value");
 }
 
 #[test]

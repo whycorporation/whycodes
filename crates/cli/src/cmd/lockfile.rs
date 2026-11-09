@@ -343,9 +343,21 @@ pub(crate) fn blocked_message(holder: &ServeLock) -> String {
     )
 }
 
+/// Where to connect instead, when another live `serve` holds the lock.
+/// `serve` writes its own lock before binding, so a bind failure must not
+/// read that lock back as someone else's server.
 pub(crate) fn connect_hint(project_dir: &Path) -> Option<String> {
     let lock = read_lock(&lock_path(project_dir))?;
-    if is_stale(&lock, now_secs(), pid_alive) {
+    hint_for(&lock, std::process::id(), now_secs(), pid_alive)
+}
+
+fn hint_for(
+    lock: &ServeLock,
+    own_pid: u32,
+    now: u64,
+    pid_live: impl Fn(u32) -> PidProbe,
+) -> Option<String> {
+    if lock.pid == own_pid || is_stale(lock, now, pid_live) {
         return None;
     }
     Some(format!(

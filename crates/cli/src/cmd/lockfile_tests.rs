@@ -184,8 +184,9 @@ fn connect_hint_none_when_stale_or_missing() {
         },
     )
     .unwrap();
-    let hint = connect_hint(dir.path()).unwrap();
-    assert!(hint.contains("9090"), "{hint}");
+    // `serve` writes its own lock before binding; a failed bind must not
+    // report it as another server.
+    assert!(connect_hint(dir.path()).is_none(), "own lock");
     write_lock(
         &path,
         &ServeLock {
@@ -198,6 +199,21 @@ fn connect_hint_none_when_stale_or_missing() {
     )
     .unwrap();
     assert!(connect_hint(dir.path()).is_none());
+}
+
+#[test]
+fn hint_for_names_another_live_server() {
+    let lock = ServeLock {
+        pid: 4242,
+        port: 9090,
+        started_at: 100,
+        interactive: false,
+        parent_pid: None,
+    };
+    let hint = hint_for(&lock, 1, 100, |_| PidProbe::Alive).unwrap();
+    assert!(hint.contains("pid 4242") && hint.contains("9090"), "{hint}");
+    assert!(hint_for(&lock, 4242, 100, |_| PidProbe::Alive).is_none());
+    assert!(hint_for(&lock, 1, 100, |_| PidProbe::Dead).is_none());
 }
 
 /// Well above typical `pid_max`; `kill` returns ESRCH (Dead), not EPERM.

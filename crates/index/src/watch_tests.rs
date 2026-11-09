@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn rules_files_map_to_rules_changes() {
+    let roots = vec![PathBuf::from("/proj")];
+    let mut out = Vec::new();
+    for path in [
+        "/proj/.gitignore",
+        "/proj/sub/.ignore",
+        "/proj/.whycodes/scratch/.gitignore",
+        // Under a pruned dir the walker never reads it.
+        "/proj/node_modules/pkg/.gitignore",
+    ] {
+        push_change(&roots, Path::new(path), ChangeKind::Upsert, &mut out);
+    }
+    push_change(
+        &roots,
+        Path::new("/proj/sub/.ignore"),
+        ChangeKind::Remove,
+        &mut out,
+    );
+    let got: Vec<(&str, ChangeKind)> = out.iter().map(|c| (c.rel.as_str(), c.kind)).collect();
+    assert_eq!(
+        got,
+        [
+            (".gitignore", ChangeKind::Rules),
+            ("sub/.ignore", ChangeKind::Rules),
+            (".whycodes/scratch/.gitignore", ChangeKind::Rules),
+            ("sub/.ignore", ChangeKind::Rules),
+        ]
+    );
+}
+
+#[test]
 fn change_mapping_filters_policy() {
     let roots = vec![PathBuf::from("/proj")];
     let mut out = Vec::new();
