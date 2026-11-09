@@ -209,7 +209,12 @@ def _head_commit_files() -> list[str]:
 
 
 def _norm(path: str) -> str:
-    return path.replace("\\", "/").lstrip("./")
+    # Drop a leading `./` only. `lstrip("./")` ate the dot of `.cargo/`, so a
+    # `.cargo/config.toml` change selected no tests at all.
+    path = path.replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    return path
 
 
 def crate_of(path: str) -> str | None:

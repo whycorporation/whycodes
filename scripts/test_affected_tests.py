@@ -71,6 +71,13 @@ class AffectedTests(unittest.TestCase):
         self.assertIn("cargo test --workspace", lines[0])
         self.assertIn("--skip provider_and_model_dialogs", lines[0])
 
+    def test_cargo_config_runs_everything(self) -> None:
+        for path in (".cargo/config.toml", "./.cargo/config.toml", r".\.cargo\config.toml"):
+            self.assertEqual(affected._norm(path), ".cargo/config.toml")
+            lines = commands([affected._norm(path)])
+            self.assertEqual(len(lines), 1, path)
+            self.assertIn("cargo test --workspace", lines[0])
+
     def test_docs_select_nothing(self) -> None:
         self.assertEqual(commands(["docs/knowhow.md", "README.md"]), [])
 
