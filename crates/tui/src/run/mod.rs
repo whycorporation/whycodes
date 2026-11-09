@@ -3321,10 +3321,8 @@ fn force_stop_turn(
     stop_loop_after_error(app, "turn stopped");
     pause_goal_after_error(app, rt, true);
     // The aborted turn took its workers with it; a row left `running` kept
-    // the fast poll rate on for good.
-    for row in app.subagents.iter_mut().filter(|s| s.is_running()) {
-        row.status = "cancelled".into();
-    }
+    // the fast poll rate on for good, and a panel that never folded.
+    app.cancel_running_subagents();
     persist_session_best_effort(&rt.session, "force_cancelled");
     close_interactive_overlays(app);
     app.mark_dirty();
