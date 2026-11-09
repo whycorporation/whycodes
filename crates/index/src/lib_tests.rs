@@ -707,6 +707,47 @@ fn watcher_upserts_under_ignored_paths_are_dropped() {
     }
 }
 
+/// Saving a file (or touching a directory) again must not add another picker
+/// item: nucleo has no replace, so each repeat upsert used to leave a
+/// duplicate behind until the next removal rebuilt the engine.
+#[test]
+fn repeated_upserts_do_not_duplicate_picker_items() {
+    let dir = fixture();
+    let idx = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+    fs::write(dir.path().join("src/fresh.rs"), "// v1").unwrap();
+    for _ in 0..3 {
+        idx.apply_test_changes(vec![
+            Change {
+                root: 0,
+                rel: "src/fresh.rs".into(),
+                kind: ChangeKind::Upsert,
+            },
+            Change {
+                root: 0,
+                rel: "src/main.rs".into(),
+                kind: ChangeKind::Upsert,
+            },
+        ]);
+    }
+    for rel in ["src/fresh.rs", "src/main.rs"] {
+        let name = rel.rsplit('/').next().unwrap();
+        let hits = idx
+            .query(name, 50)
+            .into_iter()
+            .filter(|m| m.rel == rel)
+            .count();
+        assert_eq!(hits, 1, "{rel} listed once");
+    }
+}
+
 /// A rules-file change is never applied as an entry: the scanner rescans,
 /// so paths the new rules ignore leave and paths they release arrive.
 #[test]

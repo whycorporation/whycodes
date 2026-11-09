@@ -725,13 +725,17 @@ pub(crate) fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
                                     continue;
                                 }
                                 let size = if is_dir { 0 } else { md.len() };
-                                upserts.push((c.rel.clone().into_boxed_str(), is_dir));
                                 if is_dir {
                                     content.remove(&c.rel);
                                 } else {
                                     content.upsert(root, &c.rel, size);
                                 }
-                                store.insert(root_idx, c.rel.into_boxed_str(), is_dir, size);
+                                let rel: Box<str> = c.rel.into_boxed_str();
+                                // nucleo cannot replace an item: pushing a path it
+                                // already holds adds a duplicate on every save.
+                                if store.insert(root_idx, rel.clone(), is_dir, size) {
+                                    upserts.push((rel, is_dir));
+                                }
                             }
                             Err(_) => {
                                 store.remove_tree(root_idx, &c.rel);

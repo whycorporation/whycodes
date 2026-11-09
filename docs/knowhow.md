@@ -159,14 +159,19 @@ trigrams) until the next rescan. Each `bash` call writes
 `.whycodes/scratch/bg-N.log`; `.whycodes` is whitelisted and the scratch
 `.gitignore` of `*` was never consulted, so every log stayed in memory for
 the life of the process. Build output in ignored dirs not in `SKIP_DIRS`
-(`out/`, `bin/`, `obj/`, …) did the same. (2) `Agent::cache_reads` kept the
-last prompt-cache read for every session id the agent ever ran.
+(`out/`, `bin/`, `obj/`, …) did the same. (2) Every upsert of a path the
+index already held pushed another nucleo item (nucleo cannot replace one),
+so each save of a file, or each new file in a directory (Windows reports
+the directory as modified), left a duplicate picker item until a removal
+rebuilt the engine. (3) `Agent::cache_reads` kept the last prompt-cache read
+for every session id the agent ever ran.
 
 **Fix:** `index::ignore_rules::IgnoreRules` checks each watcher upsert
 against the same rule files as the walker (deeper dir first, `.ignore`
 before `.gitignore`, then exclude and global; an ignored parent hides its
 children). A changed `.gitignore` / `.ignore` arrives as `ChangeKind::Rules`
-and triggers a rescan, so the index follows the new rules. The cache-read
+and triggers a rescan, so the index follows the new rules. Upserts reach
+nucleo only when `IndexStore::insert` reports a new entry. The cache-read
 value moved to `Session::last_cache_read`.
 
 **Prevention:** A filter on the full scan must hold for watcher deltas too.
@@ -175,7 +180,8 @@ State about one session belongs on the `Session`, not on the shared
 size with a wrapping `#[global_allocator]`, run load then idle cycles, and
 diff the size histograms between cycles. Tests:
 `watcher_upserts_under_ignored_paths_are_dropped`,
-`rules_change_rescans_with_fresh_rules`, `ignore_rules::tests::*`.
+`rules_change_rescans_with_fresh_rules`,
+`repeated_upserts_do_not_duplicate_picker_items`, `ignore_rules::tests::*`.
 
 ### 2026-11-04 — Long Windows paste came out as a chip plus plain text
 
