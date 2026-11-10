@@ -9,7 +9,7 @@ use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar};
 use ratatui::{Frame, layout::Rect};
 
 use super::base::{dialog_frame, paint_divider};
-use super::select::{paint_picker_row, paint_search_bar, paint_section_header};
+use super::select::{paint_child_row, paint_picker_row, paint_search_bar, paint_section_header};
 
 enum HelpLine {
     Header(&'static str),
@@ -340,15 +340,7 @@ pub fn render_help_overlay(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
                     paint_section_header(frame.buffer_mut(), row, label, palette);
                 }
                 HelpLine::Binding { key, desc } => {
-                    paint_picker_row(
-                        frame.buffer_mut(),
-                        row,
-                        key,
-                        Some(desc),
-                        false,
-                        palette,
-                        false,
-                    );
+                    paint_child_row(frame.buffer_mut(), row, key, Some(desc), false, palette);
                 }
             }
         }

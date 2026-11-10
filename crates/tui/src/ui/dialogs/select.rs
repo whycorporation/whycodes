@@ -7,7 +7,7 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
 use super::base::dialog_frame;
@@ -220,9 +220,36 @@ pub fn paint_picker_row(
     palette: &ThemePalette,
     dimmed: bool,
 ) {
-    if row.width == 0 || row.height == 0 {
-        return;
-    }
+    paint_row_indented(buf, row, 0, label, detail, selected, palette, dimmed);
+}
+
+/// A row that belongs to a group or section: same as [`paint_picker_row`]
+/// but indented under its header, so children never line up with it.
+pub fn paint_child_row(
+    buf: &mut Buffer,
+    row: Rect,
+    label: &str,
+    detail: Option<&str>,
+    selected: bool,
+    palette: &ThemePalette,
+) {
+    paint_row_indented(
+        buf,
+        row,
+        CHILD_INDENT,
+        label,
+        detail,
+        selected,
+        palette,
+        false,
+    );
+}
+
+/// Columns a group/section child sits right of its header.
+const CHILD_INDENT: u16 = 2;
+
+/// Fill `row` with the row background (wash when selected) and return it.
+fn fill_row(buf: &mut Buffer, row: Rect, selected: bool, palette: &ThemePalette) -> Color {
     let bg = if selected {
         elevate(palette.bg, SELECTED_LIFT)
     } else {
@@ -234,6 +261,33 @@ pub fn paint_picker_row(
             cell.set_symbol(" ");
             cell.set_style(fill);
         }
+    }
+    bg
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_row_indented(
+    buf: &mut Buffer,
+    row: Rect,
+    indent: u16,
+    label: &str,
+    detail: Option<&str>,
+    selected: bool,
+    palette: &ThemePalette,
+    dimmed: bool,
+) {
+    if row.width == 0 || row.height == 0 {
+        return;
+    }
+    let bg = fill_row(buf, row, selected, palette);
+    let indent = indent.min(row.width);
+    let row = Rect {
+        x: row.x + indent,
+        width: row.width - indent,
+        ..row
+    };
+    if row.width == 0 {
+        return;
     }
 
     let label_style = if dimmed {
@@ -285,20 +339,27 @@ pub fn paint_picker_row(
     }
 }
 
-/// Section header: `── Label ──` in dim, not selectable.
+/// Section header: bold accent `Label` followed by a dim `─` rule to the
+/// row's end. Not selectable; its rows are painted with [`paint_child_row`].
 pub fn paint_section_header(buf: &mut Buffer, row: Rect, label: &str, palette: &ThemePalette) {
     if row.width == 0 || row.height == 0 {
         return;
     }
-    let style = Style::default().fg(palette.dim).bg(palette.bg);
-    for x in row.x..row.x.saturating_add(row.width) {
+    let bg = fill_row(buf, row, false, palette);
+    let label_style = Style::default()
+        .fg(palette.accent)
+        .bg(bg)
+        .add_modifier(Modifier::BOLD);
+    let rule_style = Style::default().fg(palette.dim).bg(bg);
+    let (end, _) = buf.set_stringn(row.x, row.y, label, row.width as usize, label_style);
+    let right = row.x.saturating_add(row.width);
+    // One space after the label, then the rule.
+    for x in end.saturating_add(1)..right {
         if let Some(cell) = buf.cell_mut((x, row.y)) {
-            cell.set_symbol(" ");
-            cell.set_style(style);
+            cell.set_char('\u{2500}');
+            cell.set_style(rule_style);
         }
     }
-    let text = format!("── {label} ──");
-    buf.set_stringn(row.x, row.y, &text, row.width as usize, style);
 }
 
 /// Picker search bar (` / to search` / ` search: query` + inverse cursor).
@@ -338,7 +399,10 @@ pub fn paint_search_bar(
     }
 }
 
-/// Collapsible provider header: `▾ name (N)` expanded, `▸ name (N)` collapsed.
+/// Collapsible group header: `▾ name` (expanded) or `▸ name` (collapsed) at
+/// the left edge in bold accent, the item count right-aligned in dim. No
+/// leaf diamond — that mark belongs to the rows under it, which are painted
+/// with [`paint_child_row`].
 pub fn paint_group_header(
     buf: &mut Buffer,
     row: Rect,
@@ -348,9 +412,27 @@ pub fn paint_group_header(
     selected: bool,
     palette: &ThemePalette,
 ) {
-    let chevron = if collapsed { "▸" } else { "▾" };
-    let label = format!("{chevron} {name} ({count})");
-    paint_picker_row(buf, row, &label, None, selected, palette, false);
+    if row.width == 0 || row.height == 0 {
+        return;
+    }
+    let bg = fill_row(buf, row, selected, palette);
+    let dim = Style::default().fg(palette.dim).bg(bg);
+    let name_style = Style::default()
+        .fg(palette.accent)
+        .bg(bg)
+        .add_modifier(Modifier::BOLD);
+    let chevron = if collapsed { "▸ " } else { "▾ " };
+    let right = row.x.saturating_add(row.width);
+    let count_text = count.to_string();
+    let count_w = UnicodeWidthStr::width(count_text.as_str()) as u16;
+    // Count sits where a child's detail would: one column in from the edge.
+    let count_x = right.saturating_sub(count_w + 1);
+    let (name_x, _) = buf.set_stringn(row.x, row.y, chevron, row.width as usize, dim);
+    let name_budget = count_x.saturating_sub(name_x).saturating_sub(2) as usize;
+    buf.set_stringn(name_x, row.y, name, name_budget, name_style);
+    if count_x > name_x {
+        buf.set_stringn(count_x, row.y, &count_text, count_w as usize, dim);
+    }
 }
 
 #[cfg(test)]

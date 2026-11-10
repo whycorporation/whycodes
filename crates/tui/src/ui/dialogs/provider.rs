@@ -15,7 +15,7 @@ use ratatui::{
 };
 
 use super::base::{dialog_frame, paint_divider};
-use super::select::{paint_group_header, paint_picker_row, paint_search_bar};
+use super::select::{paint_child_row, paint_group_header, paint_picker_row, paint_search_bar};
 use crate::app::ModelPickerRow;
 
 pub fn render_provider_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
@@ -446,14 +446,13 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
                     i == selected,
                     palette,
                 ),
-                ModelPickerRow::Model { model, .. } => paint_picker_row(
+                ModelPickerRow::Model { model, .. } => paint_child_row(
                     frame.buffer_mut(),
                     cell,
                     model,
                     None,
                     i == selected,
                     palette,
-                    false,
                 ),
             }
         }
