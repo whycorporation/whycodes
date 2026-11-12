@@ -255,7 +255,8 @@ jobs:
         if: steps.scope.outputs.code == 'true'
         with:
           toolchain: 1.99.1
-          components: llvm-tools-preview
+          # rustfmt: formatter tests shell out to it under RUSTUP_TOOLCHAIN.
+          components: llvm-tools-preview, rustfmt
       - uses: Swatinem/rust-cache@v2
         if: steps.scope.outputs.code == 'true' && env.CARGO_CACHE_HIT_LOCAL != '1'
         with:
