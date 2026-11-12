@@ -863,7 +863,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1507,7 +1507,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1626,9 +1626,9 @@ checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
 name = "findutils"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cd7cce4eddc7d5ffc18857488b396d32285dabecec437d17f1cb29171d60b05"
+checksum = "999509a3ca9a9cdc156820463ce2e10cf406dd8e9c39d4bd5c9ae420c8ad7699"
 dependencies = [
  "argmax",
  "chrono",
@@ -1637,9 +1637,11 @@ dependencies = [
  "itertools 0.15.0",
  "nix 0.31.3",
  "onig",
+ "parse_datetime 0.17.0",
  "regex",
+ "rustix",
  "thiserror 2.0.21",
- "uucore 0.9.0",
+ "uucore 0.12.0",
  "walkdir",
 ]
 
@@ -3553,6 +3555,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "parse_datetime"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb51967a779ef73b125a243688e53e4bb2474f91cae72734ee5051e857fb2645"
+dependencies = [
+ "jiff",
+ "num-traits",
+ "winnow",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3962,7 +3975,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4432,7 +4445,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4916,7 +4929,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6043,7 +6056,7 @@ dependencies = [
  "fluent",
  "jiff",
  "libc",
- "parse_datetime",
+ "parse_datetime 0.16.0",
  "rustix",
  "thiserror 2.0.21",
  "uucore 0.12.0",
@@ -6117,30 +6130,6 @@ dependencies = [
 
 [[package]]
 name = "uucore"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "069b34217c27f611e1589f540f58118dbf226a9e407d38ab472052ff075a1dc2"
-dependencies = [
- "bstr",
- "clap",
- "dunce",
- "fluent",
- "fluent-syntax",
- "libc",
- "nix 0.31.3",
- "os_display",
- "rustc-hash",
- "rustix",
- "thiserror 2.0.21",
- "unic-langid",
- "uucore_procs 0.9.0",
- "wild",
- "winapi-util",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "uucore"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f24a5910ebbf2c0baf486a9125705f8e026a8f7741a3ea8cf5eca3c9257c9bdf"
@@ -6185,16 +6174,6 @@ name = "uucore_procs"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da865e8a648b260dbd89fca76d0801995877ab27a4e259b6dec30ba9743b86ab"
-dependencies = [
- "proc-macro2",
- "quote",
-]
-
-[[package]]
-name = "uucore_procs"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34337da211e7abfff7189b794afb3b5018fe356fb36474b73645458fc1201350"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7049,7 +7028,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
