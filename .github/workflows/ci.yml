@@ -246,10 +246,17 @@ jobs:
       - name: Isolate Cargo home
         if: steps.scope.outputs.code == 'true'
         run: sh scripts/ci_isolate_cargo_home.sh
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned: rustc 1.100 maps coverage regions onto the wrong lines (lines
+      # that ran report 0), dropping every 100% floor. Unpin once stable
+      # measures the same as 1.99.1 (`cargo +stable llvm-cov -p whycodes-schema`
+      # back at 100%). RUSTUP_TOOLCHAIN on the Measure step overrides
+      # rust-toolchain.toml's `stable`.
+      - uses: dtolnay/rust-toolchain@master
         if: steps.scope.outputs.code == 'true'
         with:
-          components: llvm-tools-preview
+          toolchain: 1.99.1
+          # rustfmt: formatter tests shell out to it under RUSTUP_TOOLCHAIN.
+          components: llvm-tools-preview, rustfmt
       - uses: Swatinem/rust-cache@v2
         if: steps.scope.outputs.code == 'true' && env.CARGO_CACHE_HIT_LOCAL != '1'
         with:
@@ -269,6 +276,7 @@ jobs:
           # Job-scoped; do not put ${{ runner.temp }} in job-level env (0-job
           # workflow failure). Compile cache is ${CARGO_TARGET_DIR}-llvm-cov
           # (scripts/coverage.sh). REPORT_JSON stays in temp.
+          RUSTUP_TOOLCHAIN: 1.99.1
           COVERAGE_FEATURES: whycodes-storage/bundled,whycodes-tools/ast-tools
           REPORT_JSON: ${{ runner.temp }}/cov.json
         run: scripts/coverage.sh

@@ -618,6 +618,9 @@ mod logging_tests {
     #[test]
     fn panic_hook_runs_registered_cleanup() {
         let _g = TEST_LOCK.lock().unwrap();
+        // Poison is sticky and other tests poison this slot on purpose; clear
+        // it so the first run below takes the `Ok` branch in any test order.
+        PANIC_CLEANUP.clear_poison();
         let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = std::sync::Arc::clone(&ran);
         set_panic_cleanup(move || {
