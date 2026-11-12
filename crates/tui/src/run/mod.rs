@@ -951,10 +951,9 @@ impl LoopTerm {
                     log_resize_failed("live", e);
                 }
             }
+            // The test backend's error type is uninhabited.
             Self::Headless(t) => {
-                if let Err(e) = t.resize(area) {
-                    log_resize_failed("headless", e);
-                }
+                let Ok(()) = t.resize(area);
             }
         }
     }
