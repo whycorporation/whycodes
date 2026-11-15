@@ -5,6 +5,7 @@
 
 pub mod cache_warm;
 mod compact;
+mod decision_gate;
 mod dispatch;
 mod gate;
 mod lifecycle;
@@ -43,6 +44,9 @@ pub struct Agent {
     permission_prompter: Arc<dyn PermissionPrompter>,
     question_prompter: Arc<dyn QuestionPrompter>,
     risk_threshold: RiskThreshold,
+    /// `[security.decision]`: second opinion on shell commands `command-risk`
+    /// allows. `None` when off.
+    decision: Option<decision_gate::DecisionGate>,
     /// Restores secret placeholders inside tool arguments; the transport
     /// redacts outgoing requests with the same redactor.
     secrets: Option<Arc<whycodes_llm::Redactor>>,
@@ -484,6 +488,7 @@ impl Agent {
             permission_prompter: default_prompter(),
             question_prompter: default_question_prompter(),
             risk_threshold: RiskThreshold::default(),
+            decision: None,
             secrets: whycodes_llm::secrets::installed(),
             speculative_summary: Mutex::new(None),
             summary_failed_at: compact::SummaryFailure::default(),
@@ -733,6 +738,7 @@ impl Agent {
                 tracing::warn!("{e}; falling back to the default");
                 RiskThreshold::default()
             });
+        self.decision = decision_gate::DecisionGate::from_config(&config.security.decision);
         self.sandbox = config.security.sandbox_settings();
         self.network = config.security.network_policy();
         self.hooks = config.hooks.clone();

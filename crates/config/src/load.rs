@@ -111,6 +111,14 @@ pub(crate) fn parse_project_text(
     if let Some(msg) = project_websearch_warning(path, &dropped) {
         tracing::warn!("{msg}");
     }
+    // A repository must not be able to send the user's commands to its own
+    // endpoint, so `[security.decision]` is honoured from global config only.
+    if !project.security.decision.is_default() {
+        // Evaluated outside the macro so the line counts without a subscriber.
+        let file = path.display();
+        tracing::warn!("{file}: [security.decision] is ignored in project config");
+        project.security.decision = crate::types::DecisionConfig::default();
+    }
     Ok(project)
 }
 

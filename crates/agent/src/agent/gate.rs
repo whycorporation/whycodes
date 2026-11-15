@@ -665,7 +665,20 @@ impl Agent {
             let assessment = assess(command, std::path::Path::new(&tool_ctx.working_dir));
 
             match decide(&assessment, self.risk_threshold) {
-                Decision::Allow => skip_retry_status(),
+                Decision::Allow => {
+                    if let Some(reason) = self.decision_escalation(command, session).await {
+                        // An escalated call counts as high risk: the approval
+                        // overlay (`important`) must not skip it, so ask directly.
+                        safety_event(&session.id, tc, "decision", "escalated");
+                        let detail = format_shell_risk_detail(command, &reason);
+                        let reply = self.permission_prompter.ask_reply(&tc.name, &detail).await;
+                        safety_event(&session.id, tc, "decision", reply_outcome(reply));
+                        if !reply.allowed() {
+                            return self.denied_permission_result(tc, reply, "");
+                        }
+                        risk_confirmed = true;
+                    }
+                }
                 Decision::Refuse { reason } => {
                     tracing::warn!(command, reason, "refused catastrophic shell command");
                     safety_event(&session.id, tc, "risk", "refused");

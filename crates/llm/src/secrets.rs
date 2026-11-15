@@ -430,7 +430,7 @@ fn recover(state: &Mutex<State>) -> std::sync::MutexGuard<'_, State> {
 
 /// Compile the built-in patterns; one that does not compile is logged and
 /// skipped rather than taking redaction down with it.
-fn compile_patterns(patterns: &[&str]) -> Vec<Regex> {
+pub(crate) fn compile_patterns(patterns: &[&str]) -> Vec<Regex> {
     let mut out = Vec::with_capacity(patterns.len());
     for pattern in patterns {
         match Regex::new(pattern) {

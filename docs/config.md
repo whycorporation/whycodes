@@ -253,6 +253,22 @@ win over patterns; patterns are `*` or `prefix*` (for example `mymcp_*`).
 | `redact_secrets` | `true` | `WHYCODES_REDACT_SECRETS` | Replace credential-looking values with placeholders in every provider request and restore them inside tool arguments before execution ([guide](guide.md#secret-redaction)). An explicit `false` in any layer wins. |
 | `network_denylist` | `[]` | `WHYCODES_NETWORK_DENYLIST` (comma/space separated) | Host patterns always blocked for HTTP tools; wins over the allowlist. |
 
+### `[security.decision]` (experimental)
+
+A decision-model second opinion on shell commands that `bash_risk_threshold` lets through. It can only add a prompt, never remove one, and it does nothing in `auto` approval mode (which never prompts) or for commands a `bash(...)` allow rule matches. A failed, refused or slow call keeps the classifier's decision. **Global config only**: a project `.whycodes/config.toml` cannot set this block. Background: [proposal](proposals/decision-models.md).
+
+When enabled, the command and your last message (both through the secret redactor, long query-string and percent-encoded values masked, length-capped) are sent to `base_url`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Turn the second opinion on. |
+| `base_url` | `"http://127.0.0.1:11434/v1"` | Endpoint base; `/systemone` is appended. Ollama ≥ 0.35 (`ollama pull clef-flash`), llama.cpp, `https://openrouter.ai/api/v1`, `https://api.typesafe.ai/v1`. Use `127.0.0.1`, not `localhost`, for a local server. |
+| `model` | `"clef-flash"` | Decision model id on that endpoint (e.g. `cloudflare/clef`, `perplexity/pplx-decider-v1.2` on OpenRouter). |
+| `api_key_env` | `""` | Environment variable holding the bearer token. Empty sends no `Authorization` header. |
+| `threshold` | `1.84` | Prompt when the score (0.0–2.0: probability of an unrecoverable, outside-project or remote effect, plus the probability the command does not fit your request) reaches this. Calibrated per model; the default suits `clef-flash`. |
+| `timeout_ms` | `800` | Give up after this long and keep the classifier's decision. |
+| `provider_only` | `[]` | Serving providers to pin on an aggregator (OpenRouter `provider.only`), e.g. `["cloudflare"]` for Cloudflare's own retention terms. |
+
 ## `[tools]`, `[tools.question]`, `[tools.bash]`, `[tools.format]`, `[tools.custom_tools.<name>]`
 
 | Key | Default | Env override | Meaning |

@@ -475,6 +475,57 @@ pub struct SecurityConfig {
     /// arguments before execution. Default `true`.
     #[serde(default = "default_true_bool")]
     pub redact_secrets: bool,
+
+    /// Decision-model second opinion on shell commands the risk classifier
+    /// allows. Global config only: a project file cannot set it.
+    #[serde(default, skip_serializing_if = "DecisionConfig::is_default")]
+    pub decision: DecisionConfig,
+}
+
+/// `[security.decision]`: ask a decision model (a `/systemone` endpoint such
+/// as Ollama, OpenRouter or TypeSafe) about shell commands that
+/// `command-risk` rates `Safe`, and prompt when its risk score reaches
+/// `threshold`. It can only add a prompt, never remove one.
+///
+/// Off by default. When on, the command and the last user request (both
+/// redacted) are sent to `base_url`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DecisionConfig {
+    pub enabled: bool,
+    /// Endpoint base; `/systemone` is appended (`http://127.0.0.1:11434/v1`
+    /// for Ollama, `https://openrouter.ai/api/v1` for OpenRouter).
+    pub base_url: String,
+    pub model: String,
+    /// Environment variable holding the bearer token. Empty sends none.
+    pub api_key_env: String,
+    /// Prompt when the combined score (0.0–2.0) reaches this. Calibrated per
+    /// model; the default suits `clef-flash`.
+    pub threshold: f64,
+    /// Give up and keep today's decision after this long.
+    pub timeout_ms: u64,
+    /// Serving providers to pin on an aggregator (OpenRouter `provider.only`).
+    pub provider_only: Vec<String>,
+}
+
+impl Default for DecisionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: "http://127.0.0.1:11434/v1".to_string(),
+            model: "clef-flash".to_string(),
+            api_key_env: String::new(),
+            threshold: 1.84,
+            timeout_ms: 800,
+            provider_only: Vec::new(),
+        }
+    }
+}
+
+impl DecisionConfig {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 pub(crate) fn default_risk_threshold() -> String {
@@ -503,6 +554,7 @@ impl Default for SecurityConfig {
             network_allowlist: Vec::new(),
             network_denylist: Vec::new(),
             redact_secrets: true,
+            decision: DecisionConfig::default(),
         }
     }
 }

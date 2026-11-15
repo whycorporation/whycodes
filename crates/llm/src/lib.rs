@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod capabilities;
 pub mod client_identity;
+pub mod decision;
 pub mod endpoint;
 pub mod error_class;
 pub mod fallback;

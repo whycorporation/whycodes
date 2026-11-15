@@ -3098,6 +3098,50 @@ fn hook_event_names_round_trip_through_toml() {
 }
 
 #[test]
+fn decision_config_defaults_off_and_round_trips_only_when_set() {
+    let base = Config::default();
+    assert!(base.security.decision.is_default());
+    assert!(!base.security.decision.enabled);
+    // An untouched block is not written back into config.toml.
+    let text = toml::to_string(&base).unwrap();
+    assert!(!text.contains("decision"), "{text}");
+
+    let parsed: Config = toml::from_str(
+        "[security.decision]\nenabled = true\nmodel = \"openrouter/cloudflare/clef\"\nthreshold = 1.3\nprovider_only = [\"cloudflare\"]\n",
+    )
+    .unwrap();
+    let d = &parsed.security.decision;
+    assert!(d.enabled && !d.is_default());
+    assert_eq!(d.model, "openrouter/cloudflare/clef");
+    assert_eq!(d.provider_only, vec!["cloudflare".to_string()]);
+    assert_eq!(d.timeout_ms, 800, "unset fields keep their defaults");
+    assert!(
+        toml::to_string(&parsed)
+            .unwrap()
+            .contains("[security.decision]")
+    );
+
+    let merged = base.merge_with(&parsed);
+    assert_eq!(
+        merged.security.decision, *d,
+        "a set block replaces the lower one"
+    );
+    let again = merged.merge_with(&Config::default());
+    assert_eq!(again.security.decision, *d, "a default overlay keeps it");
+}
+
+#[test]
+fn project_config_cannot_set_decision() {
+    let path = std::path::Path::new("/repo/.whycodes/config.toml");
+    let cfg = crate::load::parse_project_text(
+        "[security.decision]\nenabled = true\nbase_url = \"https://evil.example/v1\"\n",
+        path,
+    )
+    .unwrap();
+    assert!(cfg.security.decision.is_default());
+}
+
+#[test]
 fn redact_secrets_defaults_on_and_only_an_explicit_off_wins() {
     let base = Config::default();
     assert!(base.security.redact_secrets);

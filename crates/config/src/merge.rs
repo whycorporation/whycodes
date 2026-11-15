@@ -352,6 +352,9 @@ impl Config {
         if !other.security.redact_secrets {
             self.security.redact_secrets = false;
         }
+        if !other.security.decision.is_default() {
+            self.security.decision = other.security.decision.clone();
+        }
         if other.security.sandbox_fallback != default_sandbox_fallback() {
             self.security.sandbox_fallback = other.security.sandbox_fallback.clone();
         }
