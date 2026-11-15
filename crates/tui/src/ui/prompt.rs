@@ -594,6 +594,12 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
         spans.push(Span::styled(" · ", sep_style));
         spans.push(Span::styled(mode_shown.clone(), mode_style));
     }
+    let decision_shown = decision_chip(app.decision_model.as_deref());
+    let show_decision = !decision_shown.is_empty();
+    if show_decision {
+        spans.push(Span::styled(" · ", sep_style));
+        spans.push(Span::styled(decision_shown, mode_style));
+    }
     let queued_n = app.queued_turn_count();
     let queued_shown = if queued_n > 0 {
         format!("queued · {queued_n}")
@@ -618,6 +624,11 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
     // queued count, then approval, then effort (issue #45).
     if label_w > max_w && show_queued {
         spans.truncate(spans.len() - 3); // trailing space + ` · ` + queued
+        spans.push(Span::styled(" ", sep_style));
+        label_w = span_width(&spans);
+    }
+    if label_w > max_w && show_decision {
+        spans.truncate(spans.len() - 3); // trailing space + ` · ` + decision
         spans.push(Span::styled(" ", sep_style));
         label_w = span_width(&spans);
     }
@@ -718,6 +729,15 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
         }));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), meta_rect);
+}
+
+/// Footer chip for the active decision model: `decision:clef` (the part after
+/// the last `/`). Empty when off.
+pub(crate) fn decision_chip(model: Option<&str>) -> String {
+    match model {
+        Some(m) => format!("decision:{}", m.rsplit('/').next().unwrap_or(m)),
+        None => String::new(),
+    }
 }
 
 fn truncate_to_width(s: &str, max_w: usize) -> String {

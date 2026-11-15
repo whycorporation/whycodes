@@ -1604,6 +1604,9 @@ pub struct TuiApp {
     pub(crate) approval_picker_selected: usize,
     /// Session approval overlay (default auto).
     pub(crate) approval_mode: ApprovalMode,
+    /// Active `[security.decision]` model, `None` when off. Footer chip and
+    /// picker marker.
+    pub(crate) decision_model: Option<String>,
     /// Tab over an open permission prompt: keys edit the prompt box, and
     /// Enter denies the pending asks and sends the text to the running turn.
     pub(crate) permission_reply_focus: bool,
@@ -1935,6 +1938,11 @@ impl ModelSelectionState {
         }
         true
     }
+}
+
+/// The decision model to show in the footer and picker, `None` when off.
+pub fn active_decision_model(decision: &whycodes_config::DecisionConfig) -> Option<String> {
+    decision.enabled.then(|| decision.model.clone())
 }
 
 /// Every provider/model pair the config knows about, for the model picker.
@@ -2459,6 +2467,7 @@ impl TuiApp {
             pending_approval_mode: None,
             approval_picker_selected: 0,
             approval_mode: ApprovalMode::Auto,
+            decision_model: None,
             permission_reply_focus: false,
             pending_agent: None,
             tree_rows: Vec::new(),

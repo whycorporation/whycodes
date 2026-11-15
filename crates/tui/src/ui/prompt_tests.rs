@@ -495,6 +495,28 @@ fn footer_line_containing(
 }
 
 #[test]
+fn decision_chip_shows_short_model_and_drops_first_when_narrow() {
+    assert_eq!(decision_chip(None), "");
+    assert_eq!(decision_chip(Some("clef-flash")), "decision:clef-flash");
+    assert_eq!(decision_chip(Some("cloudflare/clef")), "decision:clef");
+
+    let mut app = TuiApp::new(TuiAppConfig::default());
+    app.agent_name = "build".into();
+    app.provider_name = "anthropic".into();
+    app.model_name = "sonnet".into();
+    app.approval_mode = ApprovalMode::Important;
+    app.decision_model = Some("cloudflare/clef".into());
+    let (terminal, _) = draw_prompt_footer(&mut app, 100, 16);
+    let line = footer_line_containing(terminal.backend().buffer(), 100, 16, "important");
+    assert!(line.contains("important · decision:clef"), "{line}");
+
+    // Narrow: the decision chip goes before the approval chip does.
+    let (terminal, _) = draw_prompt_footer(&mut app, 46, 16);
+    let line = footer_line_containing(terminal.backend().buffer(), 46, 16, "important");
+    assert!(!line.contains("decision:"), "{line}");
+}
+
+#[test]
 fn bottom_meta_approval_chip_is_dim_in_auto_and_brighter_otherwise() {
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.agent_name = "build".into();

@@ -504,6 +504,7 @@ fn prepare_tui_chrome(opts: &TuiRunOptions) -> TuiChrome {
     app.model_name = opts.model.clone();
     app.reasoning_effort = opts.config.session.reasoning_effort.clone();
     app.approval_mode = opts.config.general.approval_mode.unwrap_or_default();
+    app.decision_model = crate::app::active_decision_model(&opts.config.security.decision);
     app.agent_name = opts.agent_name.clone();
     crate::desktop_notify::configure(&opts.config.notify);
     // Do not canonicalize here: Windows NTFS + Defender on a temp dir is
@@ -576,6 +577,7 @@ fn apply_deferred_config(
     }
     app.reasoning_effort = loaded.session.reasoning_effort.clone();
     app.approval_mode = loaded.general.approval_mode.unwrap_or_default();
+    app.decision_model = crate::app::active_decision_model(&loaded.security.decision);
     app.apply_context_window(
         provider,
         model,
@@ -5002,6 +5004,7 @@ fn apply_decision_choice(app: &mut TuiApp, agent: &mut Agent, config: &mut Confi
     };
     config.security.decision = next.clone();
     agent.set_decision_config(config);
+    app.decision_model = crate::app::active_decision_model(&next);
     if let Err(e) = Config::update_global(&mut |global| global.security.decision = next.clone()) {
         tracing::warn!(error = %e, "failed to persist security.decision");
     }
@@ -5017,6 +5020,8 @@ fn apply_decision_choice(app: &mut TuiApp, agent: &mut Agent, config: &mut Confi
     } else {
         "Decision model → off".to_string()
     };
+    app.toasts
+        .push(crate::toast::ToastKind::Info, app.status_message.clone());
     app.mark_dirty();
 }
 

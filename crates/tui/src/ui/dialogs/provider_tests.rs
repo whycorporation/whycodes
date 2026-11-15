@@ -209,3 +209,22 @@ fn render_provider_select_shows_discovered_local_servers() {
         "llamacpp · llama.cpp server · no models loaded"
     );
 }
+
+#[test]
+fn decision_row_detail_marks_the_active_decision_row_only() {
+    use whycodes_llm::decision::DECISION_PROVIDER as D;
+    assert_eq!(
+        decision_row_detail(D, "clef-flash", Some("clef-flash")),
+        Some("active")
+    );
+    assert_eq!(
+        decision_row_detail(D, "cloudflare/clef", Some("clef-flash")),
+        None
+    );
+    assert_eq!(decision_row_detail(D, "off", None), Some("active"));
+    assert_eq!(decision_row_detail(D, "off", Some("clef-flash")), None);
+    assert_eq!(
+        decision_row_detail("acme", "clef-flash", Some("clef-flash")),
+        None
+    );
+}

@@ -1683,3 +1683,11 @@ fn copy_last_reply_takes_the_latest_assistant_text() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn active_decision_model_is_none_when_off() {
+    let mut d = whycodes_config::DecisionConfig::default();
+    assert_eq!(active_decision_model(&d), None);
+    d.enabled = true;
+    assert_eq!(active_decision_model(&d).as_deref(), Some("clef-flash"));
+}

@@ -446,11 +446,11 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
                     i == selected,
                     palette,
                 ),
-                ModelPickerRow::Model { model, .. } => paint_child_row(
+                ModelPickerRow::Model { provider, model } => paint_child_row(
                     frame.buffer_mut(),
                     cell,
                     model,
-                    None,
+                    decision_row_detail(provider, model, app.decision_model.as_deref()),
                     i == selected,
                     palette,
                 ),
@@ -491,6 +491,18 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
         item_count,
         Some(chrome.modal),
     );
+}
+
+/// `active` on the decision row that matches `[security.decision]` (`off`
+/// when it is disabled); `None` on every other row.
+pub(crate) fn decision_row_detail(
+    provider: &str,
+    model: &str,
+    active: Option<&str>,
+) -> Option<&'static str> {
+    use whycodes_llm::decision::{DECISION_OFF, DECISION_PROVIDER};
+    let is_active = provider == DECISION_PROVIDER && active.unwrap_or(DECISION_OFF) == model;
+    is_active.then_some("active")
 }
 
 #[cfg(test)]
