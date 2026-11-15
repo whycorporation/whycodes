@@ -83,15 +83,9 @@ impl DecisionQuestion {
         let mut question = Vec::new();
         let mut options = Vec::new();
         for line in prompt.lines() {
-            let trimmed = line.trim_start();
-            match trimmed
-                .strip_prefix("- ")
-                .or_else(|| trimmed.strip_prefix("* "))
-            {
-                Some(option) if !option.trim().is_empty() => {
-                    options.push(option.trim().to_string())
-                }
-                _ => question.push(line),
+            match option_text(line) {
+                Some(option) => options.push(option.to_string()),
+                None => question.push(line),
             }
         }
         if options.len() < 2 {
@@ -120,6 +114,28 @@ impl DecisionQuestion {
     }
 }
 
+/// The option on a list line: `- a`, `-a`, `* a`, `• a`, `+ a`, `1. a`,
+/// `1) a`. `None` for anything else, including `--flag` and `---`.
+fn option_text(line: &str) -> Option<&str> {
+    let line = line.trim();
+    let rest = match line.chars().next()? {
+        c @ ('-' | '*' | '•' | '+') => {
+            let rest = &line[c.len_utf8()..];
+            // `--x`, `**bold**` and `---` are not list items.
+            if rest.starts_with(c) {
+                return None;
+            }
+            rest
+        }
+        '0'..='9' => {
+            let digits = line.find(|c: char| !c.is_ascii_digit())?;
+            line[digits..].strip_prefix(['.', ')'])?
+        }
+        _ => return None,
+    };
+    Some(rest.trim()).filter(|r| !r.is_empty())
+}
+
 /// Text reply for a `/systemone` response: options by probability with bars.
 /// `Err` for a refusal or any other shape.
 pub fn format_answer(json: &Value) -> Result<String, String> {
@@ -141,39 +157,17 @@ pub fn format_answer(json: &Value) -> Result<String, String> {
         _ => return Err("no answer in the response".into()),
     };
     rows.sort_by(|a, b| b.1.total_cmp(&a.1));
-    let width = rows
-        .iter()
-        .map(|(k, _)| k.chars().count())
-        .max()
-        .unwrap_or(0);
-    // Headline in bold, then aligned bars in a code block (monospace).
-    let mut out = format!(
-        "**{}** · {:.0}%
-
-```text
-",
-        rows[0].0,
-        rows[0].1 * 100.0
-    );
+    // Headline in bold, then bars in a code block. Bar and percentage come
+    // first so the columns line up whatever the labels' lengths.
+    let mut out = format!("**{}** · {:.0}%\n\n```text\n", rows[0].0, rows[0].1 * 100.0);
     for (label, p) in &rows {
         let filled = (p.clamp(0.0, 1.0) * 10.0).round() as usize;
         let bar = format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled));
-        out.push_str(&format!(
-            "{label:<width$}  {bar} {:>3.0}%
-",
-            p * 100.0
-        ));
+        out.push_str(&format!("{bar} {:>3.0}%  {label}\n", p * 100.0));
     }
-    out.push_str(
-        "```
-",
-    );
+    out.push_str("```\n");
     if let Some(c) = answer["confidence"].as_f64() {
-        out.push_str(&format!(
-            "confidence {:.0}%
-",
-            c * 100.0
-        ));
+        out.push_str(&format!("confidence {:.0}%\n", c * 100.0));
     }
     Ok(out)
 }

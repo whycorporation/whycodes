@@ -78,11 +78,26 @@ fn parse_plain_prompt_is_yes_no() {
 #[test]
 fn parse_bullets_make_a_choice() {
     let q = DecisionQuestion::parse("Which database?\n- postgres\n  * sqlite\n- \n-duckdb");
-    assert_eq!(q.question, "Which database?\n- \n-duckdb");
-    assert_eq!(
-        q.options,
-        vec!["postgres".to_string(), "sqlite".to_string()]
+    assert_eq!(q.question, "Which database?\n-");
+    assert_eq!(q.options, ["postgres", "sqlite", "duckdb"]);
+}
+
+#[test]
+fn parse_accepts_unspaced_dashes_and_numbered_lists() {
+    // As typed in the TUI: indented, no space after the dash.
+    let q = DecisionQuestion::parse(
+        "Hangi veritabanını kullanalım?\n    -postgres\n    -sqlite\n    -duckdb",
     );
+    assert_eq!(q.question, "Hangi veritabanını kullanalım?");
+    assert_eq!(q.options, ["postgres", "sqlite", "duckdb"]);
+
+    let q = DecisionQuestion::parse("Pick one\n1. alpha\n2) beta\n• gamma\n+ delta");
+    assert_eq!(q.options, ["alpha", "beta", "gamma", "delta"]);
+
+    // Not list items: flags, rules, bold, a bare number, a number in prose.
+    for line in ["--force", "---", "**bold**", "12", "3 apples", "1.", ""] {
+        assert_eq!(option_text(line), None, "{line:?}");
+    }
 }
 
 #[test]
@@ -107,7 +122,7 @@ fn format_answer_sorts_and_draws_bars() {
         format_answer(&json!({"answers": {"answer": {"type": "noul", "noul": 0.71}}})).unwrap();
     assert_eq!(
         yes,
-        "**yes** · 71%\n\n```text\nyes  ███████░░░  71%\nno   ███░░░░░░░  29%\n```\n"
+        "**yes** · 71%\n\n```text\n███████░░░  71%  yes\n███░░░░░░░  29%  no\n```\n"
     );
 
     let choice = format_answer(&json!({"answers": {"answer": {
@@ -118,11 +133,11 @@ fn format_answer_sorts_and_draws_bars() {
     .unwrap();
     let lines: Vec<&str> = choice.lines().collect();
     assert_eq!(lines[0], "**sqlite** · 58%", "{choice}");
-    assert!(lines[3].starts_with("sqlite    ██████"), "{choice}");
-    assert!(lines[4].starts_with("postgres  ███"), "{choice}");
-    assert!(
-        lines[5].contains("░░░░░░░░░░   0%"),
-        "unreadable value counts as 0: {choice}"
+    assert_eq!(lines[3], "██████░░░░  58%  sqlite", "{choice}");
+    assert_eq!(lines[4], "███░░░░░░░  31%  postgres", "{choice}");
+    assert_eq!(
+        lines[5], "░░░░░░░░░░   0%  duckdb",
+        "unreadable value counts as 0"
     );
     assert!(choice.ends_with("```\nconfidence 73%\n"), "{choice}");
 }
