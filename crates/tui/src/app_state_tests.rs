@@ -727,10 +727,58 @@ fn catalog_models_merges_config_and_dedups() {
     let models = catalog_models(&cfg);
     assert!(models.contains(&("acme".into(), "m1".into())), "{models:?}");
     assert!(models.contains(&("acme".into(), "m2".into())), "{models:?}");
-    let mut sorted = models.clone();
+    let decision = whycodes_llm::decision::DECISION_PROVIDER;
+    let chat: Vec<_> = models
+        .iter()
+        .filter(|(p, _)| p != decision)
+        .cloned()
+        .collect();
+    let mut sorted = chat.clone();
     sorted.sort();
     sorted.dedup();
-    assert_eq!(models, sorted, "catalog is sorted and unique");
+    assert_eq!(chat, sorted, "chat models are sorted and unique");
+}
+
+#[test]
+fn catalog_models_lists_decision_models_last_and_only_with_chat_models() {
+    use whycodes_llm::decision::{DECISION_OFF, DECISION_PRESETS, DECISION_PROVIDER};
+    let mut cfg = whycodes_config::Config::default();
+    cfg.providers.clear();
+    assert!(
+        catalog_models(&cfg).is_empty(),
+        "empty catalog keeps its hint"
+    );
+
+    cfg.providers.insert(
+        "zz".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "zz".into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec!["chat".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: Default::default(),
+        },
+    );
+    let models = catalog_models(&cfg);
+    let first_decision = models
+        .iter()
+        .position(|(p, _)| p == DECISION_PROVIDER)
+        .unwrap();
+    assert!(
+        models[..first_decision]
+            .iter()
+            .all(|(p, _)| p != DECISION_PROVIDER)
+            && models[first_decision..]
+                .iter()
+                .all(|(p, _)| p == DECISION_PROVIDER),
+        "{models:?}"
+    );
+    assert_eq!(models[first_decision].1, DECISION_OFF);
+    assert_eq!(models.len() - first_decision, DECISION_PRESETS.len() + 1);
 }
 
 #[test]

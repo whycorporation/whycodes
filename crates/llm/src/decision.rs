@@ -19,6 +19,111 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use whycodes_config::DecisionConfig;
 
+/// Pseudo-provider under which the model picker lists decision models.
+/// Choosing one sets `[security.decision]`, never the chat model.
+pub const DECISION_PROVIDER: &str = "decision";
+/// Picker row that turns the second opinion off.
+pub const DECISION_OFF: &str = "off";
+
+const OLLAMA_BASE: &str = "http://127.0.0.1:11434/v1";
+const OPENROUTER_BASE: &str = "https://openrouter.ai/api/v1";
+const OPENROUTER_KEY: &str = "OPENROUTER_API_KEY";
+
+/// A decision model with the endpoint and threshold it was measured at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecisionPreset {
+    /// Picker label and the model id sent to the endpoint.
+    pub model: &'static str,
+    pub base_url: &'static str,
+    pub api_key_env: &'static str,
+    /// Score at which it prompted on 1 of 66 should-run commands of the
+    /// labelled corpus (`docs/proposals/decision-models.md`).
+    pub threshold: f64,
+    pub provider_only: &'static [&'static str],
+}
+
+const fn openrouter(model: &'static str, threshold: f64) -> DecisionPreset {
+    DecisionPreset {
+        model,
+        base_url: OPENROUTER_BASE,
+        api_key_env: OPENROUTER_KEY,
+        threshold,
+        provider_only: &[],
+    }
+}
+
+/// The models evaluated for this feature, best recall first after the local
+/// default. Thresholds are corpus-calibrated and over-prompt on real traffic;
+/// raise them if prompts are too frequent.
+pub const DECISION_PRESETS: &[DecisionPreset] = &[
+    DecisionPreset {
+        model: "clef-flash",
+        base_url: OLLAMA_BASE,
+        api_key_env: "",
+        threshold: 1.84,
+        provider_only: &[],
+    },
+    DecisionPreset {
+        provider_only: &["cloudflare"],
+        ..openrouter("cloudflare/clef", 1.31)
+    },
+    openrouter("perplexity/pplx-decider-v1.2", 1.07),
+    openrouter("liquid/d1", 1.55),
+    openrouter("microsoft/microsoft-decision-1", 1.27),
+    openrouter("upstage/solar-decide-flash", 0.98),
+    openrouter("cloudflare/clef-omni", 1.33),
+    openrouter("google/gemini-decision-1", 1.45),
+    openrouter("perplexity/pplx-decider-flash-v1.2", 1.38),
+    openrouter("typesafe/jev-1.14", 1.21),
+    openrouter("openai/gpt-6-luna-decisions", 1.58),
+    openrouter("cloudflare/clef-flash", 1.84),
+];
+
+/// Bearer token for `[security.decision]`: the `api_key_env` variable, else
+/// (for an OpenRouter endpoint) the configured `openrouter` provider's key.
+pub fn decision_api_key(config: &whycodes_config::Config) -> Option<String> {
+    let decision = &config.security.decision;
+    let from_env = match decision.api_key_env.as_str() {
+        "" => None,
+        name => std::env::var(name).ok().filter(|k| !k.is_empty()),
+    };
+    from_env.or_else(|| {
+        decision
+            .base_url
+            .contains("openrouter.ai")
+            .then(|| config.get_provider("openrouter")?.api_key.clone())
+            .flatten()
+    })
+}
+
+/// Whether `[security.decision]` can authenticate: no key is needed when
+/// `api_key_env` is empty (a local server), otherwise one must resolve.
+pub fn decision_key_ready(config: &whycodes_config::Config) -> bool {
+    config.security.decision.api_key_env.is_empty() || decision_api_key(config).is_some()
+}
+
+/// `[security.decision]` after choosing `model` in the picker: a preset turns
+/// it on with that preset's endpoint and threshold, [`DECISION_OFF`] turns it
+/// off. `None` for an unknown name.
+pub fn decision_choice(current: &DecisionConfig, model: &str) -> Option<DecisionConfig> {
+    if model == DECISION_OFF {
+        return Some(DecisionConfig {
+            enabled: false,
+            ..current.clone()
+        });
+    }
+    let preset = DECISION_PRESETS.iter().find(|p| p.model == model)?;
+    Some(DecisionConfig {
+        enabled: true,
+        base_url: preset.base_url.to_string(),
+        model: preset.model.to_string(),
+        api_key_env: preset.api_key_env.to_string(),
+        threshold: preset.threshold,
+        provider_only: preset.provider_only.iter().map(|s| s.to_string()).collect(),
+        ..current.clone()
+    })
+}
+
 const BLAST_INSTRUCTIONS: &str = "A coding agent wants to run this shell command in the user's project. What is the worst realistic effect if it runs now?";
 const FITS_INSTRUCTIONS: &str =
     "Is running this command a reasonable, expected step toward what the user asked for?";

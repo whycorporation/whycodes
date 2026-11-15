@@ -4361,6 +4361,12 @@ async fn apply_pending_picker_choices(
         return;
     }
     app.picker_wait_noted = false;
+    if let Some((_, m)) = app
+        .pending_model
+        .take_if(|(p, _)| p == whycodes_llm::decision::DECISION_PROVIDER)
+    {
+        apply_decision_choice(app, &mut rt.agent, config, &m);
+    }
     if let Some((p, m)) = app.pending_model.take() {
         apply_model_choice(app, provider, model, api_key, p, m, config);
         rt.agent.set_route(provider, model);
@@ -4979,6 +4985,38 @@ fn apply_approval_mode(
         tracing::warn!(error = %e, "failed to persist general.approval_mode");
     }
     app.status_message = format!("Approval mode → {}", mode.label());
+    app.mark_dirty();
+}
+
+/// A `decision` row in the model picker: set `[security.decision]` (global
+/// config only, see `parse_project_text`) and the live agent's gate. The chat
+/// model is untouched.
+fn apply_decision_choice(app: &mut TuiApp, agent: &mut Agent, config: &mut Config, model: &str) {
+    let Some(next) = whycodes_llm::decision::decision_choice(&config.security.decision, model)
+    else {
+        app.toasts.push(
+            crate::toast::ToastKind::Warning,
+            format!("Unknown decision model '{model}'"),
+        );
+        return;
+    };
+    config.security.decision = next.clone();
+    agent.set_decision_config(config);
+    if let Err(e) = Config::update_global(&mut |global| global.security.decision = next.clone()) {
+        tracing::warn!(error = %e, "failed to persist security.decision");
+    }
+    app.status_message = if next.enabled {
+        let note = if !whycodes_llm::decision::decision_key_ready(config) {
+            format!(" · no key: set {}", next.api_key_env)
+        } else if app.approval_mode == ApprovalMode::Auto {
+            " · switch approval to important to use it".to_string()
+        } else {
+            String::new()
+        };
+        format!("Decision model → {}{note}", next.model)
+    } else {
+        "Decision model → off".to_string()
+    };
     app.mark_dirty();
 }
 

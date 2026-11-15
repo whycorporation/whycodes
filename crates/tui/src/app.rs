@@ -1962,6 +1962,18 @@ pub fn catalog_models(config: &whycodes_config::Config) -> Vec<(String, String)>
     }
     out.sort();
     out.dedup();
+    // Decision models last, in their own group. Choosing one sets
+    // `[security.decision]`, not the chat model. Left out with no chat models
+    // so the empty-catalog hint still shows.
+    if !out.is_empty() {
+        use whycodes_llm::decision::{DECISION_OFF, DECISION_PRESETS, DECISION_PROVIDER};
+        out.push((DECISION_PROVIDER.into(), DECISION_OFF.into()));
+        out.extend(
+            DECISION_PRESETS
+                .iter()
+                .map(|p| (DECISION_PROVIDER.to_string(), p.model.to_string())),
+        );
+    }
     out
 }
 

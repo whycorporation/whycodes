@@ -222,3 +222,83 @@ async fn verdict_errors_on_status_body_and_transport() {
     );
     held.join().unwrap();
 }
+
+#[test]
+fn decision_choice_applies_presets_and_off() {
+    let current = DecisionConfig {
+        timeout_ms: 1500,
+        ..DecisionConfig::default()
+    };
+    let clef = decision_choice(&current, "cloudflare/clef").unwrap();
+    assert!(clef.enabled);
+    assert_eq!(clef.base_url, "https://openrouter.ai/api/v1");
+    assert_eq!(clef.api_key_env, "OPENROUTER_API_KEY");
+    assert_eq!(clef.provider_only, vec!["cloudflare".to_string()]);
+    assert_eq!(clef.threshold, 1.31);
+    assert_eq!(
+        clef.timeout_ms, 1500,
+        "fields a preset does not own are kept"
+    );
+
+    let local = decision_choice(&clef, "clef-flash").unwrap();
+    assert_eq!(local.base_url, "http://127.0.0.1:11434/v1");
+    assert!(local.api_key_env.is_empty() && local.provider_only.is_empty());
+
+    let off = decision_choice(&local, DECISION_OFF).unwrap();
+    assert!(!off.enabled);
+    assert_eq!(off.model, "clef-flash", "turning off keeps the last choice");
+
+    assert!(decision_choice(&current, "no-such-model").is_none());
+    let mut names: Vec<_> = DECISION_PRESETS.iter().map(|p| p.model).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(
+        names.len(),
+        DECISION_PRESETS.len(),
+        "preset names are unique"
+    );
+}
+
+#[test]
+fn api_key_comes_from_env_then_openrouter_provider() {
+    let mut config = whycodes_config::Config::default();
+    config.providers.remove("openrouter");
+    // Local default: no key needed, none resolved.
+    assert_eq!(decision_api_key(&config), None);
+    assert!(decision_key_ready(&config));
+
+    config.security.decision =
+        decision_choice(&config.security.decision, "cloudflare/clef").unwrap();
+    // A name that is never set: OpenRouter key falls back to the provider block.
+    config.security.decision.api_key_env = "WHYCODES_TEST_DECISION_NEVER_SET".into();
+    assert_eq!(decision_api_key(&config), None);
+    assert!(!decision_key_ready(&config));
+    config.providers.insert(
+        "openrouter".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "openrouter".into(),
+            api_key: Some("sk-or-from-config".into()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: Default::default(),
+        },
+    );
+    assert_eq!(
+        decision_api_key(&config).as_deref(),
+        Some("sk-or-from-config")
+    );
+    assert!(decision_key_ready(&config));
+
+    // `PATH` is set on every host: the env variable wins.
+    config.security.decision.api_key_env = "PATH".into();
+    assert_eq!(decision_api_key(&config), std::env::var("PATH").ok());
+
+    // Not OpenRouter: no provider fallback.
+    config.security.decision.api_key_env = "WHYCODES_TEST_DECISION_NEVER_SET".into();
+    config.security.decision.base_url = "https://api.typesafe.ai/v1".into();
+    assert_eq!(decision_api_key(&config), None);
+}

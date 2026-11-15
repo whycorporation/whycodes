@@ -5,6 +5,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
+use whycodes_config::DecisionConfig;
 use whycodes_core::types::{AGENT_NOTE_NAME, MessageContent};
 
 /// Answers every connection with `body`; counts the requests it saw.
@@ -40,14 +41,20 @@ pub(super) fn verdict(outside: f64, fits: f64) -> String {
     .to_string()
 }
 
+fn config_with(decision: DecisionConfig) -> whycodes_config::Config {
+    let mut config = whycodes_config::Config::default();
+    config.security.decision = decision;
+    config
+}
+
 pub(super) fn gate(base: &str, threshold: f64) -> DecisionGate {
-    DecisionGate::from_config(&DecisionConfig {
+    DecisionGate::from_config(&config_with(DecisionConfig {
         enabled: true,
         base_url: base.to_string(),
         threshold,
         timeout_ms: 2000,
         ..DecisionConfig::default()
-    })
+    }))
     .unwrap()
 }
 
@@ -62,21 +69,13 @@ fn msg(role: Role, text: &str, name: Option<&str>) -> Message {
 }
 
 #[test]
-fn from_config_is_none_when_disabled_and_reads_the_key_env() {
-    assert!(DecisionGate::from_config(&DecisionConfig::default()).is_none());
+fn from_config_is_none_when_disabled() {
+    assert!(DecisionGate::from_config(&config_with(DecisionConfig::default())).is_none());
     let on = DecisionConfig {
         enabled: true,
         ..DecisionConfig::default()
     };
-    assert!(DecisionGate::from_config(&on).is_some());
-    // `PATH` is set on every host; an unset name resolves to no key.
-    for env in ["PATH", "WHYCODES_TEST_DECISION_KEY_THAT_IS_NEVER_SET"] {
-        let cfg = DecisionConfig {
-            api_key_env: env.into(),
-            ..on.clone()
-        };
-        assert!(DecisionGate::from_config(&cfg).is_some());
-    }
+    assert!(DecisionGate::from_config(&config_with(on)).is_some());
 }
 
 #[tokio::test]
@@ -246,4 +245,26 @@ mod gate {
         assert_eq!(hits.load(Ordering::SeqCst), 0, "model never called");
         assert_eq!(p.asks.load(Ordering::SeqCst), 0);
     }
+}
+
+#[test]
+fn set_decision_config_replaces_the_live_gate() {
+    let mut a = Agent::new(whycodes_core::types::AgentInfo {
+        name: "build".into(),
+        description: "test".into(),
+        mode: whycodes_core::types::AgentMode::Primary,
+        permission: Default::default(),
+        model: None,
+        system_prompt: None,
+        temperature: None,
+        top_p: None,
+    });
+    assert!(a.decision.is_none());
+    a.set_decision_config(&config_with(DecisionConfig {
+        enabled: true,
+        ..DecisionConfig::default()
+    }));
+    assert!(a.decision.is_some());
+    a.set_decision_config(&config_with(DecisionConfig::default()));
+    assert!(a.decision.is_none());
 }

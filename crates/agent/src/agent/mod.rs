@@ -674,6 +674,12 @@ impl Agent {
         self.approval_mode = mode;
     }
 
+    /// Rebuild the `[security.decision]` gate from `config` on a live agent
+    /// (model picker), without re-applying the rest of the config.
+    pub fn set_decision_config(&mut self, config: &whycodes_config::Config) {
+        self.decision = decision_gate::DecisionGate::from_config(config);
+    }
+
     /// Structured / CI runs: permission `ask` is denied instead of auto-allowed.
     pub fn set_fail_closed_ask(&mut self, fail_closed: bool) {
         self.fail_closed_ask = fail_closed;
@@ -738,7 +744,7 @@ impl Agent {
                 tracing::warn!("{e}; falling back to the default");
                 RiskThreshold::default()
             });
-        self.decision = decision_gate::DecisionGate::from_config(&config.security.decision);
+        self.decision = decision_gate::DecisionGate::from_config(config);
         self.sandbox = config.security.sandbox_settings();
         self.network = config.security.network_policy();
         self.hooks = config.hooks.clone();

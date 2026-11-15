@@ -3,9 +3,8 @@
 //! call keeps the classifier's decision. See
 //! `docs/proposals/decision-models.md`.
 
-use whycodes_config::DecisionConfig;
 use whycodes_core::types::{ApprovalMode, Message, PermissionAction, Role};
-use whycodes_llm::decision::DecisionClient;
+use whycodes_llm::decision::{DecisionClient, decision_api_key};
 use whycodes_session::session::Session;
 
 use super::Agent;
@@ -46,18 +45,14 @@ pub(crate) struct DecisionGate {
 
 impl DecisionGate {
     /// `None` unless `[security.decision] enabled = true`.
-    pub(crate) fn from_config(config: &DecisionConfig) -> Option<Self> {
-        if !config.enabled {
+    pub(crate) fn from_config(config: &whycodes_config::Config) -> Option<Self> {
+        let decision = &config.security.decision;
+        if !decision.enabled {
             return None;
         }
-        let api_key = if config.api_key_env.is_empty() {
-            None
-        } else {
-            std::env::var(&config.api_key_env).ok()
-        };
         Some(Self {
-            client: DecisionClient::new(config, api_key),
-            threshold: config.threshold,
+            client: DecisionClient::new(decision, decision_api_key(config)),
+            threshold: decision.threshold,
         })
     }
 

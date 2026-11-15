@@ -5818,6 +5818,44 @@ async fn apply_pending_picker_choices_applies_model_effort_mode_login_and_catalo
     let _ = auth_rx.try_recv();
 }
 
+#[tokio::test]
+async fn picking_a_decision_model_keeps_the_chat_model() {
+    let (_lock, _home) = isolate_home_fresh();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut config = Config::default();
+    let mut provider = "acme".into();
+    let mut model = "m1".into();
+    let mut api_key = "sk-test".into();
+    let mut catalog_fetch_pending = false;
+    let (catalog_tx, _catalog_rx) = mpsc::unbounded_channel();
+    let (auth_tx, _auth_rx) = mpsc::unbounded_channel();
+
+    app.pending_model = Some((
+        whycodes_llm::decision::DECISION_PROVIDER.into(),
+        "perplexity/pplx-decider-v1.2".into(),
+    ));
+    apply_pending_picker_choices(
+        &mut app,
+        &mut rt,
+        &mut config,
+        &mut provider,
+        &mut model,
+        &mut api_key,
+        &mut catalog_fetch_pending,
+        catalog_tx,
+        &auth_tx,
+    )
+    .await;
+    assert_eq!((provider.as_str(), model.as_str()), ("acme", "m1"));
+    assert!(app.pending_model.is_none());
+    assert_eq!(
+        config.security.decision.model,
+        "perplexity/pplx-decider-v1.2"
+    );
+    assert!(config.security.decision.enabled);
+}
+
 #[test]
 fn auto_prompts_are_fifo_and_do_not_replace_pending_work() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
@@ -11573,6 +11611,56 @@ fn discovered(provider: &str, models: &[&str]) -> whycodes_llm::LocalServer {
         api_base: "http://127.0.0.1:1/v1".into(),
         models: models.iter().map(|m| m.to_string()).collect(),
     }
+}
+
+#[test]
+fn apply_decision_choice_sets_gate_persists_and_reports() {
+    let (_lock, home) = isolate_home_fresh();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut config = Config::default();
+
+    // Local preset needs no key; in `auto` the hint says how to use it.
+    app.approval_mode = ApprovalMode::Auto;
+    apply_decision_choice(&mut app, &mut rt.agent, &mut config, "clef-flash");
+    assert!(config.security.decision.enabled);
+    assert!(
+        app.status_message.contains("important"),
+        "{}",
+        app.status_message
+    );
+    let saved = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
+    assert!(saved.contains("[security.decision]"), "{saved}");
+
+    app.approval_mode = ApprovalMode::Important;
+    apply_decision_choice(&mut app, &mut rt.agent, &mut config, "clef-flash");
+    assert_eq!(app.status_message, "Decision model → clef-flash");
+
+    // OpenRouter preset without any key: the status says which variable to set.
+    config.providers.remove("openrouter");
+    apply_decision_choice(&mut app, &mut rt.agent, &mut config, "cloudflare/clef");
+    assert_eq!(config.security.decision.model, "cloudflare/clef");
+    let saved = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
+    assert!(saved.contains("cloudflare/clef"), "{saved}");
+    if std::env::var_os("OPENROUTER_API_KEY").is_none() {
+        assert!(
+            app.status_message
+                .ends_with("no key: set OPENROUTER_API_KEY"),
+            "{}",
+            app.status_message
+        );
+    }
+
+    apply_decision_choice(&mut app, &mut rt.agent, &mut config, "off");
+    assert!(!config.security.decision.enabled);
+    assert_eq!(app.status_message, "Decision model → off");
+
+    let before = config.security.decision.clone();
+    apply_decision_choice(&mut app, &mut rt.agent, &mut config, "nope");
+    assert_eq!(
+        config.security.decision, before,
+        "unknown name changes nothing"
+    );
 }
 
 #[test]
