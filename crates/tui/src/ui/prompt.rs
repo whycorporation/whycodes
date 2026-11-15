@@ -489,6 +489,7 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
     app.model_hit.set_rect(None);
     app.effort_hit.set_rect(None);
     app.approval_hit.set_rect(None);
+    app.decision_hit.set_rect(None);
     if row.width < 8 {
         return;
     }
@@ -594,11 +595,16 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
         spans.push(Span::styled(" · ", sep_style));
         spans.push(Span::styled(mode_shown.clone(), mode_style));
     }
-    let decision_shown = decision_chip(app.decision_model.as_deref());
-    let show_decision = !decision_shown.is_empty();
+    let decision_shown = decision_chip(app.decision_model.as_deref(), app.decision_hit.hovered);
+    let decision_shown_w = UnicodeWidthStr::width(decision_shown.as_str()) as u16;
+    let mut show_decision = !decision_shown.is_empty();
     if show_decision {
+        let mut style = Style::default().fg(palette.info);
+        if app.decision_hit.hovered {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
         spans.push(Span::styled(" · ", sep_style));
-        spans.push(Span::styled(decision_shown, mode_style));
+        spans.push(Span::styled(decision_shown, style));
     }
     let queued_n = app.queued_turn_count();
     let queued_shown = if queued_n > 0 {
@@ -630,6 +636,7 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
     if label_w > max_w && show_decision {
         spans.truncate(spans.len() - 3); // trailing space + ` · ` + decision
         spans.push(Span::styled(" ", sep_style));
+        show_decision = false;
         label_w = span_width(&spans);
     }
     if label_w > max_w && show_mode {
@@ -727,15 +734,27 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
             width: mode_shown_w,
             height: 1,
         }));
+        col = col.saturating_add(mode_shown_w);
+    }
+    if show_decision {
+        col = col.saturating_add(3); // ` · `
+        app.decision_hit.set_rect(Some(Rect {
+            x: col,
+            y: row.y,
+            width: decision_shown_w,
+            height: 1,
+        }));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), meta_rect);
 }
 
-/// Footer chip for the active decision model: `decision:clef` (the part after
-/// the last `/`). Empty when off.
-pub(crate) fn decision_chip(model: Option<&str>) -> String {
+/// Footer chip while a decision model guards shell commands: `guard`, and
+/// `guard: clef` (the part after the last `/`) on hover. Empty when off. It is
+/// not a second chat model, so the name stays out of the resting label.
+pub(crate) fn decision_chip(model: Option<&str>, hovered: bool) -> String {
     match model {
-        Some(m) => format!("decision:{}", m.rsplit('/').next().unwrap_or(m)),
+        Some(m) if hovered => format!("guard: {}", m.rsplit('/').next().unwrap_or(m)),
+        Some(_) => "guard".to_string(),
         None => String::new(),
     }
 }

@@ -495,10 +495,11 @@ fn footer_line_containing(
 }
 
 #[test]
-fn decision_chip_shows_short_model_and_drops_first_when_narrow() {
-    assert_eq!(decision_chip(None), "");
-    assert_eq!(decision_chip(Some("clef-flash")), "decision:clef-flash");
-    assert_eq!(decision_chip(Some("cloudflare/clef")), "decision:clef");
+fn decision_chip_is_a_guard_that_names_the_model_on_hover() {
+    assert_eq!(decision_chip(None, false), "");
+    assert_eq!(decision_chip(Some("cloudflare/clef"), false), "guard");
+    assert_eq!(decision_chip(Some("cloudflare/clef"), true), "guard: clef");
+    assert_eq!(decision_chip(Some("clef-flash"), true), "guard: clef-flash");
 
     let mut app = TuiApp::new(TuiAppConfig::default());
     app.agent_name = "build".into();
@@ -508,12 +509,26 @@ fn decision_chip_shows_short_model_and_drops_first_when_narrow() {
     app.decision_model = Some("cloudflare/clef".into());
     let (terminal, _) = draw_prompt_footer(&mut app, 100, 16);
     let line = footer_line_containing(terminal.backend().buffer(), 100, 16, "important");
-    assert!(line.contains("important · decision:clef"), "{line}");
+    assert!(line.contains("important · guard "), "{line}");
+    assert!(
+        !line.contains("clef"),
+        "resting label has no model name: {line}"
+    );
+    let hit = app.decision_hit.rect.expect("guard is a hover target");
 
-    // Narrow: the decision chip goes before the approval chip does.
+    // Hover names the model.
+    app.decision_hit.hovered = true;
+    let (terminal, _) = draw_prompt_footer(&mut app, 100, 16);
+    let line = footer_line_containing(terminal.backend().buffer(), 100, 16, "important");
+    assert!(line.contains("guard: clef"), "{line}");
+    assert!(hit.width > 0);
+
+    // Narrow: the guard goes before the approval chip does.
+    app.decision_hit.hovered = false;
     let (terminal, _) = draw_prompt_footer(&mut app, 46, 16);
     let line = footer_line_containing(terminal.backend().buffer(), 46, 16, "important");
-    assert!(!line.contains("decision:"), "{line}");
+    assert!(!line.contains("guard"), "{line}");
+    assert!(app.decision_hit.rect.is_none());
 }
 
 #[test]

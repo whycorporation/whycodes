@@ -1699,6 +1699,8 @@ pub struct TuiApp {
     pub(crate) effort_hit: crate::hit_area::HitArea,
     /// Prompt-footer approval mode (click → mode picker).
     pub(crate) approval_hit: crate::hit_area::HitArea,
+    /// Prompt-footer decision-model guard (hover → model name).
+    pub(crate) decision_hit: crate::hit_area::HitArea,
     /// Last known mouse cell (for hover tooltips).
     pub(crate) mouse_pos: Option<(u16, u16)>,
 
@@ -2512,6 +2514,7 @@ impl TuiApp {
             model_hit: crate::hit_area::HitArea::default(),
             effort_hit: crate::hit_area::HitArea::default(),
             approval_hit: crate::hit_area::HitArea::default(),
+            decision_hit: crate::hit_area::HitArea::default(),
             mouse_pos: None,
             context_used: 0,
             max_context_tokens: 200_000,
@@ -2859,6 +2862,10 @@ impl TuiApp {
                 self.approval_hit.hovered = false;
                 changed = true;
             }
+            if self.decision_hit.hovered {
+                self.decision_hit.hovered = false;
+                changed = true;
+            }
             if self.tasks_hit.hovered {
                 self.tasks_hit.hovered = false;
                 changed = true;
@@ -2874,6 +2881,7 @@ impl TuiApp {
         changed |= self.model_hit.update_hover(c, r);
         changed |= self.effort_hit.update_hover(c, r);
         changed |= self.approval_hit.update_hover(c, r);
+        changed |= self.decision_hit.update_hover(c, r);
         changed |= self.todos_hit.update_hover(c, r);
         changed |= self.todos_body_hit.update_hover(c, r);
         changed |= self.todos_scrollbar_hit.update_hover(c, r);

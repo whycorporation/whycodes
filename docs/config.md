@@ -259,7 +259,7 @@ A decision-model second opinion on shell commands that `bash_risk_threshold` let
 
 When enabled, the command and your last message (both through the secret redactor, long query-string and percent-encoded values masked, length-capped) are sent to `base_url`.
 
-The TUI model picker (`/models`) lists the evaluated decision models in a `decision` group at the end. Choosing one writes this block to the global config with that model's endpoint and measured threshold and applies it to the running session; `off` disables it. The chat model does not change. OpenRouter entries read `OPENROUTER_API_KEY`, falling back to `[providers.openrouter] api_key`; `clef-flash` (first entry) is a local Ollama model.
+The TUI model picker (`/models`) lists the evaluated decision models in a `decision` group at the end. Choosing one writes this block to the global config with that model's endpoint and measured threshold and applies it to the running session; `off` disables it. The chat model does not change; while it is on, the prompt footer shows `guard` (hover for the model name). OpenRouter entries read `OPENROUTER_API_KEY`, falling back to `[providers.openrouter] api_key`; `clef-flash` (first entry) is a local Ollama model.
 
 | Key | Default | Meaning |
 |---|---|---|
