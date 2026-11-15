@@ -203,6 +203,11 @@ impl Agent {
                     provider_name
                 ))
             })?;
+        // A prompt-only provider (decision models) reads the prompt as the
+        // question: no recall, posture or keyword notice may ride along.
+        if provider.prompt_only() {
+            turn_suffix.clear();
+        }
 
         // Completed LLM steps. A step that is retried before its stream finished
         // (overflow, credential rotation, fallback, stream rule, harmony leak)

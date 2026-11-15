@@ -6,6 +6,7 @@ pub mod codeassist;
 pub mod codex;
 pub mod copilot;
 pub mod custom;
+pub mod decision;
 pub mod deepseek;
 pub mod google;
 pub mod groq;

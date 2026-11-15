@@ -16,7 +16,10 @@ pub const DEFAULT_ANTHROPIC_MESSAGES_URL: &str = "https://api.anthropic.com/v1/m
 /// loopback / private `base_url` (local proxy). Cloud Anthropic/OpenAI still
 /// require a key.
 pub fn provider_requires_api_key(provider: &str, config: Option<&Config>) -> bool {
-    if provider.eq_ignore_ascii_case("ollama") {
+    // Ollama is local; decision models resolve their own key per model.
+    if provider.eq_ignore_ascii_case("ollama")
+        || provider == super::providers::decision::DECISION_PROVIDER
+    {
         return false;
     }
     let Some(cfg) = config else {

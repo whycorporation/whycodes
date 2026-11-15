@@ -1456,3 +1456,51 @@ async fn apply_config_sets_compaction_and_swarm_flags() {
     assert_eq!(agent.model_fast(), Some("haiku"));
     assert_eq!(agent.approval_mode(), ApprovalMode::default());
 }
+
+#[tokio::test]
+async fn decision_provider_turn_sends_only_the_typed_question() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let reply = r#"{"answers":{"answer":{"type":"noul","noul":0.9}},"usage":{"input_tokens":50,"output_tokens":0}}"#;
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = vec![0u8; 65536];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            tx.send(String::from_utf8_lossy(&buf[..n]).into_owned())
+                .unwrap();
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                reply.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(reply.as_bytes()).unwrap();
+        }
+    });
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(
+        whycodes_llm::providers::decision::DecisionProvider::new(
+            None,
+            Some(&format!("http://{addr}")),
+        ),
+    ));
+    let agent = Agent::new(make_test_agent_info("build")).with_provider_registry(registry);
+    let mut session = scripted_session("ultrathink Should we merge this PR?");
+    session.turn_context = Some("\n\nMEMORY RECALL that must not be asked".into());
+    let out = agent
+        .run_turn(&mut session, "decision", "clef-flash", "", Some(4))
+        .await
+        .expect("turn");
+    assert!(out.contains("**yes** · 90%"), "{out}");
+    let raw = rx.recv().unwrap();
+    assert!(raw.contains("Should we merge this PR?"), "{raw}");
+    assert!(
+        !raw.contains("MEMORY RECALL"),
+        "recall must not ride along: {raw}"
+    );
+    assert!(
+        !raw.contains("You are"),
+        "no system prompt in the question: {raw}"
+    );
+}
