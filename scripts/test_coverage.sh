@@ -81,6 +81,16 @@ need "CARGO_LLVM_COV_TARGET_DIR=/tmp/pinned-llvm-target-llvm-cov" "$dryci"
 need "LLVM_PROFILE_FILE=/tmp/pinned-llvm-target-llvm-cov/whycodes-%p-%m.profraw" "$dryci"
 forbid "CARGO_LLVM_COV_TARGET_DIR=/tmp/gha-runner-temp/llvm-cov-target" "$dryci"
 
+# A pinned toolchain gets its own persistent dir, so test binaries built by
+# another rustc never enter the report.
+drypin="$(
+    env -u CARGO_LLVM_COV_TARGET_DIR \
+        RUSTUP_TOOLCHAIN=1.99.1 \
+        CARGO_TARGET_DIR=/tmp/pinned-llvm-target \
+        "$SCRIPT" --dry-run
+)"
+need "CARGO_LLVM_COV_TARGET_DIR=/tmp/pinned-llvm-target-llvm-cov-1.99.1" "$drypin"
+
 # rustup llvm-cov is under rustlib/bin, not PATH. Prepend that dir so CI
 # (and rustup clones) do not fail with `llvm-cov not found`. JSON floors
 # pass LLVM_COV_FLAGS=-skip-expansions to cargo-llvm-cov (parent reads it
