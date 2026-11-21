@@ -409,3 +409,49 @@ fn decision_provider_needs_no_api_key_gate() {
     ));
     assert!(crate::endpoint::provider_requires_api_key("acme", None));
 }
+
+#[tokio::test]
+async fn openrouter_models_send_the_key_to_the_configured_base() {
+    let (base, rx) = serve_once("200 OK", &noul_reply(0.6));
+    let p = DecisionProvider::new(Some("sk-config".into()), None)
+        .with_openrouter_base(&format!("{base}/api/v1/"));
+    let r = p
+        .complete(&request("q?"), "sk-call", "cloudflare/clef")
+        .await
+        .unwrap();
+    assert_eq!(r.model, "cloudflare/clef");
+    let raw = rx.recv().unwrap();
+    assert!(raw.starts_with("POST /api/v1/systemone "), "{raw}");
+    let expected = std::env::var("OPENROUTER_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())
+        .unwrap_or_else(|| "sk-call".into());
+    assert!(raw.contains(&format!("Bearer {expected}")), "{raw}");
+    // A blank base keeps OpenRouter.
+    let p = DecisionProvider::default().with_openrouter_base("  ");
+    assert_eq!(p.openrouter_base, "https://openrouter.ai/api/v1");
+}
+
+#[test]
+fn from_config_reads_the_openrouter_base() {
+    let mut config = whycodes_config::Config::default();
+    config.providers.insert(
+        "openrouter".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "openrouter".into(),
+            api_key: None,
+            api_base: None,
+            base_url: Some("http://127.0.0.1:8787/v1".into()),
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: Default::default(),
+        },
+    );
+    let p = DecisionProvider::from_config(&config);
+    assert_eq!(
+        p.endpoint("cloudflare/clef", "").0,
+        "http://127.0.0.1:8787/v1/systemone"
+    );
+}

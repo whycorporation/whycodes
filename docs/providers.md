@@ -407,7 +407,8 @@ the model and the endpoint's message.
 `clef-flash` is a local Ollama model (≥ 0.35, `ollama pull clef-flash`),
 served from `[providers.ollama] base_url` (default `127.0.0.1:11434`, `/v1`
 appended) with no key. The other models go to
-`https://openrouter.ai/api/v1/systemone` with `Bearer` from
+`https://openrouter.ai/api/v1/systemone` (or `[providers.openrouter]
+base_url`, for an OpenRouter-compatible proxy) with `Bearer` from
 `OPENROUTER_API_KEY`, else the session key, else
 `[providers.openrouter] api_key`. `provider_requires_api_key` is false for
 `decision`, so a missing key surfaces as the endpoint's 401. Usage comes

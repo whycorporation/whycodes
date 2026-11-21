@@ -179,6 +179,9 @@ pub struct DecisionProvider {
     openrouter_key: Option<String>,
     /// `/v1` base of the local server for local models (`[providers.ollama]`).
     local_base: String,
+    /// Base for the other models (`[providers.openrouter] base_url`, so an
+    /// OpenRouter-compatible proxy works too).
+    openrouter_base: String,
 }
 
 impl Default for DecisionProvider {
@@ -199,17 +202,35 @@ impl DecisionProvider {
         Self {
             openrouter_key: openrouter_key.filter(|k| !k.is_empty()),
             local_base,
+            openrouter_base: OPENROUTER_BASE.to_string(),
         }
     }
 
+    /// Send non-local models to `base` (with `/v1`) instead of OpenRouter.
+    pub fn with_openrouter_base(mut self, base: &str) -> Self {
+        let base = base.trim().trim_end_matches('/');
+        if !base.is_empty() {
+            self.openrouter_base = base.to_string();
+        }
+        self
+    }
+
     pub fn from_config(config: &whycodes_config::Config) -> Self {
-        let ollama = config.get_provider("ollama");
-        Self::new(
+        let base = |name: &str| {
+            config
+                .get_provider(name)
+                .and_then(|p| p.base_url.as_deref().or(p.api_base.as_deref()))
+        };
+        let provider = Self::new(
             config
                 .get_provider("openrouter")
                 .and_then(|p| p.api_key.clone()),
-            ollama.and_then(|p| p.base_url.as_deref().or(p.api_base.as_deref())),
-        )
+            base("ollama"),
+        );
+        match base("openrouter") {
+            Some(b) => provider.with_openrouter_base(b),
+            None => provider,
+        }
     }
 
     /// Endpoint and bearer token for `model`. A model id not in the list is
@@ -230,7 +251,7 @@ impl DecisionProvider {
         };
         let base = match entry.base_url {
             OLLAMA_BASE => self.local_base.as_str(),
-            other => other,
+            _ => self.openrouter_base.as_str(),
         };
         (format!("{base}/systemone"), key)
     }
