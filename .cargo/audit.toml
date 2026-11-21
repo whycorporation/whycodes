@@ -17,4 +17,9 @@ ignore = [
     "RUSTSEC-2024-0320",
     # paste (proc-macro, compile-time only) via tokenizers.
     "RUSTSEC-2024-0436",
+    # chrono: "unmaintained" notice (2026-11), no fixed release. Direct
+    # dependency of most crates and of brush/diffutils/findutils, so it
+    # cannot be dropped in a lockfile bump; replacing it is a separate
+    # migration. Not a vulnerability.
+    "RUSTSEC-2026-0543",
 ]
