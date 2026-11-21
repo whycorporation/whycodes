@@ -250,7 +250,9 @@ jobs:
       # that ran report 0), dropping every 100% floor. Unpin once stable
       # measures the same as 1.99.1 (`cargo +stable llvm-cov -p whycodes-schema`
       # back at 100%). RUSTUP_TOOLCHAIN on the Measure step overrides
-      # rust-toolchain.toml's `stable`.
+      # rust-toolchain.toml's `stable` and keys the persistent llvm-cov dir
+      # (scripts/coverage.sh), so binaries from another rustc never enter the
+      # report. cargo-llvm-cov is pinned too: the pair moves together.
       - uses: dtolnay/rust-toolchain@master
         if: steps.scope.outputs.code == 'true'
         with:
@@ -266,7 +268,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         if: steps.scope.outputs.code == 'true'
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.1
       # Single workspace instrumentation + single JSON report; per-crate floors
       # checked by Python instead of 12 separate `cargo llvm-cov -p` re-runs.
       # Wrapper flags live in scripts/coverage.sh (same as local `scripts/coverage.sh`).
@@ -274,7 +276,8 @@ jobs:
         if: steps.scope.outputs.code == 'true'
         env:
           # Job-scoped; do not put ${{ runner.temp }} in job-level env (0-job
-          # workflow failure). Compile cache is ${CARGO_TARGET_DIR}-llvm-cov
+          # workflow failure). Compile cache is
+          # ${CARGO_TARGET_DIR}-llvm-cov-${RUSTUP_TOOLCHAIN}
           # (scripts/coverage.sh). REPORT_JSON stays in temp.
           RUSTUP_TOOLCHAIN: 1.99.1
           COVERAGE_FEATURES: whycodes-storage/bundled,whycodes-tools/ast-tools

@@ -116,9 +116,17 @@ fi
 # instrumented rlibs survive the job (Coverage was a 22m cold rebuild when
 # this lived in RUNNER_TEMP). Leftover *.profraw mixed floors to 54% —
 # purge traces, do not rm -rf the rlibs.
+# The persistent dir is keyed by RUSTUP_TOOLCHAIN: cargo-llvm-cov reports
+# every test binary it finds there, and binaries left by another rustc
+# (no profile for this run) counted as uncovered lines and raised the line
+# totals, failing every floor (schema 117/117 became 117/121).
 if [ -z "${CARGO_LLVM_COV_TARGET_DIR:-}" ]; then
     if [ -n "${CARGO_TARGET_DIR:-}" ]; then
         CARGO_LLVM_COV_TARGET_DIR="${CARGO_TARGET_DIR%/}-llvm-cov"
+        toolchain_key="$(printf '%s' "${RUSTUP_TOOLCHAIN:-}" | tr -c 'A-Za-z0-9._-' '_')"
+        if [ -n "$toolchain_key" ]; then
+            CARGO_LLVM_COV_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR-$toolchain_key"
+        fi
     else
         CARGO_LLVM_COV_TARGET_DIR="$ROOT/target/llvm-cov-target"
     fi
