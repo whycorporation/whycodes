@@ -1433,15 +1433,22 @@ impl Agent {
         let (title_provider, title_model) =
             crate::title::resolve_title_model(provider_name, model, title_model_override);
 
-        let (use_provider_name, use_model) =
-            if self.provider_registry.get(&title_provider).is_some() {
-                (title_provider, title_model)
-            } else if self.provider_registry.get(provider_name).is_some() {
-                (provider_name.to_string(), model.to_string())
-            } else {
-                tracing::debug!(%title_provider, "no provider for title refine");
-                return None;
-            };
+        let (use_provider_name, use_model) = if self
+            .provider_registry
+            .get_for_side_request(&title_provider)
+            .is_some()
+        {
+            (title_provider, title_model)
+        } else if self
+            .provider_registry
+            .get_for_side_request(provider_name)
+            .is_some()
+        {
+            (provider_name.to_string(), model.to_string())
+        } else {
+            tracing::debug!(%title_provider, "no provider for title refine");
+            return None;
+        };
 
         let key = if use_provider_name == provider_name {
             api_key.to_string()

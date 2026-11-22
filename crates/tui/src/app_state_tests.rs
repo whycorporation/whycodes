@@ -1635,3 +1635,38 @@ fn copy_last_reply_takes_the_latest_assistant_text() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn catalog_models_lists_decision_models_like_a_provider() {
+    use whycodes_llm::providers::decision::{DECISION_MODELS, DECISION_PROVIDER};
+    let mut cfg = whycodes_config::Config::default();
+    cfg.providers.clear();
+    assert!(
+        catalog_models(&cfg).is_empty(),
+        "empty catalog keeps its hint"
+    );
+    cfg.providers.insert(
+        "zz".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "zz".into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec!["chat".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+            credentials: Default::default(),
+        },
+    );
+    let models = catalog_models(&cfg);
+    let decision: Vec<_> = models
+        .iter()
+        .filter(|(p, _)| p == DECISION_PROVIDER)
+        .collect();
+    assert_eq!(decision.len(), DECISION_MODELS.len(), "{models:?}");
+    assert!(models.contains(&(DECISION_PROVIDER.into(), "clef-flash".into())));
+    let mut sorted = models.clone();
+    sorted.sort();
+    assert_eq!(models, sorted, "decision sorts like any provider");
+}

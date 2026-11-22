@@ -70,7 +70,7 @@ impl Agent {
             api_key.to_string(),
         );
         Some(async move {
-            let provider = registry.get(&provider_name)?;
+            let provider = registry.get_for_side_request(&provider_name)?;
             let transport = whycodes_llm::default_transport();
             let stream = transport.stream(provider, &request, &api_key, &model).await;
             let mut stream = stream

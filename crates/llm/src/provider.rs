@@ -36,6 +36,15 @@ pub trait LlmProvider: Send + Sync {
         model: &'a str,
     ) -> ProviderStreamFuture<'a>;
 
+    /// True for a provider that reads only the user's typed prompt as a
+    /// question (decision models). The turn then sends no model-only text
+    /// (memory recall, intent posture, keyword notices), and background
+    /// requests (titles, compaction summaries, memory extraction, cache
+    /// keep-alive) skip it and fall back to their local path.
+    fn prompt_only(&self) -> bool {
+        false
+    }
+
     /// Provider-native compaction: summarize `request.messages` on the
     /// provider's side and return its compaction block (Anthropic on-demand
     /// compaction: `stop_reason` `"compaction"` and one
@@ -78,6 +87,12 @@ impl ProviderRegistry {
 
     pub fn get(&self, name: &str) -> Option<&dyn LlmProvider> {
         self.providers.get(name).map(|p| p.as_ref())
+    }
+
+    /// [`Self::get`] for background requests: `None` for a
+    /// [`LlmProvider::prompt_only`] provider.
+    pub fn get_for_side_request(&self, name: &str) -> Option<&dyn LlmProvider> {
+        self.get(name).filter(|p| !p.prompt_only())
     }
 
     /// Sorted built-in (and later config-registered) provider ids.
@@ -125,6 +140,10 @@ impl ProviderRegistry {
             let custom = Box::new(super::providers::custom::CustomProvider::from_config(pc));
             self.providers.insert(name.clone(), custom);
         }
+        // Decision models pick up the configured OpenRouter key.
+        self.register(Box::new(
+            super::providers::decision::DecisionProvider::from_config(config),
+        ));
     }
     ///
     /// `primary` is a `(provider_name, model)` pair to try first.
@@ -164,6 +183,9 @@ impl Default for ProviderRegistry {
         registry.register(Box::new(super::providers::mistral::MistralProvider::new()));
         registry.register(Box::new(super::providers::together::TogetherProvider::new()));
         registry.register(Box::new(super::providers::groq::GroqProvider::new()));
+        registry.register(Box::new(
+            super::providers::decision::DecisionProvider::default(),
+        ));
         registry
     }
 }

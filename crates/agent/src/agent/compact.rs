@@ -311,7 +311,7 @@ impl Agent {
             tracing::debug!("no cut for native compaction; using full-replace");
             return None;
         };
-        let provider = self.provider_registry.get(provider_name)?;
+        let provider = self.provider_registry.get_for_side_request(provider_name)?;
         let mut request = session.build_request(
             self.step_tools(),
             Some(NATIVE_COMPACT_MAX_TOKENS),
@@ -423,7 +423,7 @@ async fn summarize_with_model(
         if transcript.trim().is_empty() {
             return None;
         }
-        let provider = registry.get(provider_name)?;
+        let provider = registry.get_for_side_request(provider_name)?;
         use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
         let request = LlmRequest {
             system: String::new(),
