@@ -373,6 +373,56 @@ Config only (see above). Usage from `prompt_tokens` / `completion_tokens`.
 waives the credential check for local hosts. `uses_harmony_dialect`
 applies to provider `custom` for `gpt-5` / `codex` ids.
 
+### decision
+
+`crates/llm/src/providers/decision.rs`, `DecisionProvider`. Built in; the
+model picker lists its models under `decision` once any chat model exists.
+
+#### Special casing
+Decision models answer a typed question with probabilities, not text.
+Choosing `decision/<model>` makes the prompt a question box: the last user
+message is the question, sent alone (no system prompt, history, tools,
+memory recall, intent posture or keyword notices; `prompt_only()` is true).
+A plain prompt is a yes/no question (`noul`); two or more lines starting
+with `- ` or `* ` are the options of a `choice` question, and the other
+lines are the question. Example:
+
+```text
+Which database should we use?
+- postgres
+- sqlite
+```
+
+The reply is a bold headline (`**sqlite** · 58%`) and probability bars.
+Background requests (session titles, compaction summaries, memory
+extraction, cache keep-alive) skip a `prompt_only` provider and use their
+local path.
+
+#### Stream behavior
+One `POST {base}/systemone`; the reply is emitted as a single text delta,
+usage, and stop. A `refusal` answer or a non-2xx status is an error naming
+the model and the endpoint's message.
+
+#### Auth and usage
+`clef-flash` is a local Ollama model (≥ 0.35, `ollama pull clef-flash`),
+served from `[providers.ollama] base_url` (default `127.0.0.1:11434`, `/v1`
+appended) with no key. The other models go to
+`https://openrouter.ai/api/v1/systemone` (or `[providers.openrouter]
+base_url`, for an OpenRouter-compatible proxy) with `Bearer` from
+`OPENROUTER_API_KEY`, else the session key, else
+`[providers.openrouter] api_key`. `provider_requires_api_key` is false for
+`decision`, so a missing key surfaces as the endpoint's 401. Usage comes
+from the response's `usage`.
+
+#### Catalog and model handling
+Fixed list `DECISION_MODELS`: `clef-flash` (local), then OpenRouter's
+`cloudflare/clef`, `perplexity/pplx-decider-v1.2`, `liquid/d1`,
+`microsoft/microsoft-decision-1`, `upstage/solar-decide-flash`,
+`cloudflare/clef-omni`, `google/gemini-decision-1`,
+`perplexity/pplx-decider-flash-v1.2`, `typesafe/jev-1.14`,
+`openai/gpt-6-luna-decisions`, `cloudflare/clef-flash`. An id not in the
+list is sent to OpenRouter.
+
 ### deepseek
 
 `crates/llm/src/providers/deepseek.rs`, `DeepSeekProvider`.

@@ -1960,6 +1960,16 @@ pub fn catalog_models(config: &whycodes_config::Config) -> Vec<(String, String)>
             }
         }
     }
+    // Decision models answer typed questions only; listed like any provider
+    // once there is a chat model (an empty catalog keeps its setup hint).
+    if !out.is_empty() {
+        use whycodes_llm::providers::decision::{DECISION_MODELS, DECISION_PROVIDER};
+        out.extend(
+            DECISION_MODELS
+                .iter()
+                .map(|m| (DECISION_PROVIDER.to_string(), m.id.to_string())),
+        );
+    }
     out.sort();
     out.dedup();
     out

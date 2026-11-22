@@ -207,7 +207,7 @@ async fn collect_retained_facts(
     }
     let mut saved = run_heuristic_retain(snap, settings, data_dir);
     if should_llm_retain(settings, saved.len(), snap.turn_index)
-        && let Some(provider) = registry.get(provider_name)
+        && let Some(provider) = registry.get_for_side_request(provider_name)
     {
         match run_llm_retain_facts(
             snap,
