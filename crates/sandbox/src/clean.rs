@@ -2,7 +2,7 @@
 //!
 //! A shell transcript is written for a terminal: colour codes, cursor moves,
 //! progress bars redrawn with `\r`, and the same line printed hundreds of
-//! times. None of it carries meaning for the model, and all of it costs
+//! times, or hundreds of lines that differ only in a counter. None of it carries meaning for the model, and all of it costs
 //! tokens on every later request. This keeps what a terminal would end up
 //! showing — every error, warning and summary line — and drops the rest.
 //! It runs once, when the tool result is made, so stored history never
@@ -30,7 +30,64 @@ pub fn clean_terminal_output(raw: &str) -> String {
         repeats = 0;
     }
     flush_repeats(&mut out, repeats);
-    out
+    collapse_similar(&out)
+}
+
+/// A run of lines that differ only in their numbers this long or longer
+/// keeps its first and last line and notes how many were between.
+const SIMILAR_COLLAPSE: usize = 8;
+
+/// Collapse long runs like `test case_1 ... ok` … `test case_4000 ... ok`.
+/// A line that breaks the shape (`test case_77 ... FAILED`) ends the run and
+/// is kept, so nothing but the repetition is lost.
+fn collapse_similar(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut kept: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let shape = digit_shape(lines[i]);
+        let mut end = i + 1;
+        while shape.is_some() && end < lines.len() && digit_shape(lines[end]) == shape {
+            end += 1;
+        }
+        let run = &lines[i..end];
+        if run.len() >= SIMILAR_COLLAPSE {
+            kept.push(run[0].to_string());
+            kept.push(format!(
+                "[{} similar lines; only the numbers differ]",
+                run.len() - 2
+            ));
+            kept.push(run[run.len() - 1].to_string());
+        } else {
+            kept.extend(run.iter().map(|l| l.to_string()));
+        }
+        i = end;
+    }
+    kept.join("\n")
+}
+
+/// The line with every run of digits replaced by `#`, or `None` when it has
+/// no digits or no letters (a data row of bare numbers is content, not noise).
+fn digit_shape(line: &str) -> Option<String> {
+    let has_digit = line.bytes().any(|b| b.is_ascii_digit());
+    let has_letter = line.bytes().any(|b| b.is_ascii_alphabetic());
+    if !has_digit || !has_letter {
+        return None;
+    }
+    let mut shape = String::with_capacity(line.len());
+    let mut in_digits = false;
+    for c in line.chars() {
+        if c.is_ascii_digit() {
+            if !in_digits {
+                shape.push('#');
+            }
+            in_digits = true;
+        } else {
+            shape.push(c);
+            in_digits = false;
+        }
+    }
+    Some(shape)
 }
 
 /// What a terminal shows for one line: the text after its last bare `\r`.
