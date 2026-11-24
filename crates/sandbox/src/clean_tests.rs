@@ -54,3 +54,34 @@ fn plain_output_passes_through_unchanged() {
     assert_eq!(clean_terminal_output("a\n\n\n\nb"), "a\n\n\n\nb");
     assert_eq!(clean_terminal_output(""), "");
 }
+
+#[test]
+fn long_runs_that_differ_only_in_numbers_keep_their_ends() {
+    let mut raw = String::from("running 4000 tests\n");
+    for n in 1..=76 {
+        raw.push_str(&format!("test case_{n} ... ok\n"));
+    }
+    raw.push_str("test case_77 ... FAILED\n");
+    for n in 78..=4000 {
+        raw.push_str(&format!("test case_{n} ... ok\n"));
+    }
+    raw.push_str("failures: case_77");
+    assert_eq!(
+        clean_terminal_output(&raw),
+        "running 4000 tests\n\
+         test case_1 ... ok\n[74 similar lines; only the numbers differ]\ntest case_76 ... ok\n\
+         test case_77 ... FAILED\n\
+         test case_78 ... ok\n[3921 similar lines; only the numbers differ]\ntest case_4000 ... ok\n\
+         failures: case_77"
+    );
+}
+
+#[test]
+fn short_similar_runs_and_bare_numbers_stay() {
+    let seven: Vec<String> = (1..=7).map(|n| format!("step {n} done")).collect();
+    let seven = seven.join("\n");
+    assert_eq!(clean_terminal_output(&seven), seven);
+    let rows: Vec<String> = (1..=20).map(|n| format!("{n},{}", n * 2)).collect();
+    let rows = rows.join("\n");
+    assert_eq!(clean_terminal_output(&rows), rows);
+}

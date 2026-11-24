@@ -1474,6 +1474,18 @@ misses 14 → 8 → 2 and cost with cache 441,571 → 172,007 → 132,675, withi
 0.5% of the Windows figures. Start-up on the same Mac: `--version` 3.8 ms,
 `--help` 4.6 → 4.0 ms, `config show` 5.4 → 5.0 ms (v0.6.33 → v0.6.34).
 
+**Similar-line collapse (2026-11-24).** Request 6's failing test prints 4,000
+`test case_N ... ok` lines, and every later request carried them. Command
+output now keeps the first and last line of a run of eight or more lines that
+differ only in their numbers, with a `[N similar lines; only the numbers
+differ]` note between; a line that breaks the shape (`FAILED`) is kept. Lines
+of bare numbers are left alone. Same two-turn script, Windows, o200k:
+
+| | Request 6 total | Request 6 uncached | Session total | Session uncached |
+|---|---|---|---|---|
+| before | 29,521 | 13,531 | 188,396 | 31,994 |
+| after | 16,199 | 209 | **135,092 (−28%)** | **18,668 (−42%)** |
+
 ## Token accounting reconciliation (2026-08-14)
 
 Providers report usage; we persist those numbers (not the char/4 heuristic)
