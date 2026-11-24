@@ -178,14 +178,31 @@ impl SessionTokenCache {
 }
 
 /// Parse `WHYCODES_IMAGE_B64:image/png\n<base64>` payloads from the read tool.
+///
+/// Only that exact shape counts: the marker opens a line, names an `image/`
+/// type, and everything after it is base64. Output that merely mentions the
+/// marker (this file's source, a grep for it) stays text.
 fn split_whycodes_image_payload(content: &str) -> Option<(String, String, String)> {
     const MARK: &str = "WHYCODES_IMAGE_B64:";
-    let idx = content.find(MARK)?;
+    let idx = content
+        .match_indices(MARK)
+        .map(|(i, _)| i)
+        .find(|&i| i == 0 || content.as_bytes()[i - 1] == b'\n')?;
     let after = &content[idx + MARK.len()..];
     let (media, rest) = after.split_once('\n')?;
     let media = media.trim();
     let b64 = rest.trim();
-    if media.is_empty() || b64.is_empty() {
+    let media_ok = media.strip_prefix("image/").is_some_and(|sub| {
+        !sub.is_empty()
+            && sub
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"+-.".contains(&b))
+    });
+    let b64_ok = !b64.is_empty()
+        && b64
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b));
+    if !media_ok || !b64_ok {
         return None;
     }
     let preface = content[..idx].trim().to_string();
@@ -3679,6 +3696,22 @@ mod tests {
             parsed,
             ("image/jpeg".into(), "ZGF0YQ==".into(), "preview".into())
         );
+        // Text that only mentions the marker is not an image: mid-line (an
+        // outline of this file), a non-image type, or a non-base64 body.
+        assert!(
+            split_whycodes_image_payload(
+                "182 sy1l|    const MARK: &str = \"WHYCODES_IMAGE_B64:\";\n202 pvel|fn spill_body("
+            )
+            .is_none()
+        );
+        assert!(split_whycodes_image_payload("WHYCODES_IMAGE_B64:\";\nYWJj").is_none());
+        assert!(split_whycodes_image_payload("WHYCODES_IMAGE_B64:image/\nYWJj").is_none());
+        assert!(split_whycodes_image_payload("WHYCODES_IMAGE_B64:image/png\nfn x() {}").is_none());
+        let parsed = split_whycodes_image_payload(
+            "see \"WHYCODES_IMAGE_B64:\"\nWHYCODES_IMAGE_B64:image/svg+xml\nPHN2Zy8+",
+        )
+        .unwrap();
+        assert_eq!(parsed.0, "image/svg+xml");
 
         let unicode = "é".repeat(10);
         assert_eq!(cap_tool_text_to(unicode.clone(), 10), unicode);
