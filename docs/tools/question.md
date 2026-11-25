@@ -9,10 +9,6 @@ Ask the user one or more clarifying questions with optional multiple-choice opti
 
 | Name | Type | Required | Description |
 |---|---|---|---|
-| `choices` | array of string | no | Legacy string choices for the single-question form |
-| `important` | boolean | no | Legacy: if true, prompt even in auto mode |
-| `multi_select` | boolean | no | Legacy multi_select for the single-question form |
-| `question` | string | no | Legacy single-question form |
 | `questions` | array of object | no | One or more questions (preferred). Max 4 recommended. |
 
 ## Related

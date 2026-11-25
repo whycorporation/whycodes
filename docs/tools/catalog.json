@@ -838,36 +838,10 @@
     "description": "Ask the user one or more clarifying questions with optional multiple-choice options. Prefer this over guessing when requirements, approach, or risk are ambiguous. Each question may set multi_select. The UI always offers an Other free-text path. Use short labels and helpful descriptions; put the recommended option first.",
     "parameters": {
       "properties": {
-        "choices": {
-          "description": "Legacy string choices for the single-question form",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "important": {
-          "description": "Legacy: if true, prompt even in auto mode",
-          "type": "boolean"
-        },
-        "multi_select": {
-          "description": "Legacy multi_select for the single-question form",
-          "type": "boolean"
-        },
-        "question": {
-          "description": "Legacy single-question form",
-          "type": "string"
-        },
         "questions": {
           "description": "One or more questions (preferred). Max 4 recommended.",
           "items": {
             "properties": {
-              "choices": {
-                "description": "Legacy: plain string options (same as options[].label)",
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
               "important": {
                 "description": "If true, prompt even in approval_mode=auto (destructive / irreversible). Default false.",
                 "type": "boolean"

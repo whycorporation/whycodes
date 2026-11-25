@@ -84,14 +84,14 @@ fn parse_questions_array_schema() {
 }
 
 #[test]
-fn parameters_describe_preferred_and_legacy_schemas() {
+fn parameters_describe_only_the_preferred_schema() {
     let schema = QuestionTool::new().parameters();
 
     assert_eq!(schema["type"], "object");
+    // The legacy single-question form is still parsed (see the tests above)
+    // but not advertised: it cost every request ~150 schema tokens.
     let properties = schema["properties"].as_object().unwrap();
-    for name in ["questions", "question", "choices", "multi_select"] {
-        assert!(properties.contains_key(name), "missing {name} schema");
-    }
+    assert_eq!(properties.keys().collect::<Vec<_>>(), ["questions"]);
     let question = &schema["properties"]["questions"]["items"];
     assert_eq!(question["required"], json!(["question"]));
     assert_eq!(question["properties"]["options"]["type"], "array");
@@ -100,7 +100,8 @@ fn parameters_describe_preferred_and_legacy_schemas() {
         json!(["label"])
     );
     assert_eq!(question["properties"]["multi_select"]["type"], "boolean");
-    assert_eq!(schema["properties"]["choices"]["items"]["type"], "string");
+    assert_eq!(question["properties"]["important"]["type"], "boolean");
+    assert!(question["properties"].get("choices").is_none());
 }
 
 #[test]

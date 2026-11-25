@@ -467,11 +467,6 @@ impl Tool for QuestionTool {
                                     "required": ["label"]
                                 }
                             },
-                            "choices": {
-                                "type": "array",
-                                "description": "Legacy: plain string options (same as options[].label)",
-                                "items": { "type": "string" }
-                            },
                             "multi_select": {
                                 "type": "boolean",
                                 "description": "Allow selecting more than one option (default false)"
@@ -483,23 +478,6 @@ impl Tool for QuestionTool {
                         },
                         "required": ["question"]
                     }
-                },
-                "question": {
-                    "type": "string",
-                    "description": "Legacy single-question form"
-                },
-                "choices": {
-                    "type": "array",
-                    "description": "Legacy string choices for the single-question form",
-                    "items": { "type": "string" }
-                },
-                "multi_select": {
-                    "type": "boolean",
-                    "description": "Legacy multi_select for the single-question form"
-                },
-                "important": {
-                    "type": "boolean",
-                    "description": "Legacy: if true, prompt even in auto mode"
                 }
             }
         })
