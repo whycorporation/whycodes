@@ -95,10 +95,12 @@ fn full_jitter(max: Duration) -> Duration {
     if max_ms == 0 {
         return Duration::ZERO;
     }
-    // Cheap non-crypto PRNG from time + address — fine for backoff jitter.
-    let seed =
-        Instant::now().elapsed().as_nanos() as u64 ^ (max_ms.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-    let r = seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) >> 16;
+    // `RandomState` is seeded randomly per thread and changes on every
+    // `new()`, so each call gets a fresh value. The old seed,
+    // `Instant::now().elapsed()`, was about 0 ns: every client and every
+    // retry waited the same "random" time, which jitter exists to avoid.
+    use std::hash::BuildHasher;
+    let r = std::collections::hash_map::RandomState::new().hash_one(max_ms);
     Duration::from_millis(r % max_ms.saturating_add(1))
 }
 

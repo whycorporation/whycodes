@@ -877,10 +877,10 @@ struct CodeAssistSse {
 
 impl CodeAssistSse {
     fn push_data_line(&mut self, line: &str) {
-        if line.is_empty() || !line.starts_with("data: ") {
+        let Some(data) = crate::openai_compat::sse_data(line) else {
             return;
-        }
-        for ev in events_for_chunk(&line[6..], &mut self.call_seq) {
+        };
+        for ev in events_for_chunk(data, &mut self.call_seq) {
             if matches!(ev, StreamEvent::MessageStop) {
                 self.done = true;
             }
