@@ -2415,6 +2415,24 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         );
                         break 'main;
                     }
+                    if !rt.agent_busy && std::mem::take(&mut app.clear_session_requested) {
+                        apply_idle_loop_key(
+                            IdleLoopKey::ClearSession,
+                            &mut app,
+                            &mut rt,
+                            &mut runtimes,
+                            &mut mru,
+                            &mut config,
+                            &project_dir,
+                            &file_index,
+                            &session_claims,
+                            &mut provider,
+                            &mut model,
+                            &mut api_key,
+                            &auth_tx,
+                        )
+                        .await;
+                    }
                     // Mouse / [✗] set flags inside handle_event — complete the
                     // oneshot on this same event, not the next tick.
                     flush_pending_question_replies(
@@ -2744,10 +2762,14 @@ enum IdleLoopKey {
     CycleAgent,
     NewSession,
     SessionLimit,
-    CycleSession { next: bool },
+    CycleSession {
+        next: bool,
+    },
     Dashboard,
     MruSwitch,
     SlashEnter,
+    /// Ctrl+L / `:clear` confirmed: the same new session as `/clear`.
+    ClearSession,
 }
 
 fn idle_loop_key_action(
@@ -2888,13 +2910,21 @@ async fn apply_idle_loop_key(
             switch_mru_session(app, rt, runtimes, mru);
             true
         }
-        IdleLoopKey::SlashEnter => {
-            // Idle, `/queue` and `/now` are a plain prompt.
-            if slash::take_mode_command(app).is_some() {
+        IdleLoopKey::SlashEnter | IdleLoopKey::ClearSession => {
+            let text = if action == IdleLoopKey::ClearSession {
+                // The prompt draft is not the command: keep it.
+                Some("/clear".to_string())
+            } else if slash::take_mode_command(app).is_some() {
+                // Idle, `/queue` and `/now` are a plain prompt.
                 return false;
-            }
-            if let Some(text) = slash_command_from_prompt(app) {
-                consume_slash_draft(app);
+            } else {
+                let text = slash_command_from_prompt(app);
+                if text.is_some() {
+                    consume_slash_draft(app);
+                }
+                text
+            };
+            if let Some(text) = text {
                 handle_slash(
                     &text,
                     &mut SlashContext {
