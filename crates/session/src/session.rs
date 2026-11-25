@@ -21,9 +21,14 @@ pub const TOOL_RESULT_PRUNE_CHARS: usize = 2_048;
 /// Harder shake when the session is still over ~¾ of the compact threshold.
 pub const TOOL_RESULT_SHAKE_CHARS: usize = 512;
 /// What stays in the transcript when an old tool body is spilled to disk:
-/// this many leading chars, then a pointer line. Under the shake cap, so
-/// neither prune nor shake cuts the pointer away.
-pub const SPILL_HEAD_CHARS: usize = 400;
+/// this many chars, [`SPILL_TAIL_CHARS`] of them from the end, around a
+/// pointer line. Under the shake cap, so neither prune nor shake cuts the
+/// pointer away.
+pub const SPILL_KEEP_CHARS: usize = 400;
+/// The part of [`SPILL_KEEP_CHARS`] taken from the end of the body: a build
+/// or test run ends with its error and exit code; a head alone shows only
+/// its first warnings.
+pub const SPILL_TAIL_CHARS: usize = 240;
 /// Marks a spilled body; a body that carries it is not spilled again.
 pub const SPILL_MARK: &str = "full output saved: ";
 
@@ -225,10 +230,20 @@ fn spill_body(
         return None;
     }
     let pointer = store(id, text)?;
-    let head: String = text.chars().take(SPILL_HEAD_CHARS).collect();
-    let omitted = text.chars().count() - head.chars().count();
+    let total = text.chars().count();
+    let head: String = text
+        .chars()
+        .take(SPILL_KEEP_CHARS - SPILL_TAIL_CHARS)
+        .collect();
+    let tail: String = text.chars().skip(total - SPILL_TAIL_CHARS).collect();
+    // Start the tail on a whole line when it holds a line break.
+    let tail = match tail.split_once('\n') {
+        Some((_, rest)) if !rest.is_empty() => rest,
+        _ => tail.as_str(),
+    };
+    let omitted = total - head.chars().count() - tail.chars().count();
     Some(format!(
-        "{head}\n[{omitted} more chars; {SPILL_MARK}{pointer}]"
+        "{head}\n[{omitted} more chars; {SPILL_MARK}{pointer}]\n{tail}"
     ))
 }
 
@@ -1391,13 +1406,13 @@ impl Session {
                     })
                     .collect(),
             };
-            // Spill runs first and keeps a SPILL_HEAD_CHARS head of a long
+            // Spill runs first and keeps SPILL_KEEP_CHARS (head and tail) of a long
             // body, so that is what a pass gives back (prune only catches the
             // bodies the store declines).
             for text in texts.into_iter().filter(|t| !t.contains(SPILL_MARK)) {
                 let body = split_truncation_notice(text).0.chars().count();
                 if body > TOOL_RESULT_PRUNE_CHARS {
-                    freed += body - SPILL_HEAD_CHARS;
+                    freed += body - SPILL_KEEP_CHARS;
                 }
             }
         }
@@ -1495,7 +1510,7 @@ impl Session {
 
     /// Move old tool bodies longer than [`TOOL_RESULT_PRUNE_CHARS`] out of
     /// the transcript through `store(id, body) -> Some(pointer)`: the message
-    /// keeps the first [`SPILL_HEAD_CHARS`] chars plus a pointer line, so the
+    /// keeps [`SPILL_KEEP_CHARS`] of its head and tail around a pointer line, so the
     /// model can `read` the full output instead of re-running the tool. The
     /// last [`PRUNE_KEEP_RECENT_TOOLS`] tool messages, results the model has
     /// not seen yet, short bodies, bodies
@@ -4567,6 +4582,42 @@ mod tests {
             .join("shares")
             .join(format!("{}.md", session.id));
         assert!(md.exists());
+    }
+
+    #[test]
+    fn spilled_build_output_keeps_its_last_whole_lines() {
+        let warnings: String = (0..200)
+            .map(|i| format!("warning: unused variable `v{i}`\n"))
+            .collect();
+        let body = format!(
+            "{warnings}error[E0308]: mismatched types\n  --> src/step_7.rs:4:18\n(exit code: 101)"
+        );
+        let mut store = |id: &str, _: &str| Some(format!("{id}.txt"));
+        let spilled = spill_body(&body, "b", &mut store).unwrap();
+        assert!(
+            spilled.starts_with("warning: unused variable `v0`\n"),
+            "{spilled}"
+        );
+        let (_, tail) = spilled.split_once(".txt]\n").unwrap();
+        assert!(tail.starts_with("warning: unused variable `v"), "{tail}");
+        assert!(
+            tail.ends_with(
+                "error[E0308]: mismatched types\n  --> src/step_7.rs:4:18\n(exit code: 101)"
+            ),
+            "{tail}"
+        );
+        let kept = SPILL_KEEP_CHARS - SPILL_TAIL_CHARS + tail.chars().count();
+        let omitted = body.chars().count() - kept;
+        assert!(
+            spilled.contains(&format!("[{omitted} more chars; ")),
+            "{spilled}"
+        );
+        assert!(spilled.chars().count() < TOOL_RESULT_SHAKE_CHARS);
+
+        // No line break near the end: the tail is cut mid-line.
+        let flat = "y".repeat(3_000);
+        let spilled = spill_body(&flat, "f", &mut store).unwrap();
+        assert!(spilled.ends_with(&format!("]\n{}", "y".repeat(SPILL_TAIL_CHARS))));
     }
 
     #[test]
