@@ -320,7 +320,10 @@ higher layer replaces the whole list. The command receives
 `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`, `WHYCODES_TOOL_ID`,
 `WHYCODES_TOOL_INPUT`, `WHYCODES_SESSION_ID`, `WHYCODES_WORKING_DIR`; post-tool
 adds `WHYCODES_TOOL_IS_ERROR` and `WHYCODES_TOOL_OUTPUT`; lifecycle events
-add `WHYCODES_PROMPT`, `WHYCODES_RESPONSE`, `WHYCODES_SUBAGENT_*`.
+add `WHYCODES_PROMPT`, `WHYCODES_RESPONSE`, `WHYCODES_SUBAGENT_*`. The same
+facts arrive on stdin as one JSON object (`hook_event_name`, `cwd`,
+`session_id`, `tool_name`, `tool_use_id`, `tool_input`, …), with the tool
+input in full; `WHYCODES_TOOL_INPUT` is cut at 16K chars.
 
 | Key | Default | Env override | Meaning |
 |---|---|---|---|
