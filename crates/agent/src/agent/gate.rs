@@ -430,17 +430,13 @@ impl Agent {
             )
         });
         let intent_ok = turn_intent.is_none_or(|intent| {
-            matches!(
-                intent_confirm_body(
-                    intent,
-                    &self.info.name,
-                    &tc.name,
-                    None,
-                    self.intent_guidance,
-                    &tc.arguments,
-                ),
-                IntentGate::Skip
-            )
+            crate::intent::authorize_tool(
+                intent,
+                &self.info.name,
+                &tc.name,
+                None,
+                self.intent_guidance,
+            ) == crate::intent::ToolAuthDecision::Allow
         });
         matches!(permission.action_for(&tc.name), PermissionAction::Allow)
             && path_ok
