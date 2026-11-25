@@ -53,6 +53,9 @@ fn plain_output_passes_through_unchanged() {
     assert_eq!(clean_terminal_output(raw), raw);
     assert_eq!(clean_terminal_output("a\n\n\n\nb"), "a\n\n\n\nb");
     assert_eq!(clean_terminal_output(""), "");
+    // Leading blank lines are layout too.
+    assert_eq!(clean_terminal_output("\n\nx"), "\n\nx");
+    assert_eq!(clean_terminal_output("\nx\nx"), "\nx\nx");
 }
 
 #[test]

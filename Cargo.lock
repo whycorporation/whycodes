@@ -6851,7 +6851,6 @@ name = "whycodes-session"
 version = "0.6.38"
 dependencies = [
  "chrono",
- "futures",
  "rusqlite",
  "serde",
  "serde_json",
