@@ -740,6 +740,11 @@ async fn legacy_sse_covers_endpoint_wait_and_post_paths() {
         .to_string();
     assert!(err.contains("MCP SSE POST error"), "{err}");
 
+    // The SSE GET outlives the per-request bound: answers still arrive on it.
+    tokio::time::sleep(request_timeout() * 2).await;
+    let via = t.send_request("accepted", None).await.unwrap();
+    assert_eq!(via["via"], "accepted");
+
     let (addr, _) = spawn_sse("ignore-then-endpoint").await;
     let url = format!("http://{addr}/sse");
     let mut t = LegacySseTransport::connect(&url, &HashMap::new())

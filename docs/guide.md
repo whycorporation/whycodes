@@ -1726,7 +1726,7 @@ feedback = true             # stdout is appended to the tool result
 ```
 
 Environment: `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`, `WHYCODES_TOOL_ID`,
-`WHYCODES_TOOL_INPUT` (JSON), `WHYCODES_SESSION_ID`, `WHYCODES_WORKING_DIR`,
+`WHYCODES_TOOL_INPUT` (JSON, cut at 16K chars), `WHYCODES_SESSION_ID`, `WHYCODES_WORKING_DIR`,
 and `WHYCODES_HOOK_TOUCHED_PATHS` (the paths named by the input: `path`,
 `file_path`, `old_path`, `new_path`, `paths`, `files`; one per line; unset
 when the call names none). Post-tool also sets `WHYCODES_TOOL_IS_ERROR`
@@ -1734,6 +1734,12 @@ when the call names none). Post-tool also sets `WHYCODES_TOOL_IS_ERROR`
 gate and permission prompt, before execution. `task` and `swarm` subagents run
 the same tool hooks. With a `read` hook configured, reads are no longer
 started early while the model is still streaming, so the hook sees every read.
+
+Stdin carries the same event as one JSON object: `hook_event_name`, `cwd`,
+`session_id`, and for tool hooks `tool_name`, `tool_use_id` and the full
+`tool_input` (post-tool adds `tool_is_error` and `tool_output`; lifecycle
+variables appear without their prefix, as `prompt` or `response`). Read it
+when the input may be large.
 
 Every hook runs with `WHYCODES_HOOKS_DISABLED=1` in its environment, so a hook
 that calls `whycodes` itself gets a child that skips its own hooks instead of
