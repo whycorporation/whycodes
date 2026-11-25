@@ -400,22 +400,34 @@ fn outline_read(path: &Path, shown: &str, size: u64, mode: OutlineMode) -> Optio
     };
     // A `?` here is an expansion line coverage misses (see `image_media_type`).
     #[allow(clippy::question_mark)]
-    let (total, entries) = match super::repomap::file_outline(path) {
+    let (total, entries, in_tests) = match super::repomap::file_outline(path) {
         Some(outline) => outline,
         None => return None,
     };
     if entries.is_empty() || (!forced && total <= DEFAULT_LIMIT) {
         return None;
     }
-    Some(render_outline(shown, size, total, &entries))
+    Some(render_outline(shown, size, total, &entries, in_tests))
 }
 
 /// Declaration lines keep their indentation (nesting) and get the same
 /// content tags a normal read would, so `edit` can name them directly.
-fn render_outline(shown: &str, size: u64, total: usize, entries: &[(usize, String)]) -> String {
+/// `in_tests` declarations inside inline test modules are counted, not listed.
+fn render_outline(
+    shown: &str,
+    size: u64,
+    total: usize,
+    entries: &[(usize, String)],
+    in_tests: usize,
+) -> String {
     let kept = &entries[..entries.len().min(MAX_OUTLINE_ENTRIES)];
+    let tests_note = if in_tests > 0 {
+        format!(" (+{in_tests} in test modules, not listed)")
+    } else {
+        String::new()
+    };
     let mut out = format!(
-        "# {shown}\n# outline: {} declarations of {total} lines  |  {}\n",
+        "# {shown}\n# outline: {} declarations{tests_note} of {total} lines  |  {}\n",
         entries.len(),
         super::paths::human_size(size)
     );
