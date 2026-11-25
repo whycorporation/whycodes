@@ -1800,3 +1800,150 @@ async fn headless_plan_intent_does_not_deny_the_write() {
     assert!(denied.content.contains("denied:headless"), "{denied:?}");
     assert!(!dir.path().join("q.md").exists());
 }
+
+fn call(id: &str, name: &str, args: serde_json::Value) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: name.into(),
+        arguments: args,
+    }
+}
+
+#[tokio::test]
+async fn speculative_read_does_not_skip_read_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("secret.txt"), "payload").unwrap();
+    for (rule, action) in [
+        ("read(secret.txt)", PermissionAction::Deny),
+        ("read", PermissionAction::Deny),
+        ("read", PermissionAction::Ask),
+    ] {
+        let mut gated = info("build");
+        gated.permission.rules.insert(rule.into(), action);
+        let mut a = Agent::new(gated).with_permission_prompter(Arc::new(CountingDenyPrompter {
+            asks: AtomicUsize::new(0),
+        }));
+        a.set_approval_mode(ApprovalMode::Manual);
+        let session = Session::new(dir.path().to_path_buf(), "test".into());
+        let ctx = a.tool_context(&session);
+        let mut jobs = Vec::new();
+        crate::speculative_read::maybe_start(
+            &mut jobs,
+            "t1",
+            "read",
+            r#"{"path":"secret.txt"}"#,
+            &ctx,
+        );
+        assert_eq!(jobs.len(), 1, "{rule}");
+        let out = a
+            .execute_tool_calls(
+                &[tc("read", json!({"path": "secret.txt"}))],
+                &session,
+                &ctx,
+                "script",
+                "m",
+                "k",
+                &None,
+                &None,
+                None,
+                &mut jobs,
+            )
+            .await
+            .expect("read");
+        assert!(out[0].is_error, "{rule}: {:?}", out[0]);
+        assert!(!out[0].content.contains("payload"), "{rule}: {:?}", out[0]);
+    }
+}
+
+#[tokio::test]
+async fn speculative_read_is_dropped_after_a_write_in_the_same_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "before").unwrap();
+    let a = agent();
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let mut jobs = Vec::new();
+    crate::speculative_read::maybe_start(&mut jobs, "r1", "read", r#"{"path":"n.txt"}"#, &ctx);
+    assert_eq!(jobs.len(), 1);
+    // Let the early read finish against the old content.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let out = a
+        .execute_tool_calls(
+            &[
+                call("w1", "write", json!({"path": "n.txt", "content": "after"})),
+                call("r1", "read", json!({"path": "n.txt"})),
+            ],
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            &None,
+            &None,
+            None,
+            &mut jobs,
+        )
+        .await
+        .expect("batch");
+    assert!(!out[0].is_error, "{:?}", out[0]);
+    assert!(out[1].content.contains("after"), "{:?}", out[1]);
+    assert!(!out[1].content.contains("before"), "{:?}", out[1]);
+    assert!(jobs.is_empty());
+}
+
+#[tokio::test]
+async fn path_rules_see_apply_patch_header_targets() {
+    let mut deny_info = info("build");
+    deny_info
+        .permission
+        .rules
+        .insert("edit(.env)".into(), PermissionAction::Deny);
+    let deny = Agent::new(deny_info);
+    let (session, ctx) = session_ctx(&deny);
+    let patch = "--- a/.env\n+++ b/.env\n@@ -1 +1 @@\n-A=1\n+A=2\n";
+    for args in [
+        json!({"path": "src/lib.rs", "patch_content": patch}),
+        json!({"patch_content": patch}),
+    ] {
+        let denied = deny
+            .execute_with_permission(
+                &tc("apply_patch", args.clone()),
+                &session,
+                &ctx,
+                "script",
+                "m",
+                "k",
+                None,
+                None,
+            )
+            .await;
+        assert!(denied.is_error, "{args}: {denied:?}");
+        assert!(denied.content.contains("path rule"), "{}", denied.content);
+        assert!(denied.content.contains(".env"), "{}", denied.content);
+    }
+}
+
+#[test]
+fn paths_rule_gate_needs_every_path_allowed() {
+    let mut permission = info("build").permission;
+    permission
+        .rules
+        .insert("edit(docs/**)".into(), PermissionAction::Allow);
+    permission
+        .rules
+        .insert("edit(ci/**)".into(), PermissionAction::Ask);
+    let gate = |paths: &[&str]| {
+        let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
+        paths_rule_gate(&permission, "apply_patch", &paths, false)
+    };
+    assert!(matches!(gate(&["docs/a.md"]), PathRuleGate::Allow));
+    assert!(matches!(
+        gate(&["docs/a.md", "src/b.rs"]),
+        PathRuleGate::Skip
+    ));
+    assert!(matches!(
+        gate(&["docs/a.md", "ci/x.yml"]),
+        PathRuleGate::Ask { .. }
+    ));
+    assert!(matches!(gate(&[]), PathRuleGate::Skip));
+}

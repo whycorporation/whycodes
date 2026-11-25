@@ -202,7 +202,10 @@ impl Agent {
                 events,
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
-            let result = match self.take_speculative_read(tc, tool_ctx, speculative).await {
+            let result = match self
+                .take_speculative_read(tc, tool_ctx, turn_intent, speculative)
+                .await
+            {
                 Some(early) => early,
                 None => {
                     tokio::select! {
@@ -255,7 +258,10 @@ impl Agent {
             // the LLM stream). Remaining calls run in parallel as before.
             let mut early: Vec<Option<ToolResult>> = Vec::with_capacity(tool_calls.len());
             for tc in tool_calls {
-                early.push(self.take_speculative_read(tc, tool_ctx, speculative).await);
+                early.push(
+                    self.take_speculative_read(tc, tool_ctx, turn_intent, speculative)
+                        .await,
+                );
             }
             // ToolStart already emitted by the caller for every call.
             let futs: Vec<_> = tool_calls
@@ -328,7 +334,10 @@ impl Agent {
                 events,
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
-            let result = match self.take_speculative_read(tc, tool_ctx, speculative).await {
+            let result = match self
+                .take_speculative_read(tc, tool_ctx, turn_intent, speculative)
+                .await
+            {
                 Some(early) => early,
                 None => {
                     tokio::select! {
@@ -350,6 +359,11 @@ impl Agent {
                     }
                 }
             };
+            // A read started while the reply streamed saw the files before
+            // this call ran; after a call that can change them it is stale.
+            if !is_parallel_safe_tool(&tc.name, &self.info.permission) {
+                crate::speculative_read::abort_all(speculative);
+            }
             let result = answering(tc, result);
             emit(
                 events,
@@ -364,17 +378,20 @@ impl Agent {
         Ok(())
     }
 
-    /// Use a speculative early `read` if path/window still match the final call.
+    /// Use a speculative early `read` if path/window still match the final
+    /// call and no gate would have stopped or questioned it.
     async fn take_speculative_read(
         &self,
         tc: &ToolCall,
         tool_ctx: &ToolContext,
+        turn_intent: Option<&crate::intent::IntentAssessment>,
         speculative: &mut Vec<crate::speculative_read::SpeculativeRead>,
     ) -> Option<ToolResult> {
         if tc.name != "read"
             || speculative.is_empty()
             || self.read_has_hooks()
             || tc.arguments.get("outline").is_some()
+            || !self.read_runs_ungated(tc, turn_intent)
         {
             return None;
         }
@@ -392,6 +409,47 @@ impl Agent {
         .await?;
         tracing::debug!(id = %tc.id, path, "speculative early read hit");
         Some(result)
+    }
+
+    /// Whether every gate [`Self::execute_with_permission`] puts before this
+    /// `read` lets it run without asking. The early read ran before any
+    /// gate, so only then may it stand in for the call: a `read: ask`/`deny`
+    /// rule, a `read(secrets/**): deny` path rule, a tool the agent may not
+    /// use, an intent check or restored secret placeholders all send the
+    /// call through the gates instead.
+    fn read_runs_ungated(
+        &self,
+        tc: &ToolCall,
+        turn_intent: Option<&crate::intent::IntentAssessment>,
+    ) -> bool {
+        let permission = &self.info.permission;
+        let path_ok = file_tool_path(tc).is_none_or(|path| {
+            matches!(
+                permission.action_for_path(&tc.name, &path),
+                None | Some(PermissionAction::Allow)
+            )
+        });
+        let intent_ok = turn_intent.is_none_or(|intent| {
+            matches!(
+                intent_confirm_body(
+                    intent,
+                    &self.info.name,
+                    &tc.name,
+                    None,
+                    self.intent_guidance,
+                    &tc.arguments,
+                ),
+                IntentGate::Skip
+            )
+        });
+        matches!(permission.action_for(&tc.name), PermissionAction::Allow)
+            && path_ok
+            && intent_ok
+            && self
+                .tool_executor
+                .get(&tc.name)
+                .is_some_and(|tool| tool.is_allowed(permission))
+            && self.restore_tool_call(tc).is_none()
     }
 
     /// A `read` hook must see the call, so the early read is not used.
@@ -782,10 +840,12 @@ impl Agent {
         }
 
         // Path-scoped rules: `edit(src/**)`, `write(docs/**)`, …
-        let path_rule = match file_tool_path(tc) {
-            Some(path) => path_rule_gate(&self.info.permission, &tc.name, &path, risk_confirmed),
-            None => PathRuleGate::Skip,
-        };
+        let path_rule = paths_rule_gate(
+            &self.info.permission,
+            &tc.name,
+            &file_tool_paths(tc),
+            risk_confirmed,
+        );
         match path_rule {
             PathRuleGate::Deny { path } => {
                 safety_event(&session.id, tc, "path_rule", "refused");
@@ -957,6 +1017,7 @@ fn intent_confirm_body(
     }
 }
 
+#[derive(Clone)]
 enum PathRuleGate {
     Skip,
     Deny { path: String },
@@ -988,6 +1049,34 @@ fn path_rule_gate(
     }
 }
 
+/// [`path_rule_gate`] over every path a call touches (an `apply_patch`
+/// writes each header target): a deny on any path refuses, an ask on any
+/// asks, and the call counts as allowed only when every path is.
+fn paths_rule_gate(
+    permission: &whycodes_core::types::PermissionSet,
+    tool_name: &str,
+    paths: &[String],
+    risk_confirmed: bool,
+) -> PathRuleGate {
+    let gates: Vec<PathRuleGate> = paths
+        .iter()
+        .map(|path| path_rule_gate(permission, tool_name, path, risk_confirmed))
+        .collect();
+    if let Some(deny) = gates
+        .iter()
+        .find(|g| matches!(g, PathRuleGate::Deny { .. }))
+    {
+        return deny.clone();
+    }
+    if let Some(ask) = gates.iter().find(|g| matches!(g, PathRuleGate::Ask { .. })) {
+        return ask.clone();
+    }
+    if !gates.is_empty() && gates.iter().all(|g| matches!(g, PathRuleGate::Allow)) {
+        return PathRuleGate::Allow;
+    }
+    PathRuleGate::Skip
+}
+
 fn nonempty_arg<'a>(tc: &'a ToolCall, key: &str) -> Option<&'a str> {
     match tc.arguments.get(key).and_then(|v| v.as_str()) {
         Some(value) => {
@@ -1017,10 +1106,9 @@ fn schedule_command_is_high_risk(
 }
 
 fn file_path_outside(tc: &ToolCall, working_dir: &str) -> bool {
-    match file_tool_path(tc) {
-        Some(path) => path_outside_workspace(&path, working_dir),
-        None => false,
-    }
+    file_tool_paths(tc)
+        .iter()
+        .any(|path| path_outside_workspace(path, working_dir))
 }
 
 fn is_shell_tool(name: &str) -> bool {

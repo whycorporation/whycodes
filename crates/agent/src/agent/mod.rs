@@ -474,6 +474,17 @@ pub(crate) fn would_doom_loop(recent: &VecDeque<String>, calls: &[ToolCall]) -> 
     n >= DOOM_LOOP_THRESHOLD
 }
 
+/// The API key for a side request (title, model race) to `target` while the
+/// turn runs on `provider` with `api_key`: that key only for the same
+/// provider. Another provider gets its own `{TARGET}_API_KEY`, or none:
+/// never the turn's key, which would hand it to a third party.
+pub(crate) fn side_request_key(target: &str, provider: &str, api_key: &str) -> String {
+    if target == provider {
+        return api_key.to_string();
+    }
+    std::env::var(format!("{}_API_KEY", target.to_uppercase())).unwrap_or_default()
+}
+
 impl Agent {
     pub fn new(info: AgentInfo) -> Self {
         Self {
@@ -1450,12 +1461,7 @@ impl Agent {
             return None;
         };
 
-        let key = if use_provider_name == provider_name {
-            api_key.to_string()
-        } else {
-            std::env::var(format!("{}_API_KEY", use_provider_name.to_uppercase()))
-                .unwrap_or_default()
-        };
+        let key = side_request_key(&use_provider_name, provider_name, api_key);
         if key.is_empty() {
             return None;
         }
