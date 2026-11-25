@@ -821,7 +821,12 @@ pub fn maybe_auto_index_background(
     };
     match svc.code_index_is_empty() {
         Ok(true) => {}
-        Ok(false) => return None,
+        Ok(false) => {
+            // Already built: refresh it quietly (no "indexing" notice) so it
+            // follows edits, new files and deletions, not just the first build.
+            std::thread::spawn(move || refresh_in_background(&svc));
+            return None;
+        }
         Err(e) => {
             tracing::debug!("auto_index probe failed: {e}");
             return None;
@@ -834,6 +839,18 @@ pub fn maybe_auto_index_background(
         maybe_auto_index(&project, &data, &settings)
             .inspect(|n| tracing::info!(chunks = n, "background code auto-index complete"))
     }))
+}
+
+/// Session-start refresh of an existing code index, logged, never surfaced.
+fn refresh_in_background(svc: &MemoryService) {
+    let (files, chunks) = (
+        svc.settings.auto_index_max_files,
+        svc.settings.auto_index_max_chunks,
+    );
+    match svc.refresh_code_index(files, chunks) {
+        Ok(refresh) => tracing::debug!(?refresh, "code index refreshed"),
+        Err(e) => tracing::debug!("code index refresh skipped: {e}"),
+    }
 }
 
 /// Best-effort: build code index if empty. Returns chunks indexed, if any.
@@ -874,6 +891,23 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         let svc = MemoryService::open(&project, &data, settings).unwrap();
         (dir, data, project, svc)
+    }
+
+    #[test]
+    fn background_refresh_runs_and_tolerates_a_disabled_service() {
+        let (_dir, _data, project, svc) = open_test_service(MemorySettings::default());
+        std::fs::write(
+            project.join("lib.rs"),
+            "pub fn refreshed_in_background() -> u32 { 7 }\n",
+        )
+        .unwrap();
+        refresh_in_background(&svc);
+        assert!(!svc.code_index_is_empty().unwrap(), "new file indexed");
+        let (_dir, _data, _project, off) = open_test_service(MemorySettings {
+            enabled: false,
+            ..Default::default()
+        });
+        refresh_in_background(&off);
     }
 
     #[test]
