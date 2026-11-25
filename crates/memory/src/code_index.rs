@@ -1,5 +1,6 @@
 //! Lightweight codebase RAG (hash embeddings over source chunks).
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -13,6 +14,27 @@ const EXT_OK: &[&str] = &[
     "php", "swift", "md", "toml", "yaml", "yml", "json", "sql", "sh", "fish", "css", "html", "vue",
     "svelte",
 ];
+
+/// Files a [`MemoryService::refresh_code_index`] changed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct IndexRefresh {
+    /// New files indexed.
+    pub added: usize,
+    /// Files modified since they were indexed, indexed again.
+    pub updated: usize,
+    /// Indexed files that no longer exist (or are no longer walked).
+    pub removed: usize,
+}
+
+/// Whether `path` was modified after `indexed_at` (RFC 3339). A file that
+/// cannot be checked counts as changed: indexing it again drops it if gone.
+fn changed_since(path: &Path, indexed_at: &str) -> bool {
+    let Ok(at) = chrono::DateTime::parse_from_rfc3339(indexed_at) else {
+        return true;
+    };
+    let modified = std::fs::metadata(path).and_then(|m| m.modified());
+    !modified.is_ok_and(|m| chrono::DateTime::<chrono::Utc>::from(m) <= at)
+}
 
 impl MemoryService {
     /// Walk the project, chunk text files, embed, replace prior index for this bank.
@@ -33,29 +55,93 @@ impl MemoryService {
             if n >= max_chunks {
                 break;
             }
-            let abs = root.join(&rel);
-            let Ok(content) = std::fs::read_to_string(&abs) else {
-                continue;
-            };
-            if content.len() > 400_000 {
+            n += self.index_file(&db, &root, &rel, max_chunks - n)?;
+        }
+        Ok(n)
+    }
+
+    /// Bring an existing index up to date without rebuilding it: drop files
+    /// that are gone, re-index files modified since they were indexed, then
+    /// add new files while there is room under `max_chunks`. An index built
+    /// once and never refreshed recalls code (and line ranges) that no
+    /// longer exist.
+    pub fn refresh_code_index(&self, max_files: usize, max_chunks: usize) -> Result<IndexRefresh> {
+        if !self.settings.enabled {
+            return Err(MemoryError::msg("memory is disabled"));
+        }
+        let root = crate::project_key::project_root(&self.project_path);
+        let mut files = Vec::new();
+        walk_files(&root, &mut files, max_files);
+        files.sort();
+        let walked: HashSet<&str> = files.iter().map(String::as_str).collect();
+
+        let db = self.open_db()?;
+        let mut out = IndexRefresh::default();
+        let mut total = 0usize;
+        let mut known = HashSet::new();
+        let mut stale = Vec::new();
+        for (path, chunks, indexed_at) in db.code_chunk_files(&self.bank_key)? {
+            if !walked.contains(path.as_str()) {
+                db.delete_code_chunks_for_path(&self.bank_key, &path)?;
+                out.removed += 1;
+            } else if changed_since(&root.join(&path), &indexed_at) {
+                db.delete_code_chunks_for_path(&self.bank_key, &path)?;
+                stale.push(path.clone());
+            } else {
+                total += chunks;
+            }
+            known.insert(path);
+        }
+        let fresh = files.iter().filter(|rel| !known.contains(*rel));
+        for (rel, new) in stale
+            .iter()
+            .map(|rel| (rel, false))
+            .chain(fresh.map(|rel| (rel, true)))
+        {
+            if total >= max_chunks {
+                break;
+            }
+            let added = self.index_file(&db, &root, rel, max_chunks - total)?;
+            total += added;
+            match (new, added > 0) {
+                (false, _) => out.updated += 1,
+                (true, true) => out.added += 1,
+                (true, false) => {}
+            }
+        }
+        Ok(out)
+    }
+
+    /// Index up to `budget` chunks of one file (chunks under 40 chars are
+    /// skipped). Unreadable and huge files add nothing.
+    fn index_file(
+        &self,
+        db: &whycodes_storage::db::Database,
+        root: &Path,
+        rel: &str,
+        budget: usize,
+    ) -> Result<usize> {
+        let Ok(content) = std::fs::read_to_string(root.join(rel)) else {
+            return Ok(0);
+        };
+        if content.len() > 400_000 {
+            return Ok(0);
+        }
+        let mut n = 0usize;
+        for (start, end, text) in chunk_source(&content, 40, 10) {
+            if n >= budget {
+                break;
+            }
+            let text = text.trim();
+            if text.len() < 40 {
                 continue;
             }
-            for (start, end, text) in chunk_source(&content, 40, 10) {
-                if n >= max_chunks {
-                    break;
-                }
-                let text = text.trim();
-                if text.len() < 40 {
-                    continue;
-                }
-                // Prefix path so search matches file-oriented queries
-                let indexed = format!("// {rel}:{start}-{end}\n{text}");
-                let vec = self.embed_text(&indexed);
-                let blob = encode_blob(&vec);
-                let id = uuid::Uuid::new_v4().to_string();
-                put_chunk(&db, &id, &self.bank_key, &rel, start, end, text, &blob)?;
-                n += 1;
-            }
+            // Prefix path so search matches file-oriented queries
+            let indexed = format!("// {rel}:{start}-{end}\n{text}");
+            let blob = encode_blob(&self.embed_text(&indexed));
+            let id = uuid::Uuid::new_v4().to_string();
+            put_chunk(db, &id, &self.bank_key, rel, start, end, text, &blob)?;
+            n += 1;
         }
         Ok(n)
     }
@@ -267,6 +353,126 @@ mod tests {
         assert!((path_ranked(&relevance, 1, "src/to/fn.rs", "fn to") - 0.9).abs() < 1e-9);
         assert_eq!(path_ranked(&[], 0, "compact.rs", query), 0.0);
         assert_eq!(path_ranked(&relevance, 5, "compact.rs", query), 0.0);
+    }
+
+    fn set_mtime(path: &std::path::Path, at: std::time::SystemTime) {
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(at).unwrap();
+    }
+
+    /// Modified well after anything indexed so far, whatever the clock grain.
+    fn touch_later(path: &std::path::Path) {
+        set_mtime(
+            path,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(120),
+        );
+    }
+
+    fn indexed_paths(svc: &MemoryService) -> Vec<String> {
+        let db = svc.open_db().unwrap();
+        let files = db.code_chunk_files(&svc.bank_key).unwrap();
+        files.into_iter().map(|(path, _, _)| path).collect()
+    }
+
+    #[test]
+    fn refresh_follows_edits_new_and_deleted_files() {
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        let src = project.join("src");
+        std::fs::write(
+            src.join("a.rs"),
+            "pub fn original_alpha_name() -> u32 { 1 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("b.rs"),
+            "pub fn bravo_goes_away_soon() -> u32 { 2 }\n",
+        )
+        .unwrap();
+        let svc = MemoryService::open(&project, dir.path().join("data"), MemorySettings::default())
+            .unwrap();
+        assert_eq!(svc.index_codebase(100, 100).unwrap(), 2);
+        assert_eq!(
+            svc.refresh_code_index(100, 100).unwrap(),
+            IndexRefresh::default()
+        );
+
+        std::fs::write(
+            src.join("a.rs"),
+            "pub fn renamed_alpha_entry() -> u32 { 11 }\n",
+        )
+        .unwrap();
+        touch_later(&src.join("a.rs"));
+        std::fs::remove_file(src.join("b.rs")).unwrap();
+        std::fs::write(
+            src.join("c.rs"),
+            "pub fn charlie_is_brand_new() -> u32 { 3 }\n",
+        )
+        .unwrap();
+        std::fs::write(src.join("d.rs"), "fn d() {}\n").unwrap(); // too short to index
+        let refresh = svc.refresh_code_index(100, 100).unwrap();
+        assert_eq!(
+            refresh,
+            IndexRefresh {
+                added: 1,
+                updated: 1,
+                removed: 1
+            }
+        );
+        assert_eq!(indexed_paths(&svc), ["src/a.rs", "src/c.rs"]);
+        let hits = svc.search_code("renamed_alpha_entry", 4, -1.0).unwrap();
+        assert!(
+            hits[0].entry.text.contains("renamed_alpha_entry"),
+            "{hits:?}"
+        );
+        let texts = svc
+            .open_db()
+            .unwrap()
+            .list_code_chunks(&svc.bank_key, 100)
+            .unwrap();
+        assert!(
+            !texts.iter().any(|c| c.text.contains("original_alpha_name")),
+            "stale chunk kept"
+        );
+
+        // No room under the cap: a new file waits for a later refresh.
+        // (`a.rs` goes back to the past, or its future mtime keeps it stale.)
+        set_mtime(&src.join("a.rs"), std::time::SystemTime::UNIX_EPOCH);
+        std::fs::write(
+            src.join("e.rs"),
+            "pub fn echo_waits_for_room() -> u32 { 5 }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            svc.refresh_code_index(100, 2).unwrap(),
+            IndexRefresh::default()
+        );
+        assert_eq!(indexed_paths(&svc).len(), 2);
+
+        let disabled = MemoryService::open(
+            &project,
+            dir.path().join("data"),
+            MemorySettings {
+                enabled: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(disabled.refresh_code_index(100, 100).is_err());
+    }
+
+    #[test]
+    fn changed_since_counts_unreadable_state_as_changed() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("x.rs");
+        std::fs::write(&file, "x").unwrap();
+        let later = (chrono::Utc::now() + chrono::Duration::seconds(120)).to_rfc3339();
+        assert!(!changed_since(&file, &later));
+        touch_later(&file);
+        assert!(changed_since(&file, &chrono::Utc::now().to_rfc3339()));
+        assert!(changed_since(&file, "not a timestamp"));
+        assert!(changed_since(&dir.path().join("gone.rs"), &later));
     }
 
     #[test]
