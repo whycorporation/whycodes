@@ -356,7 +356,7 @@ pub(crate) async fn load_or_get_session(
     }
     let db = AppState::open_db()?;
     let session = Session::load_from_db(&db, id).ok().flatten()?;
-    Some(state.insert_session(session))
+    Some(state.adopt_session(session))
 }
 
 #[derive(Deserialize)]

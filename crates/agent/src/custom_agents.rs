@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use whycodes_core::types::PermissionSet;
+use whycodes_skill::frontmatter::{Field, parse as frontmatter, unquote};
 
 /// Subagent types that need no definition file.
 pub const BUILTIN_TYPES: [&str; 3] = ["general", "explore", "scout"];
@@ -448,93 +449,6 @@ fn yaml_scalar(raw: &str) -> Result<serde_json::Value, String> {
             Err(_e) => Value::String(unquote(raw)),
         },
     })
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum Field {
-    Text(String),
-    List(Vec<String>),
-}
-
-impl Field {
-    fn text(&self) -> String {
-        match self {
-            Field::Text(s) => s.clone(),
-            Field::List(items) => items.join(", "),
-        }
-    }
-
-    fn items(&self) -> Vec<String> {
-        match self {
-            Field::Text(s) => s.split(',').map(|t| t.trim().to_string()).collect(),
-            Field::List(items) => items.clone(),
-        }
-    }
-}
-
-/// The YAML subset agent files use: `key: value`, quoted values, inline
-/// `[a, b]` lists, `- item` lists, and `|` / `>` block text.
-fn frontmatter(block: &str) -> HashMap<String, Field> {
-    let mut map: HashMap<String, Field> = HashMap::new();
-    let mut key: Option<String> = None;
-    let mut fold = " ";
-    for line in block.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let indented = line.starts_with(' ') || line.starts_with('\t');
-        if let (true, Some(k)) = (indented, &key) {
-            let entry = map.entry(k.clone()).or_insert(Field::Text(String::new()));
-            match (trimmed.strip_prefix("- "), entry) {
-                (Some(item), Field::List(items)) => items.push(unquote(item)),
-                (Some(item), slot @ Field::Text(_)) if slot.text().is_empty() => {
-                    *slot = Field::List(vec![unquote(item)]);
-                }
-                (_, Field::Text(s)) => {
-                    if !s.is_empty() {
-                        s.push_str(fold);
-                    }
-                    s.push_str(trimmed);
-                }
-                (None, Field::List(items)) => items.push(unquote(trimmed)),
-            }
-            continue;
-        }
-        let Some((k, v)) = trimmed.split_once(':') else {
-            continue;
-        };
-        let k = k.trim().to_string();
-        let v = v.trim();
-        fold = if v.starts_with('|') { "\n" } else { " " };
-        let field = if v.starts_with('|') || v.starts_with('>') || v.is_empty() {
-            Field::Text(String::new())
-        } else if let Some(inner) = v.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            Field::List(
-                inner
-                    .split(',')
-                    .map(unquote)
-                    .filter(|s| !s.is_empty())
-                    .collect(),
-            )
-        } else {
-            Field::Text(unquote(v))
-        };
-        map.insert(k.clone(), field);
-        key = Some(k);
-    }
-    map
-}
-
-fn unquote(s: &str) -> String {
-    let s = s.trim();
-    let quoted = s.len() >= 2
-        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')));
-    if quoted {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
-    }
 }
 
 /// PascalCase tool names from shared definition files mapped to WhyCodes ones.

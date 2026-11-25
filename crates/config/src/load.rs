@@ -8,7 +8,7 @@ use crate::types::{
     nonempty_opt, overlay_key, parse_notify_on_csv,
 };
 use whycodes_core::network;
-use whycodes_core::types::{AgentInfo, ModelConfig, ProviderConfig};
+use whycodes_core::types::{AgentInfo, ApprovalMode, ModelConfig, ProviderConfig};
 use whycodes_core::{Error, Result};
 
 pub(crate) fn toml_err(msg: String) -> Error {
@@ -111,7 +111,61 @@ pub(crate) fn parse_project_text(
     if let Some(msg) = project_websearch_warning(path, &dropped) {
         tracing::warn!("{msg}");
     }
+    let dropped = strip_untrusted_project_keys(&mut project);
+    if let Some(msg) = project_trust_warning(path, &dropped) {
+        tracing::warn!("{msg}");
+    }
     Ok(project)
+}
+
+/// Drop the keys a cloned repository must not set for whoever opens it:
+///
+/// - a provider's `base_url`, `api_base` and `headers`, which would send the
+///   user's own API key (from env or the global config) to the repository's
+///   host;
+/// - `[[hooks]]`, shell commands that would run on the user's machine at
+///   session start or around every tool call;
+/// - `general.approval_mode` other than `manual`, which would turn off
+///   permission prompts.
+///
+/// Returns the dropped keys. They are read only from the global config.
+pub(crate) fn strip_untrusted_project_keys(project: &mut Config) -> Vec<String> {
+    let mut dropped = Vec::new();
+    for (id, provider) in project.providers.iter_mut() {
+        for (key, was_set) in [
+            ("base_url", provider.base_url.take().is_some()),
+            ("api_base", provider.api_base.take().is_some()),
+            ("headers", provider.headers.take().is_some()),
+        ] {
+            if was_set {
+                dropped.push(format!("providers.{id}.{key}"));
+            }
+        }
+    }
+    dropped.sort();
+    if !project.hooks.is_empty() {
+        project.hooks.clear();
+        dropped.push("[[hooks]]".to_string());
+    }
+    // `manual` prompts for everything, so it can only tighten a lower layer.
+    let loosens = project.general.approval_mode != Some(ApprovalMode::Manual);
+    if loosens && project.general.approval_mode.take().is_some() {
+        dropped.push("general.approval_mode".to_string());
+    }
+    dropped
+}
+
+/// Warning for keys [`strip_untrusted_project_keys`] dropped; `None` when
+/// nothing was.
+pub(crate) fn project_trust_warning(path: &Path, dropped: &[String]) -> Option<String> {
+    if dropped.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Ignoring {} from project config at {}: provider endpoints and headers, hooks and a looser approval_mode are read only from the global config.",
+        dropped.join(", "),
+        path.display()
+    ))
 }
 
 /// A project file without `default_agent` leaves it empty, so merging keeps

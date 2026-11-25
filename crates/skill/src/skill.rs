@@ -1,3 +1,4 @@
+use crate::frontmatter::Field;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -65,21 +66,23 @@ impl Skill {
         // Third split is the prompt body (everything after the closing `---`)
         let prompt = parts.next().unwrap_or("").trim().to_string();
 
-        // Parse frontmatter with simple line-based key: value parser
-        let parsed = parse_frontmatter(frontmatter)?;
+        let parsed = crate::frontmatter::parse(frontmatter);
 
-        let name = parsed.get("name").cloned().ok_or_else(|| {
+        let name = parsed.get("name").map(Field::text).ok_or_else(|| {
             crate::error::SkillError::msg(format!(
                 "Skill file {:?} missing required field 'name'",
                 path
             ))
         })?;
 
-        let description = parsed.get("description").cloned().unwrap_or_default();
+        let description = parsed
+            .get("description")
+            .map(Field::text)
+            .unwrap_or_default();
 
-        let tools_allowed = parse_string_list(parsed.get("tools_allowed"));
+        let tools_allowed = string_list(parsed.get("tools_allowed"));
 
-        let file_patterns = parse_string_list(parsed.get("file_patterns"));
+        let file_patterns = string_list(parsed.get("file_patterns"));
 
         let dir = path
             .file_name()
@@ -127,76 +130,14 @@ fn plugin_root(skill_dir: &Path) -> Option<&Path> {
     (skills.file_name()? == "skills" && root.join("plugin.json").is_file()).then_some(root)
 }
 
-/// Simple frontmatter parser that handles `key: value` lines and
-/// `key:` followed by indented `- item` list entries.
-///
-/// This is deliberately not a full YAML parser — it covers the
-/// subset needed for skill frontmatter.
-fn parse_frontmatter(
-    input: &str,
-) -> crate::error::Result<std::collections::HashMap<String, String>> {
-    let mut map = std::collections::HashMap::new();
-    let mut current_key: Option<String> = None;
-    let mut current_list = String::new();
-
-    for line in input.lines() {
-        let trimmed = line.trim();
-
-        // Skip empty lines and full-line comments
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        // List item under the current key
-        if let Some(stripped) = trimmed.strip_prefix("- ") {
-            if let Some(ref _key) = current_key {
-                if !current_list.is_empty() {
-                    current_list.push('\n');
-                }
-                current_list.push_str(stripped.trim());
-            }
-            continue;
-        }
-
-        // Flush any pending list before starting a new key
-        if let Some(ref key) = current_key {
-            map.insert(key.clone(), std::mem::take(&mut current_list));
-            current_key = None;
-        }
-
-        // Key: value line
-        if let Some((key, value)) = trimmed.split_once(':') {
-            let key = key.trim().to_string();
-            let value = value.trim().to_string();
-
-            if value.is_empty() {
-                // Possibly the start of a list block
-                current_key = Some(key);
-                current_list = String::new();
-            } else {
-                map.insert(key, value);
-            }
-        }
-    }
-
-    // Flush the last pending list
-    if let Some(ref key) = current_key {
-        map.insert(key.clone(), current_list);
-    }
-
-    Ok(map)
-}
-
-/// Helper: parse a value that may be a newline-separated list into a `Vec<String>`.
-fn parse_string_list(value: Option<&String>) -> Vec<String> {
-    match value {
-        Some(s) if !s.is_empty() => s
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect(),
-        _ => Vec::new(),
-    }
+/// A list field: `- item` lines, `[a, b]`, or `a, b`; blanks dropped.
+fn string_list(field: Option<&Field>) -> Vec<String> {
+    field
+        .map(Field::items)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -218,7 +159,7 @@ mod tests {
         assert_eq!(skill.name, "rust-dev");
         assert_eq!(skill.description, "Rust development skill");
         assert_eq!(skill.tools_allowed, vec!["read", "write", "edit"]);
-        assert_eq!(skill.file_patterns, vec!["\"*.rs\"", "\"Cargo.toml\""]);
+        assert_eq!(skill.file_patterns, vec!["*.rs", "Cargo.toml"]);
         assert!(skill.prompt.contains("You are a Rust expert"));
     }
 
@@ -292,23 +233,14 @@ mod tests {
     }
 
     #[test]
-    fn comments_blank_lines_and_orphan_list_items() {
-        let parsed = parse_frontmatter(
-            "# comment\n\n- orphan\nnot a pair\nname: demo\ntools_allowed:\n  - read\n# mid\n  - write\n",
-        )
-        .unwrap();
-        assert_eq!(parsed.get("name").map(String::as_str), Some("demo"));
-        assert_eq!(
-            parsed.get("tools_allowed").map(String::as_str),
-            Some("read\nwrite")
+    fn quoted_names_folded_descriptions_and_inline_lists() {
+        let (_dir, path) = write_temp(
+            "---\nname: \"my-skill\"\ndescription: >\n  Reviews code\n  for bugs: carefully\ntools_allowed: [read, grep]\nfile_patterns:\n---\nbody\n",
         );
-    }
-
-    #[test]
-    fn empty_list_value_and_empty_string_list() {
-        assert!(parse_string_list(None).is_empty());
-        assert!(parse_string_list(Some(&String::new())).is_empty());
-        let parsed = parse_frontmatter("name: x\ntools_allowed:\n").unwrap();
-        assert!(parse_string_list(parsed.get("tools_allowed")).is_empty());
+        let skill = Skill::from_file(&path).unwrap();
+        assert_eq!(skill.name, "my-skill");
+        assert_eq!(skill.description, "Reviews code for bugs: carefully");
+        assert_eq!(skill.tools_allowed, vec!["read", "grep"]);
+        assert!(skill.file_patterns.is_empty());
     }
 }
