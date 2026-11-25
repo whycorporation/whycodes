@@ -36,7 +36,10 @@ pub fn append_entry(path: &Path, id: &str, text: &str) -> std::io::Result<()> {
         .unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent)?;
     let date = Utc::now().format("%Y-%m-%d");
-    let line = format!("- [{date}] {} (id:{id})\n", text.trim());
+    // One line per fact: `remove_entry` drops the line holding the id, so a
+    // multi-line fact used to leave its other lines in the injected index.
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = format!("- [{date}] {flat} (id:{id})\n");
 
     if path.exists() {
         use std::io::Write;
@@ -111,6 +114,20 @@ mod tests {
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(!body.contains("prefer pnpm"));
         assert!(body.contains("use rustfmt"));
+
+        // A multi-line fact is stored on one line and removed whole.
+        append_entry(&path, "ghi", "build with\n  cargo xtask\nnot make").unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            body.contains("build with cargo xtask not make (id:ghi)"),
+            "{body}"
+        );
+        assert!(remove_entry(&path, "ghi").unwrap());
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !body.contains("xtask") && !body.contains("not make"),
+            "{body}"
+        );
     }
 
     #[test]
