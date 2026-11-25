@@ -239,7 +239,7 @@ fn apply_unified_diff_empty_file_and_no_trailing_newline() {
     let out = apply_unified_diff("", "@@ -0,0 +1 @@\n+hello\n").unwrap();
     assert_eq!(out, "hello\n");
     let out = apply_unified_diff("keep", "@@ -1 +1,2 @@\n keep\n+more\n").unwrap();
-    assert_eq!(out, "keepmore\n");
+    assert_eq!(out, "keep\nmore\n");
     let err = apply_unified_diff("a\n", "no hunks here").unwrap_err();
     assert!(err.contains("no @@ hunks"), "{err}");
     let err = apply_unified_diff("a\n", "@@ -9 +9 @@\n a\n").unwrap_err();
@@ -527,4 +527,108 @@ fn patch_lines_ignore_trailing_space_and_typographic_quotes() {
     )
     .unwrap();
     assert_eq!(out, "say(\"bye\")\nend\n");
+}
+
+#[test]
+fn blank_context_lines_without_a_space_still_match() {
+    let original = "fn a() {}\n\nfn b() {}\n";
+    // The blank context line lost its leading space; trailing blank lines
+    // after the hunk are not context.
+    let patch = "@@ -1,3 +1,3 @@\n fn a() {}\n\n-fn b() {}\n+fn c() {}\n\n\n";
+    assert_eq!(
+        apply_unified_diff(original, patch).unwrap(),
+        "fn a() {}\n\nfn c() {}\n"
+    );
+}
+
+#[test]
+fn no_newline_marker_after_an_added_line_ends_the_file_bare() {
+    let patch = "@@ -1 +1 @@\n-old\n+new\n\\ No newline at end of file\n";
+    assert_eq!(apply_unified_diff("old\n", patch).unwrap(), "new");
+    // After a removed line the marker describes the old file: keep the newline.
+    let patch = "@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n";
+    assert_eq!(apply_unified_diff("old", patch).unwrap(), "new\n");
+}
+
+#[tokio::test]
+async fn a_failing_file_leaves_every_file_in_the_patch_untouched() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("one.rs"), "old\n").unwrap();
+    std::fs::write(dir.path().join("two.rs"), "a\n").unwrap();
+    let patch = "\
+diff --git a/one.rs b/one.rs
+@@ -1 +1 @@
+-old
++new
+diff --git a/two.rs b/two.rs
+@@ -1 +1 @@
+-nope
++b
+";
+    let out = ApplyPatchTool::new()
+        .execute(
+            serde_json::json!({ "patch_content": patch }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(out.is_error, "{}", out.content);
+    assert!(out.content.contains("two.rs"), "{}", out.content);
+    let one = std::fs::read_to_string(dir.path().join("one.rs")).unwrap();
+    assert_eq!(one, "old\n");
+}
+
+#[tokio::test]
+async fn the_same_file_twice_in_one_patch_applies_both_parts() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("x.rs"), "a\nb\n").unwrap();
+    let part = |old: &str, new: &str, line: usize| {
+        format!("diff --git a/x.rs b/x.rs\n@@ -{line} +{line} @@\n-{old}\n+{new}\n")
+    };
+    let patch = format!("{}{}", part("a", "A", 1), part("b", "B", 2));
+    let out = ApplyPatchTool::new()
+        .execute(
+            serde_json::json!({ "patch_content": patch }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    let x = std::fs::read_to_string(dir.path().join("x.rs")).unwrap();
+    assert_eq!(x, "A\nB\n");
+
+    // A mismatch in the second part is reported and nothing is written.
+    let patch = format!("{}{}", part("A", "1", 1), part("zz", "2", 2));
+    let out = ApplyPatchTool::new()
+        .execute(
+            serde_json::json!({ "patch_content": patch }),
+            &ctx(dir.path()),
+        )
+        .await;
+    assert!(out.is_error, "{}", out.content);
+    let x = std::fs::read_to_string(dir.path().join("x.rs")).unwrap();
+    assert_eq!(x, "A\nB\n");
+}
+
+#[test]
+fn patch_targets_name_every_header_over_path() {
+    let hunk = "@@ -1 +1 @@\n-a\n+b\n";
+    let headed =
+        format!("--- a/.env\n+++ b/.env\n{hunk}diff --git a/x.rs b/x.rs\n+++ b/x.rs\n{hunk}");
+    assert_eq!(
+        patch_targets(&json!({"path": "src/a.rs", "patch_content": headed})),
+        [".env", "x.rs"]
+    );
+    // No headers: `path` is the target; without either there is none.
+    assert_eq!(
+        patch_targets(&json!({"path": "src/a.rs", "patch_content": hunk})),
+        ["src/a.rs"]
+    );
+    assert!(patch_targets(&json!({"path": ".", "patch_content": hunk})).is_empty());
+    assert_eq!(
+        patch_targets(&json!({"patch_content": "garbage"})),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        patch_targets(&json!({"path": "only.rs", "patch_content": ""})),
+        ["only.rs"]
+    );
 }

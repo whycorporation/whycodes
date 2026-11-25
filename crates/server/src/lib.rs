@@ -69,6 +69,22 @@ impl AppState {
         handle
     }
 
+    /// Keep `session` unless a request loaded the same id first; either way
+    /// return the one handle every request shares. Two requests that both
+    /// missed the map (after idle eviction) each loaded a copy, and the
+    /// second insert replaced the first: a turn running on the replaced
+    /// copy then saved over the other's messages.
+    pub fn adopt_session(&self, session: Session) -> SessionHandle {
+        let Ok(mut map) = self.sessions.lock() else {
+            return Arc::new(AsyncMutex::new(session));
+        };
+        let id = session.id.clone();
+        Arc::clone(
+            map.entry(id)
+                .or_insert_with(|| Arc::new(AsyncMutex::new(session))),
+        )
+    }
+
     pub fn get_session(&self, id: &str) -> Option<SessionHandle> {
         self.sessions.lock().ok()?.get(id).cloned()
     }

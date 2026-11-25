@@ -23,7 +23,7 @@ use crate::question::{
 use crate::structured_output::{self, Structured};
 
 use super::agent::DEFAULT_SYSTEM_PROMPT;
-use crate::tool_policy::{SHELL_TOOLS, file_tool_path};
+use crate::tool_policy::{SHELL_TOOLS, file_tool_paths};
 
 /// Parameters for spawning a subagent
 #[derive(Debug, Clone)]
@@ -1024,7 +1024,7 @@ impl SubagentRunner {
                 Some(PermissionAction::Allow) | None => {}
             }
         }
-        if let Some(path) = file_tool_path(tc) {
+        for path in file_tool_paths(tc) {
             match permission.action_for_path(&tc.name, &path) {
                 Some(PermissionAction::Deny) => {
                     return Some(format!(

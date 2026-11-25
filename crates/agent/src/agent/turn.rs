@@ -433,10 +433,16 @@ impl Agent {
             let race_provider = race_ids
                 .as_ref()
                 .and_then(|(p, _)| self.provider_registry.get(p.as_str()));
+            // The partner may be another provider: it gets its own key, never
+            // this turn's (that would send it to a third party).
+            let race_key = race_ids
+                .as_ref()
+                .map(|(p, _)| super::side_request_key(p, provider_name, &api_key))
+                .unwrap_or_default();
             let race_target = match (race_ids.as_ref(), race_provider) {
                 (Some((_, m)), Some(rp)) => Some(whycodes_llm::StreamTarget {
                     provider: rp,
-                    api_key: &api_key,
+                    api_key: &race_key,
                     model: m.as_str(),
                 }),
                 _ => None,
