@@ -75,34 +75,33 @@ impl MemoryService {
         let db = self.open_db()?;
         let page = db.search_code_chunks(&self.bank_key, query, FTS_CANDIDATES)?;
         let q = self.embed_text(query);
-        let mut hits: Vec<CodeHit> = page
+        let relevance = page.relevance;
+        let mut hits: Vec<(CodeHit, f64)> = page
             .rows
             .into_iter()
-            .filter_map(|entry| {
+            .enumerate()
+            .filter_map(|(i, entry)| {
                 let v = decode_blob(&entry.embedding);
                 if v.is_empty() {
                     return None;
                 }
                 let score = cosine(&q, &v);
-                if score >= min_score {
-                    Some(CodeHit { entry, score })
-                } else {
-                    None
-                }
+                let rank = path_ranked(&relevance, i, &entry.path, query);
+                (score >= min_score).then_some((CodeHit { entry, score }, rank))
             })
             .collect();
-        // BM25 already ranked the candidates, and on code it ranks better
-        // than the hash cosine, which common words ("where", "how", "file")
-        // dominate: on 22 questions about this repo, recalled chunks on topic
-        // went from 28% to 47%. The cosine still sets the floor and the shown
-        // score; it orders only an unranked page (a browse or a scan).
-        if !page.ranked {
-            hits.sort_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
+        // BM25 ranks code better than the hash cosine, which common words
+        // ("where", "how", "file") dominate, and a query word in the path
+        // (`compact` → `compact.rs`) is strong evidence BM25 cannot see: the
+        // index holds chunk text only. The cosine still sets the floor and the
+        // shown score; it orders only an unranked page (a browse or a scan).
+        let key = |h: &(CodeHit, f64)| if page.ranked { h.1 } else { h.0.score as f64 };
+        hits.sort_by(|a, b| {
+            key(b)
+                .partial_cmp(&key(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let mut hits: Vec<CodeHit> = hits.into_iter().map(|(hit, _)| hit).collect();
         hits.truncate(top_k.max(1));
         Ok(SearchPage {
             hits,
@@ -110,6 +109,34 @@ impl MemoryService {
             corpus: page.corpus,
         })
     }
+}
+
+/// What one query word found in a chunk's path adds to its rank, where the
+/// best BM25 candidate counts 1.0. On 22 questions about this repo, chunks on
+/// topic went 28% (cosine order) → 47% (BM25) → 57% with this weight, and on
+/// 12 held-out questions 35% → 58% (questions with a relevant chunk 9 → 11).
+/// Taking path matches first instead (any weight high enough) lets generic
+/// path words (`turn`, `command`, `load`) push out the only relevant chunk.
+const PATH_WORD_WEIGHT: f64 = 0.2;
+
+/// Rank of candidate `i` on a BM25 page: its relevance scaled so the best
+/// candidate is 1.0, plus [`PATH_WORD_WEIGHT`] for each query word of three
+/// or more characters that is also a word of `path`. 0.0 off a ranked page.
+fn path_ranked(relevance: &[f64], i: usize, path: &str, query: &str) -> f64 {
+    let (Some(best), Some(own)) = (relevance.first(), relevance.get(i)) else {
+        return 0.0;
+    };
+    let words = |text: &str| -> std::collections::HashSet<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let path_words = words(path);
+    let in_path = words(query)
+        .iter()
+        .filter(|w| w.chars().count() >= 3 && path_words.contains(*w))
+        .count();
+    own / best.max(f64::MIN_POSITIVE) + PATH_WORD_WEIGHT * in_path as f64
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -225,6 +252,21 @@ mod tests {
         let browse = svc.search_code("?", 8, -1.0).unwrap();
         assert_eq!(browse.len(), 3);
         assert!(browse.windows(2).all(|w| w[0].score >= w[1].score));
+    }
+
+    #[test]
+    fn a_query_word_in_the_path_lifts_a_close_candidate() {
+        let relevance = [4.0, 3.6];
+        let query = "compact the conversation";
+        let best = path_ranked(&relevance, 0, "crates/tui/src/app.rs", query);
+        let named = path_ranked(&relevance, 1, "crates/agent/src/compact.rs", query);
+        assert!((best - 1.0).abs() < 1e-9, "{best}");
+        assert!((named - (0.9 + PATH_WORD_WEIGHT)).abs() < 1e-9, "{named}");
+        assert!(named > best);
+        // Words under three characters do not count; nothing off a ranked page.
+        assert!((path_ranked(&relevance, 1, "src/to/fn.rs", "fn to") - 0.9).abs() < 1e-9);
+        assert_eq!(path_ranked(&[], 0, "compact.rs", query), 0.0);
+        assert_eq!(path_ranked(&relevance, 5, "compact.rs", query), 0.0);
     }
 
     #[test]

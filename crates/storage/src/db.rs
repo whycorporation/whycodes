@@ -689,15 +689,20 @@ impl Database {
                 matched: corpus,
                 corpus,
                 ranked: false,
+                relevance: Vec::new(),
             });
         };
         match self.fts_rows(table, cols, (project_key, &fts_query, limit), map) {
-            Ok((rows, matched)) => Ok(FtsPage {
-                rows,
-                matched,
-                corpus,
-                ranked: true,
-            }),
+            Ok((ranked, matched)) => {
+                let (rows, relevance) = ranked.into_iter().unzip();
+                Ok(FtsPage {
+                    rows,
+                    matched,
+                    corpus,
+                    ranked: true,
+                    relevance,
+                })
+            }
             Err(e) => {
                 tracing::warn!(table, error = %e, "fts index unavailable; scanning the bank");
                 let rows = browse(FTS_SCAN_LIMIT)?;
@@ -706,6 +711,7 @@ impl Database {
                     rows,
                     corpus,
                     ranked: false,
+                    relevance: Vec::new(),
                 })
             }
         }
@@ -727,14 +733,14 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<Vec<T>>>()?)
     }
 
-    /// Ranked FTS matches and their total count.
+    /// Ranked FTS matches with their relevance, and their total count.
     fn fts_rows<T>(
         &self,
         table: &str,
         cols: &str,
         (project_key, fts_query, limit): (&str, &str, usize),
         map: fn(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
-    ) -> rusqlite::Result<(Vec<T>, usize)> {
+    ) -> rusqlite::Result<(Vec<(T, f64)>, usize)> {
         let from = format!(
             "FROM {table} t JOIN {table}_fts ON {table}_fts.rowid = t.rowid
              WHERE {table}_fts MATCH ?1 AND t.project_key = ?2"
@@ -744,12 +750,17 @@ impl Database {
             (fts_query, project_key),
             |row| row.get(0),
         )?;
+        // `bm25()` is lower for a better match; its negation is the
+        // relevance, read from the last column after `map` reads `cols`.
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {cols} {from} ORDER BY bm25({table}_fts) LIMIT ?3"
+            "SELECT {cols}, -bm25({table}_fts) {from} ORDER BY bm25({table}_fts) LIMIT ?3"
         ))?;
-        let rows = stmt.query_map((fts_query, project_key, limit as i64), map)?;
+        let last = stmt.column_count() - 1;
+        let rows = stmt.query_map((fts_query, project_key, limit as i64), |row| {
+            Ok((map(row)?, row.get::<_, f64>(last)?))
+        })?;
         Ok((
-            rows.collect::<rusqlite::Result<Vec<T>>>()?,
+            rows.collect::<rusqlite::Result<Vec<(T, f64)>>>()?,
             matched as usize,
         ))
     }
@@ -783,6 +794,8 @@ pub struct FtsPage<T> {
     /// `rows` are in BM25 order. `false` on a browse or a scan without the
     /// index, where they come in storage order and rank nothing.
     pub ranked: bool,
+    /// BM25 relevance of each row (higher is better) when `ranked`, else empty.
+    pub relevance: Vec<f64>,
 }
 
 /// FTS5 `MATCH` string for free text: every word of two or more characters,
