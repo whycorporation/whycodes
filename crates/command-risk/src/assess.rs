@@ -263,7 +263,7 @@ fn assess_segment(
     };
 
     let args: Vec<&Word> = segment.args().collect();
-    let has_sudo = segment.words.iter().any(|w| w.text == "sudo");
+    let has_sudo = segment.elevated();
 
     let base = match command {
         "rm" | "rmdir" | "shred" => assess_delete(command, &args, project, home),
@@ -1255,5 +1255,72 @@ mod tests {
             best < std::time::Duration::from_millis(BUDGET_MS),
             "{best:?}"
         );
+    }
+
+    // ── Wrappers, program paths and the parent directory ────────────────
+
+    #[test]
+    fn wrappers_and_program_paths_do_not_hide_the_command() {
+        for cmd in [
+            "/bin/rm -rf ~",
+            "/usr/bin/rm -rf /",
+            "C:/tools/rm.exe -rf ~",
+            "nice rm -rf ~",
+            "nice -n 10 rm -rf ~",
+            "timeout 5 rm -rf /",
+            "timeout -s KILL 5 rm -rf /",
+            "env -i rm -rf ~",
+            "env -u PATH rm -rf ~",
+            "nohup rm -rf ~",
+            "stdbuf -oL rm -rf ~",
+            "sudo -u root rm -rf /",
+            "/usr/bin/sudo rm -rf /",
+            "doas rm -rf /",
+            "sudo -- rm -rf /",
+            "exec rm -rf ~",
+            "xargs rm -rf ~",
+            "xargs -I {} rm -rf ~",
+            "nice timeout 5 sudo -u root rm -rf ~",
+        ] {
+            assert_eq!(level(cmd), RiskLevel::Catastrophic, "{cmd}");
+        }
+        // A wrapper with nothing after it runs nothing we know of.
+        assert_eq!(level("timeout 5"), RiskLevel::Safe);
+        assert_eq!(level("sudo -u root"), RiskLevel::Safe);
+    }
+
+    #[test]
+    fn wrapped_sudo_still_raises_the_level() {
+        assert!(level("sudo -u root rm -rf build") > level("rm -rf build"));
+        assert!(level("/usr/bin/sudo rm -rf build") > level("rm -rf build"));
+        assert_eq!(level("nice rm -rf build"), level("rm -rf build"));
+    }
+
+    #[test]
+    fn the_parent_directory_is_outside_the_project() {
+        for cmd in ["rm -rf ..", "rm -rf ../", "rm -rf foo/../.."] {
+            assert!(level(cmd) >= RiskLevel::Destructive, "{cmd}");
+            assert!(!reason(cmd).is_empty(), "{cmd}");
+        }
+        // `/home/..` is `/`; a glob of dots still means the directory.
+        assert_eq!(level("rm -rf /home/.."), RiskLevel::Catastrophic);
+        assert_eq!(level("rm -rf /*"), RiskLevel::Catastrophic);
+        assert_eq!(level("rm -rf ~/.*"), RiskLevel::Catastrophic);
+    }
+
+    #[test]
+    fn home_root_and_msys_drive_paths_are_protected() {
+        for cmd in [
+            "rm -rf /home",
+            "rm -rf /c",
+            "rm -rf /c/",
+            "rm -rf /c/Users",
+            "rm -rf /C/Windows",
+        ] {
+            assert_eq!(level(cmd), RiskLevel::Catastrophic, "{cmd}");
+        }
+        // Inside them is an ordinary path; `/cache` is no drive.
+        assert!(level("rm -rf /c/Users/me/tmp") < RiskLevel::Catastrophic);
+        assert!(level("rm -rf /cache") < RiskLevel::Catastrophic);
     }
 }
