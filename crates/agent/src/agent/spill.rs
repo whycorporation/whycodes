@@ -17,8 +17,13 @@ pub(crate) fn artifact_store(project: PathBuf) -> impl FnMut(&str, &str) -> Opti
 /// Write `body` once and return the project-relative pointer the model can
 /// pass to `read`. An unwritable scratch directory keeps the body in the
 /// transcript (the caller leaves it alone).
+///
+/// The name carries a hash of the body. Ids alone repeat: Gemini numbers
+/// its calls from `gcall_1` in every stream, and other sessions in the
+/// project share the directory. Keyed by id only, a later result pointed at
+/// an earlier call's file. The same body still maps to the same file.
 pub(crate) fn store_artifact(project: &Path, id: &str, body: &str) -> Option<String> {
-    let name = format!("{}.txt", safe_file_stem(id));
+    let name = format!("{}-{:016x}.txt", safe_file_stem(id), fnv1a(body));
     let dir = whycodes_core::project_scratch_dir(project).join(ARTIFACT_DIR);
     if let Err(err) =
         whycodes_core::create_scratch_dir(project).and_then(|_| std::fs::create_dir_all(&dir))
@@ -38,6 +43,14 @@ pub(crate) fn store_artifact(project: &Path, id: &str, body: &str) -> Option<Str
         .join(ARTIFACT_DIR)
         .join(&name);
     Some(rel.to_string_lossy().replace('\\', "/"))
+}
+
+/// FNV-1a 64: stable across runs and builds (unlike `DefaultHasher`), so a
+/// re-spilled body finds the file it was written to.
+fn fnv1a(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, b| {
+        (hash ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 /// Tool call ids are provider-chosen; keep them file-system safe.

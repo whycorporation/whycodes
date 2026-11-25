@@ -467,8 +467,17 @@ async fn old_tool_outputs_are_spilled_to_scratch_before_the_step() {
         .run_turn(&mut session, "script", MODEL, "k", Some(2))
         .await
         .unwrap();
-    let artifact = dir.path().join(".whycodes/scratch/artifacts/call_0.txt");
-    let saved = std::fs::read_to_string(&artifact).unwrap();
+    // Artifacts are named `<id>-<hash>.txt`; find them by id prefix.
+    let artifacts = dir.path().join(".whycodes/scratch/artifacts");
+    let named = |id: &str| {
+        std::fs::read_dir(&artifacts)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .find(|n| n.starts_with(&format!("{id}-")))
+    };
+    let name = named("call_0").expect("call_0 spilled");
+    let saved = std::fs::read_to_string(artifacts.join(&name)).unwrap();
     assert!(
         saved.starts_with("log 0\n") && saved.len() > 5_000,
         "{}",
@@ -476,15 +485,12 @@ async fn old_tool_outputs_are_spilled_to_scratch_before_the_step() {
     );
     let spilled = session.messages[1].content.as_text().unwrap();
     assert!(
-        spilled.contains("full output saved: .whycodes/scratch/artifacts/call_0.txt"),
+        spilled.contains(&format!(
+            "full output saved: .whycodes/scratch/artifacts/{name}"
+        )),
         "{spilled}"
     );
-    assert!(
-        !dir.path()
-            .join(".whycodes/scratch/artifacts/call_5.txt")
-            .exists(),
-        "recent results stay inline"
-    );
+    assert!(named("call_5").is_none(), "recent results stay inline");
 }
 
 /// Near the threshold a summary is prepared in the background; when a tool
