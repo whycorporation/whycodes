@@ -256,3 +256,21 @@ fn hunk_line_starting_with_plus_is_mid_hunk() {
     let at = patch.find(MARKER).unwrap();
     assert!(!leak_is_after_last_hunk(patch, at));
 }
+
+/// Regression: the 80-byte look-back and 240-byte look-ahead sliced by byte
+/// and panicked when the edge fell inside a multi-byte character.
+#[test]
+fn windows_around_a_marker_respect_char_boundaries() {
+    for wide in ["ş", "漢", "🦀"] {
+        for shift in 0..4 {
+            let text = format!(
+                "{}{} to=functions.read {}",
+                "a".repeat(shift),
+                wide.repeat(60),
+                wide.repeat(120)
+            );
+            // Must not panic, whatever it decides.
+            let _ = scan_text(&text);
+        }
+    }
+}
