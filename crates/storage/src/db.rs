@@ -689,14 +689,16 @@ impl Database {
                 matched: corpus,
                 corpus,
                 ranked: false,
+                relevance: Vec::new(),
             });
         };
         match self.fts_rows(table, cols, (project_key, &fts_query, limit), map) {
-            Ok((rows, matched)) => Ok(FtsPage {
+            Ok((rows, relevance, matched)) => Ok(FtsPage {
                 rows,
                 matched,
                 corpus,
                 ranked: true,
+                relevance,
             }),
             Err(e) => {
                 tracing::warn!(table, error = %e, "fts index unavailable; scanning the bank");
@@ -706,6 +708,7 @@ impl Database {
                     rows,
                     corpus,
                     ranked: false,
+                    relevance: Vec::new(),
                 })
             }
         }
@@ -727,14 +730,14 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<Vec<T>>>()?)
     }
 
-    /// Ranked FTS matches and their total count.
+    /// Ranked FTS matches, their BM25 relevance, and their total count.
     fn fts_rows<T>(
         &self,
         table: &str,
         cols: &str,
         (project_key, fts_query, limit): (&str, &str, usize),
         map: fn(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
-    ) -> rusqlite::Result<(Vec<T>, usize)> {
+    ) -> rusqlite::Result<(Vec<T>, Vec<f64>, usize)> {
         let from = format!(
             "FROM {table} t JOIN {table}_fts ON {table}_fts.rowid = t.rowid
              WHERE {table}_fts MATCH ?1 AND t.project_key = ?2"
@@ -748,10 +751,25 @@ impl Database {
             "SELECT {cols} {from} ORDER BY bm25({table}_fts) LIMIT ?3"
         ))?;
         let rows = stmt.query_map((fts_query, project_key, limit as i64), map)?;
-        Ok((
-            rows.collect::<rusqlite::Result<Vec<T>>>()?,
-            matched as usize,
-        ))
+        let rows = rows.collect::<rusqlite::Result<Vec<T>>>()?;
+        let relevance = self.fts_relevance(table, &from, (fts_query, project_key, limit))?;
+        Ok((rows, relevance, matched as usize))
+    }
+
+    /// BM25 relevance (`-bm25()`, higher is better) of the rows
+    /// [`Self::fts_rows`] returns, in the same order. Rows that tie on BM25
+    /// may come back in either order, but tied rows share one value, so the
+    /// list is the same. Not generic, so one instantiation covers it.
+    fn fts_relevance(
+        &self,
+        table: &str,
+        from: &str,
+        (fts_query, project_key, limit): (&str, &str, usize),
+    ) -> rusqlite::Result<Vec<f64>> {
+        let sql = format!("SELECT -bm25({table}_fts) {from} ORDER BY bm25({table}_fts) LIMIT ?3");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let scores = stmt.query_map((fts_query, project_key, limit as i64), |row| row.get(0))?;
+        scores.collect()
     }
 
     /// Drop the FTS indexes and their triggers so a search hits the
@@ -783,6 +801,8 @@ pub struct FtsPage<T> {
     /// `rows` are in BM25 order. `false` on a browse or a scan without the
     /// index, where they come in storage order and rank nothing.
     pub ranked: bool,
+    /// BM25 relevance of each row (higher is better) when `ranked`, else empty.
+    pub relevance: Vec<f64>,
 }
 
 /// FTS5 `MATCH` string for free text: every word of two or more characters,

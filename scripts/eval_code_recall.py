@@ -50,6 +50,22 @@ CASES = [
     ("subagent task tool spawning a worker", ["crates/agent/src/subagent", "crates/tools/src/agent_tools/task", "crates/agent/src/agent/task"]),
 ]
 
+# Written after PATH_WORD_WEIGHT was tuned on CASES, and never used to tune it.
+HELD_OUT = [
+    ("paste an image from the clipboard into the prompt", ["crates/tui/src/clipboard"]),
+    ("start a language server and send go-to-definition", ["crates/lsp/src"]),
+    ("run commands inside bubblewrap on linux", ["crates/sandbox/src/bwrap", "crates/sandbox/src/policy"]),
+    ("split a shell command line into words before checking it", ["crates/command-risk/src/tokenize", "crates/command-risk/src/parse"]),
+    ("render a unified diff with colors", ["crates/format/src/diff", "crates/shell/src/diff"]),
+    ("user types a message while the agent is still working", ["crates/agent/src/steer"]),
+    ("keep the todo list of the current task", ["crates/core/src/todo", "crates/tools/src/agent_tools/todo"]),
+    ("parallel workers each get their own git checkout", ["crates/agent/src/swarm_worktree", "crates/tools/src/agent_tools/worktree"]),
+    ("run user hooks before and after a tool call", ["crates/plugin/src/hooks"]),
+    ("server-sent events transport for remote mcp servers", ["crates/mcp/src/sse", "crates/mcp/src/client"]),
+    ("import settings from another coding assistant", ["crates/import/src"]),
+    ("search old sessions by text", ["crates/session/src/search", "crates/memory/src"]),
+]
+
 HIT = re.compile(r"^\[\d+\] (\S+?):\d+-\d+ · rel ([0-9.]+)", re.M)
 
 
@@ -90,23 +106,26 @@ def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
     exe, home = sys.argv[1], sys.argv[2]
-    k = int(sys.argv[3]) if len(sys.argv) > 3 else 4
-    floor = float(sys.argv[4]) if len(sys.argv) > 4 else 0.22
+    k = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3].isdigit() else 4
+    floor = float(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] != "-v" else 0.22
     db = sqlite3.connect(os.path.join(home, "whycodes.db"))
-    variants = {"whycodes code-search": [], "bm25": []}
-    for q, want in CASES:
-        cur = [h for h in current(exe, home, q, k) if h[1] >= floor]
-        variants["whycodes code-search"].append(((q, want), cur))
-        variants["bm25"].append(((q, want), bm25(db, q, k)))
-    for name, ch in variants.items():
-        good, shown, answered = score(ch, k)
-        print(f"{name:24} on-topic {good}/{shown} ({good / max(shown, 1):.0%})  "
-              f"answered {answered}/{len(CASES)}")
-    if "-v" in sys.argv:
-        for (q, want), hits in variants["whycodes code-search"]:
-            print("\n#", q)
-            for p, s in hits:
-                print(f"   {'+' if any(p.startswith(w) for w in want) else '-'} {s:.2f} {p}")
+    for label, cases in (("tuning set", CASES), ("held-out set", HELD_OUT)):
+        variants = {"whycodes code-search": [], "bm25": []}
+        for q, want in cases:
+            cur = [h for h in current(exe, home, q, k) if h[1] >= floor]
+            variants["whycodes code-search"].append(((q, want), cur))
+            variants["bm25"].append(((q, want), bm25(db, q, k)))
+        print(f"{label} ({len(cases)} questions)")
+        for name, ch in variants.items():
+            good, shown, answered = score(ch, k)
+            print(f"  {name:22} on-topic {good}/{shown} ({good / max(shown, 1):.0%})  "
+                  f"answered {answered}/{len(cases)}")
+        if "-v" in sys.argv:
+            for (q, want), hits in variants["whycodes code-search"]:
+                print("\n  #", q)
+                for p, s in hits:
+                    mark = "+" if any(p.startswith(w) for w in want) else "-"
+                    print(f"     {mark} {s:.2f} {p}")
 
 
 if __name__ == "__main__":
