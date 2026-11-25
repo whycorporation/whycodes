@@ -1947,3 +1947,35 @@ fn paths_rule_gate_needs_every_path_allowed() {
     ));
     assert!(matches!(gate(&[]), PathRuleGate::Skip));
 }
+
+#[tokio::test]
+async fn speculative_read_runs_under_a_question_intent() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let a = agent();
+    let session = Session::new(dir.path().to_path_buf(), "test".into());
+    let ctx = a.tool_context(&session);
+    let mut jobs = Vec::new();
+    crate::speculative_read::maybe_start(&mut jobs, "t1", "read", r#"{"path":"n.txt"}"#, &ctx);
+    let intent = crate::intent::classify_user_intent("Why does the auth refresh fail?");
+    let out = a
+        .execute_tool_calls(
+            &[tc("read", json!({"path": "n.txt"}))],
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            &None,
+            &None,
+            Some(&intent),
+            &mut jobs,
+        )
+        .await
+        .expect("read");
+    assert!(out[0].content.contains("payload"), "{:?}", out[0]);
+    assert!(
+        jobs.is_empty(),
+        "a read is allowed under any intent: early result used"
+    );
+}
