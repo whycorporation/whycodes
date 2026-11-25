@@ -596,6 +596,16 @@ fn ingest_leaked_mouse_csi(app: &mut TuiApp, c: char) -> bool {
     }
 }
 
+/// Ask the run loop for a new session, as `/clear` does. Not mid-turn: the
+/// request would otherwise fire on some later keypress, long after.
+fn request_clear_session(app: &mut TuiApp) {
+    if app.is_busy() {
+        app.status_message = "Finish or cancel the running turn before clearing".into();
+    } else {
+        app.clear_session_requested = true;
+    }
+}
+
 fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
     // Windows (and enhanced keyboard) emits Press + Release for every key.
     // Without this filter each character is inserted twice.
@@ -2673,11 +2683,7 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
             ConfirmAction::Quit => {
                 app.running = false;
             }
-            ConfirmAction::ClearSession => {
-                app.messages.clear();
-                app.status_message = "Session cleared".into();
-                app.request_full_clear(2);
-            }
+            ConfirmAction::ClearSession => request_clear_session(app),
             ConfirmAction::DeleteProvider(name) => {
                 app.status_message = format!("Provider '{name}' would be deleted");
             }
@@ -2835,10 +2841,7 @@ fn execute_command(app: &mut TuiApp, cmd: &str) {
             app.key_context = KeymapContext::Dialog;
             app.dialogs.push(DialogKind::Theme);
         }
-        Some(":clear") => {
-            app.messages.clear();
-            app.status_message = "Session cleared".into();
-        }
+        Some(":clear") => request_clear_session(app),
         Some(":sidebar") => {
             app.sidebar.visible = !app.sidebar.visible;
             app.mark_dirty();
