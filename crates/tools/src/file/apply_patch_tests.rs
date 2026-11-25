@@ -528,3 +528,28 @@ fn patch_lines_ignore_trailing_space_and_typographic_quotes() {
     .unwrap();
     assert_eq!(out, "say(\"bye\")\nend\n");
 }
+
+#[test]
+fn patch_targets_name_every_header_over_path() {
+    let hunk = "@@ -1 +1 @@\n-a\n+b\n";
+    let headed =
+        format!("--- a/.env\n+++ b/.env\n{hunk}diff --git a/x.rs b/x.rs\n+++ b/x.rs\n{hunk}");
+    assert_eq!(
+        patch_targets(&json!({"path": "src/a.rs", "patch_content": headed})),
+        [".env", "x.rs"]
+    );
+    // No headers: `path` is the target; without either there is none.
+    assert_eq!(
+        patch_targets(&json!({"path": "src/a.rs", "patch_content": hunk})),
+        ["src/a.rs"]
+    );
+    assert!(patch_targets(&json!({"path": ".", "patch_content": hunk})).is_empty());
+    assert_eq!(
+        patch_targets(&json!({"patch_content": "garbage"})),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        patch_targets(&json!({"path": "only.rs", "patch_content": ""})),
+        ["only.rs"]
+    );
+}
