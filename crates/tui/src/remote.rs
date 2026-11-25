@@ -153,12 +153,13 @@ pub async fn stream_chat(
     let mut stream = res.bytes_stream();
     let mut buf = String::new();
     let mut text = String::new();
+    let mut utf8 = whycodes_core::Utf8Stream::new();
     while let Some(chunk) = stream.next().await {
         if whycodes_agent::is_cancelled(&cancel) {
             anyhow::bail!("cancelled");
         }
         let chunk = chunk?;
-        buf.push_str(&String::from_utf8_lossy(&chunk));
+        buf.push_str(&utf8.push(&chunk));
         while let Some(idx) = buf.find("\n\n") {
             let frame = buf[..idx].to_string();
             buf = buf[idx + 2..].to_string();

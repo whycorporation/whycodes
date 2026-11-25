@@ -482,6 +482,7 @@ impl WhyCodesClient {
         Ok(EventStream {
             bytes: res.bytes_stream().map(|r| r.map(|b| b.to_vec())).boxed(),
             buf: String::new(),
+            utf8: whycodes_protocol::Utf8Stream::new(),
             done: false,
         })
     }
@@ -658,6 +659,8 @@ impl Drop for WhyCodesClient {
 pub struct EventStream {
     bytes: futures::stream::BoxStream<'static, reqwest::Result<Vec<u8>>>,
     buf: String,
+    /// Holds a character split across two chunks.
+    utf8: whycodes_protocol::Utf8Stream,
     done: bool,
 }
 
@@ -691,8 +694,10 @@ impl futures::Stream for EventStream {
             }
             match self.bytes.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(chunk))) => {
-                    self.buf
-                        .push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
+                    let text = self.utf8.push(&chunk);
+                    self.buf.push_str(&text);
+                    // A `\r\n` may also straddle chunks: fold it once whole.
+                    self.buf = self.buf.replace("\r\n", "\n");
                 }
                 Poll::Ready(Some(Err(e))) => {
                     self.done = true;

@@ -554,8 +554,7 @@ fn handle_sse_chunk(
 ) -> bool {
     match chunk {
         Ok(bytes) => {
-            let text = String::from_utf8_lossy(bytes);
-            parser.push(&text);
+            parser.push_bytes(bytes);
             for ev in parser.take_events() {
                 if tx.send(ev).is_err() {
                     return false;
