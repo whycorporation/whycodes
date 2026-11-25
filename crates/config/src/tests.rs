@@ -3599,3 +3599,31 @@ fn command_and_prompt_files_load_from_home_and_project() {
         cfg.load_prompt_files(project.path());
     });
 }
+
+#[cfg(unix)]
+#[test]
+fn write_atomic_keeps_config_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    crate::load::write_atomic(
+        &path, b"a = 1
+",
+    )
+    .unwrap();
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&path), 0o600);
+    // A file an older build left world-readable is tightened on save.
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    crate::load::write_atomic(
+        &path, b"a = 2
+",
+    )
+    .unwrap();
+    assert_eq!(mode(&path), 0o600);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "a = 2
+"
+    );
+}
