@@ -1880,7 +1880,10 @@ mod tests {
 
     #[test]
     fn search_code_skips_empty_vectors_and_low_scores() {
-        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        let (_dir, _data, project, svc) = open_test_service(MemorySettings::default());
+        for path in ["x.rs", "y.rs"] {
+            std::fs::write(project.join(path), "").unwrap();
+        }
         let db = svc.open_db().unwrap();
         db.insert_code_chunk("empty", &svc.bank_key, "x.rs", 1, 2, "fn empty()", &[])
             .unwrap();
