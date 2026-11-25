@@ -811,12 +811,29 @@ fn poisoned_maps_are_treated_as_empty() {
     poison_mutex(&state.cancel_flags);
     let s = Session::new("/tmp".into(), "sys".into());
     let handle = state.insert_session(s);
+    let adopted = state.adopt_session(Session::new("/tmp".into(), "sys".into()));
     assert!(state.get_session("anything").is_none());
+    drop(adopted);
     assert!(state.list_session_ids().is_empty());
     state.register_cancel("s1", new_cancel_flag());
     assert!(!state.request_cancel("s1"));
     assert!(state.take_cancel("s1").is_none());
     drop(handle);
+}
+
+/// Regression: two requests that both missed the map each loaded a copy,
+/// and the second replaced the first, so they ran on different sessions.
+#[test]
+fn a_second_load_of_the_same_session_shares_the_first_handle() {
+    let state = test_state();
+    let first = Session::new("/tmp".into(), "sys".into());
+    let mut again = Session::new("/tmp".into(), "sys".into());
+    again.id = first.id.clone();
+    let id = first.id.clone();
+    let a = state.adopt_session(first);
+    let b = state.adopt_session(again);
+    assert!(Arc::ptr_eq(&a, &b));
+    assert!(Arc::ptr_eq(&a, &state.get_session(&id).unwrap()));
 }
 
 #[test]

@@ -99,6 +99,29 @@ impl Tool for ApplyPatchTool {
     }
 }
 
+/// The files an `apply_patch` call writes, as the call names them: each
+/// file's `+++` / `diff --git` header, else `path`. A header overrides
+/// `path`, so permission gates must judge these, not `path` alone.
+pub fn patch_targets(args: &serde_json::Value) -> Vec<String> {
+    let named = |p: &str| !p.is_empty() && p != ".";
+    let explicit = args["path"].as_str().unwrap_or("").trim();
+    let patch = args["patch_content"].as_str().unwrap_or("");
+    let mut targets: Vec<String> = Vec::new();
+    for file in split_patch_files(patch) {
+        let target = file
+            .header_path
+            .filter(|h| named(h))
+            .unwrap_or_else(|| explicit.to_string());
+        if named(&target) && !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    if targets.is_empty() && named(explicit) {
+        targets.push(explicit.to_string());
+    }
+    targets
+}
+
 /// One file's hunks inside a (possibly multi-file) unified diff.
 struct FilePatch {
     /// Path from `+++ b/…` / `diff --git`, if present.

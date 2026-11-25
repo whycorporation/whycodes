@@ -1136,13 +1136,18 @@ async fn ensure_fresh_refreshes_expired_token() {
         mock_server(vec![(200, r#"{"access_token":"refreshed"}"#)]),
         TokenEncoding::Form,
     );
-    assert_eq!(
-        ensure_fresh(&spec, &store, "imported", expired_token(Some("refresh")))
-            .await
-            .unwrap()
-            .access_token,
-        "refreshed"
-    );
+    let mut previous = expired_token(Some("refresh"));
+    previous
+        .extra
+        .insert("project_id".into(), Value::String("proj-1".into()));
+    let fresh = ensure_fresh(&spec, &store, "imported", previous)
+        .await
+        .unwrap();
+    assert_eq!(fresh.access_token, "refreshed");
+    // The response named no refresh_token and no extras: both carry over,
+    // or the next expiry would mean logging in again.
+    assert_eq!(fresh.refresh_token.as_deref(), Some("refresh"));
+    assert_eq!(fresh.extra["project_id"], "proj-1");
 }
 
 #[tokio::test]
@@ -1153,13 +1158,24 @@ async fn force_fresh_refreshes_expired_token() {
         mock_server(vec![(200, r#"{"access_token":"forced"}"#)]),
         TokenEncoding::Form,
     );
-    assert_eq!(
-        force_fresh(&spec, &store, "imported", expired_token(Some("refresh")))
-            .await
-            .unwrap()
-            .access_token,
-        "forced"
-    );
+    let forced = force_fresh(&spec, &store, "imported", expired_token(Some("refresh")))
+        .await
+        .unwrap();
+    assert_eq!(forced.access_token, "forced");
+    assert_eq!(forced.refresh_token.as_deref(), Some("refresh"));
+}
+
+#[test]
+fn carry_over_keeps_only_what_the_refresh_left_out() {
+    let mut previous = expired_token(Some("old-refresh"));
+    previous.extra.insert("a".into(), Value::from(1));
+    previous.extra.insert("b".into(), Value::from(1));
+    let mut refreshed = expired_token(Some("new-refresh"));
+    refreshed.extra.insert("b".into(), Value::from(2));
+    let merged = carry_over(&previous, refreshed);
+    assert_eq!(merged.refresh_token.as_deref(), Some("new-refresh"));
+    assert_eq!(merged.extra["a"], 1);
+    assert_eq!(merged.extra["b"], 2, "a value the refresh sent wins");
 }
 
 #[tokio::test]

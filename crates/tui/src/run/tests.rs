@@ -10041,6 +10041,38 @@ async fn apply_idle_loop_key_covers_session_and_slash_arms() {
         "plain Enter must fall through to submit"
     );
 
+    // Ctrl+L / `:clear`: a new session, as `/clear`; the prompt draft stays.
+    rt.session.add_user_message("old turn");
+    let old_id = rt.session.id.clone();
+    app.input_buffer = "draft".into();
+    assert!(
+        apply_idle_loop_key(
+            IdleLoopKey::ClearSession,
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut mru,
+            &mut config,
+            dir.path(),
+            &idx,
+            &claims,
+            &mut provider,
+            &mut model,
+            &mut api_key,
+            &auth_tx,
+        )
+        .await
+    );
+    assert_ne!(rt.session.id, old_id, "a new session");
+    assert!(
+        !rt.session
+            .messages
+            .iter()
+            .any(|m| m.content.as_text() == Some("old turn")),
+        "the old turn is not sent again"
+    );
+    assert_eq!(app.input_buffer, "draft");
+
     apply_idle_loop_key(
         IdleLoopKey::SessionLimit,
         &mut app,
@@ -12389,4 +12421,34 @@ fn force_stop_marks_running_workers_cancelled() {
     );
     assert_eq!(app.subagents[0].status, "cancelled");
     assert_eq!(app.running_task_count(), 0);
+}
+
+#[tokio::test]
+async fn run_headless_ctrl_l_confirm_starts_a_new_session() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let prev_stub = std::env::var_os("WHYCODES_TEST_TUI");
+    let prev_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::set_var("WHYCODES_SKIP_IMPORT", "1");
+    }
+    set_headless_events(Some(std::collections::VecDeque::from([
+        ctrl('l'),
+        press(KeyCode::Enter),
+        ctrl('q'),
+        press(KeyCode::Enter),
+    ])));
+    let exit = run_injected(boot_opts(dir.path(), "sk-test"))
+        .await
+        .unwrap();
+    match prev_stub {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TUI", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TUI") },
+    }
+    match prev_import {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+    }
+    assert_eq!(exit, TuiExit::Quit);
 }

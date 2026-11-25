@@ -255,6 +255,12 @@ impl Database {
             rusqlite::params![id],
         )?;
         delete_branches(&self.conn, id)?;
+        // Its turns embedded for recall: left behind, a deleted session
+        // (and any secret pasted into it) kept coming back in later prompts.
+        self.conn.execute(
+            "DELETE FROM session_chunks WHERE session_id = ?1",
+            rusqlite::params![id],
+        )?;
         self.conn
             .execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
@@ -1151,9 +1157,22 @@ mod tests {
         db.create_session("s1", "Test", "/tmp").unwrap();
         db.insert_message("m1", "s1", "user", "hi", None, None)
             .unwrap();
+        db.insert_session_chunk("c1", "p", "s1", 0, "deleted turn text", b"")
+            .unwrap();
+        db.insert_session_chunk("c2", "p", "s2", 0, "kept turn text", b"")
+            .unwrap();
         db.delete_session("s1").unwrap();
         assert!(db.get_session("s1").unwrap().is_none());
         assert!(db.get_messages("s1").unwrap().is_empty());
+        // Its recall chunks go too (FTS included); another session's stay.
+        let left: Vec<String> = db
+            .search_session_chunks("p", "turn text", 10)
+            .unwrap()
+            .rows
+            .into_iter()
+            .map(|r| r.session_id)
+            .collect();
+        assert_eq!(left, ["s2"]);
     }
 
     #[test]
@@ -1516,6 +1535,9 @@ mod tests {
 
         let db = broken("DROP TABLE branch_messages;");
         assert!(db.replace_transcript("s", &msgs, &[]).is_err());
+        assert!(db.delete_session("s").is_err());
+
+        let db = broken("DROP TABLE session_chunks;");
         assert!(db.delete_session("s").is_err());
 
         let db = broken("DROP TABLE session_branches;");
