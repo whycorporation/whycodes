@@ -8,6 +8,7 @@ fn stale_when_pid_dead() {
         started_at: now_secs(),
         interactive: false,
         parent_pid: None,
+        token: None,
     };
     assert!(is_stale(&lock, now_secs(), |_| PidProbe::Dead));
     assert!(!is_stale(&lock, now_secs(), |_| PidProbe::Alive));
@@ -22,6 +23,7 @@ fn stale_when_older_than_max_age() {
         started_at: 10,
         interactive: false,
         parent_pid: None,
+        token: None,
     };
     let now = 10 + MAX_AGE.as_secs() + 1;
     assert!(is_stale(&lock, now, |_| PidProbe::Alive));
@@ -36,6 +38,7 @@ fn stale_when_started_in_the_future() {
         started_at: now + CLOCK_SKEW.as_secs() + 1,
         interactive: false,
         parent_pid: None,
+        token: None,
     };
     assert!(is_stale(&lock, now, |_| PidProbe::Alive));
 }
@@ -50,6 +53,7 @@ fn roundtrip_lock_file() {
         started_at: 99,
         interactive: true,
         parent_pid: Some(1),
+        token: None,
     };
     write_lock(&path, &lock).unwrap();
     assert_eq!(read_lock(&path), Some(lock));
@@ -77,6 +81,7 @@ fn decide_lock_blocked_without_prompt() {
         started_at: now_secs(),
         interactive: false,
         parent_pid: None,
+        token: None,
     };
     write_lock(&path, &lock).unwrap();
     match decide_lock(&path, 3030, true, false).unwrap() {
@@ -104,6 +109,7 @@ fn blocked_message_names_pid_and_url() {
         started_at: 0,
         interactive: false,
         parent_pid: None,
+        token: None,
     });
     assert!(msg.contains("pid 9"), "{msg}");
     assert!(msg.contains("127.0.0.1:4040"), "{msg}");
@@ -116,7 +122,7 @@ fn acquire_lock_free_then_drop_removes_file() {
     assert!(takeover.is_none());
     let path = lock_path(dir.path());
     assert!(path.exists());
-    commit_lock(&guard, 4040).unwrap();
+    commit_lock(&guard, 4040, "tok").unwrap();
     let written = read_lock(&path).unwrap();
     assert_eq!(written.port, 4040);
     drop(guard);
@@ -135,6 +141,7 @@ fn acquire_lock_blocked_when_live_and_no_takeover() {
             started_at: now_secs(),
             interactive: false,
             parent_pid: None,
+            token: None,
         },
     )
     .unwrap();
@@ -158,6 +165,7 @@ fn decide_lock_frees_stale_holder() {
             started_at: 10,
             interactive: false,
             parent_pid: None,
+            token: None,
         },
     )
     .unwrap();
@@ -181,6 +189,7 @@ fn connect_hint_none_when_stale_or_missing() {
             started_at: now_secs(),
             interactive: false,
             parent_pid: None,
+            token: None,
         },
     )
     .unwrap();
@@ -195,6 +204,7 @@ fn connect_hint_none_when_stale_or_missing() {
             started_at: 1,
             interactive: false,
             parent_pid: None,
+            token: None,
         },
     )
     .unwrap();
@@ -209,6 +219,7 @@ fn hint_for_names_another_live_server() {
         started_at: 100,
         interactive: false,
         parent_pid: None,
+        token: None,
     };
     let hint = hint_for(&lock, 1, 100, |_| PidProbe::Alive).unwrap();
     assert!(hint.contains("pid 4242") && hint.contains("9090"), "{hint}");
@@ -268,6 +279,7 @@ fn apply_takeover_choice_covers_all_arms() {
         started_at: now_secs(),
         interactive: false,
         parent_pid: None,
+        token: None,
     };
     write_lock(&path, &holder).unwrap();
     match apply_takeover_choice(&path, 3030, holder.clone(), Ok(0)).unwrap() {
@@ -300,6 +312,7 @@ fn acquire_lock_takeover_via_test_env() {
             started_at: now_secs(),
             interactive: false,
             parent_pid: None,
+            token: None,
         },
     )
     .unwrap();
@@ -342,4 +355,20 @@ fn current_parent_pid_is_set_on_unix() {
     assert_eq!(lock.port, 9);
     #[cfg(unix)]
     assert!(lock.parent_pid.is_some());
+}
+
+#[test]
+fn committed_lock_carries_the_token_for_the_owner_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let (guard, _) = acquire_lock(dir.path(), 3030, true).unwrap();
+    commit_lock(&guard, 3031, "secret-token").unwrap();
+    let path = lock_path(dir.path());
+    let written = read_lock(&path).unwrap();
+    assert_eq!(written.token.as_deref(), Some("secret-token"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
 }

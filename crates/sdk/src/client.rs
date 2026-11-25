@@ -71,10 +71,19 @@ pub struct WhyCodesClient {
 }
 
 impl WhyCodesClient {
-    /// Attach to an already-running daemon (`whycodes serve`).
+    /// Attach to an already-running daemon (`whycodes serve`), sending the
+    /// bearer token from `WHYCODES_SERVE_TOKEN` (see [`Self::connect_with_token`]).
     pub async fn connect(base: &str) -> Result<Self, SdkError> {
+        let token = std::env::var(SERVE_TOKEN_ENV).unwrap_or_default();
+        Self::connect_with_token(base, &token).await
+    }
+
+    /// Attach to a running daemon with its bearer token: the one in the
+    /// project's `.whycodes/serve.lock`, or the `WHYCODES_SERVE_TOKEN` it
+    /// was started with.
+    pub async fn connect_with_token(base: &str, token: &str) -> Result<Self, SdkError> {
         let base = normalize_base(base);
-        let http = http_client()?;
+        let http = http_client(token)?;
         let client = Self {
             base,
             http,
@@ -132,7 +141,7 @@ impl WhyCodesClient {
             let held_home = prepared.held_home;
 
             let base = format!("http://127.0.0.1:{port}");
-            let http = http_client()?;
+            let http = http_client(&prepared.token)?;
             let mut client = Self {
                 base: base.clone(),
                 http,
@@ -719,8 +728,21 @@ fn http_client_failed(e: reqwest::Error) -> SdkError {
     SdkError::with_source(ErrorCode::Internal, "http client", e)
 }
 
-fn http_client() -> Result<reqwest::Client, SdkError> {
+/// Env var holding the daemon's bearer token (`whycodes serve` reads the
+/// same name to fix its token).
+const SERVE_TOKEN_ENV: &str = "WHYCODES_SERVE_TOKEN";
+
+/// A client that sends `Authorization: Bearer <token>` (nothing when blank).
+fn http_client(token: &str) -> Result<reqwest::Client, SdkError> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    let token = token.trim();
+    if !token.is_empty()
+        && let Ok(value) = format!("Bearer {token}").parse()
+    {
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+    }
     reqwest::Client::builder()
+        .default_headers(headers)
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(600))
         .build()
@@ -861,6 +883,8 @@ const STRIPPED_LOGIN_KEYS: &[&str] = &[
 
 struct PreparedLaunch {
     port: u16,
+    /// Bearer token handed to the child through `WHYCODES_SERVE_TOKEN`.
+    token: String,
     binary: PathBuf,
     home_env: Option<PathBuf>,
     held_home: Option<tempfile::TempDir>,
@@ -953,6 +977,11 @@ fn prepare_launch(opts: &LaunchOptions) -> Result<PreparedLaunch, SdkError> {
     };
     Ok(PreparedLaunch {
         port,
+        token: format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        ),
         binary,
         home_env,
         held_home,
@@ -967,7 +996,8 @@ fn launch_command(prepared: &PreparedLaunch, opts: &LaunchOptions) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .kill_on_drop(true)
+        .env(SERVE_TOKEN_ENV, &prepared.token);
     if let Some(home) = &prepared.home_env {
         cmd.env("WHYCODES_HOME", home);
     }

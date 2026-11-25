@@ -4460,6 +4460,7 @@ async fn connect_unreachable_includes_lock_hint() {
             started_at: crate::cmd::lockfile::now_secs(),
             interactive: false,
             parent_pid: None,
+            token: None,
         },
     )
     .unwrap();
@@ -4516,6 +4517,7 @@ async fn takeover_holder_dead_and_live_child() {
         started_at: crate::cmd::lockfile::now_secs(),
         interactive: false,
         parent_pid: None,
+        token: None,
     };
     assert!(takeover_holder(&dead).await.is_err());
 
@@ -4527,6 +4529,7 @@ async fn takeover_holder_dead_and_live_child() {
         started_at: crate::cmd::lockfile::now_secs(),
         interactive: false,
         parent_pid: None,
+        token: None,
     };
     takeover_holder(&live).await.unwrap();
     let _ = child.wait();
@@ -4547,6 +4550,7 @@ async fn cmd_serve_takeover_then_abort() {
             started_at: crate::cmd::lockfile::now_secs(),
             interactive: false,
             parent_pid: None,
+            token: None,
         },
     )
     .unwrap();
@@ -5366,6 +5370,7 @@ async fn takeover_holder_sigkill_after_ignored_term() {
         started_at: crate::cmd::lockfile::now_secs(),
         interactive: false,
         parent_pid: None,
+        token: None,
     };
     takeover_holder(&live).await.unwrap();
     let _ = child.wait();
@@ -5990,6 +5995,7 @@ fn acquire_lock_takeover_start_anyway_other_port() {
             started_at: crate::cmd::lockfile::now_secs(),
             interactive: false,
             parent_pid: None,
+            token: None,
         },
     )
     .unwrap();

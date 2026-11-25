@@ -173,7 +173,7 @@ async fn http_client_helper_wraps_reqwest_errors() {
 
 #[test]
 fn http_client_builds() {
-    assert!(http_client().is_ok());
+    assert!(http_client("").is_ok());
     assert_eq!(binary_names()[0], binary_names()[0]);
     assert!(!binary_names().is_empty());
 }
@@ -371,24 +371,26 @@ async fn take_stderr_reads_child_output_and_missing_pipe() {
 #[tokio::test]
 async fn close_and_drop_kill_launched_child() {
     let live = cmd_hang().kill_on_drop(true).spawn().unwrap();
-    let client =
-        WhyCodesClient::unconnected("http://127.0.0.1:9", http_client().unwrap()).with_child(live);
+    let client = WhyCodesClient::unconnected("http://127.0.0.1:9", http_client("").unwrap())
+        .with_child(live);
     client.close().await.unwrap();
 
     let live = cmd_hang().kill_on_drop(true).spawn().unwrap();
     drop(
-        WhyCodesClient::unconnected("http://127.0.0.1:9", http_client().unwrap()).with_child(live),
+        WhyCodesClient::unconnected("http://127.0.0.1:9", http_client("").unwrap())
+            .with_child(live),
     );
 
     let mut dead = cmd_exit().spawn().unwrap();
     let _ = dead.wait().await;
     drop(
-        WhyCodesClient::unconnected("http://127.0.0.1:9", http_client().unwrap()).with_child(dead),
+        WhyCodesClient::unconnected("http://127.0.0.1:9", http_client("").unwrap())
+            .with_child(dead),
     );
 
     let mut dead = cmd_exit().spawn().unwrap();
     let _ = dead.wait().await;
-    WhyCodesClient::unconnected("http://127.0.0.1:9", http_client().unwrap())
+    WhyCodesClient::unconnected("http://127.0.0.1:9", http_client("").unwrap())
         .with_child(dead)
         .close()
         .await

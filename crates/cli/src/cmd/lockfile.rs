@@ -26,6 +26,9 @@ pub(crate) struct ServeLock {
     pub interactive: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_pid: Option<u32>,
+    /// Bearer token the daemon requires; `whycodes connect` reads it here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
 }
 
 #[derive(Debug)]
@@ -55,7 +58,12 @@ pub(crate) fn write_lock(path: &Path, lock: &ServeLock) -> std::io::Result<()> {
     let tmp = path.with_extension("lock.tmp");
     let json = lock_json(lock)?;
     {
-        let mut f = std::fs::File::create(&tmp)?;
+        // Owner-only: the lock carries the daemon's bearer token.
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut f = options.open(&tmp)?;
         f.write_all(&json)?;
         f.write_all(b"\n")?;
         f.sync_all()?;
@@ -226,8 +234,12 @@ pub(crate) fn acquire_lock(
     }
 }
 
-pub(crate) fn commit_lock(guard: &ServeLockGuard, port: u16) -> std::io::Result<()> {
-    write_lock(guard.path(), &current_lock(port))
+pub(crate) fn commit_lock(guard: &ServeLockGuard, port: u16, token: &str) -> std::io::Result<()> {
+    let lock = ServeLock {
+        token: Some(token.to_string()),
+        ..current_lock(port)
+    };
+    write_lock(guard.path(), &lock)
 }
 
 fn current_lock(port: u16) -> ServeLock {
@@ -237,6 +249,7 @@ fn current_lock(port: u16) -> ServeLock {
         started_at: now_secs(),
         interactive: stdin_can_prompt(),
         parent_pid: current_parent_pid(),
+        token: None,
     }
 }
 
