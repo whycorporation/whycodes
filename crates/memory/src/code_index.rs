@@ -146,6 +146,32 @@ impl MemoryService {
         Ok(n)
     }
 
+    /// Index again the files behind `rows` that changed after they were
+    /// indexed, so recall does not quote code (or line ranges) that an edit
+    /// earlier in the session replaced; a deleted file just drops out. Only
+    /// candidate files are checked, one `stat` each. The file keeps all its
+    /// chunks: an edit that grows it must not lose the new code to the cap.
+    fn reindex_stale(
+        &self,
+        db: &whycodes_storage::db::Database,
+        rows: &[whycodes_storage::models::CodeChunkRow],
+    ) -> Result<bool> {
+        let root = crate::project_key::project_root(&self.project_path);
+        let mut seen = HashSet::new();
+        let mut any = false;
+        for row in rows {
+            if !seen.insert(row.path.as_str())
+                || !changed_since(&root.join(&row.path), &row.updated_at)
+            {
+                continue;
+            }
+            db.delete_code_chunks_for_path(&self.bank_key, &row.path)?;
+            self.index_file(db, &root, &row.path, usize::MAX)?;
+            any = true;
+        }
+        Ok(any)
+    }
+
     /// Semantic search over indexed code chunks.
     pub fn search_code(&self, query: &str, top_k: usize, min_score: f32) -> Result<Vec<CodeHit>> {
         Ok(self.search_code_page(query, top_k, min_score)?.hits)
@@ -159,7 +185,10 @@ impl MemoryService {
         min_score: f32,
     ) -> Result<SearchPage<CodeHit>> {
         let db = self.open_db()?;
-        let page = db.search_code_chunks(&self.bank_key, query, FTS_CANDIDATES)?;
+        let mut page = db.search_code_chunks(&self.bank_key, query, FTS_CANDIDATES)?;
+        if self.reindex_stale(&db, &page.rows)? {
+            page = db.search_code_chunks(&self.bank_key, query, FTS_CANDIDATES)?;
+        }
         let q = self.embed_text(query);
         let relevance = page.relevance;
         let mut hits: Vec<(CodeHit, f64)> = page
@@ -300,6 +329,10 @@ mod tests {
         let svc = MemoryService::open(&project, dir.path().join("data"), MemorySettings::default())
             .unwrap();
         let db = svc.open_db().unwrap();
+        // The files exist, unchanged since indexing: search keeps their rows.
+        for path in ["a.rs", "b.rs", "c.rs"] {
+            std::fs::write(project.join(path), "").unwrap();
+        }
         let query = "retry backoff";
         // Stored vectors disagree with the text on purpose: the chunk BM25
         // ranks first carries an unrelated vector, the weak match the query's
@@ -463,6 +496,42 @@ mod tests {
     }
 
     #[test]
+    fn search_reindexes_candidate_files_edited_since_indexing() {
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("proj");
+        let src = project.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("a.rs"),
+            "pub fn retry_handler() -> u32 { old_retry_body() }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("b.rs"),
+            "pub fn retry_handler_copy() -> u32 { gone_retry_body() }\n",
+        )
+        .unwrap();
+        let svc = MemoryService::open(&project, dir.path().join("data"), MemorySettings::default())
+            .unwrap();
+        assert_eq!(svc.index_codebase(100, 100).unwrap(), 2);
+
+        // Edited mid-session (a new line on top shifts the range) and deleted.
+        std::fs::write(
+            src.join("a.rs"),
+            "// header line\npub fn retry_handler() -> u32 { new_retry_body() }\n",
+        )
+        .unwrap();
+        touch_later(&src.join("a.rs"));
+        std::fs::remove_file(src.join("b.rs")).unwrap();
+
+        let hits = svc.search_code("retry_handler", 4, -1.0).unwrap();
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].entry.text.contains("new_retry_body"), "{hits:?}");
+        assert_eq!(hits[0].entry.end_line, 2);
+        assert_eq!(indexed_paths(&svc), ["src/a.rs"]);
+    }
+
+    #[test]
     fn changed_since_counts_unreadable_state_as_changed() {
         let dir = tempdir().unwrap();
         let file = dir.path().join("x.rs");
@@ -558,6 +627,10 @@ mod tests {
             std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o644)).unwrap();
         }
 
+        // Files behind the rows below exist and predate them: search keeps them.
+        for path in ["a.rs", "b.rs", "x.rs"] {
+            std::fs::write(project.join(path), "").unwrap();
+        }
         let db = svc.open_db().unwrap();
         db.insert_code_chunk(
             "empty-emb",
