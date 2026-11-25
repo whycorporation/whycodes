@@ -25,7 +25,12 @@ pub fn clean_terminal_output(raw: &str) -> String {
             continue;
         }
         flush_repeats(&mut out, repeats);
-        push_line(&mut out, shown);
+        // `last` is `None` only before the first line: no separator, so a
+        // leading blank line survives as the empty first line.
+        if last.is_some() {
+            out.push('\n');
+        }
+        out.push_str(shown);
         last = Some(shown);
         repeats = 0;
     }
@@ -100,10 +105,10 @@ fn final_redraw(line: &str) -> &str {
     }
 }
 
+/// Append `line` after the lines already written (there is always one: a
+/// repeat follows the line it copies).
 fn push_line(out: &mut String, line: &str) {
-    if !out.is_empty() {
-        out.push('\n');
-    }
+    out.push('\n');
     out.push_str(line);
 }
 
