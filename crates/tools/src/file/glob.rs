@@ -219,7 +219,7 @@ impl GlobTool {
             if total == 1 { "" } else { "s" },
             root_shown,
             pattern_str,
-            results.join("\n")
+            by_directory(&results)
         );
         if hit_cap || total > results.len() {
             output.push_str(&format!(
@@ -235,6 +235,32 @@ impl GlobTool {
             is_error: false,
         }
     }
+}
+
+/// One path per line, except that files sharing a directory are listed
+/// under a `dir/` line, indented by their name alone: a deep tree repeats
+/// its directory prefix on every line, about half the tokens of a capped
+/// `crates/**/*.rs` listing.
+fn by_directory(paths: &[String]) -> String {
+    let mut split: Vec<(&str, &str)> = paths
+        .iter()
+        .map(|p| p.rsplit_once('/').unwrap_or(("", p.as_str())))
+        .collect();
+    split.sort();
+    let mut lines = Vec::with_capacity(split.len());
+    for group in split.chunk_by(|a, b| a.0 == b.0) {
+        match group {
+            [(dir, _), _, ..] if !dir.is_empty() => {
+                lines.push(format!("{dir}/"));
+                lines.extend(group.iter().map(|(_, name)| format!("  {name}")));
+            }
+            _ => lines.extend(group.iter().map(|(dir, name)| match *dir {
+                "" => (*name).to_string(),
+                dir => format!("{dir}/{name}"),
+            })),
+        }
+    }
+    lines.join("\n")
 }
 
 fn collect_fallback_glob(
