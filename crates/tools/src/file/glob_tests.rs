@@ -65,8 +65,11 @@ async fn finds_files_by_suffix_and_skips_heavy_dirs() {
         .execute(json!({ "pattern": "*.rs" }), &ctx(dir.path()))
         .await;
     assert!(!out.is_error, "{}", out.content);
-    assert!(out.content.contains("src/main.rs"), "{}", out.content);
-    assert!(out.content.contains("src/lib.rs"), "{}", out.content);
+    assert!(
+        out.content.ends_with(":\nsrc/\n  lib.rs\n  main.rs"),
+        "{}",
+        out.content
+    );
     assert!(
         !out.content.contains("foo.rs"),
         "target/ pruned: {}",
@@ -258,4 +261,24 @@ async fn fallback_glob_skips_heavy_dirs() {
         )
         .await;
     assert!(!out.is_error, "{}", out.content);
+}
+
+#[test]
+fn by_directory_lists_shared_directories_once() {
+    let paths: Vec<String> = [
+        "b/z.rs",
+        "README.md",
+        "a/one.rs",
+        "b/y/deep.rs",
+        "b/x.rs",
+        "Cargo.toml",
+    ]
+    .iter()
+    .map(|p| p.to_string())
+    .collect();
+    assert_eq!(
+        by_directory(&paths),
+        "Cargo.toml\nREADME.md\na/one.rs\nb/\n  x.rs\n  z.rs\nb/y/deep.rs"
+    );
+    assert_eq!(by_directory(&[]), "");
 }
