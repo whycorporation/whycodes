@@ -70,7 +70,12 @@ Lowest to highest precedence, from `Config::load_layered`:
    `$WHYCODES_HOME/config.toml`). Created on first run if missing. A file
    that fails to parse is an error, not a silent fallback.
 3. Project `.whycodes/config.toml` next to the project directory. A file
-   that fails to parse or read is logged as a warning and skipped.
+   that fails to parse or read is logged as a warning and skipped. A cloned
+   repository must not act on whoever opens it, so this layer cannot set a
+   provider's `base_url`, `api_base` or `headers` (your API key would go to
+   its host), `[[hooks]]` (commands on your machine), or an `approval_mode`
+   other than `manual`. Those keys are dropped with a warning; set them in
+   the global config.
 4. `WHYCODES_*` environment variables (`apply_env_overrides`; the exact
    names appear in the tables). `${VAR}` / `$VAR` inside
    `notify.discord_webhook`, `notify.telegram_bot_token` and
