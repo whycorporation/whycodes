@@ -130,10 +130,10 @@ fn google_body_and_urls() {
     assert_eq!(body["generationConfig"]["maxOutputTokens"], 32);
     assert!(body["tools"].is_array());
 
-    let stream = p.build_url("gemini-2.0-flash", "k");
+    let stream = p.build_url("gemini-2.0-flash");
     assert!(stream.contains("streamGenerateContent"), "{stream}");
-    assert!(stream.contains("key=k"), "{stream}");
-    let complete = p.build_complete_url("gemini-2.0-flash", "k");
+    assert!(!stream.contains("key="), "{stream}");
+    let complete = p.build_complete_url("gemini-2.0-flash");
     assert!(complete.contains("generateContent"), "{complete}");
     assert!(!complete.contains("streamGenerateContent"), "{complete}");
 }
@@ -418,8 +418,9 @@ fn google_ok_json() -> String {
 }
 
 fn google_sse() -> String {
-    // Gemini stream is a JSON array of chunks, not OpenAI `data:` SSE.
-    "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}".to_string()
+    // `streamGenerateContent?alt=sse` sends `data:` events (without
+    // `alt=sse` it would be one JSON array).
+    "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\r\n\r\n".to_string()
 }
 
 #[tokio::test]
@@ -472,7 +473,7 @@ async fn google_complete_and_stream_against_loopback() {
     );
     assert!(
         google::GoogleProvider::new()
-            .build_complete_url("m", "k")
+            .build_complete_url("m")
             .contains("generativelanguage")
     );
 }
