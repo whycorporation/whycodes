@@ -29,31 +29,62 @@ pub struct Segment {
 }
 
 impl Segment {
-    /// The command name, ignoring leading `VAR=value` assignments, `sudo` and
-    /// shell control-flow keywords.
+    /// The program the segment runs, by its file name (`/bin/rm` and
+    /// `rm.exe` are `rm`), past leading `VAR=value` assignments, shell
+    /// control-flow keywords and [`WRAPPERS`] with their own options.
     pub fn command(&self) -> Option<&str> {
-        self.words.iter().map(|w| w.text.as_str()).find(|w| {
-            !is_assignment(w)
-                && *w != "sudo"
-                && *w != "command"
-                && *w != "env"
-                && !is_shell_keyword(w)
-        })
+        self.command_index()
+            .map(|i| program_name(&self.words[i].text))
     }
 
     /// Arguments after the command name.
     pub fn args(&self) -> impl Iterator<Item = &Word> {
-        let cmd = self.command().map(str::to_string);
-        let mut seen = false;
-        self.words.iter().filter(move |w| {
-            if seen {
-                return true;
+        let rest = match self.command_index() {
+            Some(i) => &self.words[i + 1..],
+            None => &[],
+        };
+        rest.iter()
+    }
+
+    /// True when a wrapper before the command raises privileges (`sudo`,
+    /// `doas`).
+    pub fn elevated(&self) -> bool {
+        let end = self.command_index().unwrap_or(self.words.len());
+        self.words[..end]
+            .iter()
+            .any(|w| matches!(program_name(&w.text), "sudo" | "doas"))
+    }
+
+    /// Index of the command word: `nice -n 5 timeout 10 /bin/rm -rf ~` runs
+    /// `rm`. A wrapper's options are skipped, with the value of each one in
+    /// its list that takes a value (`sudo -u root`), and then its leading
+    /// operands (`timeout`'s duration).
+    fn command_index(&self) -> Option<usize> {
+        let words = &self.words;
+        let mut i = 0;
+        while i < words.len() {
+            let word = words[i].text.as_str();
+            if is_assignment(word) || is_shell_keyword(word) {
+                i += 1;
+                continue;
             }
-            if Some(&w.text) == cmd.as_ref() {
-                seen = true;
+            let name = program_name(word);
+            let Some(&(_, valued, operands)) = WRAPPERS.iter().find(|(w, ..)| *w == name) else {
+                return Some(i);
+            };
+            i += 1;
+            while let Some(option) = words.get(i).map(|w| w.text.as_str()) {
+                if !option.starts_with('-') || option == "-" {
+                    break;
+                }
+                i += if valued.contains(&option) { 2 } else { 1 };
+                if option == "--" {
+                    break;
+                }
             }
-            false
-        })
+            i += operands;
+        }
+        None
     }
 
     /// True when any word could not be resolved statically.
@@ -71,6 +102,49 @@ const SHELL_KEYWORDS: &[&str] = &[
     "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "case", "esac",
     "in", "select", "time", "coproc", "!", "{", "}",
 ];
+
+/// Programs that run the rest of their arguments as a command, so the
+/// command a segment runs is the one after them: `(name, options that take
+/// a value, operands before the command)`.
+///
+/// Regression: `timeout 5 rm -rf /`, `nice rm -rf ~`, `xargs rm -rf` and
+/// `sudo -u root rm -rf /` were judged by the wrapper (or by `-u`) and
+/// passed as safe.
+const WRAPPERS: &[(&str, &[&str], usize)] = &[
+    (
+        "sudo",
+        &["-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U"],
+        0,
+    ),
+    ("doas", &["-u", "-C"], 0),
+    ("env", &["-u", "-C", "-S", "--unset", "--chdir"], 0),
+    ("command", &[], 0),
+    ("builtin", &[], 0),
+    ("exec", &["-a"], 0),
+    ("nohup", &[], 0),
+    ("time", &["-f", "-o"], 0),
+    ("nice", &["-n"], 0),
+    ("ionice", &["-c", "-n", "-p"], 0),
+    ("stdbuf", &["-i", "-o", "-e"], 0),
+    ("timeout", &["-s", "-k", "--signal", "--kill-after"], 1),
+    (
+        "xargs",
+        &["-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a"],
+        0,
+    ),
+];
+
+/// A command word's program: its file name without directory or a Windows
+/// `.exe`, so `/bin/rm`, `/usr/bin/sudo` and `C:\tools\rm.exe` match by name.
+fn program_name(word: &str) -> &str {
+    let name = word.rsplit(['/', '\\']).next().unwrap_or(word);
+    match name.len().checked_sub(4) {
+        Some(stem) if name.is_char_boundary(stem) && name[stem..].eq_ignore_ascii_case(".exe") => {
+            &name[..stem]
+        }
+        _ => name,
+    }
+}
 
 fn is_shell_keyword(word: &str) -> bool {
     SHELL_KEYWORDS.contains(&word)

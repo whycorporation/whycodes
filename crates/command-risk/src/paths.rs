@@ -56,6 +56,7 @@ const PROTECTED_PREFIXES: &[&str] = &[
     "/boot",
     "/dev",
     "/etc",
+    "/home",
     "/lib",
     "/opt",
     "/proc",
@@ -168,6 +169,23 @@ fn as_comparable(path: &Path) -> String {
     }
 }
 
+/// `/c` or `/c/rest` as the drive path `c:` / `c:/rest`, lowercased: the
+/// MSYS spelling of a Windows drive. `None` for any other path.
+fn msys_drive(cmp: &str) -> Option<String> {
+    let rest = cmp.strip_prefix('/')?;
+    let mut chars = rest.chars();
+    let drive = chars.next().filter(char::is_ascii_alphabetic)?;
+    let tail = chars.as_str();
+    if !tail.is_empty() && !tail.starts_with('/') {
+        return None;
+    }
+    Some(format!(
+        "{}:{}",
+        drive.to_ascii_lowercase(),
+        tail.to_ascii_lowercase()
+    ))
+}
+
 /// True when `path` is exactly `prefix` or the whole of it.
 fn is_at_or_above(path: &str, prefix: &str) -> bool {
     path.eq_ignore_ascii_case(prefix)
@@ -208,15 +226,16 @@ pub fn classify(raw: &str, project: &Path, home: Option<&Path>) -> PathScope {
             return PathScope::Catastrophic;
         }
     }
+    // Git Bash and the embedded shell run `/c/Users` as `C:/Users`.
+    let drive = msys_drive(&cmp).unwrap_or_else(|| cmp.to_ascii_lowercase());
     for prefix in PROTECTED_PREFIXES_WINDOWS {
-        if is_at_or_above(&cmp.to_ascii_lowercase(), prefix) {
+        if is_at_or_above(&drive, prefix) {
             return PathScope::Catastrophic;
         }
     }
 
-    // A bare drive root, e.g. `C:\` or `C:`.
-    let lower = cmp.to_ascii_lowercase();
-    let lb: Vec<char> = lower.chars().collect();
+    // A bare drive root, e.g. `C:\`, `C:` or `/c`.
+    let lb: Vec<char> = drive.chars().collect();
     if lb.len() <= 3 && lb.len() >= 2 && lb[0].is_ascii_alphabetic() && lb[1] == ':' {
         return PathScope::Catastrophic;
     }
@@ -237,7 +256,8 @@ pub fn classify(raw: &str, project: &Path, home: Option<&Path>) -> PathScope {
 /// glob expands within: `/*` is `/`, `~/*` is `~`, `target/*` is `target`.
 fn strip_glob_tail(path: &str) -> String {
     let last = path.rsplit(['/', '\\']).next().unwrap_or("");
-    if !last.is_empty() && last.chars().all(|c| matches!(c, '*' | '?' | '.')) {
+    // Dots alone are no glob: `..` is the parent and is judged as one.
+    if last.contains(['*', '?']) && last.chars().all(|c| matches!(c, '*' | '?' | '.')) {
         let cut = path.len() - last.len();
         let head = path[..cut].trim_end_matches(['/', '\\']);
         return if head.is_empty() {
