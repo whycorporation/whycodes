@@ -8,6 +8,8 @@
 //! It runs once, when the tool result is made, so stored history never
 //! changes afterwards (the provider prompt cache stays valid).
 
+use std::borrow::Cow;
+
 /// A run of identical lines this long or longer collapses to one line.
 const REPEAT_COLLAPSE: usize = 3;
 
@@ -35,7 +37,90 @@ pub fn clean_terminal_output(raw: &str) -> String {
         repeats = 0;
     }
     flush_repeats(&mut out, repeats);
-    collapse_similar(&out)
+    collapse_similar_blocks(&collapse_similar(&out))
+}
+
+/// A run of blocks with one shape this long or longer keeps the first block
+/// whole and only the first [`BLOCK_HEAD_LINES`] lines of the others.
+const SIMILAR_BLOCKS: usize = 8;
+/// Lines kept of each later block in a run: a compiler diagnostic's message
+/// and its `--> file:line`, a failed test's name and where it panicked.
+const BLOCK_HEAD_LINES: usize = 2;
+
+/// Collapse long runs of blank-line separated blocks of one shape, like the
+/// 120 `warning: unused variable` diagnostics of a build: each repeats the
+/// same five-line layout around a different name. A block that breaks the
+/// shape (the `error[E0308]` after them) ends the run and is kept whole.
+fn collapse_similar_blocks(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut blocks: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let start = i;
+        while i < lines.len() && !lines[i].trim().is_empty() {
+            i += 1;
+        }
+        if i > start {
+            blocks.push((start, i));
+        }
+        i += 1;
+    }
+    let shapes: Vec<Option<String>> = blocks
+        .iter()
+        .map(|&(start, end)| block_shape(&lines[start..end]))
+        .collect();
+    let mut out: Vec<Cow<'_, str>> = Vec::with_capacity(lines.len());
+    let mut copied = 0;
+    let mut b = 0;
+    while b < blocks.len() {
+        let mut end = b + 1;
+        while shapes[b].is_some() && end < blocks.len() && shapes[end] == shapes[b] {
+            end += 1;
+        }
+        if end - b >= SIMILAR_BLOCKS {
+            out.extend(lines[copied..blocks[b].1].iter().map(|l| Cow::Borrowed(*l)));
+            out.push(Cow::Borrowed(""));
+            out.push(Cow::Owned(format!(
+                "[{} more blocks shaped like the one above; first {BLOCK_HEAD_LINES} lines of each]",
+                end - b - 1
+            )));
+            for &(start, stop) in &blocks[b + 1..end] {
+                let head = &lines[start..stop.min(start + BLOCK_HEAD_LINES)];
+                out.extend(head.iter().map(|l| Cow::Borrowed(*l)));
+            }
+            copied = blocks[end - 1].1;
+        }
+        b = end;
+    }
+    out.extend(lines[copied..].iter().map(|l| Cow::Borrowed(*l)));
+    out.join("\n")
+}
+
+/// A block's layout with its words and numbers erased: each run of letters,
+/// digits and `_` becomes `x`, whitespace one space, and a repeated mark one
+/// mark (`^^^^^` under a name of any length). `None` for a block no longer
+/// than [`BLOCK_HEAD_LINES`]: collapsing it would keep every line anyway.
+fn block_shape(block: &[&str]) -> Option<String> {
+    if block.len() <= BLOCK_HEAD_LINES {
+        return None;
+    }
+    let mut shape = String::new();
+    for line in block {
+        let mut last = '\n';
+        for c in line.chars() {
+            let mark = match c {
+                c if c.is_alphanumeric() || c == '_' => 'x',
+                c if c.is_whitespace() => ' ',
+                c => c,
+            };
+            if mark != last {
+                shape.push(mark);
+            }
+            last = mark;
+        }
+        shape.push('\n');
+    }
+    Some(shape)
 }
 
 /// A run of lines that differ only in their numbers this long or longer
