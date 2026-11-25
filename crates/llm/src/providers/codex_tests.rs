@@ -485,13 +485,29 @@ async fn complete_sends_chatgpt_account_id_from_stored_extra() {
 
 #[tokio::test]
 async fn complete_assembles_tool_use_and_missing_stop() {
-    let body = format!(
+    let events = format!(
         "data: {}\n\ndata: {}\n\n",
         serde_json::json!({"type":"response.output_text.delta","delta":"hi"}),
         serde_json::json!({
             "type":"response.output_item.done",
             "item":{"type":"function_call","call_id":"c1","name":"read","arguments":"{\"p\":1}"}
         })
+    );
+    // Closed before `response.completed`: a dropped stream, retried.
+    let url = serve_sse("200 OK", &events);
+    let err = complete_at(
+        &url,
+        &simple_request(),
+        "eyJhbGciOiJ.eyJzdWIiOiJx.sig",
+        "gpt-test",
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("unexpected EOF"), "{err}");
+
+    let body = format!(
+        "{events}data: {}\n\n",
+        serde_json::json!({"type":"response.completed","response":{"usage":{}}})
     );
     let url = serve_sse("200 OK", &body);
     let resp = complete_at(

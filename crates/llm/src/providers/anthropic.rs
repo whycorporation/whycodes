@@ -52,8 +52,10 @@ fn events_for_data(data: &str) -> Vec<whycodes_core::Result<StreamEvent>> {
     let mut out: Vec<whycodes_core::Result<StreamEvent>> = Vec::new();
     match event["type"].as_str() {
         Some("message_start") => {
-            if let Some(msg) = event["message"].as_object() {
-                let usage = &msg["usage"];
+            // `Value` indexing, not `Map`: a proxy that leaves out `usage`
+            // must read as zero, not panic ("no entry found for key").
+            if event["message"].is_object() {
+                let usage = &event["message"]["usage"];
                 crate::usage_dump::dump_raw_usage("anthropic", usage);
                 out.push(Ok(StreamEvent::Usage {
                     input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
@@ -74,9 +76,7 @@ fn events_for_data(data: &str) -> Vec<whycodes_core::Result<StreamEvent>> {
             }
         }
         Some("message_delta") => {
-            if let Some(delta) = event["delta"].as_object()
-                && let Some(sr) = delta["stop_reason"].as_str()
-            {
+            if let Some(sr) = event["delta"]["stop_reason"].as_str() {
                 out.push(Ok(StreamEvent::MessageDelta {
                     delta: obj([("stop_reason", jstr(sr))]),
                 }));

@@ -98,36 +98,40 @@ const SCRATCH_PREFIX: &str = ".whycodes/scratch/";
 /// Returns repo-relative paths (forward slashes when possible), without the
 /// worktree's scratch dir.
 pub fn changed_relative_paths(worktree: &Path) -> Result<Vec<String>, String> {
-    let out = git_ok(worktree, &["status", "--porcelain", "-uall"])
+    // `-z`: paths come raw, NUL-separated. Without it git C-quotes any
+    // non-ASCII name (`"src/\303\266dev.rs"`), which matched no file, so a
+    // worker's edit to `ödev.rs` was dropped without a conflict or a note.
+    let out = git_ok(worktree, &["status", "--porcelain", "-z", "-uall"])
         .ok_or_else(|| "git status failed in worktree".to_string())?;
-    let mut paths = Vec::new();
-    for line in out.lines() {
-        if let Some(path) = porcelain_path(line)
-            && !path.starts_with(SCRATCH_PREFIX)
-            && !paths.iter().any(|p| p == &path)
-        {
-            paths.push(path);
-        }
-    }
+    let mut paths = porcelain_z_paths(&out);
+    paths.retain(|p| !p.starts_with(SCRATCH_PREFIX));
     paths.sort();
+    paths.dedup();
     Ok(paths)
 }
 
-/// Parse one `git status --porcelain` line into a repo-relative path.
-fn porcelain_path(line: &str) -> Option<String> {
-    if line.len() < 4 {
-        return None;
+/// Repo-relative paths in `git status --porcelain -z` output. A rename
+/// (`R  new\0old\0`) yields both sides, so the old path is merged as a
+/// deletion instead of staying behind in the main checkout.
+fn porcelain_z_paths(out: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut entries = out.split('\0');
+    while let Some(entry) = entries.next() {
+        let (Some(status), Some(path)) = (entry.get(..2), entry.get(3..)) else {
+            continue;
+        };
+        if !path.is_empty() {
+            paths.push(path.to_string());
+        }
+        if status.contains('R') || status.contains('C') {
+            // The source path follows as its own entry; a copy leaves it as is.
+            let source = entries.next().unwrap_or_default();
+            if status.contains('R') && !source.is_empty() {
+                paths.push(source.to_string());
+            }
+        }
     }
-    // XY PATH or XY ORIG -> PATH (renames)
-    let rest = line[3..].trim();
-    let path = if let Some((_, right)) = rest.split_once(" -> ") {
-        right
-    } else {
-        rest
-    };
-    // Unquoted paths; git quotes with " when special chars — strip lightly.
-    let path = path.trim_matches('"').to_string();
-    if path.is_empty() { None } else { Some(path) }
+    paths
 }
 
 /// Three-way merge worktree changes into `main_root` (usually the same as repo_root).

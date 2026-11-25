@@ -271,20 +271,86 @@ const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(2);
 const PIPE_HELD_NOTE: &[u8] =
     b"\n[stopped reading output: a process this command started still holds it open]\n";
 
-/// Bytes read so far, shared with the reader thread.
-#[derive(Clone, Default)]
-pub(crate) struct SharedBuf(pub(crate) Arc<Mutex<Vec<u8>>>);
+/// Most bytes kept from one pipe. A command that never stops printing
+/// (`yes`, a runaway loop) would otherwise grow the buffer until the timeout,
+/// or until memory runs out. The head and the tail are kept; the middle is
+/// counted and dropped. Spilled tool results keep head and tail too.
+pub(crate) const OUTPUT_CAP: usize = 8 * 1024 * 1024;
+
+/// Bytes read so far, shared with the reader thread, capped at `cap`.
+#[derive(Clone)]
+pub(crate) struct SharedBuf {
+    pub(crate) inner: Arc<Mutex<CappedBytes>>,
+}
+
+#[derive(Default)]
+pub(crate) struct CappedBytes {
+    cap: usize,
+    head: Vec<u8>,
+    tail: std::collections::VecDeque<u8>,
+    dropped: u64,
+}
+
+impl Default for SharedBuf {
+    fn default() -> Self {
+        Self::with_cap(OUTPUT_CAP)
+    }
+}
 
 impl SharedBuf {
+    pub(crate) fn with_cap(cap: usize) -> Self {
+        let bytes = CappedBytes {
+            cap,
+            ..CappedBytes::default()
+        };
+        Self {
+            inner: Arc::new(Mutex::new(bytes)),
+        }
+    }
+
     pub(crate) fn take(&self) -> Vec<u8> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        let mut bytes = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut out = std::mem::take(&mut bytes.head);
+        if bytes.dropped > 0 {
+            let note = format!(
+                "
+[{} bytes of output dropped]
+",
+                bytes.dropped
+            );
+            out.extend_from_slice(note.as_bytes());
+        }
+        out.extend(bytes.tail.drain(..));
+        bytes.dropped = 0;
+        out
+    }
+}
+
+impl CappedBytes {
+    fn push(&mut self, mut bytes: &[u8]) {
+        let head_cap = self.cap / 2;
+        let room = head_cap.saturating_sub(self.head.len());
+        let (first, rest) = bytes.split_at(room.min(bytes.len()));
+        self.head.extend_from_slice(first);
+        bytes = rest;
+        let tail_cap = self.cap - head_cap;
+        if bytes.len() > tail_cap {
+            let skip = bytes.len() - tail_cap;
+            self.dropped += (skip + self.tail.len()) as u64;
+            self.tail.clear();
+            bytes = &bytes[skip..];
+        }
+        let overflow = (self.tail.len() + bytes.len()).saturating_sub(tail_cap);
+        self.tail.drain(..overflow);
+        self.dropped += overflow as u64;
+        self.tail.extend(bytes);
     }
 }
 
 impl std::io::Write for SharedBuf {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        let mut buf = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        buf.extend_from_slice(bytes);
+        let mut buf = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        buf.push(bytes);
         Ok(bytes.len())
     }
 

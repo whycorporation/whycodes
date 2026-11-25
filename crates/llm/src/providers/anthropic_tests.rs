@@ -868,3 +868,18 @@ fn a_stream_error_event_keeps_its_type() {
     assert!(err.to_string().contains("api_error"), "{err}");
     assert!(crate::classify(err).retryable, "{err}");
 }
+
+/// Regression: `Map` indexing panicked on a proxy that leaves out keys.
+#[test]
+fn events_tolerate_a_message_start_without_usage_and_an_empty_delta() {
+    let start = events_for_data(r#"{"type":"message_start","message":{"id":"m"}}"#);
+    assert!(matches!(
+        start.first(),
+        Some(Ok(StreamEvent::Usage {
+            input_tokens: 0,
+            ..
+        }))
+    ));
+    let delta = events_for_data(r#"{"type":"message_delta","delta":{}}"#);
+    assert!(delta.is_empty(), "{delta:?}");
+}
