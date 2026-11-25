@@ -30,8 +30,8 @@ type DiagnosticsMap = Arc<Mutex<HashMap<String, Vec<Diagnostic>>>>;
 pub struct LspClient {
     writer: Arc<Mutex<ChildStdin>>,
     stdout: Arc<Mutex<BufReader<ChildStdout>>>,
-    /// Server process handle. Never read directly: owned here so the `Child`
-    /// outlives the client (the server exits on its own once stdin closes).
+    /// Server process handle. Never read directly: owned here so the server
+    /// lives exactly as long as the client (`kill_on_drop`).
     #[allow(dead_code)]
     child: Arc<Mutex<Child>>,
     next_id: Arc<Mutex<i64>>,
@@ -167,11 +167,15 @@ impl LspClient {
         } else {
             cmd.stdout(std::process::Stdio::null());
         }
-        #[cfg(test)]
+        // A dropped client (idle eviction, session end) must not leave the
+        // server running: one that ignores stdin EOF would live on.
         cmd.kill_on_drop(true);
         let mut child = cmd
             .spawn()
             .map_err(|e| LspError::msg(format!("Failed to spawn LSP server {command}: {e}")))?;
+        // Nothing else reads stderr. A server that logs there (most do)
+        // fills the pipe and then blocks mid-reply, hanging every request.
+        tokio::spawn(drain_stderr(child.stderr.take(), command.to_string()));
 
         let (stdin, stdout) = take_stdio_pair(child.stdin.take(), child.stdout.take())?;
 
@@ -854,6 +858,10 @@ while True:
         if mode == "hang_init":
             import time
             time.sleep(2)
+        if mode == "stderr_flood":
+            # Past any pipe buffer: blocks unless the client drains stderr.
+            sys.stderr.buffer.write(b"log line\n" * 100000)
+            sys.stderr.buffer.flush()
         write_msg({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {}}})
         if mode == "diag_notify":
             write_msg({
@@ -1049,6 +1057,21 @@ pub(crate) async fn start_test_client(mode: &str, spawn_background: bool) -> Res
     } else {
         LspClient::start_without_reader(py, &args, "/tmp", "rust").await
     }
+}
+
+/// Read the server's stderr to its end, logging each line at debug level.
+async fn drain_stderr(stderr: Option<tokio::process::ChildStderr>, cmd_name: String) -> Option<()> {
+    let mut reader = BufReader::new(stderr?);
+    let mut line = Vec::new();
+    while reader
+        .read_until(b'\n', &mut line)
+        .await
+        .is_ok_and(|n| n > 0)
+    {
+        debug!(server = %cmd_name, "{}", String::from_utf8_lossy(&line).trim_end());
+        line.clear();
+    }
+    Some(())
 }
 
 async fn consume_stdout<R>(stdout: Arc<Mutex<R>>, state: ReaderState, cmd_name: String)
