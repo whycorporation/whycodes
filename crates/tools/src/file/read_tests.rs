@@ -456,6 +456,36 @@ async fn large_python_and_typescript_files_read_as_outline() {
 }
 
 #[tokio::test]
+async fn outline_counts_inline_test_modules_instead_of_listing_them() {
+    let dir = TempDir::new().unwrap();
+    let mut src = rust_sample(3);
+    src.push_str("#[cfg(test)]\nfn helper() {}\n#[cfg(test)]\nmod split;\n");
+    src.push_str("#[cfg(test)]\nmod tests {\n    use super::*;\n");
+    for i in 0..4 {
+        src.push_str(&format!("    #[test]\n    fn case_{i}() {{}}\n"));
+    }
+    src.push_str("}\n\npub fn after_tests() {}\n");
+    // An unclosed module hides everything to the end of the file.
+    src.push_str("#[cfg(test)]\npub mod more {\n    fn unclosed() {}\n");
+    write(&dir, "t.rs", &src);
+    let out = read_args(&dir, serde_json::json!({"path": "t.rs", "outline": true})).await;
+    assert!(
+        out.contains("# outline: 10 declarations (+5 in test modules, not listed) of 47 lines"),
+        "{out}"
+    );
+    for kept in [
+        "fn helper",
+        "mod split;",
+        "mod tests {",
+        "fn after_tests",
+        "mod more {",
+    ] {
+        assert!(out.contains(kept), "{kept} missing: {out}");
+    }
+    assert!(!out.contains("case_") && !out.contains("unclosed"), "{out}");
+}
+
+#[tokio::test]
 async fn small_file_pages_unless_outline_is_asked() {
     let dir = TempDir::new().unwrap();
     write(&dir, "small.rs", &rust_sample(3));

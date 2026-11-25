@@ -227,7 +227,11 @@ fn file_ext(path: &Path) -> String {
 /// Declaration lines of one source file for `read`'s outline: the file's
 /// line count and every `(1-based line, raw line)` repomap would keep.
 /// `None` when repomap does not map this file (extension, size, binary, UTF-8).
-pub(super) fn file_outline(path: &Path) -> Option<(usize, Vec<(usize, String)>)> {
+/// Total lines, listed `(line, text)` declarations, and how many declarations
+/// inside inline test modules were left out.
+pub(super) type FileOutline = (usize, Vec<(usize, String)>, usize);
+
+pub(super) fn file_outline(path: &Path) -> Option<FileOutline> {
     if !is_source_path(path) {
         return None;
     }
@@ -238,11 +242,47 @@ pub(super) fn file_outline(path: &Path) -> Option<(usize, Vec<(usize, String)>)>
         None => return None,
     };
     let ext = file_ext(path);
-    let entries = signature_lines(&text, &ext)
+    let lines: Vec<&str> = text.lines().collect();
+    let test_bodies = if ext == "rs" {
+        rust_test_bodies(&lines)
+    } else {
+        Vec::new()
+    };
+    let (hidden, entries): (Vec<_>, Vec<_>) = signature_lines(&text, &ext)
+        .into_iter()
+        .partition(|(i, _)| test_bodies.iter().any(|body| body.contains(i)));
+    let entries = entries
         .into_iter()
         .map(|(i, line)| (i + 1, line.to_string()))
         .collect();
-    Some((text.lines().count(), entries))
+    Some((lines.len(), entries, hidden.len()))
+}
+
+/// Bodies (0-based line ranges) of inline `#[cfg(test)] mod name { … }`
+/// blocks. The outline keeps the `mod` line and only counts what is inside:
+/// test names are most of a large file's declarations and rarely what a read
+/// is looking for.
+fn rust_test_bodies(lines: &[&str]) -> Vec<std::ops::Range<usize>> {
+    let mut bodies = Vec::new();
+    let mut i = 0;
+    while i + 1 < lines.len() {
+        let open = lines[i + 1];
+        let t = open.trim_start();
+        let is_mod = t.starts_with("mod ") || t.starts_with("pub mod ");
+        if lines[i].trim() != "#[cfg(test)]" || !is_mod || !t.ends_with('{') {
+            i += 1;
+            continue;
+        }
+        let close = format!("{}}}", &open[..open.len() - t.len()]);
+        let start = i + 2;
+        let end = lines[start..]
+            .iter()
+            .position(|l| l.trim_end() == close)
+            .map_or(lines.len(), |p| start + p);
+        bodies.push(start..end);
+        i = end;
+    }
+    bodies
 }
 
 fn file_block_from(path: &Path, rel: String) -> Option<FileBlock> {

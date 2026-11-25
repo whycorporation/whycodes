@@ -1486,6 +1486,14 @@ of bare numbers are left alone. Same two-turn script, Windows, o200k:
 | before | 29,521 | 13,531 | 188,396 | 31,994 |
 | after | 16,199 | 209 | **135,092 (−28%)** | **18,668 (−42%)** |
 
+**Test modules out of the outline (2026-11-25).** Request 2 reads
+`session.rs` as an outline, and most of its declarations were test names.
+Declarations inside an inline `#[cfg(test)] mod … { }` are now counted in the
+header (`+N in test modules, not listed`) instead of listed; the `mod` line
+stays so a range read can reach them. Request 2 total 12,736 → 10,975
+(uncached 4,390 → 2,629); session total 135,092 → **120,950 (−10%)**,
+uncached 18,668 → 16,889.
+
 ## Token accounting reconciliation (2026-08-14)
 
 Providers report usage; we persist those numbers (not the char/4 heuristic)
