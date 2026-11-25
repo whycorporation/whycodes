@@ -34,6 +34,7 @@ Context sent to the model, per request, over a scripted two-turn session
 
 ```bash
 python scripts/bench_tokens.py --binary target/release/whycodes     --compare path/to/previous/whycodes   # optional side by side
+python scripts/bench_tokens.py --workload dev   # three-turn edit loop: edits, a rustc-style build, wide grep/glob
 ```
 
 Counts use tiktoken's o200k encoding when `tiktoken` is installed, chars/4
