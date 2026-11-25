@@ -119,7 +119,7 @@ impl Default for MemorySettings {
             code_min_score: 0.22,
             auto_index: true,
             auto_index_max_files: 1500,
-            auto_index_max_chunks: 4000,
+            auto_index_max_chunks: 8000,
             subagent_banks: true,
             session_inject: true,
             session_top_k: 3,
