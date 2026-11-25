@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -31,19 +32,31 @@ import {
   validateSchema,
 } from "./types.js";
 
+/** Env var holding the daemon's bearer token (`whycodes serve` reads it too). */
+const SERVE_TOKEN_ENV = "WHYCODES_SERVE_TOKEN";
+
 export class WhyCodesClient {
   readonly baseUrl: string;
   #child: ChildProcess | undefined;
   #ephemeralHome: string | undefined;
+  #token: string;
 
-  private constructor(baseUrl: string, child?: ChildProcess) {
+  private constructor(baseUrl: string, token: string, child?: ChildProcess) {
     this.baseUrl = baseUrl;
+    this.#token = token.trim();
     this.#child = child;
   }
 
-  /** Attach to an already-running daemon (`whycodes serve`). */
-  static async connect(base: string): Promise<WhyCodesClient> {
-    const client = new WhyCodesClient(normalizeBase(base));
+  /**
+   * Attach to an already-running daemon (`whycodes serve`). `token` is its
+   * bearer token: the one in the project's `.whycodes/serve.lock`, or the
+   * `WHYCODES_SERVE_TOKEN` it was started with (the default here).
+   */
+  static async connect(
+    base: string,
+    token: string = process.env[SERVE_TOKEN_ENV] ?? "",
+  ): Promise<WhyCodesClient> {
+    const client = new WhyCodesClient(normalizeBase(base), token);
     await client.health();
     return client;
   }
@@ -79,6 +92,8 @@ export class WhyCodesClient {
         }
       }
     }
+    const token = randomBytes(32).toString("hex");
+    env[SERVE_TOKEN_ENV] = token;
     const child = spawn(binary, ["serve", String(port)], {
       cwd: workingDir,
       stdio: ["ignore", "ignore", "pipe"],
@@ -90,7 +105,7 @@ export class WhyCodesClient {
     });
 
     const baseUrl = `http://127.0.0.1:${port}`;
-    const client = new WhyCodesClient(baseUrl, child);
+    const client = new WhyCodesClient(baseUrl, token, child);
     client.#ephemeralHome = ephemeralHome;
     const deadline = Date.now() + startupTimeoutMs;
 
@@ -492,10 +507,15 @@ export class WhyCodesClient {
       method,
       signal: AbortSignal.timeout(600_000),
     };
+    const headers: Record<string, string> = {};
+    if (this.#token) {
+      headers.authorization = `Bearer ${this.#token}`;
+    }
     if (json !== undefined) {
-      init.headers = { "content-type": "application/json" };
+      headers["content-type"] = "application/json";
       init.body = JSON.stringify(json);
     }
+    init.headers = headers;
     try {
       return await fetch(`${this.baseUrl}${path}`, init);
     } catch (err) {

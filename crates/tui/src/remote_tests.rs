@@ -371,3 +371,37 @@ fn draft_discarded_event_maps_through() {
         other => panic!("{other:?}"),
     }
 }
+
+#[tokio::test]
+async fn requests_carry_the_bearer_token_once_set() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let mut seen = Vec::new();
+        for _ in 0..2 {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let n = sock.read(&mut buf).await.unwrap();
+            seen.push(String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase());
+            let body = b"{\"status\":\"ok\"}";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            sock.write_all(head.as_bytes()).await.unwrap();
+            sock.write_all(body).await.unwrap();
+        }
+        seen
+    });
+    set_token(Some("tok-123".into()));
+    health(&base).await.unwrap();
+    set_token(None);
+    health(&base).await.unwrap();
+    let seen = server.await.unwrap();
+    assert!(
+        seen[0].contains("authorization: bearer tok-123"),
+        "{}",
+        seen[0]
+    );
+    assert!(!seen[1].contains("authorization"), "{}", seen[1]);
+}

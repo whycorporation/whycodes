@@ -101,8 +101,12 @@ pub(crate) fn test_state_with_registry(
         cancel_flags: Arc::new(std::sync::Mutex::new(HashMap::new())),
         perm: crate::perm::PermHub::new(),
         session_route: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        auth_token: TEST_TOKEN.into(),
     }
 }
+
+/// The bearer token [`test_state`] requires.
+pub(crate) const TEST_TOKEN: &str = "test-token";
 
 fn poison_mutex<T>(m: &std::sync::Mutex<T>) {
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -152,6 +156,7 @@ async fn call(app: axum::Router, req: Request<Body>) -> (StatusCode, Vec<u8>) {
 async fn json_get(app: axum::Router, uri: &str) -> (StatusCode, Value) {
     let req = Request::builder()
         .uri(uri)
+        .header("authorization", "Bearer test-token")
         .body(Body::empty())
         .expect("req");
     let (status, bytes) = call(app, req).await;
@@ -167,6 +172,7 @@ async fn json_post(app: axum::Router, uri: &str, body: Value) -> (StatusCode, Va
     let req = Request::builder()
         .method("POST")
         .uri(uri)
+        .header("authorization", "Bearer test-token")
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))
         .expect("req");
@@ -289,6 +295,7 @@ async fn api_chat_rejects_empty_and_missing_session() {
     let req = Request::builder()
         .method("POST")
         .uri(format!("/api/session/{id}/chat"))
+        .header("authorization", "Bearer test-token")
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::json!({"message": "hello"}).to_string(),
@@ -506,6 +513,7 @@ async fn v1_run_rejects_empty_and_streams_auth_error() {
     let req = Request::builder()
         .method("POST")
         .uri(format!("/v1/sessions/{id}/run"))
+        .header("authorization", "Bearer test-token")
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::json!({"message": "hello"}).to_string(),
@@ -533,6 +541,7 @@ async fn router_rejects_wrong_method_and_malformed_json() {
         Request::builder()
             .method("POST")
             .uri("/v1/health")
+            .header("authorization", "Bearer test-token")
             .body(Body::empty())
             .unwrap(),
     )
@@ -544,6 +553,7 @@ async fn router_rejects_wrong_method_and_malformed_json() {
         Request::builder()
             .method("POST")
             .uri("/v1/sessions")
+            .header("authorization", "Bearer test-token")
             .header("content-type", "application/json")
             .body(Body::from("{"))
             .unwrap(),
@@ -676,6 +686,7 @@ async fn api_and_v1_create_with_project_and_scripted_turns() {
     let req = Request::builder()
         .method("POST")
         .uri(format!("/api/session/{api_id}/chat"))
+        .header("authorization", "Bearer test-token")
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::json!({
@@ -708,6 +719,7 @@ async fn api_and_v1_create_with_project_and_scripted_turns() {
     let req = Request::builder()
         .method("POST")
         .uri(format!("/v1/sessions/{v1_id}/run"))
+        .header("authorization", "Bearer test-token")
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::json!({
@@ -846,6 +858,7 @@ async fn steer_queues_a_message_for_the_session() {
         Request::builder()
             .method("POST")
             .uri("/api/session/s1/steer")
+            .header("authorization", "Bearer test-token")
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap()
@@ -948,4 +961,98 @@ async fn eviction_skips_locked_sessions_and_a_poisoned_map() {
 
     poison_mutex(&state.sessions);
     assert_eq!(state.evict_idle_sessions(std::time::Duration::ZERO), 0);
+}
+
+async fn status_with_auth(app: axum::Router, uri: &str, auth: Option<&str>) -> StatusCode {
+    let mut req = Request::builder().uri(uri);
+    if let Some(auth) = auth {
+        req = req.header("authorization", auth);
+    }
+    call(app, req.body(Body::empty()).unwrap()).await.0
+}
+
+#[tokio::test]
+async fn api_and_v1_refuse_requests_without_the_bearer_token() {
+    let app = create_router(test_state());
+    for uri in ["/api/health", "/api/shares", "/v1/health", "/v1/sessions"] {
+        for auth in [
+            None,
+            Some("Bearer wrong-token"),
+            Some("Bearer test-toke"),
+            Some("test-token"),
+        ] {
+            assert_eq!(
+                status_with_auth(app.clone(), uri, auth).await,
+                StatusCode::UNAUTHORIZED,
+                "{uri} {auth:?}"
+            );
+        }
+        assert_eq!(
+            status_with_auth(app.clone(), uri, Some("Bearer test-token")).await,
+            StatusCode::OK,
+            "{uri}"
+        );
+    }
+
+    // A web page's preflight gets no CORS grant.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/api/session/new")
+                .header("origin", "https://evil.example")
+                .header("access-control-request-method", "POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(!resp.status().is_success(), "{}", resp.status());
+    assert!(resp.headers().get("access-control-allow-origin").is_none());
+
+    // An empty token refuses everything, even an empty bearer.
+    let mut open = test_state();
+    open.auth_token = "".into();
+    assert_eq!(
+        status_with_auth(create_router(open), "/api/health", Some("Bearer ")).await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn share_pages_stay_open_but_refuse_paths_and_escape_the_id() {
+    let app = create_router(test_state());
+    for uri in [
+        "/s/..%2Fauth.json",
+        "/s/..%2F..%2Fconfig.md",
+        "/s/%2Fetc%2Fpasswd.json",
+    ] {
+        assert_eq!(
+            status_with_auth(app.clone(), uri, None).await,
+            StatusCode::NOT_FOUND,
+            "{uri}"
+        );
+    }
+    let (st, body) = call(
+        app,
+        Request::builder()
+            .uri("/s/%3Cscript%3Ealert(1)%3C%2Fscript%3E")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("&lt;script&gt;"), "{body}");
+    assert!(!body.contains("<script>"), "{body}");
+}
+
+#[test]
+fn auth_token_comes_from_the_env_or_is_random() {
+    assert_eq!(crate::auth_token_from(Some(" fixed ".into())), "fixed");
+    let made = crate::auth_token_from(Some("  ".into()));
+    assert_eq!(made.len(), 64);
+    assert!(made.bytes().all(|b| b.is_ascii_hexdigit()), "{made}");
+    assert_ne!(crate::auth_token_from(None), made);
 }

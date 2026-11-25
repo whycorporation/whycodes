@@ -819,3 +819,21 @@ fn unread_steering_goes_back_as_queued_prompts() {
     }
     assert!(rx.try_recv().is_err(), "one message, one prompt");
 }
+
+#[test]
+fn share_ids_that_leave_the_share_dir_find_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let shares = dir.path().join("shares");
+    std::fs::create_dir_all(&shares).unwrap();
+    std::fs::write(dir.path().join("auth.json"), "{}").unwrap();
+    std::fs::write(shares.join("abc-1_2.json"), "{}").unwrap();
+    let dirs = [shares.clone()];
+    assert_eq!(
+        find_share_file_in(&dirs, "abc-1_2.json", "json"),
+        Some(shares.join("abc-1_2.json"))
+    );
+    let outside = dir.path().join("auth").to_string_lossy().into_owned();
+    for id in ["../auth", r"..\auth", outside.as_str(), "a/b", "", "<b>"] {
+        assert_eq!(find_share_file_in(&dirs, id, "json"), None, "{id}");
+    }
+}

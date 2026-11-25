@@ -15,10 +15,13 @@ fn ephemeral_port() -> u16 {
         .port()
 }
 
+/// Bearer token the spawned daemon is started with.
+const TOKEN: &str = "sdk-v1-test-token";
+
 async fn wait_connect(base: &str) -> WhyCodesClient {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        match WhyCodesClient::connect(base).await {
+        match WhyCodesClient::connect_with_token(base, TOKEN).await {
             Ok(c) => return c,
             Err(e) if Instant::now() >= deadline => {
                 panic!("daemon at {base} never became healthy: {e}");
@@ -37,6 +40,7 @@ async fn v1_session_models_and_errors_without_llm() {
         .arg("serve")
         .arg(port.to_string())
         .env("WHYCODES_HOME", home.path())
+        .env("WHYCODES_SERVE_TOKEN", TOKEN)
         .current_dir(home.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -47,6 +51,12 @@ async fn v1_session_models_and_errors_without_llm() {
 
     let base = format!("127.0.0.1:{port}");
     let client = wait_connect(&base).await;
+    // The daemon is up; a wrong token still gets nothing.
+    assert!(
+        WhyCodesClient::connect_with_token(&base, "wrong")
+            .await
+            .is_err()
+    );
     let hs = client.health().await.expect("health");
     assert_eq!(hs.protocol, 1);
 

@@ -133,7 +133,13 @@ every value in a `headers` table. A whole `${VAR}` reference is a name, not
 a secret, and prints as written. Setting a secret works; its confirmation
 does not echo the value.
 
-`whycodes serve` writes `.whycodes/serve.lock` (pid, port). A second
+`whycodes serve` writes `.whycodes/serve.lock` (pid, port, token; owner-only
+on Unix). Every `/api` and `/v1` request must send
+`Authorization: Bearer <token>`: loopback is not a boundary, since any web
+page you open can reach `127.0.0.1`, and these routes run tools. The token is
+random per start; set `WHYCODES_SERVE_TOKEN` to fix it. `whycodes connect`
+reads it from that env var, else from the lock of the project it runs in when
+the port matches. Only the read-only share pages (`/s/<id>`) need no token. A second
 invoke on a TTY offers takeover; stale locks (dead PID, 24h, clock skew)
 are removed. CI and `whycodes serve --no-takeover` exit non-zero instead
 of prompting. `whycodes connect` names the lock holder when the daemon is
