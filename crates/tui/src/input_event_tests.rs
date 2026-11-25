@@ -695,7 +695,7 @@ fn command_mode_executes_colon_commands() {
         (":model", |a| {
             assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)))
         }),
-        (":clear", |a| assert!(a.messages.is_empty())),
+        (":clear", |a| assert!(a.clear_session_requested)),
         (":sidebar", |a| assert!(a.sidebar.visible)),
         (":nope", |a| assert!(a.status_message.contains("Unknown"))),
     ];
@@ -732,7 +732,7 @@ fn dialog_keys_confirm_cancel_and_list_jumps() {
     a.confirm("Clear", "?", ConfirmAction::ClearSession);
     a.add_message(ChatRole::User, "x");
     handle_event(&mut a, key(KeyCode::Enter));
-    assert!(a.messages.is_empty());
+    assert!(a.clear_session_requested);
 
     let mut a = app();
     a.alert("Hi", "there");
@@ -3096,8 +3096,11 @@ fn colon_commands_quit_help_theme_clear_sidebar_and_unknown() {
     let mut a = app();
     a.add_message(ChatRole::User, "keep");
     submit_command(&mut a, ":clear");
-    assert!(a.messages.is_empty());
-    assert_eq!(a.status_message, "Session cleared");
+    assert!(
+        a.clear_session_requested,
+        "the run loop starts a new session"
+    );
+    assert_eq!(a.messages.len(), 1, "nothing is cleared until it does");
     assert_eq!(a.mode, AppMode::Normal);
 
     submit_command(&mut a, ":h");
@@ -3621,7 +3624,7 @@ fn colon_sidebar_and_clear_commands() {
     a.add_message(ChatRole::User, "x");
     a.command.buffer = ":clear".into();
     handle_event(&mut a, key(KeyCode::Enter));
-    assert!(a.messages.is_empty());
+    assert!(a.clear_session_requested);
 }
 
 fn click_list_row(a: &mut TuiApp, y: u16, total: usize) {
@@ -6082,14 +6085,25 @@ fn word_right_without_paste_chip_advances_by_word() {
 }
 
 #[test]
-fn confirm_clear_session_wipes_transcript() {
+fn confirm_clear_session_asks_the_run_loop_for_a_new_session() {
     let mut a = app();
     a.add_message(ChatRole::User, "keep?");
     a.confirm("Clear", "wipe?", ConfirmAction::ClearSession);
     let dlg = a.dialogs.active().cloned().expect("confirm");
     confirm_dialog(&mut a, &dlg);
-    assert!(a.messages.is_empty());
-    assert!(a.status_message.contains("cleared"));
+    assert!(a.clear_session_requested, "the run loop runs /clear");
+    // Mid-turn the request is refused rather than left to fire later.
+    let mut busy = app();
+    busy.current_agent_state = AgentState::Generating;
+    busy.confirm("Clear", "wipe?", ConfirmAction::ClearSession);
+    let dlg = busy.dialogs.active().cloned().expect("confirm");
+    confirm_dialog(&mut busy, &dlg);
+    assert!(!busy.clear_session_requested);
+    assert!(
+        busy.status_message.contains("running turn"),
+        "{}",
+        busy.status_message
+    );
 }
 
 #[test]

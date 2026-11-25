@@ -37,6 +37,31 @@ fn req() -> LlmRequest {
     }
 }
 
+/// Like [`serve_once`], also returning the raw request the server read.
+fn serve_once_capture(
+    status: &str,
+    body: &str,
+    content_type: &str,
+) -> (String, std::sync::mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let header = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let payload = format!("{header}{body}");
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+            let _ = stream.write_all(payload.as_bytes());
+        }
+    });
+    (format!("http://{addr}"), rx)
+}
+
 fn serve_once(status: &str, body: &str, content_type: &str) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -60,16 +85,20 @@ fn from_base_blank_keeps_cloud_urls() {
     let cloud = GoogleProvider::from_base(Some("   "));
     assert!(
         cloud
-            .build_url("gemini-test", "k")
+            .build_url("gemini-test")
             .contains("generativelanguage")
     );
     let local = GoogleProvider::from_base(Some("http://127.0.0.1:9/"));
-    let stream = local.build_url("m", "k");
-    assert!(stream.contains("127.0.0.1:9"), "{stream}");
-    assert!(stream.contains("streamGenerateContent"), "{stream}");
-    let complete = local.build_complete_url("m", "k");
-    assert!(complete.contains("generateContent"), "{complete}");
-    assert!(!complete.contains("streamGenerateContent"), "{complete}");
+    let stream = local.build_url("m");
+    assert_eq!(
+        stream,
+        "http://127.0.0.1:9/v1beta/models/m:streamGenerateContent?alt=sse"
+    );
+    let complete = local.build_complete_url("m");
+    assert_eq!(
+        complete,
+        "http://127.0.0.1:9/v1beta/models/m:generateContent"
+    );
     assert_eq!(GoogleProvider::default().name(), "google");
 }
 
@@ -130,84 +159,111 @@ async fn complete_json_parse_error_and_unknown_api_error() {
     );
 }
 
+fn sse(events: &[serde_json::Value]) -> String {
+    events
+        .iter()
+        .map(|e| format!("data: {e}\r\n\r\n"))
+        .collect()
+}
+
+async fn collect(mut stream: crate::provider::ProviderEventStream) -> Vec<StreamEvent> {
+    let mut out = Vec::new();
+    while let Some(ev) = stream.next().await {
+        out.push(ev.unwrap());
+    }
+    out
+}
+
+fn text_of(events: &[StreamEvent]) -> String {
+    events
+        .iter()
+        .filter_map(|ev| match ev {
+            StreamEvent::TextDelta { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
 #[tokio::test]
-async fn stream_http_error_and_usage_stop() {
+async fn stream_http_error_surfaces_the_body() {
     let p = GoogleProvider::from_base(Some(&serve_once("403 Forbidden", "denied", "text/plain")));
     let err = p
         .stream(&req(), "k", "gemini-test")
         .await
         .map(|_| ())
         .unwrap_err();
-    assert!(
-        err.to_string().contains("denied") || !err.to_string().is_empty(),
-        "{err}"
-    );
-
-    let body = serde_json::json!({
-        "candidates": [{
-            "content": {"parts": [{"text": "hello"}]},
-            "finishReason": "STOP"
-        }],
-        "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 3}
-    })
-    .to_string();
-    let p = GoogleProvider::from_base(Some(&serve_once("200 OK", &body, "application/json")));
-    let mut stream = p.stream(&req(), "k", "gemini-test").await.unwrap();
-    let mut text = String::new();
-    let mut saw_usage = false;
-    let mut saw_stop = false;
-    while let Some(ev) = stream.next().await {
-        match ev.unwrap() {
-            StreamEvent::TextDelta { text: d } => text.push_str(&d),
-            StreamEvent::Usage { .. } => saw_usage = true,
-            StreamEvent::MessageStop => saw_stop = true,
-            StreamEvent::MessageDelta { .. } => {}
-            _ => {}
-        }
-    }
-    assert_eq!(text, "hello");
-    assert!(saw_usage);
-    assert!(saw_stop);
+    assert!(err.to_string().contains("denied"), "{err}");
 }
 
-#[test]
-fn stream_body_wraps_array_items_and_skips_invalid_json() {
-    let first = serde_json::json!({
-        "candidates": [{"content": {"parts": [{"text": "one"}]}}]
-    });
-    let second = serde_json::json!({
-        "candidates": [{"content": {"parts": [{"text": "two"}]}}],
-        "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 2}
-    });
-    let body = format!("{}\n,{}", first, second);
-    let events = events_from_google_stream_body(&body);
-    let text: String = events
-        .iter()
-        .filter_map(|ev| match ev {
-            Ok(StreamEvent::TextDelta { text }) => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(text, "two");
-    assert!(
-        events
-            .iter()
-            .any(|ev| matches!(ev, Ok(StreamEvent::MessageStop)))
-    );
-
-    let wrapped = events_from_google_stream_body(
-        r#""usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":4}"#,
-    );
-    assert!(wrapped.iter().any(|ev| matches!(
-        ev,
-        Ok(StreamEvent::Usage {
-            input_tokens: 3,
-            output_tokens: 4
-        })
+/// Regression: `alt=sse` answers `data: {...}` events, but the reply was
+/// parsed as a JSON array, so every API-key Gemini turn came back empty.
+#[tokio::test]
+async fn stream_reads_sse_events_with_the_key_in_a_header() {
+    let body = sse(&[
+        serde_json::json!({"candidates": [{"content": {"parts": [{"text": "hel"}]}}]}),
+        serde_json::json!({
+            "candidates": [{"content": {"parts": [{"text": "lo"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 3}
+        }),
+    ]);
+    let (base, request) = serve_once_capture("200 OK", &body, "text/event-stream");
+    let p = GoogleProvider::from_base(Some(&base));
+    let events = collect(p.stream(&req(), "secret-key", "gemini-test").await.unwrap()).await;
+    assert_eq!(text_of(&events), "hello");
+    assert!(events.iter().any(|e| matches!(
+        e,
+        StreamEvent::Usage {
+            input_tokens: 2,
+            output_tokens: 3
+        }
     )));
-    assert!(events_from_google_stream_body("not-json").is_empty());
-    assert!(events_from_google_stream_body("]\n").is_empty());
-    assert!(events_from_google_stream_body("{\"ok\":1}\n,not-json]}").is_empty());
+    assert!(matches!(events.last(), Some(StreamEvent::MessageStop)));
+
+    let request = request.recv().unwrap().to_ascii_lowercase();
+    let first_line = request.lines().next().unwrap_or_default().to_string();
+    assert!(
+        first_line.contains(":streamgeneratecontent?alt=sse "),
+        "{first_line}"
+    );
+    assert!(!first_line.contains("secret-key"), "{first_line}");
+    assert!(request.contains("x-goog-api-key: secret-key"), "{request}");
+}
+
+#[tokio::test]
+async fn stream_turns_function_calls_into_tool_use() {
+    let body = sse(&[serde_json::json!({
+        "candidates": [{"content": {"parts": [
+            {"functionCall": {"name": "read", "args": {"path": "a.rs"}}}
+        ]}}],
+        "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}
+    })]);
+    let p = GoogleProvider::from_base(Some(&serve_once("200 OK", &body, "text/event-stream")));
+    let events = collect(p.stream(&req(), "k", "gemini-test").await.unwrap()).await;
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            StreamEvent::ToolUse { name, input, .. } if name == "read" && input["path"] == "a.rs"
+        )),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn complete_sends_the_key_in_a_header() {
+    let json = serde_json::json!({
+        "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
+        "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}
+    })
+    .to_string();
+    let (base, request) = serve_once_capture("200 OK", &json, "application/json");
+    let p = GoogleProvider::from_base(Some(&base));
+    p.complete(&req(), "secret-key", "gemini-test")
+        .await
+        .unwrap();
+    let request = request.recv().unwrap().to_ascii_lowercase();
+    let first_line = request.lines().next().unwrap_or_default().to_string();
+    assert!(!first_line.contains("secret-key"), "{first_line}");
+    assert!(request.contains("x-goog-api-key: secret-key"), "{request}");
 }
 
 #[tokio::test]
@@ -232,27 +288,6 @@ async fn complete_candidates_without_parts_are_empty() {
     let p = GoogleProvider::from_base(Some(&serve_once("200 OK", &json, "application/json")));
     let resp = p.complete(&req(), "k", "gemini-test").await.unwrap();
     assert_eq!(resp.content.len(), 2, "{resp:?}");
-}
-
-#[test]
-fn stream_body_skips_candidates_without_parts() {
-    let body = serde_json::json!({
-        "candidates": [
-            {"content": {}},
-            {"content": {"parts": [{"text": "kept"}]}, "finishReason": "STOP"}
-        ],
-        "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}
-    })
-    .to_string();
-    let events = events_from_google_stream_body(&body);
-    let text: String = events
-        .iter()
-        .filter_map(|ev| match ev {
-            Ok(StreamEvent::TextDelta { text }) => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(text, "kept");
 }
 
 #[tokio::test]
