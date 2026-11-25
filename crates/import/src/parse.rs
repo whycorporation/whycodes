@@ -15,15 +15,15 @@ pub fn parse_jsonc(text: &str) -> Result<Value> {
 }
 
 fn strip_jsonc(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
     let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     let mut in_string = false;
     let mut escape = false;
     while i < bytes.len() {
         let c = bytes[i];
         if in_string {
-            out.push(c as char);
+            out.push(c);
             if escape {
                 escape = false;
             } else if c == b'\\' {
@@ -36,41 +36,54 @@ fn strip_jsonc(input: &str) -> String {
         }
         if c == b'"' {
             in_string = true;
-            out.push('"');
+        }
+        if let Some(end) = comment_end(bytes, i) {
+            i = end;
+            continue;
+        }
+        if c == b',' && matches!(next_significant(bytes, i + 1), Some(b'}' | b']')) {
             i += 1;
             continue;
         }
-        if c == b'/' && i + 1 < bytes.len() {
-            if bytes[i + 1] == b'/' {
-                i += 2;
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            if bytes[i + 1] == b'*' {
-                i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    i += 1;
-                }
-                i = (i + 2).min(bytes.len());
-                continue;
-            }
-        }
-        if c == b',' {
-            let mut j = i + 1;
-            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
-                j += 1;
-            }
-            if j < bytes.len() && (bytes[j] == b'}' || bytes[j] == b']') {
-                i += 1;
-                continue;
-            }
-        }
-        out.push(c as char);
+        out.push(c);
         i += 1;
     }
-    out
+    // Only whole ASCII runs (comments, commas) were dropped, so `out` is
+    // still valid UTF-8; the lossy fallback never fires.
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// When a `//` or `/* */` comment starts at `i`, the index just past it.
+fn comment_end(bytes: &[u8], i: usize) -> Option<usize> {
+    if bytes.get(i) != Some(&b'/') {
+        return None;
+    }
+    match bytes.get(i + 1) {
+        Some(b'/') => {
+            let len = bytes[i..].iter().position(|&b| b == b'\n');
+            Some(len.map_or(bytes.len(), |n| i + n))
+        }
+        Some(b'*') => {
+            let body = &bytes[i + 2..];
+            let len = body.windows(2).position(|w| w == b"*/");
+            Some(len.map_or(bytes.len(), |n| i + 2 + n + 2))
+        }
+        _ => None,
+    }
+}
+
+/// The first byte from `i` on that is not whitespace or inside a comment.
+fn next_significant(bytes: &[u8], mut i: usize) -> Option<u8> {
+    while i < bytes.len() {
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+        } else if let Some(end) = comment_end(bytes, i) {
+            i = end;
+        } else {
+            return Some(bytes[i]);
+        }
+    }
+    None
 }
 
 pub fn string_map(value: &Value) -> Option<HashMap<String, String>> {
@@ -264,31 +277,37 @@ pub fn permission_from_lists(
     out
 }
 
+/// `Bash(npm test)` → `bash(npm test)`, `Read(./.env)` → `read(./.env)`,
+/// `Read` / `Read(*)` → `read`.
+///
+/// A scope is never dropped: an allow for one command must not become an
+/// allow for every command, nor a deny for one file a deny for every read.
+/// A scope on a tool without scoped rules is not mapped at all.
 fn rule_to_key(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let tool = if let Some(open) = trimmed.find('(') {
-        &trimmed[..open]
-    } else {
-        trimmed
+    let (tool, scope) = match trimmed.split_once('(') {
+        Some((tool, rest)) => (tool, rest.strip_suffix(')')?.trim()),
+        None => (trimmed, ""),
     };
     let mapped = map_tool_name(tool);
     if mapped.is_empty() {
-        None
-    } else {
-        Some(mapped)
+        return None;
     }
+    if scope.is_empty() || scope == "*" {
+        return Some(mapped);
+    }
+    const SCOPED_TOOLS: &[&str] = &["bash", "read", "edit", "grep", "glob"];
+    SCOPED_TOOLS
+        .contains(&mapped.as_str())
+        .then(|| format!("{mapped}({scope})"))
 }
 
 pub fn map_tool_name(name: &str) -> String {
     match name.trim().to_ascii_lowercase().as_str() {
         "bash" | "shell" | "command" => "bash".into(),
         "read" | "read_file" | "view" => "read".into(),
-        "edit" | "edit_file" | "strreplace" | "str_replace" | "write" | "write_file" => {
-            "edit".into()
-        }
+        "edit" | "edit_file" | "multiedit" | "multi_edit" | "strreplace" | "str_replace"
+        | "write" | "write_file" => "edit".into(),
         "grep" | "search" => "grep".into(),
         "glob" | "find" => "glob".into(),
         "webfetch" | "web_fetch" | "fetch" => "webfetch".into(),
@@ -333,6 +352,38 @@ pub fn hook_from_command(
     }
 }
 
+/// Split a regex tool matcher into tool-match patterns: `Edit|Write` →
+/// `edit`, `edit`… deduplicated; `.*` → `*`; `mcp__.*` → `mcp__*`.
+///
+/// `None` when an alternative uses any other regex syntax: a hook that
+/// silently never fires is worse than one reported as skipped.
+fn matcher_alternatives(matcher: &str) -> Option<Vec<String>> {
+    let matcher = matcher.trim();
+    if matcher.is_empty() || matcher == "*" {
+        return Some(vec!["*".to_string()]);
+    }
+    let mut out: Vec<String> = Vec::new();
+    for alt in matcher.split('|').map(str::trim) {
+        let (name, wildcard) = match alt.strip_suffix(".*") {
+            Some(prefix) => (prefix, "*"),
+            None => (alt, ""),
+        };
+        let plain = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+        if !name.chars().all(plain) || (name.is_empty() && wildcard.is_empty()) {
+            return None;
+        }
+        let pattern = match name {
+            "" => "*".to_string(),
+            name if wildcard.is_empty() => map_tool_name(name),
+            name => format!("{}*", name.to_ascii_lowercase()),
+        };
+        if !out.contains(&pattern) {
+            out.push(pattern);
+        }
+    }
+    Some(out)
+}
+
 /// Claude `settings.json` `hooks` object: `{ "PreToolUse": [ { matcher, hooks: [{type,command}] } ] }`.
 pub fn hooks_from_claude_object(value: &Value, skipped: &mut Vec<String>) -> Vec<HookConfig> {
     let mut out = Vec::new();
@@ -351,6 +402,10 @@ pub fn hooks_from_claude_object(value: &Value, skipped: &mut Vec<String>) -> Vec
         };
         for group in arr {
             let matcher = group.get("matcher").and_then(Value::as_str).unwrap_or("*");
+            let Some(tool_matches) = matcher_alternatives(matcher) else {
+                skipped.push(format!("hook matcher `{matcher}` is not a tool name list"));
+                continue;
+            };
             let hooks = group
                 .get("hooks")
                 .and_then(Value::as_array)
@@ -371,13 +426,15 @@ pub fn hooks_from_claude_object(value: &Value, skipped: &mut Vec<String>) -> Vec
                 };
                 let timeout = hook.get("timeout").and_then(Value::as_u64);
                 let block = event.can_block();
-                out.push(hook_from_command(
-                    event,
-                    matcher,
-                    command.to_string(),
-                    block,
-                    timeout,
-                ));
+                for tool_match in &tool_matches {
+                    out.push(hook_from_command(
+                        event,
+                        tool_match,
+                        command.to_string(),
+                        block,
+                        timeout,
+                    ));
+                }
             }
         }
     }
@@ -561,6 +618,7 @@ mod tests {
             &mut skipped,
         );
         assert_eq!(lists.get("bash"), Some(&PermissionAction::Deny));
+        assert_eq!(lists.get("bash(git *)"), Some(&PermissionAction::Ask));
         assert_eq!(lists.get("read"), Some(&PermissionAction::Allow));
         let nested = permission_from_map(
             &serde_json::json!({"edit": {"action": "ask"}, "glob": {"*": "allow"}}),
@@ -579,6 +637,71 @@ mod tests {
         let unmapped =
             permission_from_map(&serde_json::json!({"x": {"nope": 1}, "y": 3}), &mut skipped);
         assert!(unmapped.is_empty());
+    }
+
+    #[test]
+    fn scoped_rules_keep_their_scope() {
+        let mut skipped = Vec::new();
+        let lists = permission_from_lists(
+            &["Bash(npm test)".into(), "Read(*)".into()],
+            &["WebFetch(domain:example.com)".into()],
+            &["Read(./.env)".into(), "Edit(src/**)".into(), "Bash(".into()],
+            &mut skipped,
+        );
+        assert_eq!(lists.get("bash(npm test)"), Some(&PermissionAction::Allow));
+        assert_eq!(lists.get("read"), Some(&PermissionAction::Allow));
+        assert_eq!(lists.get("read(./.env)"), Some(&PermissionAction::Deny));
+        assert_eq!(lists.get("edit(src/**)"), Some(&PermissionAction::Deny));
+        assert!(!lists.contains_key("bash"), "{lists:?}");
+        assert!(!lists.contains_key("webfetch"), "{lists:?}");
+        let skipped = skipped.join("\n");
+        assert!(
+            skipped.contains("WebFetch(domain:example.com)"),
+            "{skipped}"
+        );
+        assert!(skipped.contains("Bash("), "{skipped}");
+    }
+
+    #[test]
+    fn hook_matchers_split_regex_alternatives() {
+        assert_eq!(
+            matcher_alternatives("Edit|Write|MultiEdit").unwrap(),
+            vec!["edit".to_string()]
+        );
+        assert_eq!(matcher_alternatives(".*").unwrap(), vec!["*".to_string()]);
+        assert_eq!(matcher_alternatives("").unwrap(), vec!["*".to_string()]);
+        assert_eq!(
+            matcher_alternatives("mcp__.*").unwrap(),
+            vec!["mcp__*".to_string()]
+        );
+        assert!(matcher_alternatives("Bash(git.*)").is_none());
+        assert!(matcher_alternatives("^Edit$").is_none());
+        assert!(matcher_alternatives("Edit||Write").is_none());
+        assert_eq!(matcher_alternatives(" * ").unwrap(), vec!["*".to_string()]);
+
+        let mut skipped = Vec::new();
+        let claude = serde_json::json!({
+            "PreToolUse": [
+                {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "fmt"}]},
+                {"matcher": "[ab]+", "hooks": [{"type": "command", "command": "x"}]}
+            ]
+        });
+        let hooks = hooks_from_claude_object(&claude, &mut skipped);
+        let matches: Vec<&str> = hooks.iter().map(|h| h.tool_match.as_str()).collect();
+        assert_eq!(matches, vec!["edit"]);
+        assert!(skipped.iter().any(|s| s.contains("[ab]+")), "{skipped:?}");
+    }
+
+    #[test]
+    fn jsonc_keeps_non_ascii_text_and_commas_before_comments() {
+        let v =
+            parse_jsonc("{\"cmd\": \"C:/Users/Çağrı/x.py\", // yol\n \"n\": [1, /* son */],\n}")
+                .unwrap();
+        assert_eq!(v["cmd"], "C:/Users/Çağrı/x.py");
+        assert_eq!(v["n"], serde_json::json!([1]));
+        let v = parse_jsonc("{\"a\": \"日本\" // tail").unwrap_or_default();
+        assert!(v.is_null(), "{v}");
+        assert_eq!(strip_jsonc("[1, // c"), "[1, ");
     }
 
     #[test]
@@ -815,7 +938,7 @@ mod tests {
         let _ = rule_to_key("(").is_none() || map_tool_name("(") == "(";
         let _ = true || map_tool_name("(") == "(";
 
-        assert_eq!(rule_to_key("Bash(git *)").as_deref(), Some("bash"));
+        assert_eq!(rule_to_key("Bash(git *)").as_deref(), Some("bash(git *)"));
         assert!(rule_to_key("   ").is_none());
         let empty_name = rule_to_key("()");
         assert!(empty_name.is_none());

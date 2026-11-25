@@ -872,6 +872,9 @@ struct CodeAssistSse {
     buffer: crate::line_buffer::LineBuffer,
     pending: VecDeque<whycodes_core::Result<StreamEvent>>,
     call_seq: u64,
+    /// A candidate carried a `finishReason`: the answer is whole even if
+    /// the usage chunk that normally ends the stream never comes.
+    finished: bool,
     done: bool,
 }
 
@@ -881,9 +884,8 @@ impl CodeAssistSse {
             return;
         }
         for ev in events_for_chunk(&line[6..], &mut self.call_seq) {
-            if matches!(ev, StreamEvent::MessageStop) {
-                self.done = true;
-            }
+            self.done |= matches!(ev, StreamEvent::MessageStop);
+            self.finished |= matches!(ev, StreamEvent::MessageDelta { .. });
             self.pending.push_back(Ok(ev));
         }
     }
@@ -918,8 +920,17 @@ impl Stream for CodeAssistSse {
                     ))));
                 }
                 Poll::Ready(None) => {
-                    this.pending.push_back(Ok(StreamEvent::MessageStop));
                     this.done = true;
+                    if this.finished {
+                        this.pending.push_back(Ok(StreamEvent::MessageStop));
+                        continue;
+                    }
+                    // Closed before any finish: a dropped stream, not an answer.
+                    let err = "unexpected EOF before finishReason";
+                    return Poll::Ready(Some(Err(crate::openai_compat::stream_chunk_error(
+                        "codeassist",
+                        err,
+                    ))));
                 }
                 Poll::Pending => return Poll::Pending,
             }
@@ -939,6 +950,7 @@ fn codeassist_sse(bytes: crate::openai_compat::ByteStream) -> ProviderEventStrea
         buffer: crate::line_buffer::LineBuffer::default(),
         pending: VecDeque::new(),
         call_seq: 0,
+        finished: false,
         done: false,
     })
 }
