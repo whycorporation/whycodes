@@ -20,6 +20,7 @@ pub mod service;
 pub mod settings;
 pub mod sync;
 
+pub use code_index::IndexRefresh;
 pub use embed::{DEFAULT_DIM, cosine, decode_blob, embed, encode_blob};
 pub use error::{MemoryError, Result};
 pub use project_key::{project_key, project_root};

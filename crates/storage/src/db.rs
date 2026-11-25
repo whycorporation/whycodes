@@ -562,6 +562,33 @@ impl Database {
         Ok(n)
     }
 
+    /// Every indexed file of the bank with its chunk count and when its
+    /// oldest chunk was written (RFC 3339), in path order.
+    pub fn code_chunk_files(
+        &self,
+        project_key: &str,
+    ) -> crate::error::Result<Vec<(String, usize, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, COUNT(*), MIN(updated_at) FROM code_chunks
+             WHERE project_key = ?1 GROUP BY path ORDER BY path ASC",
+        )?;
+        let rows = stmt.query_map([project_key], map_code_chunk_file)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Drop one file's chunks from the bank; returns how many went.
+    pub fn delete_code_chunks_for_path(
+        &self,
+        project_key: &str,
+        path: &str,
+    ) -> crate::error::Result<usize> {
+        let n = self.conn.execute(
+            "DELETE FROM code_chunks WHERE project_key = ?1 AND path = ?2",
+            rusqlite::params![project_key, path],
+        )?;
+        Ok(n)
+    }
+
     // ── Session chunks (turn RAG) ────────────────────────────────────────
 
     pub fn insert_session_chunk(
@@ -821,6 +848,11 @@ pub fn fts_match_query(text: &str) -> Option<String> {
     }
     let quoted: Vec<String> = words.iter().map(|w| format!("\"{w}\"")).collect();
     Some(quoted.join(" OR "))
+}
+
+/// `(path, chunk count, oldest updated_at)` for [`Database::code_chunk_files`].
+fn map_code_chunk_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, usize, String)> {
+    Ok((row.get(0)?, row.get::<_, i64>(1)? as usize, row.get(2)?))
 }
 
 fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
@@ -1568,6 +1600,28 @@ mod tests {
         assert_eq!(rows[0].text, "fn a() {}");
         assert_eq!(rows[0].embedding, emb);
         assert_eq!(db.list_code_chunks("proj", 1).unwrap().len(), 1);
+
+        db.insert_code_chunk("c4", "proj", "src/a.rs", 8, 20, "fn a2() {}", &emb)
+            .unwrap();
+        let files = db.code_chunk_files("proj").unwrap();
+        let summary: Vec<(&str, usize)> = files.iter().map(|(p, n, _)| (p.as_str(), *n)).collect();
+        assert_eq!(summary, [("src/a.rs", 2), ("src/b.rs", 1)]);
+        assert!(files.iter().all(|(_, _, at)| at.contains('T')), "{files:?}");
+        assert_eq!(
+            db.delete_code_chunks_for_path("proj", "src/a.rs").unwrap(),
+            2
+        );
+        assert_eq!(
+            db.delete_code_chunks_for_path("proj", "src/a.rs").unwrap(),
+            0
+        );
+        assert_eq!(
+            db.code_chunk_files("other").unwrap().len(),
+            1,
+            "other banks untouched"
+        );
+        db.insert_code_chunk("c5", "proj", "src/c.rs", 1, 2, "fn c() {}", &emb)
+            .unwrap();
         assert_eq!(db.clear_code_chunks("proj").unwrap(), 2);
         assert!(db.list_code_chunks("proj", 10).unwrap().is_empty());
     }
@@ -1642,6 +1696,8 @@ mod tests {
         );
         assert!(db.list_code_chunks("pk", 10).is_err());
         assert!(db.clear_code_chunks("pk").is_err());
+        assert!(db.code_chunk_files("pk").is_err());
+        assert!(db.delete_code_chunks_for_path("pk", "a.rs").is_err());
         assert!(
             db.insert_session_chunk("id", "pk", "s", 0, "t", &[])
                 .is_err()
