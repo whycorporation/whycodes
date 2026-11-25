@@ -137,6 +137,19 @@ pub(crate) fn file_tool_path(tc: &ToolCall) -> Option<String> {
     if path.is_empty() { None } else { Some(path) }
 }
 
+/// Every path a file tool call touches, normalised like [`file_tool_path`].
+/// `apply_patch` writes each `+++` / `diff --git` header target, which wins
+/// over its `path` (or stands in when `path` is absent).
+pub(crate) fn file_tool_paths(tc: &ToolCall) -> Vec<String> {
+    if tc.name == "apply_patch" {
+        return whycodes_tools::apply_patch::patch_targets(&tc.arguments)
+            .into_iter()
+            .map(|p| p.replace('\\', "/"))
+            .collect();
+    }
+    file_tool_path(tc).into_iter().collect()
+}
+
 /// Tools that must never fan out in parallel (side effects, races, or UI ask).
 pub(crate) const SERIAL_TOOLS: &[&str] = &[
     "bash",

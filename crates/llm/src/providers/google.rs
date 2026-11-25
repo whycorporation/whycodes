@@ -1,17 +1,10 @@
 /// Google Gemini LLM provider.
 /// Uses the Gemini generateContent API with streaming support.
-use std::collections::VecDeque;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
-use futures::Stream;
 use serde_json::Value;
-use whycodes_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
+use whycodes_core::types::{ContentBlock, LlmRequest, LlmResponse, Usage};
 
 use crate::json_value::{self, arr, obj, str as jstr};
-use crate::provider::{
-    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
-};
+use crate::provider::{LlmProvider, ProviderResponseFuture, ProviderStreamFuture};
 
 pub struct GoogleProvider {
     name: String,
@@ -35,30 +28,30 @@ impl GoogleProvider {
         }
     }
 
-    pub(crate) fn build_url(&self, model: &str, api_key: &str) -> String {
-        if let Some(base) = self.base_url.as_deref() {
-            let base = base.trim_end_matches('/');
-            return format!(
-                "{base}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}"
-            );
-        }
+    /// Streaming endpoint. The key goes in the `x-goog-api-key` header, not
+    /// the query string: reqwest puts the URL in its error text, and that
+    /// text reaches the TUI and the logs.
+    pub(crate) fn build_url(&self, model: &str) -> String {
         format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:{}?key={}",
-            model, "streamGenerateContent?alt=sse", api_key
+            "{}/{model}:streamGenerateContent?alt=sse",
+            self.models_base()
         )
     }
 
-    pub(crate) fn build_complete_url(&self, model: &str, api_key: &str) -> String {
-        if let Some(base) = self.base_url.as_deref() {
-            let base = base.trim_end_matches('/');
-            return format!("{base}/v1beta/models/{model}:generateContent?key={api_key}");
+    pub(crate) fn build_complete_url(&self, model: &str) -> String {
+        format!("{}/{model}:generateContent", self.models_base())
+    }
+
+    fn models_base(&self) -> String {
+        match self.base_url.as_deref() {
+            Some(base) => format!("{}/v1beta/models", base.trim_end_matches('/')),
+            None => "https://generativelanguage.googleapis.com/v1beta/models".to_string(),
         }
-        format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            model, api_key
-        )
     }
 }
+
+/// Header carrying a Gemini API key ([`GoogleProvider::build_url`]).
+const API_KEY_HEADER: &str = "x-goog-api-key";
 
 impl LlmProvider for GoogleProvider {
     fn name(&self) -> &str {
@@ -83,8 +76,9 @@ impl LlmProvider for GoogleProvider {
             }
             let body = self.build_body(request);
 
-            let url = self.build_complete_url(model, api_key);
+            let url = self.build_complete_url(model);
             let resp = crate::client_identity::post(&url)
+                .header(API_KEY_HEADER, api_key)
                 .json(&body)
                 .send()
                 .await
@@ -133,8 +127,9 @@ impl LlmProvider for GoogleProvider {
             let mut body = self.build_body(request);
             json_value::insert(&mut body, "generationConfig", obj([]));
 
-            let url = self.build_url(model, api_key);
+            let url = self.build_url(model);
             let resp = crate::client_identity::post(&url)
+                .header(API_KEY_HEADER, api_key)
                 .json(&body)
                 .send()
                 .await
@@ -148,10 +143,11 @@ impl LlmProvider for GoogleProvider {
                 )));
             }
 
-            let text = resp.text().await.unwrap_or_default();
-            Ok(Box::pin(GoogleReplay {
-                pending: events_from_google_stream_body(&text).into(),
-            }) as ProviderEventStream)
+            // `alt=sse`: `data: {GenerateContentResponse}` events, the same
+            // shape Code Assist streams (text, function calls, usage).
+            Ok(super::codeassist::gemini_sse(
+                crate::openai_compat::response_bytes(resp),
+            ))
         })
     }
 }
@@ -279,72 +275,6 @@ fn finish_reason_from_candidates(event: &Value) -> Option<String> {
     event["candidates"][0]["finishReason"]
         .as_str()
         .map(str::to_string)
-}
-
-fn text_deltas_from_candidates(event: &Value) -> Vec<StreamEvent> {
-    let mut out = Vec::new();
-    if let Some(candidates) = event["candidates"].as_array() {
-        for c in candidates {
-            out.extend(candidate_text_deltas(c));
-            if let Some(reason) = c["finishReason"].as_str() {
-                out.push(StreamEvent::MessageDelta {
-                    delta: obj([("finishReason", jstr(reason))]),
-                });
-            }
-        }
-    }
-    out
-}
-
-fn candidate_text_deltas(candidate: &Value) -> Vec<StreamEvent> {
-    candidate["content"]["parts"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|part| {
-            part["text"].as_str().map(|text| StreamEvent::TextDelta {
-                text: text.to_string(),
-            })
-        })
-        .collect()
-}
-
-/// Gemini stream body is a JSON array of objects, often split as `[{…}\n,{…}]`.
-fn events_from_google_stream_body(text: &str) -> Vec<whycodes_core::Result<StreamEvent>> {
-    let mut pending = Vec::new();
-    let clean = text.replace("}\n,{", "}\n~{").replace("]\n", "");
-    for item_str in clean.split("}\n~").filter(|s| !s.is_empty()) {
-        let item = if item_str.starts_with('{') {
-            item_str.to_string()
-        } else {
-            format!("{{{}}}", item_str.replace("]}", "}").replace("]\n", ""))
-        };
-
-        let Ok(event) = serde_json::from_str::<Value>(&item) else {
-            continue;
-        };
-        pending.extend(text_deltas_from_candidates(&event).into_iter().map(Ok));
-        if let Some(usage) = event.get("usageMetadata") {
-            pending.push(Ok(StreamEvent::Usage {
-                input_tokens: usage["promptTokenCount"].as_u64().unwrap_or(0),
-                output_tokens: usage["candidatesTokenCount"].as_u64().unwrap_or(0),
-            }));
-            pending.push(Ok(StreamEvent::MessageStop));
-        }
-    }
-    pending
-}
-
-struct GoogleReplay {
-    pending: VecDeque<whycodes_core::Result<StreamEvent>>,
-}
-
-impl Stream for GoogleReplay {
-    type Item = whycodes_core::Result<StreamEvent>;
-
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Poll::Ready(self.get_mut().pending.pop_front())
-    }
 }
 
 #[cfg(test)]
