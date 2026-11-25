@@ -927,6 +927,12 @@ impl Stream for CodeAssistSse {
     }
 }
 
+/// A Gemini `alt=sse` stream (Code Assist, or the API-key
+/// `generativelanguage` route) as whycodes events.
+pub(crate) fn gemini_sse(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
+    codeassist_sse(bytes)
+}
+
 fn codeassist_sse(bytes: crate::openai_compat::ByteStream) -> ProviderEventStream {
     Box::pin(CodeAssistSse {
         bytes,
