@@ -1046,3 +1046,11 @@ fn configuration_result_walks_dotted_sections() {
         json!([null])
     );
 }
+
+/// Regression: stderr was piped and never read, so a server that logs a lot
+/// blocked on a full pipe and `initialize` never got its answer.
+#[tokio::test]
+async fn a_server_flooding_stderr_still_answers() {
+    let client = start_fake("stderr_flood").await;
+    drop(client);
+}

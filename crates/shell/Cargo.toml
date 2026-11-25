@@ -64,7 +64,7 @@ grep-searcher.workspace = true
 grep-regex.workspace = true
 grep-printer = { version = "=0.3.1", default-features = false }
 globset = "=0.4.21"
-walkdir = "=2.5.0"
+walkdir = "=2.5.1"
 uucore = "=0.12.0"
 uu_cat = "=0.12.0"
 uu_cp = "=0.12.0"

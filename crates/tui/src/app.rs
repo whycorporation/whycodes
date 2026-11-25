@@ -1451,6 +1451,10 @@ pub struct TuiApp {
     pub(crate) input_cursor: usize,
     /// First Esc of a double-Esc clear/cancel gesture.
     pub(crate) esc_armed_at: Option<std::time::Instant>,
+    /// Ctrl+L or `:clear` confirmed: the run loop runs `/clear` (a new
+    /// session) once idle. Emptying `messages` alone only cleared the
+    /// screen; the next prompt still sent the whole old conversation.
+    pub(crate) clear_session_requested: bool,
     /// Last prompt insert (typed char or paste). Windows PowerShell paste
     /// of ASCII `i` arrives as Tab / Ctrl+I one key at a time; a Tab that
     /// follows a recent insert is recovered as `i` instead of ToggleFocus.
@@ -2387,6 +2391,7 @@ impl TuiApp {
             input_history_idx: 0,
             input_cursor: 0,
             esc_armed_at: None,
+            clear_session_requested: false,
             last_prompt_insert_at: None,
             input_batch_seq: 0,
             last_prompt_insert_batch: 0,
