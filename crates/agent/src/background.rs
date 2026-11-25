@@ -742,6 +742,7 @@ fn append_output(job: &Arc<Mutex<JobInner>>, chunk: &str) {
 /// reading its length for every chunk dominated noisy commands on Windows.
 struct ScratchLog {
     file: std::fs::File,
+    path: PathBuf,
     len: u64,
 }
 
@@ -771,7 +772,10 @@ fn claim_job_log(next_id: &AtomicU64, working_dir: &Path) -> (String, Option<Scr
                 .open(dir.join(format!("{id}.log")))
         });
         match opened {
-            Ok(file) => return (id, Some(ScratchLog { file, len: 0 })),
+            Ok(file) => {
+                let path = dir.join(format!("{id}.log"));
+                return (id, Some(ScratchLog { file, path, len: 0 }));
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && dir.is_dir() => continue,
             Err(e) => {
                 tracing::debug!(error = %e, "background scratch log skipped");
@@ -875,6 +879,39 @@ fn complete_utf8_len(bytes: &[u8]) -> usize {
     }
 }
 
+/// A job whose in-memory tail was cut often fits again once cleaned: a test
+/// run's thousands of `... ok` lines fold to three. Its complete log then
+/// replaces the tail, so the model sees how the run started, not only its end.
+fn restore_from_log(g: &mut JobInner) {
+    if !g.output.starts_with('…') {
+        return;
+    }
+    let Some(log) = g.log.as_ref() else {
+        return;
+    };
+    if let Some(full) = cleaned_log_if_fits(&log.path, log.len) {
+        g.output = full;
+    }
+}
+
+/// The whole log, cleaned, when it was kept in full and cleaning brings it
+/// under [`MAX_JOB_OUTPUT_BYTES`].
+fn cleaned_log_if_fits(path: &Path, len: u64) -> Option<String> {
+    // A log that reached its cap stopped recording: its end is missing.
+    if len >= MAX_JOB_LOG_BYTES {
+        return None;
+    }
+    let raw = match std::fs::read(path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            tracing::debug!(error = %e, "background log re-read skipped");
+            return None;
+        }
+    };
+    let text = whycodes_sandbox::clean_terminal_output(&String::from_utf8_lossy(&raw));
+    (text.len() <= MAX_JOB_OUTPUT_BYTES).then_some(text)
+}
+
 fn finalize_job(
     reg: &BackgroundRegistry,
     job: &Arc<Mutex<JobInner>>,
@@ -892,6 +929,7 @@ fn finalize_job(
         g.status = status;
         g.exit_code = exit_code;
         g.finished = Some(Instant::now());
+        restore_from_log(&mut g);
     }
     reg.emit(BackgroundEvent {
         id: id.to_string(),
