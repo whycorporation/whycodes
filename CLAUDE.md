@@ -4,57 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository rules
 
-Read `AGENTS.md` before changing code. It contains the repository's required build-after-edit workflow, CI budget rules, and TUI/terminal pitfalls. `CONTRIBUTING.md` is the authoritative short pre-PR checklist. For terminal event-loop, mouse, clipboard, `/dev/tty`, or signal changes, read `docs/knowhow.md` first and run the manual checks in `docs/tui-term-matrix.md`.
+@AGENTS.md
 
-This is a Rust 2024 workspace. Cargo package names have the `whycodes-` prefix even when their directories do not (`crates/llm` is `whycodes-llm`). Run commands below from the repository root unless a command changes directories explicitly.
+`AGENTS.md` (above) is the shared rulebook: build after every change, the budget ratchets, commit/push, releases, coverage, and the workspace map. This file only adds what it does not cover. `CONTRIBUTING.md` is the short pre-PR checklist. For terminal event-loop, mouse, clipboard, `/dev/tty`, or signal changes, read `docs/knowhow.md` first and run the manual checks in `docs/tui-term-matrix.md`.
 
-## Build, run, and test
+## Run and test
 
 ```bash
-# Day-to-day CLI build and run
-cargo build -p whycodes-cli
 cargo run -p whycodes-cli -- -d .
 
-# Compilation checks: start narrow, widen for cross-crate changes
-cargo check -p whycodes-<crate>
-cargo check --workspace
-
-# Tests — only what the diff touches. Do not run --workspace for a leaf edit.
-python scripts/affected_tests.py --paths crates/<crate>/src/<module>.rs --execute
-# Whole crate (lib.rs / main.rs / crate Cargo.toml) plus dependents' --lib:
-python scripts/affected_tests.py --paths crates/<crate>/src/lib.rs --execute
-
-# One test by name, when you already know it
+# One test by name / one integration test exactly
 cargo test -p whycodes-<crate> <test-name>
-
-# One integration test exactly
-cargo test -p whycodes-<crate> --test <integration-target> <test-name> -- --exact
-# Example:
 cargo test -p whycodes-cli --test cli_args test_cli_help -- --exact
-
-# Formatting and linting
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-# Faster targeted Clippy while iterating
-cargo clippy -p whycodes-<crate> --all-targets -- -D warnings
 ```
 
-After edits to Rust or Cargo manifests, run a targeted `cargo check` (or build the CLI when its binary path changed), the relevant crate tests, formatting, targeted Clippy, and the repository ratchets:
-
-```bash
-python scripts/check_panic_budget.py
-python scripts/check_swallowed_error_budget.py
-python scripts/check_dependency_boundaries.py
-python scripts/check_tracked_secrets.py
-```
-
-Before a PR, run the workspace-wide formatting, Clippy, and test commands plus:
-
-```bash
-python scripts/check_sdk_protocol.py
-```
-
-The budget scripts are ratchets, not formatters: new panic sites, swallowed errors, or internal crate edges require deliberate budget/allowlist changes. CI also checks benchmark ceilings, installer scripts, a release workspace build, and coverage (98.5% workspace floor; selected foundational crates have 100% floors). See `.github/workflows/ci.yml` and `docs/coverage.md` when a change affects those areas. **Do not push coverage-related changes until `scripts/coverage.sh` is green locally** (`AGENTS.md`).
+Before a PR, also run workspace-wide `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, the tests, and `python scripts/check_sdk_protocol.py`. CI also checks benchmark ceilings, installer scripts, a release workspace build, and coverage (98.5% workspace floor; selected foundational crates have 100% floors): see `.github/workflows/ci.yml` and `docs/coverage.md`.
 
 ### TypeScript SDK
 
@@ -88,8 +52,6 @@ The complete crate map and rationale are in `docs/architecture.md`; allowed inte
 - **Services** add domain behavior: `llm`, `session`, `memory`, `plugin`, `tools`, and `mcp`.
 - **Orchestration** lives in `agent`: the model/tool loop, context compaction, permission and sandbox gates, subagents, and tool execution scheduling.
 - **Applications** are `cli`, `tui`, `server`, and the Rust `sdk`. `whycodes-cli` is the composition root and produces the repository's only executable, `whycodes`; the server and self-update features are enabled by default.
-
-Keep leaf types, traits, shared errors, logging, and path concepts in `core`. User-loaded configuration and policy belong in `config`. `config` may depend on `core`, but `core` must never depend on or re-export `config`.
 
 ### Runtime flow
 
