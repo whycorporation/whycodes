@@ -310,17 +310,25 @@ pub(super) fn refresh_session_memory(
     // the provider keeps the whole history cached. Recall rides on the user
     // message instead.
     session.set_system_prompt(&with_project_memory(&base, project_dir, config, None));
-    session.turn_context = turn_recall(project_dir, config, query);
+    session.turn_context = turn_recall(project_dir, config, query, &session.id);
 }
 
 /// Memory recall for this turn's user message; `None` without a query.
+/// `session_id`'s own turns are already in context and are not recalled.
 fn turn_recall(
     project_dir: &std::path::Path,
     config: &Config,
     query: Option<&str>,
+    session_id: &str,
 ) -> Option<String> {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
-    whycodes_memory::recall_turn_context(project_dir, &data_dir, &memory_settings(config), query?)
+    whycodes_memory::recall_turn_context(
+        project_dir,
+        &data_dir,
+        &memory_settings(config),
+        query?,
+        Some(session_id),
+    )
 }
 
 pub(super) fn memory_service(

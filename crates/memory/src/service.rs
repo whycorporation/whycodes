@@ -308,12 +308,25 @@ impl MemoryService {
         top_k: usize,
         min_score: f32,
     ) -> Result<SearchPage<SessionHit>> {
+        self.session_hits(query, top_k, min_score, None)
+    }
+
+    /// Ranked session turns, leaving out `skip_session`'s own turns before
+    /// `top_k` is applied.
+    fn session_hits(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: f32,
+        skip_session: Option<&str>,
+    ) -> Result<SearchPage<SessionHit>> {
         let db = self.open_db()?;
         let page = db.search_session_chunks(&self.bank_key, query, FTS_CANDIDATES)?;
         let q = self.embed_text(query);
         let mut hits: Vec<SessionHit> = page
             .rows
             .into_iter()
+            .filter(|entry| skip_session != Some(entry.session_id.as_str()))
             .filter_map(|entry| {
                 let v = decode_blob(&entry.embedding);
                 if v.is_empty() || v.len() != q.len() {
@@ -469,22 +482,32 @@ impl MemoryService {
     }
 
     pub fn build_inject_block(&self, query: Option<&str>) -> Result<String> {
-        let (index, mut parts) = self.inject_parts(query)?;
+        let (index, mut parts) = self.inject_parts(query, None)?;
         parts.splice(0..0, index);
         Ok(parts.join("\n\n"))
     }
 
     /// Only the query-dependent part: recalled memories, code and past
     /// sessions. The MEMORY.md index is left to the system prompt.
-    pub fn build_recall_block(&self, query: Option<&str>) -> Result<String> {
-        Ok(self.inject_parts(query)?.1.join("\n\n"))
+    /// `current_session`'s own turns are already in context, so they are
+    /// never recalled as past sessions.
+    pub fn build_recall_block(
+        &self,
+        query: Option<&str>,
+        current_session: Option<&str>,
+    ) -> Result<String> {
+        Ok(self.inject_parts(query, current_session)?.1.join("\n\n"))
     }
 
     /// `(MEMORY.md index block, recall blocks)`. The recall blocks share one
     /// budget, `recall_token_budget`, in priority order: memories, code,
     /// past sessions. The index has its own cap (`max_index_bytes`) and does
     /// not change what is recalled, so both callers recall the same hits.
-    fn inject_parts(&self, query: Option<&str>) -> Result<(Option<String>, Vec<String>)> {
+    fn inject_parts(
+        &self,
+        query: Option<&str>,
+        current_session: Option<&str>,
+    ) -> Result<(Option<String>, Vec<String>)> {
         if !self.settings.enabled {
             return Ok((None, Vec::new()));
         }
@@ -561,13 +584,14 @@ impl MemoryService {
         }
 
         if self.settings.session_inject
-            && let Ok(sess_hits) = self.search_sessions(
+            && let Ok(sess_page) = self.session_hits(
                 q,
                 self.settings.session_top_k,
                 self.settings.session_min_score,
+                current_session,
             )
         {
-            let sessions = sess_hits.iter().map(|hit| {
+            let sessions = sess_page.hits.iter().map(|hit| {
                 let sid = &hit.entry.session_id;
                 let short = &sid[..8.min(sid.len())];
                 format!(
@@ -714,11 +738,15 @@ pub fn apply_memory_prompt(
 /// prompt: a system prompt that changes every turn invalidates the provider
 /// prompt cache for the whole history (43k tokens: 1.7 s → 2.6 s to first
 /// token, 43,392 → 1,152 cached tokens).
+///
+/// `current_session` is the session the message belongs to: its earlier
+/// turns are already in the request and are not recalled again.
 pub fn recall_turn_context(
     project_path: &Path,
     data_dir: &Path,
     settings: &MemorySettings,
     query: &str,
+    current_session: Option<&str>,
 ) -> Option<String> {
     if !settings.enabled {
         return None;
@@ -727,7 +755,9 @@ pub fn recall_turn_context(
         Ok(svc) => svc,
         Err(e) => return skip_turn_context(&e),
     };
-    let block = svc.build_recall_block(Some(query)).unwrap_or_default();
+    let block = svc
+        .build_recall_block(Some(query), current_session)
+        .unwrap_or_default();
     wrap_turn_context(block.trim())
 }
 
@@ -964,6 +994,24 @@ mod tests {
         assert!(hits[0].entry.text.contains("retry"));
         let block = svc.build_inject_block(Some("retry loop")).unwrap();
         assert!(block.contains("Past sessions"), "{block}");
+
+        // The session asking already has its own turns in context.
+        let own = svc
+            .build_recall_block(Some("retry loop"), Some("sess-aaa"))
+            .unwrap();
+        assert!(!own.contains("Past sessions"), "{own}");
+        svc.index_session_turn(
+            "sess-bbb",
+            0,
+            "Where is the retry loop configured?",
+            "Retry loop settings are in the llm crate.",
+        )
+        .unwrap();
+        let other = svc
+            .build_recall_block(Some("retry loop"), Some("sess-aaa"))
+            .unwrap();
+        assert!(other.contains("session sess-bbb"), "{other}");
+        assert!(!other.contains("session sess-aaa"), "{other}");
     }
 
     #[test]
@@ -1896,13 +1944,13 @@ mod tests {
         };
         let (_dir, _data, _project, svc) = open_test_service(settings);
         svc.remember("recall block local fact", None).unwrap();
-        let recall = svc.build_recall_block(Some("local fact")).unwrap();
+        let recall = svc.build_recall_block(Some("local fact"), None).unwrap();
         assert!(recall.contains("# Recalled Memories"), "{recall}");
         assert!(!recall.contains("# Auto Memory"), "{recall}");
         let both = svc.build_inject_block(Some("local fact")).unwrap();
         assert!(both.starts_with("# Auto Memory"), "{both}");
         assert!(both.ends_with(&recall), "{both}");
-        assert_eq!(svc.build_recall_block(None).unwrap(), "");
+        assert_eq!(svc.build_recall_block(None, None).unwrap(), "");
     }
 
     #[test]
@@ -1961,7 +2009,8 @@ mod tests {
         let (dir, data, project, svc) = open_test_service(settings.clone());
         svc.remember("turn context retry loop fact", None).unwrap();
 
-        let ctx = recall_turn_context(&project, &data, &settings, "retry loop").expect("hits");
+        let ctx =
+            recall_turn_context(&project, &data, &settings, "retry loop", None).expect("hits");
         assert!(ctx.starts_with("\n\n<recalled-context>\n"), "{ctx}");
         assert!(ctx.ends_with("\n</recalled-context>"), "{ctx}");
         assert!(ctx.contains("turn context retry loop fact"), "{ctx}");
@@ -1972,17 +2021,23 @@ mod tests {
             ..settings.clone()
         };
         assert_eq!(
-            recall_turn_context(&project, &data, &quiet, "retry loop"),
+            recall_turn_context(&project, &data, &quiet, "retry loop", None),
             None
         );
         assert_eq!(
-            recall_turn_context(&project, &data, &MemorySettings::disabled(), "retry loop"),
+            recall_turn_context(
+                &project,
+                &data,
+                &MemorySettings::disabled(),
+                "retry loop",
+                None
+            ),
             None
         );
         let blocked = dir.path().join("blocked-data");
         std::fs::write(&blocked, "file").unwrap();
         assert_eq!(
-            recall_turn_context(&project, &blocked, &settings, "q"),
+            recall_turn_context(&project, &blocked, &settings, "q", None),
             None
         );
     }
