@@ -860,7 +860,7 @@ fn shared_buf_collects_writes() {
     assert!(buf.take().is_empty());
 
     // A reader thread that panicked mid-write must not lose the output.
-    let inner = std::sync::Arc::clone(&buf.0);
+    let inner = std::sync::Arc::clone(&buf.inner);
     let _ = std::thread::spawn(move || {
         let _guard = inner.lock().expect("lock");
         panic!("poison shared buf");
@@ -868,6 +868,35 @@ fn shared_buf_collects_writes() {
     .join();
     buf.write_all(b"cd").expect("write after poison");
     assert_eq!(buf.take(), b"cd");
+}
+
+#[test]
+fn shared_buf_keeps_head_and_tail_past_the_cap() {
+    use std::io::Write;
+    let mut buf = crate::policy::SharedBuf::with_cap(8);
+    buf.write_all(b"abcdef").expect("write");
+    buf.write_all(b"gh").expect("write");
+    assert_eq!(buf.take(), b"abcdefgh");
+
+    // One write larger than the tail, then small writes rolling the tail.
+    buf.write_all(b"0123456789").expect("write");
+    assert_eq!(
+        buf.take(),
+        b"0123
+[2 bytes of output dropped]
+6789"
+    );
+    buf.write_all(b"0123").expect("write");
+    buf.write_all(b"ab").expect("write");
+    buf.write_all(b"cde").expect("write");
+    buf.write_all(b"fgh").expect("write");
+    assert_eq!(
+        buf.take(),
+        b"0123
+[4 bytes of output dropped]
+efgh"
+    );
+    assert!(buf.take().is_empty());
 }
 
 #[test]

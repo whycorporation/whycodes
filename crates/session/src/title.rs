@@ -184,12 +184,16 @@ fn strip_leading_filler(s: &str) -> &str {
 /// Normalize a model- or heuristic-produced title for storage/display.
 pub fn sanitize_title(raw: &str) -> String {
     let mut s = raw.trim().to_string();
-    // Strip wrapping quotes the model often adds.
-    if (s.starts_with('"') && s.ends_with('"'))
-        || (s.starts_with('\'') && s.ends_with('\''))
-        || (s.starts_with('“') && s.ends_with('”'))
-    {
-        s = s[1..s.len() - 1].trim().to_string();
+    // Strip wrapping quotes the model often adds. By char, not byte: `“`
+    // is three bytes, and a lone `"` is both the opening and the closing.
+    for (open, close) in [('"', '"'), ('\'', '\''), ('“', '”')] {
+        if let Some(inner) = s
+            .strip_prefix(open)
+            .and_then(|rest| rest.strip_suffix(close))
+        {
+            s = inner.trim().to_string();
+            break;
+        }
     }
     // Drop a trailing period/exclamation (keep `?` rare titles intact? drop all).
     while s.ends_with(['.', '!', ':', ';', ',']) {
@@ -312,6 +316,10 @@ mod tests {
         assert_eq!(sanitize_title("'Single title'"), "Single title");
         assert_eq!(sanitize_title("Title!!!  "), "Title");
         assert_eq!(sanitize_title("\"Double title\""), "Double title");
+        // Regression: byte slicing panicked on curly quotes and a lone `"`.
+        assert_eq!(sanitize_title("“Fix login bug”"), "Fix login bug");
+        assert_eq!(sanitize_title("\""), "\"");
+        assert_eq!(sanitize_title("''"), "");
         assert_eq!(sanitize_title("a\n\tb"), "a b");
         let long = "é".repeat(70);
         let cleaned = sanitize_title(&long);
