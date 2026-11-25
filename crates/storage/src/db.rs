@@ -688,6 +688,7 @@ impl Database {
                 rows,
                 matched: corpus,
                 corpus,
+                ranked: false,
             });
         };
         match self.fts_rows(table, cols, (project_key, &fts_query, limit), map) {
@@ -695,6 +696,7 @@ impl Database {
                 rows,
                 matched,
                 corpus,
+                ranked: true,
             }),
             Err(e) => {
                 tracing::warn!(table, error = %e, "fts index unavailable; scanning the bank");
@@ -703,6 +705,7 @@ impl Database {
                     matched: rows.len(),
                     rows,
                     corpus,
+                    ranked: false,
                 })
             }
         }
@@ -777,6 +780,9 @@ pub struct FtsPage<T> {
     pub matched: usize,
     /// Rows in the bank.
     pub corpus: usize,
+    /// `rows` are in BM25 order. `false` on a browse or a scan without the
+    /// index, where they come in storage order and rank nothing.
+    pub ranked: bool,
 }
 
 /// FTS5 `MATCH` string for free text: every word of two or more characters,
@@ -1712,8 +1718,10 @@ mod tests {
         let code = db.search_code_chunks("p", "memories", 5).unwrap();
         assert_eq!((code.matched, code.corpus), (1, 2));
         assert_eq!(code.rows[0].path, "b.rs");
+        assert!(code.ranked, "an FTS match comes in BM25 order");
         let browse = db.search_code_chunks("p", "", 5).unwrap();
         assert_eq!(browse.rows[0].path, "a.rs", "browse is path order");
+        assert!(!browse.ranked);
         db.clear_code_chunks("p").unwrap();
         assert_eq!(
             db.search_code_chunks("p", "memories", 5).unwrap().matched,
@@ -1739,5 +1747,6 @@ mod tests {
         db.insert_memory("m2", "p", "unrelated", b"", None).unwrap();
         let page = db.search_memories("p", "sqlite", 1).unwrap();
         assert_eq!((page.rows.len(), page.matched, page.corpus), (2, 2, 2));
+        assert!(!page.ranked, "a scan without the index ranks nothing");
     }
 }

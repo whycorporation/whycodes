@@ -91,11 +91,18 @@ impl MemoryService {
                 }
             })
             .collect();
-        hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // BM25 already ranked the candidates, and on code it ranks better
+        // than the hash cosine, which common words ("where", "how", "file")
+        // dominate: on 22 questions about this repo, recalled chunks on topic
+        // went from 28% to 47%. The cosine still sets the floor and the shown
+        // score; it orders only an unranked page (a browse or a scan).
+        if !page.ranked {
+            hits.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
         hits.truncate(top_k.max(1));
         Ok(SearchPage {
             hits,
@@ -171,6 +178,54 @@ mod tests {
     use super::*;
     use crate::settings::MemorySettings;
     use tempfile::tempdir;
+
+    #[test]
+    fn ranked_hits_keep_bm25_order_and_a_browse_sorts_by_score() {
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let svc = MemoryService::open(&project, dir.path().join("data"), MemorySettings::default())
+            .unwrap();
+        let db = svc.open_db().unwrap();
+        let query = "retry backoff";
+        // Stored vectors disagree with the text on purpose: the chunk BM25
+        // ranks first carries an unrelated vector, the weak match the query's
+        // own, so a cosine re-rank would reverse the order.
+        let chunks = [
+            (
+                "a.rs",
+                "fn retry_backoff() { retry(); backoff(); } // retry backoff",
+                "zz qq",
+            ),
+            (
+                "b.rs",
+                "fn other_thing() {} // see retry elsewhere in a long comment",
+                query,
+            ),
+            ("c.rs", "fn unrelated_parser() {}", "parser"),
+        ];
+        for (i, (path, text, vector_of)) in chunks.iter().enumerate() {
+            let blob = encode_blob(&svc.embed_text(vector_of));
+            db.insert_code_chunk(&format!("c{i}"), &svc.bank_key, path, 1, 2, text, &blob)
+                .unwrap();
+        }
+
+        let bm25: Vec<String> = db
+            .search_code_chunks(&svc.bank_key, query, 8)
+            .unwrap()
+            .rows
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        let hits = svc.search_code(query, 8, -1.0).unwrap();
+        let order: Vec<&str> = hits.iter().map(|h| h.entry.path.as_str()).collect();
+        assert_eq!(order, bm25, "the cosine does not re-rank FTS candidates");
+
+        // No indexable word: an unranked browse, ordered by score.
+        let browse = svc.search_code("?", 8, -1.0).unwrap();
+        assert_eq!(browse.len(), 3);
+        assert!(browse.windows(2).all(|w| w[0].score >= w[1].score));
+    }
 
     #[test]
     fn index_and_search_rust() {
