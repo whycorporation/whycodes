@@ -110,7 +110,7 @@ fn submit_phase_probe() {
         let _ = whycodes_memory::apply_memory_prompt(&base, &project, &data_dir, &settings, None);
         index.push(t.elapsed());
         let t = Instant::now();
-        let _ = whycodes_memory::recall_turn_context(&project, &data_dir, &settings, prompt);
+        let _ = whycodes_memory::recall_turn_context(&project, &data_dir, &settings, prompt, None);
         recall.push(t.elapsed());
         let t = Instant::now();
         let _ = whycodes_memory::MemoryService::open(&project, &data_dir, settings.clone());
