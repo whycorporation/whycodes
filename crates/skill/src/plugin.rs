@@ -18,15 +18,23 @@ pub struct PluginConfig {
     pub working_dir: Option<String>,
 }
 
+/// How long one plugin call may run before it is killed. Without a bound a
+/// hung plugin held the turn until the user pressed Esc.
+const PLUGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// A ready-to-execute plugin instance.
 pub struct Plugin {
     config: PluginConfig,
+    timeout: std::time::Duration,
 }
 
 impl Plugin {
     /// Create a new plugin from its configuration.
     pub fn new(config: PluginConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            timeout: PLUGIN_TIMEOUT,
+        }
     }
 
     /// Return the plugin's name.
@@ -44,21 +52,27 @@ impl Plugin {
         self.config.parameters.as_ref()
     }
 
-    /// Build the platform's shell invocation for `command`.
+    /// Build the platform's shell invocation for `command`, the same way
+    /// config hooks run theirs.
     fn shell_command(command: &str) -> tokio::process::Command {
         #[cfg(windows)]
         let mut cmd = {
+            // `raw_arg`: cmd does not understand the `\"` escaping `arg`
+            // applies, so `python "C:\Program Files\x.py"` broke.
             let mut c = tokio::process::Command::new("cmd");
-            c.arg("/C");
+            c.arg("/C").raw_arg(command);
             c
         };
         #[cfg(not(windows))]
         let mut cmd = {
             let mut c = tokio::process::Command::new("sh");
-            c.arg("-c");
+            c.arg("-c").arg(command);
             c
         };
-        cmd.arg(command);
+        // Not the agent's stdin (the terminal): a plugin that reads it would
+        // wait forever or steal keystrokes. Killed if the call is dropped
+        // (Esc, timeout) instead of left running.
+        cmd.stdin(std::process::Stdio::null()).kill_on_drop(true);
         cmd
     }
 
@@ -92,7 +106,21 @@ impl Plugin {
 
         let tool_call_id = format!("plugin-{}", self.config.name);
 
-        match cmd.output().await {
+        let output = match tokio::time::timeout(self.timeout, cmd.output()).await {
+            Ok(output) => output,
+            Err(_elapsed) => {
+                return ToolResult {
+                    tool_call_id,
+                    content: format!(
+                        "Plugin '{}' timed out after {}s and was stopped",
+                        self.config.name,
+                        self.timeout.as_secs()
+                    ),
+                    is_error: true,
+                };
+            }
+        };
+        match output {
             Ok(output) => {
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -131,6 +159,43 @@ pub struct PluginContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn plugin(command: &str) -> Plugin {
+        Plugin::new(PluginConfig {
+            name: "p".into(),
+            command: command.into(),
+            description: String::new(),
+            parameters: None,
+            working_dir: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_hung_plugin_times_out() {
+        #[cfg(windows)]
+        let command = "ping -n 30 127.0.0.1 >NUL";
+        #[cfg(not(windows))]
+        let command = "sleep 30";
+        let mut p = plugin(command);
+        p.timeout = std::time::Duration::from_millis(200);
+        let out = p.execute(&HashMap::new(), &PluginContext::default()).await;
+        assert!(out.is_error);
+        assert!(out.content.contains("timed out"), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn plugins_get_an_empty_stdin_and_quoted_arguments_intact() {
+        // A plugin reading stdin sees EOF at once instead of waiting.
+        #[cfg(windows)]
+        let command = "more & echo \"a b\"";
+        #[cfg(not(windows))]
+        let command = "cat; echo \"a b\"";
+        let out = plugin(command)
+            .execute(&HashMap::new(), &PluginContext::default())
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("a b"), "{}", out.content);
+    }
 
     #[tokio::test]
     async fn plugin_execute_echo() {

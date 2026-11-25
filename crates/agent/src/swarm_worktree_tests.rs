@@ -213,24 +213,45 @@ fn changed_relative_paths_skips_short_and_parses_rename() {
 }
 
 #[test]
-fn porcelain_path_skips_short_and_parses_rename() {
-    assert_eq!(porcelain_path(""), None);
-    assert_eq!(porcelain_path("M"), None);
-    assert_eq!(porcelain_path("M  "), None);
-    assert_eq!(porcelain_path("M   "), None);
-    assert_eq!(porcelain_path("M  a.txt").as_deref(), Some("a.txt"));
+fn porcelain_z_paths_reads_raw_names_and_both_sides_of_a_rename() {
+    let out = "M  a.txt\0R  new.txt\0old.txt\0C  copy.txt\0src.txt\0?? \u{f6}dev.rs\0M\0";
     assert_eq!(
-        porcelain_path("R  old.txt -> new.txt").as_deref(),
-        Some("new.txt")
+        porcelain_z_paths(out),
+        vec!["a.txt", "new.txt", "old.txt", "copy.txt", "\u{f6}dev.rs"]
     );
+    assert!(porcelain_z_paths("").is_empty());
+    assert!(porcelain_z_paths("M  ").is_empty());
+}
+
+#[test]
+fn merge_carries_non_ascii_names_and_renames_into_main() {
+    let (_keep, root) = init_repo();
+    let dest = root
+        .join(".whycodes")
+        .join("swarm")
+        .join("run-utf8")
+        .join("worker-0");
+    let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+    std::fs::write(wt.path.join("\u{f6}dev.rs"), "fn main() {}\n").unwrap();
+    assert!(
+        Command::new("git")
+            .args(["mv", "a.txt", "c.txt"])
+            .current_dir(&wt.path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let report = merge_into_main(&wt, &root);
+    assert!(report.conflicts.is_empty(), "{report:?}");
     assert_eq!(
-        porcelain_path("?? \"quoted.txt\"").as_deref(),
-        Some("quoted.txt")
+        std::fs::read_to_string(root.join("\u{f6}dev.rs")).unwrap(),
+        "fn main() {}\n"
     );
-    assert_eq!(
-        porcelain_path("M   ").or_else(|| porcelain_path("M  \"\"")),
-        None
-    );
+    // `trim_end`: a Windows checkout may write CRLF.
+    let renamed = std::fs::read_to_string(root.join("c.txt")).unwrap();
+    assert_eq!(renamed.trim_end(), "base-a");
+    assert!(!root.join("a.txt").exists(), "{report:?}");
+    remove_worktree(&wt).ok();
 }
 
 #[test]
