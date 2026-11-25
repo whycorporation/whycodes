@@ -9,6 +9,12 @@ use whycodes_config::{HookConfig, HookEvent};
 /// Truncate long tool output before stuffing it into an env var.
 const OUTPUT_ENV_MAX: usize = 8_192;
 
+/// Most chars of the tool input put in `WHYCODES_TOOL_INPUT`. Linux caps one
+/// environment string at 128 KiB and Windows one variable at 32K chars; past
+/// either the hook never started, so a large `write` failed every
+/// `block_on_failure` hook. The whole input is on stdin.
+const INPUT_ENV_MAX: usize = 16_384;
+
 /// Set to `1` in every hook's environment. A hook that runs `whycodes`
 /// itself therefore gets a child that skips its own hooks instead of
 /// recursing; set it yourself to run without hooks.
@@ -252,7 +258,7 @@ pub async fn run_hook(hook: &HookConfig, ctx: &HookContext) -> HookRunResult {
     };
 
     cmd.current_dir(&ctx.working_dir)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
@@ -267,7 +273,10 @@ pub async fn run_hook(hook: &HookConfig, ctx: &HookContext) -> HookRunResult {
     ) {
         cmd.env("WHYCODES_TOOL_NAME", &ctx.tool_name)
             .env("WHYCODES_TOOL_ID", &ctx.tool_id)
-            .env("WHYCODES_TOOL_INPUT", &ctx.tool_input);
+            .env(
+                "WHYCODES_TOOL_INPUT",
+                truncate_chars(&ctx.tool_input, INPUT_ENV_MAX),
+            );
         let touched = touched_paths(&ctx.tool_input);
         if !touched.is_empty() {
             cmd.env(TOUCHED_PATHS_ENV, touched.join("\n"));
@@ -284,7 +293,7 @@ pub async fn run_hook(hook: &HookConfig, ctx: &HookContext) -> HookRunResult {
         cmd.env("WHYCODES_TOOL_OUTPUT", out);
     }
 
-    let child = match cmd.spawn() {
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
             return HookRunResult {
@@ -296,9 +305,58 @@ pub async fn run_hook(hook: &HookConfig, ctx: &HookContext) -> HookRunResult {
         }
     };
 
-    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+    // Fed alongside the wait: a hook that never reads its stdin must not
+    // stall on a full pipe, and one that does gets EOF after the payload.
+    let feed = feed_stdin(child.stdin.take(), stdin_payload(ctx));
+    let run = async {
+        let ((), output) = tokio::join!(feed, child.wait_with_output());
+        output
+    };
+    match tokio::time::timeout(timeout, run).await {
         Ok(result) => hook_result_from_wait(result),
         Err(_elapsed) => hook_timeout_result(hook.timeout_secs),
+    }
+}
+
+/// The event as one JSON object, written to the hook's stdin: the same
+/// facts as the environment, untruncated input included. Hooks written for
+/// other tools read the event this way.
+fn stdin_payload(ctx: &HookContext) -> String {
+    let mut payload = serde_json::json!({
+        "hook_event_name": event_env(ctx.event),
+        "cwd": ctx.working_dir,
+        "session_id": ctx.session_id,
+    });
+    if matches!(
+        ctx.event,
+        HookEvent::PreTool | HookEvent::PreToolTransform | HookEvent::PostTool
+    ) {
+        let input = serde_json::from_str(&ctx.tool_input)
+            .unwrap_or_else(|_| serde_json::Value::String(ctx.tool_input.clone()));
+        payload["tool_name"] = ctx.tool_name.clone().into();
+        payload["tool_use_id"] = ctx.tool_id.clone().into();
+        payload["tool_input"] = input;
+    }
+    if let Some(is_error) = ctx.tool_is_error {
+        payload["tool_is_error"] = is_error.into();
+    }
+    if let Some(output) = &ctx.tool_output {
+        payload["tool_output"] = output.clone().into();
+    }
+    for (key, value) in &ctx.extra_env {
+        let name = key.trim_start_matches("WHYCODES_").to_ascii_lowercase();
+        payload[name] = value.clone().into();
+    }
+    payload.to_string()
+}
+
+async fn feed_stdin(stdin: Option<tokio::process::ChildStdin>, payload: String) {
+    use tokio::io::AsyncWriteExt;
+    if let Some(mut stdin) = stdin
+        && let Err(e) = stdin.write_all(payload.as_bytes()).await
+    {
+        // Most hooks never read stdin and exit first: a broken pipe is normal.
+        tracing::debug!(error = %e, "hook did not read its stdin");
     }
 }
 
@@ -334,11 +392,15 @@ fn event_env(event: HookEvent) -> &'static str {
 
 /// Truncate tool output for env injection.
 pub fn truncate_output(s: &str) -> String {
+    truncate_chars(s, OUTPUT_ENV_MAX)
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
     let n = s.chars().count();
-    if n <= OUTPUT_ENV_MAX {
+    if n <= max {
         return s.to_string();
     }
-    let mut out: String = s.chars().take(OUTPUT_ENV_MAX).collect();
+    let mut out: String = s.chars().take(max).collect();
     out.push_str("\n…[truncated]");
     out
 }
@@ -1016,5 +1078,74 @@ mod tests {
             run_transform_hooks(&hooks, &pre).await.unwrap()["path"],
             "z.txt"
         );
+    }
+
+    /// Shell snippet that copies stdin to stdout.
+    #[cfg(windows)]
+    fn cat_stdin() -> &'static str {
+        "findstr \"^\""
+    }
+
+    #[cfg(not(windows))]
+    fn cat_stdin() -> &'static str {
+        "cat"
+    }
+
+    #[test]
+    fn stdin_payload_carries_the_event() {
+        let pre = HookContext::pre("edit", "e1", r#"{"path":"a.txt"}"#, Some("s1".into()), "/w");
+        let v: serde_json::Value = serde_json::from_str(&stdin_payload(&pre)).unwrap();
+        assert_eq!(v["hook_event_name"], "pre_tool");
+        assert_eq!(v["tool_name"], "edit");
+        assert_eq!(v["tool_use_id"], "e1");
+        assert_eq!(v["tool_input"]["path"], "a.txt");
+        assert_eq!(v["session_id"], "s1");
+        assert_eq!(v["cwd"], "/w");
+
+        let post = HookContext::post("bash", "b1", "not json", None, "/w", true, "boom");
+        let v: serde_json::Value = serde_json::from_str(&stdin_payload(&post)).unwrap();
+        assert_eq!(v["tool_input"], "not json");
+        assert_eq!(v["tool_is_error"], true);
+        assert_eq!(v["tool_output"], "boom");
+        assert!(v["session_id"].is_null());
+
+        let prompt = HookContext::lifecycle(HookEvent::UserPromptSubmit, "", None, "/w")
+            .with_env("WHYCODES_PROMPT", "fix it");
+        let v: serde_json::Value = serde_json::from_str(&stdin_payload(&prompt)).unwrap();
+        assert_eq!(v["prompt"], "fix it");
+        assert!(v.get("tool_name").is_none(), "{v}");
+    }
+
+    #[tokio::test]
+    async fn hooks_read_the_event_on_stdin() {
+        let hooks = vec![speaking(HookEvent::PostTool, "*", cat_stdin())];
+        let ctx = HookContext::post(
+            "edit",
+            "e1",
+            r#"{"path":"a.txt"}"#,
+            None,
+            work_dir(),
+            false,
+            "ok",
+        );
+        let feedback = run_post_hooks(&hooks, &ctx).await.expect("feedback");
+        let v: serde_json::Value = serde_json::from_str(feedback.trim()).expect("json");
+        assert_eq!(v["tool_input"]["path"], "a.txt");
+    }
+
+    /// Regression: a `write` larger than one environment string made the
+    /// spawn fail, so a blocking hook refused every large write.
+    #[tokio::test]
+    async fn a_huge_tool_input_still_runs_the_hook() {
+        let content = "x".repeat(300_000);
+        let input = serde_json::json!({ "path": "big.txt", "content": content }).to_string();
+        let hooks = vec![hook(HookEvent::PreTool, "*", "exit 0", true, 10)];
+        let ctx = HookContext::pre("write", "w1", input, None, work_dir());
+        let outcome = run_hooks(&hooks, &ctx).await;
+        assert_eq!(outcome.block, None);
+
+        let cut = truncate_chars(&"é".repeat(INPUT_ENV_MAX + 5), INPUT_ENV_MAX);
+        assert!(cut.ends_with("…[truncated]"), "{cut}");
+        assert_eq!(truncate_chars("short", INPUT_ENV_MAX), "short");
     }
 }
