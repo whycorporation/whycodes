@@ -4405,3 +4405,16 @@ async fn a_server_that_cannot_start_is_reported_by_the_load() {
     assert_eq!(loaded.failures()[0].server, "git");
     assert!(loaded.failures()[0].error.contains("needs the package"));
 }
+
+#[test]
+fn side_requests_never_send_the_turn_key_to_another_provider() {
+    assert_eq!(
+        super::side_request_key("anthropic", "anthropic", "sk-turn"),
+        "sk-turn"
+    );
+    // No `NOSUCHRACEPROVIDER_API_KEY`: no key at all, not the turn's.
+    assert_eq!(
+        super::side_request_key("nosuchraceprovider", "anthropic", "sk-turn"),
+        ""
+    );
+}
