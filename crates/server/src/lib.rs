@@ -12,13 +12,16 @@ pub mod v1;
 
 use axum::{
     Router,
+    extract::{Request, State},
+    http::{StatusCode, header::AUTHORIZATION},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
-use tower_http::cors::CorsLayer;
 use whycodes_agent::agent::Agent;
 use whycodes_agent::events::CancelFlag;
 use whycodes_config::Config;
@@ -50,6 +53,10 @@ pub struct AppState {
     pub perm: Arc<perm::PermHub>,
     /// Per-session (provider, model) override from `POST /v1/sessions/:id/model`.
     pub session_route: Arc<std::sync::Mutex<HashMap<String, (String, String)>>>,
+    /// Bearer token every `/api` and `/v1` request must carry. Loopback is
+    /// not a boundary: any web page the user opens can reach 127.0.0.1, and
+    /// these routes run tools. Empty refuses every request.
+    pub auth_token: Arc<str>,
 }
 
 impl AppState {
@@ -151,7 +158,59 @@ pub fn spawn_session_eviction(
     })
 }
 
+/// Env var that fixes the daemon's bearer token (scripts, SDK launches);
+/// unset, `serve` makes a random one.
+pub const AUTH_TOKEN_ENV: &str = "WHYCODES_SERVE_TOKEN";
+
+/// The token `serve` requires: [`AUTH_TOKEN_ENV`] when set and non-blank,
+/// else 64 random hex chars (two v4 UUIDs, 244 random bits).
+pub fn auth_token_from(env: Option<String>) -> String {
+    env.map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| {
+            format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            )
+        })
+}
+
+/// Whether `request` carries `Authorization: Bearer <token>` for `want`.
+/// Constant time in the token length; an empty `want` matches nothing.
+pub fn bearer_matches(request: &axum::http::HeaderMap, want: &str) -> bool {
+    let Some(given) = request
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    else {
+        return false;
+    };
+    !want.is_empty()
+        && given.len() == want.len()
+        && given
+            .bytes()
+            .zip(want.bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
+}
+
+async fn require_token(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    if bearer_matches(request.headers(), &state.auth_token) {
+        return next.run(request).await;
+    }
+    (
+        StatusCode::UNAUTHORIZED,
+        "missing or wrong bearer token (see .whycodes/serve.lock or WHYCODES_SERVE_TOKEN)",
+    )
+        .into_response()
+}
+
+/// `/api` and `/v1` need [`AppState::auth_token`]; only the read-only
+/// share pages (`/s/...`, opened in a browser) do not. No CORS layer: the
+/// clients are the TUI and the SDKs, never a web page.
 pub fn create_router(state: AppState) -> Router {
+    let shares = Router::new().route("/s/{id}", get(routes::share_dispatch));
     Router::new()
         .route("/api/health", get(routes::health))
         .route("/api/tools", get(routes::list_tools))
@@ -181,11 +240,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/rewind", post(v1::rewind))
         .route("/v1/sessions/{id}/compact", post(v1::compact))
         .route("/v1/models", get(v1::list_models))
+        .route("/api/shares", get(routes::list_shares))
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         // Single param route: id may be bare, `foo.json`, or `foo.md`
         // (axum rejects overlapping `/s/{id}` + `/s/{id}.json`).
-        .route("/s/{id}", get(routes::share_dispatch))
-        .route("/api/shares", get(routes::list_shares))
-        .layer(CorsLayer::permissive())
+        .merge(shares)
         .with_state(state)
 }
 

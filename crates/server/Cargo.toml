@@ -22,12 +22,12 @@ whycodes-storage = { path = "../storage", version = "0.6" }
 whycodes-auth = { path = "../auth", version = "0.6" }
 whycodes-index = { path = "../index", version = "0.6" }
 whycodes-protocol = { path = "../protocol", version = "0.6" }
-tower-http = { version = "0.7", features = ["cors"] }
 tracing.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 async-stream.workspace = true
 chrono.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

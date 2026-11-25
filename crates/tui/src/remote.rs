@@ -32,10 +32,30 @@ pub fn normalize_base(addr: &str) -> String {
     }
 }
 
+/// The daemon's bearer token, set once by `whycodes connect` before any
+/// request; a process attaches to one daemon.
+static TOKEN: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Send `Authorization: Bearer <token>` on every later request.
+pub fn set_token(token: Option<String>) {
+    *TOKEN
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = token;
+}
+
 fn client() -> reqwest::Result<reqwest::Client> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    let token = TOKEN
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    if let Some(value) = token.and_then(|t| format!("Bearer {t}").parse().ok()) {
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+    }
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(600))
+        .default_headers(headers)
         .build()
 }
 
