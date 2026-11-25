@@ -198,13 +198,25 @@ fn join_or_abs(working_dir: &str, path: &str) -> String {
     }
 }
 
+/// One file's patched contents, ready to write.
+struct Planned {
+    full_path: String,
+    shown: String,
+    /// Hunks applied to this file, joined, for the report.
+    patch: String,
+    modified: String,
+}
+
+/// Apply every file's hunks in memory first and write only when all of them
+/// applied, so a mismatch in the third file does not leave the first two
+/// patched and the rest untouched.
 fn apply_files(
     working_dir: &str,
     explicit_path: &str,
     files: Vec<FilePatch>,
     ctx: &ToolContext,
 ) -> ToolResult {
-    let mut reports = Vec::new();
+    let mut planned: Vec<Planned> = Vec::new();
     for file in files {
         let full_path =
             match resolve_target(working_dir, explicit_path, file.header_path.as_deref()) {
@@ -224,8 +236,29 @@ fn apply_files(
                 is_error: true,
             };
         }
+        // The same file twice in one patch: the later hunks apply on top.
+        if let Some(prev) = planned.iter_mut().find(|p| p.full_path == full_path) {
+            match patch_text(&prev.modified, &prev.shown, &file.body) {
+                Ok(modified) => prev.modified = modified,
+                Err(e) => return e,
+            }
+            prev.patch.push_str(&file.body);
+            continue;
+        }
         let shown = display_path(Path::new(&full_path), working_dir);
-        let result = apply_to_file(&full_path, &shown, &file.body);
+        match patch_file(&full_path, &shown, &file.body) {
+            Ok(modified) => planned.push(Planned {
+                full_path,
+                shown,
+                patch: file.body,
+                modified,
+            }),
+            Err(e) => return e,
+        }
+    }
+    let mut reports = Vec::new();
+    for p in planned {
+        let result = write_patched_file(&p.full_path, &p.shown, &p.patch, &p.modified);
         if result.is_error {
             return result;
         }
@@ -233,31 +266,30 @@ fn apply_files(
     }
     ToolResult {
         tool_call_id: String::new(),
-        content: reports.join("\n"),
+        content: reports.join(
+            "
+",
+        ),
         is_error: false,
     }
 }
 
-fn apply_to_file(full_path: &str, shown: &str, patch_content: &str) -> ToolResult {
-    let original = match std::fs::read_to_string(full_path) {
-        Ok(s) => s,
-        Err(e) => {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Error reading '{shown}': {e}"),
-                is_error: true,
-            };
-        }
-    };
+/// Read `full_path` and apply `patch_content` to it, without writing.
+fn patch_file(full_path: &str, shown: &str, patch_content: &str) -> Result<String, ToolResult> {
+    let original = std::fs::read_to_string(full_path).map_err(|e| ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Error reading '{shown}': {e}"),
+        is_error: true,
+    })?;
+    patch_text(&original, shown, patch_content)
+}
 
-    match apply_unified_diff(&original, patch_content) {
-        Ok(modified) => write_patched_file(full_path, shown, patch_content, &modified),
-        Err(e) => ToolResult {
-            tool_call_id: String::new(),
-            content: format!("Failed to apply patch to `{shown}`: {e}"),
-            is_error: true,
-        },
-    }
+fn patch_text(original: &str, shown: &str, patch_content: &str) -> Result<String, ToolResult> {
+    apply_unified_diff(original, patch_content).map_err(|e| ToolResult {
+        tool_call_id: String::new(),
+        content: format!("Failed to apply patch to `{shown}`: {e}"),
+        is_error: true,
+    })
 }
 
 fn write_patched_file(
@@ -362,12 +394,14 @@ fn apply_unified_diff(original: &str, patch: &str) -> Result<String, String> {
     };
 
     // Apply from the end so earlier hunk line numbers stay valid.
+    let ends_without_newline = hunks.iter().any(|h| h.no_newline_at_end);
     let mut ordered: Vec<(usize, Hunk)> = hunks.into_iter().enumerate().collect();
     ordered.sort_by_key(|(i, h)| (std::cmp::Reverse(h.old_start), std::cmp::Reverse(*i)));
 
     for (_i, hunk) in ordered {
         apply_hunk(&mut file, &hunk, eol)?;
     }
+    end_lines(&mut file, eol, ends_without_newline);
 
     let mut out = String::new();
     for (text, line_end) in file {
@@ -377,10 +411,29 @@ fn apply_unified_diff(original: &str, patch: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// Give every line but the last a line end, and the last one per the patch.
+///
+/// A file whose last line had no newline kept that empty ending when lines
+/// were added after it, gluing it to the first added line. `\ No newline at
+/// end of file` after an added line asks for the new last line to end bare.
+fn end_lines(file: &mut [(String, &str)], eol: &'static str, bare_end: bool) {
+    let last = file.len().saturating_sub(1);
+    for (n, (_, line_end)) in file.iter_mut().enumerate() {
+        if n < last && line_end.is_empty() {
+            *line_end = eol;
+        }
+    }
+    if bare_end && let Some((_, line_end)) = file.last_mut() {
+        *line_end = "";
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Hunk {
     old_start: usize, // 1-based; 0 means empty file
     ops: Vec<Op>,
+    /// `\ No newline at end of file` followed an added line.
+    no_newline_at_end: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -401,6 +454,9 @@ fn require_hunks(hunks: &[Hunk]) -> Result<(), String> {
 fn parse_hunks(patch: &str) -> Result<Vec<Hunk>, String> {
     let mut hunks = Vec::new();
     let mut current: Option<Hunk> = None;
+    // Empty lines seen inside a hunk. Many writers strip the space off a
+    // blank context line; those are context, unless only blank lines follow.
+    let mut blanks = 0usize;
 
     for raw in patch.lines() {
         let line = raw.strip_suffix('\r').unwrap_or(raw);
@@ -412,21 +468,32 @@ fn parse_hunks(patch: &str) -> Result<Vec<Hunk>, String> {
             current = Some(Hunk {
                 old_start,
                 ops: Vec::new(),
+                no_newline_at_end: false,
             });
+            blanks = 0;
             continue;
         }
         let Some(hunk) = current.as_mut() else {
             // File headers / noise before the first hunk.
             continue;
         };
+        if line.is_empty() {
+            blanks += 1;
+            continue;
+        }
+        if line.starts_with('\\') {
+            hunk.no_newline_at_end = matches!(hunk.ops.last(), Some(Op::Add(_)));
+            continue;
+        }
+        let blank_context = std::iter::repeat_n(Op::Context(String::new()), blanks);
+        hunk.ops.extend(blank_context);
+        blanks = 0;
         if let Some(rest) = line.strip_prefix('+') {
             hunk.ops.push(Op::Add(rest.to_string()));
         } else if let Some(rest) = line.strip_prefix('-') {
             hunk.ops.push(Op::Remove(rest.to_string()));
         } else if let Some(rest) = line.strip_prefix(' ') {
             hunk.ops.push(Op::Context(rest.to_string()));
-        } else if line.starts_with('\\') || line.is_empty() {
-            continue;
         } else {
             // GNU patch treats a missing prefix as context.
             hunk.ops.push(Op::Context(line.to_string()));
