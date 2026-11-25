@@ -88,3 +88,64 @@ fn short_similar_runs_and_bare_numbers_stay() {
     let rows = rows.join("\n");
     assert_eq!(clean_terminal_output(&rows), rows);
 }
+
+fn unused_warning(i: usize, name: &str) -> String {
+    format!(
+        "warning: unused variable: `{name}`\n  --> src/m{i}.rs:{}:13\n   |\n{} |         let {name} = self.{name}();\n   |             {} help: prefix it with an underscore: `_{name}`",
+        i * 3,
+        i * 3,
+        "^".repeat(name.len())
+    )
+}
+
+#[test]
+fn long_runs_of_same_shaped_blocks_keep_the_first_and_each_head() {
+    let names = [
+        "a", "bb", "ccc", "dddd", "eeeee", "ffffff", "ggggggg", "h", "ii",
+    ];
+    let mut blocks: Vec<String> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| unused_warning(i + 1, n))
+        .collect();
+    blocks.push(
+        "error[E0308]: mismatched types\n  --> src/step_7.rs:4:18\n   |\n4 |         total += value * 7;\n   |                  ^^^^^ expected `u32`, found `&u32`".into(),
+    );
+    let raw = format!("   Compiling bench\n\n{}\n", blocks.join("\n\n"));
+    let out = clean_terminal_output(&raw);
+
+    assert!(
+        out.starts_with(&format!("   Compiling bench\n\n{}\n\n", blocks[0])),
+        "{out}"
+    );
+    assert!(
+        out.contains("[8 more blocks shaped like the one above; first 2 lines of each]"),
+        "{out}"
+    );
+    for (i, name) in names.iter().enumerate().skip(1) {
+        assert!(
+            out.contains(&format!(
+                "warning: unused variable: `{name}`\n  --> src/m{}.rs:",
+                i + 1
+            )),
+            "{out}"
+        );
+        assert!(!out.contains(&format!("let {name} =")), "{out}");
+    }
+    // The block that breaks the shape, and the end of the output, are kept.
+    assert!(
+        out.ends_with(&format!("\n\n{}\n", blocks[names.len()])),
+        "{out}"
+    );
+}
+
+#[test]
+fn short_runs_and_short_blocks_are_not_collapsed() {
+    let seven: Vec<String> = (1..=7).map(|i| unused_warning(i, "x")).collect();
+    let raw = seven.join("\n\n");
+    assert_eq!(clean_terminal_output(&raw), raw);
+    // Two-line blocks would keep every line: left as they are.
+    let pairs: Vec<String> = (0..10).map(|i| format!("item {i}\n  value {i}")).collect();
+    let raw = pairs.join("\n\n");
+    assert_eq!(clean_terminal_output(&raw), raw);
+}
