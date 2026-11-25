@@ -744,7 +744,9 @@ fn http_client(token: &str) -> Result<reqwest::Client, SdkError> {
     reqwest::Client::builder()
         .default_headers(headers)
         .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(600))
+        // Between reads, not in total: a run streams for as long as it
+        // works, and the server pings every 15 s while it is quiet.
+        .read_timeout(Duration::from_secs(600))
         .build()
         .map_err(http_client_failed)
 }

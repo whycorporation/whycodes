@@ -875,12 +875,31 @@ async fn stream_http_error_and_public_wrappers() {
 }
 
 #[tokio::test]
+async fn stream_without_a_finish_is_a_dropped_stream() {
+    cache_project("google", "proj-sse-cut");
+    let sse = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"o\"}]}}]}\n\n";
+    let url = leak_url(serve_once("200 OK", sse, "text/event-stream"));
+    TEST_GEMINI_BASES.with(|c| *c.borrow_mut() = Some(leak_bases(vec![url])));
+    let mut stream = super::stream(&assist_request(), "ya29.public", "gemini-test")
+        .await
+        .unwrap();
+    let mut last = None;
+    while let Some(ev) = stream.next().await {
+        last = Some(ev);
+    }
+    TEST_GEMINI_BASES.with(|c| *c.borrow_mut() = None);
+    let err = last.expect("events").unwrap_err();
+    assert!(err.to_string().contains("unexpected EOF"), "{err}");
+}
+
+#[tokio::test]
 async fn stream_skips_empty_sse_lines_and_stops_without_done() {
     cache_project("google", "proj-sse-empty");
+    // A finishReason but no usage chunk: the answer is whole.
     let sse = concat!(
         ": keep-alive\n",
         "\n",
-        "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}\n\n",
+        "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}\n\n",
     );
     let url = leak_url(serve_once("200 OK", sse, "text/event-stream"));
     TEST_GEMINI_BASES.with(|c| *c.borrow_mut() = Some(leak_bases(vec![url])));
