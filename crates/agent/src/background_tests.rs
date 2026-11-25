@@ -850,6 +850,7 @@ fn scratch_log_persists_and_skips_failures() {
     // A failed write is skipped, not fatal.
     let mut read_only = ScratchLog {
         file: std::fs::File::open(&path).unwrap(),
+        path: path.clone(),
         len: 0,
     };
     read_only.append("nope");
@@ -1113,4 +1114,67 @@ async fn kill_ends_the_shells_children_on_windows() {
         t0.elapsed()
     );
     assert!(!lock(&job).output.contains("still holds it open"));
+}
+
+#[test]
+fn a_cut_tail_is_replaced_by_the_cleaned_log_when_it_fits() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let next_id = AtomicU64::new(1);
+    let (_, log) = claim_job_log(&next_id, dir.path());
+    let mut job = sample_job(JobStatus::Running, "");
+    job.log = Some(log.expect("log"));
+    let job = Arc::new(Mutex::new(job));
+    append_output(
+        &job,
+        "error: first thing that went wrong
+",
+    );
+    for n in 0..8_000 {
+        append_output(
+            &job,
+            &format!(
+                "test case_{n} ... ok
+"
+            ),
+        );
+    }
+    assert!(
+        lock(&job).output.starts_with('…'),
+        "memory kept only the tail"
+    );
+
+    restore_from_log(&mut lock(&job));
+    let out = lock(&job).output.clone();
+    assert!(
+        out.starts_with(
+            "error: first thing that went wrong
+"
+        ),
+        "{out}"
+    );
+    assert!(out.contains("similar lines"), "{out}");
+
+    // Untouched: output that was never cut, a job without a log, a log
+    // that stays too big once cleaned, a log at its cap, a missing log.
+    let mut whole = sample_job(JobStatus::Done, "short");
+    restore_from_log(&mut whole);
+    assert_eq!(whole.output, "short");
+    let mut no_log = sample_job(JobStatus::Done, "…tail");
+    restore_from_log(&mut no_log);
+    assert_eq!(no_log.output, "…tail");
+
+    let noisy = dir.path().join("noisy.log");
+    let distinct: String = (0..MAX_JOB_OUTPUT_BYTES / 8)
+        .map(|n| {
+            format!(
+                "{:x}
+",
+                n.wrapping_mul(2_654_435_761)
+            )
+        })
+        .collect();
+    std::fs::write(&noisy, &distinct).unwrap();
+    assert!(cleaned_log_if_fits(&noisy, distinct.len() as u64).is_none());
+    assert!(cleaned_log_if_fits(&noisy, MAX_JOB_LOG_BYTES).is_none());
+    assert!(cleaned_log_if_fits(&dir.path().join("gone.log"), 1).is_none());
 }
