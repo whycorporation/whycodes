@@ -1292,7 +1292,7 @@ pub(crate) fn default_auto_index_files() -> usize {
     1500
 }
 pub(crate) fn default_auto_index_chunks() -> usize {
-    4000
+    8000
 }
 pub(crate) fn default_session_top_k() -> usize {
     3

@@ -224,7 +224,7 @@ skipped. `whycodes rules list` shows each rule and whether it is active.
 | `subagent_banks` | `true` | — | Give subagents their own memory bank (`project::agent_name`). |
 | `auto_index` | `true` | — | On session start, build a code index when none exists. |
 | `auto_index_max_files` | `1500` | — | Maximum source files walked when auto-indexing. |
-| `auto_index_max_chunks` | `4000` | — | Maximum chunks produced when auto-indexing. |
+| `auto_index_max_chunks` | `8000` | — | Maximum chunks produced when auto-indexing (same as `whycodes memory index`). |
 | `session_inject` | `true` | — | Inject related turns from past sessions (`# Past sessions`). |
 | `session_top_k` | `3` | — | Maximum past-session excerpts per turn. |
 | `session_min_score` | `0.22` | — | Minimum similarity for a past-session excerpt. |
