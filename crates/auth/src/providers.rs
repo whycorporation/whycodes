@@ -224,6 +224,7 @@ async fn force_fresh(
     let refreshed = refresh_grant(spec, &refresh)
         .await
         .map_err(|e| AuthError::Refresh(spec.name.to_string(), e.to_string()))?;
+    let refreshed = carry_over(&token, refreshed);
     persist_token(store, spec.name.as_str(), method, &refreshed)?;
     Ok(refreshed)
 }
@@ -253,6 +254,7 @@ async fn ensure_fresh(
     let refreshed = refresh_grant(spec, &refresh)
         .await
         .map_err(|e| AuthError::Refresh(spec.name.to_string(), e.to_string()))?;
+    let refreshed = carry_over(&token, refreshed);
     persist_token(store, spec.name.as_str(), method, &refreshed)?;
     Ok(refreshed)
 }
@@ -705,6 +707,23 @@ async fn parse_token_response(resp: reqwest::Response) -> Result<OAuthToken> {
 
 /// Shared response → `OAuthToken` mapping. `expires_in` may arrive as a
 /// number or a string depending on the provider.
+/// A refresh response is not a whole credential: Google omits
+/// `refresh_token` (the old one stays valid), and no provider repeats what
+/// login stored in `extra` (`project_id`, an account id). Storing the
+/// response as is dropped them, so the next expiry meant logging in again.
+fn carry_over(previous: &OAuthToken, mut refreshed: OAuthToken) -> OAuthToken {
+    if refreshed.refresh_token.is_none() {
+        refreshed.refresh_token = previous.refresh_token.clone();
+    }
+    for (key, value) in &previous.extra {
+        refreshed
+            .extra
+            .entry(key.clone())
+            .or_insert_with(|| value.clone());
+    }
+    refreshed
+}
+
 fn token_from_json(json: &Value) -> Result<OAuthToken> {
     let access_token = json["access_token"]
         .as_str()

@@ -182,14 +182,16 @@ fn channel_adjacent(text: &str, at: usize) -> bool {
     })
 }
 
+/// The windows below are byte counts, so their far edge can land inside a
+/// multi-byte character (Turkish, CJK, emoji): round it outward to one.
 fn glitch_near(text: &str, at: usize) -> bool {
-    let start = at.saturating_sub(80);
+    let start = text.floor_char_boundary(at.saturating_sub(80));
     let window = &text[start..at];
     GLITCH_SURFACES.iter().any(|g| window.contains(g))
 }
 
 fn fake_result_after(text: &str, at: usize) -> bool {
-    let end = (at + 240).min(text.len());
+    let end = text.ceil_char_boundary((at + 240).min(text.len()));
     let window = &text[at..end];
     FAKE_RESULT.iter().any(|f| window.contains(f))
 }

@@ -70,7 +70,12 @@ Lowest to highest precedence, from `Config::load_layered`:
    `$WHYCODES_HOME/config.toml`). Created on first run if missing. A file
    that fails to parse is an error, not a silent fallback.
 3. Project `.whycodes/config.toml` next to the project directory. A file
-   that fails to parse or read is logged as a warning and skipped.
+   that fails to parse or read is logged as a warning and skipped. A cloned
+   repository must not act on whoever opens it, so this layer cannot set a
+   provider's `base_url`, `api_base` or `headers` (your API key would go to
+   its host), `[[hooks]]` (commands on your machine), or an `approval_mode`
+   other than `manual`. Those keys are dropped with a warning; set them in
+   the global config.
 4. `WHYCODES_*` environment variables (`apply_env_overrides`; the exact
    names appear in the tables). `${VAR}` / `$VAR` inside
    `notify.discord_webhook`, `notify.telegram_bot_token` and
@@ -320,7 +325,10 @@ higher layer replaces the whole list. The command receives
 `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`, `WHYCODES_TOOL_ID`,
 `WHYCODES_TOOL_INPUT`, `WHYCODES_SESSION_ID`, `WHYCODES_WORKING_DIR`; post-tool
 adds `WHYCODES_TOOL_IS_ERROR` and `WHYCODES_TOOL_OUTPUT`; lifecycle events
-add `WHYCODES_PROMPT`, `WHYCODES_RESPONSE`, `WHYCODES_SUBAGENT_*`.
+add `WHYCODES_PROMPT`, `WHYCODES_RESPONSE`, `WHYCODES_SUBAGENT_*`. The same
+facts arrive on stdin as one JSON object (`hook_event_name`, `cwd`,
+`session_id`, `tool_name`, `tool_use_id`, `tool_input`, …), with the tool
+input in full; `WHYCODES_TOOL_INPUT` is cut at 16K chars.
 
 | Key | Default | Env override | Meaning |
 |---|---|---|---|
