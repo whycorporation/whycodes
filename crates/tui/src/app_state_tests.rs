@@ -1639,12 +1639,17 @@ fn copy_last_reply_takes_the_latest_assistant_text() {
 #[test]
 fn catalog_models_lists_decision_models_like_a_provider() {
     use whycodes_llm::providers::decision::{DECISION_MODELS, DECISION_PROVIDER};
+    // `catalog_models` also lists OAuth providers with a stored token, read
+    // from `WHYCODES_HOME`. Hold the lock the token-store test holds while it
+    // points that at a home with a token, and use an empty home of our own,
+    // or the "empty catalog" below sees its token.
+    let _lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
     let mut cfg = whycodes_config::Config::default();
     cfg.providers.clear();
-    assert!(
-        catalog_models(&cfg).is_empty(),
-        "empty catalog keeps its hint"
-    );
+    let empty = catalog_models(&cfg);
     cfg.providers.insert(
         "zz".into(),
         whycodes_core::types::ProviderConfig {
@@ -1660,6 +1665,11 @@ fn catalog_models_lists_decision_models_like_a_provider() {
         },
     );
     let models = catalog_models(&cfg);
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+    }
+    assert!(empty.is_empty(), "empty catalog keeps its hint: {empty:?}");
     let decision: Vec<_> = models
         .iter()
         .filter(|(p, _)| p == DECISION_PROVIDER)
