@@ -1231,3 +1231,38 @@ async fn launch_timeout_closes_stderr_then_hangs() {
     assert_eq!(err.code, ErrorCode::StartupTimeout);
     assert!(err.message.contains("waiting") || err.message.contains("did not become healthy"));
 }
+
+/// `/v1/health` that answers only `Authorization: Bearer tok`.
+async fn guarded_health(headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer tok") {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    Json(Handshake {
+        protocol: PROTOCOL_MAJOR,
+        version: "0.1.0".into(),
+        healthy: true,
+        project: "/tmp".into(),
+        uptime_secs: 1,
+        sessions_in_memory: 0,
+    })
+    .into_response()
+}
+
+#[tokio::test]
+async fn connect_with_token_sends_the_bearer_and_a_blank_token_sends_none() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new().route("/v1/health", get(guarded_health));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+
+    let client = WhyCodesClient::connect_with_token(&base, " tok ")
+        .await
+        .expect("token accepted");
+    assert_eq!(client.base_url(), base);
+    assert!(WhyCodesClient::connect_with_token(&base, "").await.is_err());
+    assert!(
+        WhyCodesClient::connect_with_token(&base, "nope")
+            .await
+            .is_err()
+    );
+}

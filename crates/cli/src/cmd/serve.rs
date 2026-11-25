@@ -16,6 +16,11 @@ pub(crate) async fn cmd_connect(
     use whycodes_tui::remote;
 
     let base = remote::normalize_base(addr);
+    remote::set_token(connect_token(
+        std::env::var("WHYCODES_SERVE_TOKEN").ok(),
+        &resolve_dir(cli),
+        &base,
+    ));
     match remote::health(&base).await {
         Ok(h) => {
             println!(
@@ -170,6 +175,8 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
     let (provider, model) = whycodes_server::routes::default_provider_model(&config);
     agent.set_route(&provider, &model);
 
+    let auth_token =
+        whycodes_server::auth_token_from(std::env::var(whycodes_server::AUTH_TOKEN_ENV).ok());
     let state = whycodes_server::AppState {
         agent: Arc::new(agent),
         config: Arc::new(config),
@@ -182,6 +189,7 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
         cancel_flags: Arc::new(std::sync::Mutex::new(HashMap::new())),
         perm,
         session_route: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        auth_token: auth_token.as_str().into(),
     };
 
     let _eviction = whycodes_server::spawn_session_eviction(
@@ -213,12 +221,28 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
         }
         Err(err) => return Err(err.into()),
     };
-    if let Err(err) = super::lockfile::commit_lock(&lock_guard, port) {
+    if let Err(err) = super::lockfile::commit_lock(&lock_guard, port, &auth_token) {
         tracing::debug!(error = %err, "serve lock write after bind failed");
     }
     axum::serve(listener, router).await?;
     drop(lock_guard);
     Ok(())
+}
+
+/// The bearer token for the daemon at `base`: `WHYCODES_SERVE_TOKEN` when
+/// set, else the token in this project's `serve.lock` if that lock is for
+/// the same port (another port is another daemon).
+pub(crate) fn connect_token(
+    env: Option<String>,
+    project_dir: &std::path::Path,
+    base: &str,
+) -> Option<String> {
+    if let Some(token) = env.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+        return Some(token);
+    }
+    let lock = super::lockfile::read_lock(&super::lockfile::lock_path(project_dir))?;
+    let port = base.rsplit(':').next()?.parse::<u16>().ok()?;
+    (port == lock.port).then_some(lock.token).flatten()
 }
 
 #[cfg(feature = "server")]
@@ -328,6 +352,10 @@ pub(crate) fn serve_endpoint_lines(port: u16, addr: &str) -> Vec<String> {
             format!("http://localhost:{port}/s/<session-id>").cyan()
         ),
         format!("  Bind: {addr} (loopback only). Ctrl+C to stop."),
+        format!(
+            "  Auth: /api and /v1 need `Authorization: Bearer <token>`; the token is in .whycodes/serve.lock (or set {}).",
+            whycodes_server::AUTH_TOKEN_ENV
+        ),
         String::new(),
     ]
 }

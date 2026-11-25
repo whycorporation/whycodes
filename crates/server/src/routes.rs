@@ -75,8 +75,20 @@ fn find_share_file(id: &str, ext: &str) -> Option<PathBuf> {
     find_share_file_in(&share_search_dirs(), id, ext)
 }
 
+/// A share id is a session id: letters, digits, `-` and `_`. Anything else
+/// (`../auth.json`, an absolute path, markup) names no share.
+fn is_share_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 fn find_share_file_in(dirs: &[PathBuf], id: &str, ext: &str) -> Option<PathBuf> {
     let id = id.trim_end_matches(".json").trim_end_matches(".md");
+    if !is_share_id(id) {
+        return None;
+    }
     for dir in dirs {
         let p = dir.join(format!("{id}.{ext}"));
         if p.exists() {
@@ -770,7 +782,10 @@ pub async fn share_view(Path(id): Path<String>) -> Response {
             None => {
                 return (
                     StatusCode::NOT_FOUND,
-                    Html(format!("<h1>Share not found</h1><p>id={id}</p>")),
+                    Html(format!(
+                        "<h1>Share not found</h1><p>id={}</p>",
+                        html_escape(&id)
+                    )),
                 )
                     .into_response();
             }

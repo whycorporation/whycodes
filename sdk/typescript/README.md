@@ -16,14 +16,17 @@ whycodes serve
 ```ts
 import { WhyCodesClient } from "@whycorporation/whycodes-sdk";
 
-const client = await WhyCodesClient.connect("127.0.0.1:3030");
+// The daemon's bearer token: `token` in .whycodes/serve.lock, or the
+// WHYCODES_SERVE_TOKEN it was started with (the default when omitted).
+const token = "<token from .whycodes/serve.lock>";
+const client = await WhyCodesClient.connect("127.0.0.1:3030", token);
 const session = await client.createSession();
 const turn = await client.run(session.id, "summarize this repo");
 console.log(turn.text);
 await client.close();
 ```
 
-`WhyCodesClient.launch()` spawns a private `whycodes serve`. Pass
+`WhyCodesClient.launch()` spawns a private `whycodes serve` with a fresh token. Pass
 `inheritLogins: false` for a private `WHYCODES_HOME` (no user API keys).
 `getHistory` / `peek`, `listModels` / `setModel`, `renameSession` /
 `rewind` / `compact` are first-class. Branch on `SdkError.code`.
