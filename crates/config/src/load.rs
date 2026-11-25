@@ -62,10 +62,26 @@ pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
             .unwrap_or("config.toml"),
         std::process::id()
     ));
-    std::fs::write(&tmp, contents)?;
+    write_private(&tmp, contents)?;
     let persist = || std::fs::rename(&tmp, path);
     let Err(first) = persist() else { return Ok(()) };
     persist().map_err(|e| fold_tmp_cleanup(e, &first, std::fs::remove_file(&tmp)).into())
+}
+
+/// Create `path` readable by its owner only (0600 on Unix), then write it.
+/// `config.toml` can hold API keys; `fs::write` created the temp file with
+/// the umask mode (usually 0644, readable by every local user), and the
+/// rename carried that mode over any 0600 file the user had set.
+fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(path)?;
+    // Before any byte is written; also tightens a temp left by a crash.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(contents)
 }
 
 /// Fold a failed temp cleanup into the persist error so the caller still sees
