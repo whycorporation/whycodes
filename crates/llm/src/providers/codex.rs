@@ -443,12 +443,16 @@ impl Stream for CodexSse {
                     ))));
                 }
                 Poll::Ready(None) => {
-                    // The backend closes the connection after `response.completed`;
-                    // tolerate a missing one so the agent still finishes its turn.
-                    if !this.done {
-                        this.pending.push_back(Ok(StreamEvent::MessageStop));
-                        this.done = true;
-                    }
+                    // The backend closes the connection after `response.completed`
+                    // (or `[DONE]`). Closing before it is a dropped stream: the
+                    // reply may be cut short and a call only finishes on
+                    // `output_item.done`. Retry it, like the other parsers.
+                    this.done = true;
+                    let err = "unexpected EOF before response.completed";
+                    return Poll::Ready(Some(Err(crate::openai_compat::stream_chunk_error(
+                        "openai-codex",
+                        err,
+                    ))));
                 }
                 Poll::Pending => return Poll::Pending,
             }

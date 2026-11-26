@@ -32,6 +32,17 @@ fn sse_response_timeout() -> Duration {
     )
 }
 
+/// Bound on one POST. Not set on the client: a client-wide total timeout
+/// also ends the legacy transport's long-lived SSE GET, so every server on
+/// it dropped out a minute after connecting.
+fn request_timeout() -> Duration {
+    sse_timeout(
+        cfg!(test),
+        Duration::from_secs(60),
+        Duration::from_millis(300),
+    )
+}
+
 fn sse_timeout(for_test: bool, production: Duration, test: Duration) -> Duration {
     if for_test { test } else { production }
 }
@@ -63,7 +74,6 @@ fn sse_post_failed(url: &str, e: reqwest::Error) -> McpError {
 
 fn http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
         .connect_timeout(Duration::from_secs(15))
         .user_agent(format!("whycodes-mcp/{}", env!("CARGO_PKG_VERSION")))
         .build()
@@ -230,6 +240,7 @@ impl StreamableHttpTransport {
         let builder = self
             .client
             .post(&self.url)
+            .timeout(request_timeout())
             .header(ACCEPT, ACCEPT_BOTH)
             .header(CONTENT_TYPE, "application/json")
             .body(body);
@@ -282,6 +293,7 @@ impl StreamableHttpTransport {
         let builder = self
             .client
             .post(&self.url)
+            .timeout(request_timeout())
             .header(ACCEPT, ACCEPT_BOTH)
             .header(CONTENT_TYPE, "application/json")
             .json(&body);
@@ -377,6 +389,7 @@ impl LegacySseTransport {
         let response = self
             .client
             .post(&self.post_url)
+            .timeout(request_timeout())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, ACCEPT_BOTH)
             .headers(self.headers.clone())
@@ -431,6 +444,7 @@ impl LegacySseTransport {
         let response = self
             .client
             .post(&self.post_url)
+            .timeout(request_timeout())
             .header(CONTENT_TYPE, "application/json")
             .headers(self.headers.clone())
             .json(&body)

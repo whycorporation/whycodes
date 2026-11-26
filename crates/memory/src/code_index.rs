@@ -121,12 +121,9 @@ impl MemoryService {
         rel: &str,
         budget: usize,
     ) -> Result<usize> {
-        let Ok(content) = std::fs::read_to_string(root.join(rel)) else {
+        let Some(content) = read_indexable(&root.join(rel)) else {
             return Ok(0);
         };
-        if content.len() > 400_000 {
-            return Ok(0);
-        }
         let mut n = 0usize;
         for (start, end, text) in chunk_source(&content, 40, 10) {
             if n >= budget {
@@ -313,6 +310,22 @@ fn chunk_source(content: &str, window: usize, overlap: usize) -> Vec<(usize, usi
         i += step;
     }
     out
+}
+
+/// Largest file the code index reads.
+const MAX_INDEXED_FILE_BYTES: u64 = 400_000;
+
+/// The file's text when it is UTF-8 and at most [`MAX_INDEXED_FILE_BYTES`].
+/// Reads no more than one byte past the cap: a multi-GB `dump.sql` used to
+/// be read whole before the size check, at every auto-index.
+fn read_indexable(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let mut text = String::new();
+    file.take(MAX_INDEXED_FILE_BYTES + 1)
+        .read_to_string(&mut text)
+        .ok()?;
+    (text.len() as u64 <= MAX_INDEXED_FILE_BYTES).then_some(text)
 }
 
 #[cfg(test)]
@@ -673,5 +686,17 @@ mod tests {
         let svc = MemoryService::open(&project, &data, MemorySettings::default()).unwrap();
         let n = svc.index_codebase(10, 10).unwrap();
         assert!(n >= 1);
+    }
+
+    #[test]
+    fn read_indexable_stops_one_byte_past_the_cap() {
+        let dir = tempdir().unwrap();
+        let at_cap = dir.path().join("a.rs");
+        std::fs::write(&at_cap, "a".repeat(MAX_INDEXED_FILE_BYTES as usize)).unwrap();
+        assert!(read_indexable(&at_cap).is_some());
+        let over = dir.path().join("b.rs");
+        std::fs::write(&over, "a".repeat(MAX_INDEXED_FILE_BYTES as usize + 1)).unwrap();
+        assert!(read_indexable(&over).is_none());
+        assert!(read_indexable(&dir.path().join("missing.rs")).is_none());
     }
 }
