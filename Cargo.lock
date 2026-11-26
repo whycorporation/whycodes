@@ -5901,15 +5901,15 @@ dependencies = [
 
 [[package]]
 name = "uu_head"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5d8bd166467c73ad000c303a0d8c3c3fa03160000bb4493cfd40b8f7816fb95"
+checksum = "2cb3af93c4c870347e9df613491fe0589d49c82264e328d72f2cc73881046ea1"
 dependencies = [
  "clap",
  "fluent",
  "memchr",
  "thiserror 2.0.21",
- "uucore 0.12.0",
+ "uucore 0.13.0",
 ]
 
 [[package]]
