@@ -5855,9 +5855,9 @@ dependencies = [
 
 [[package]]
 name = "uu_cp"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb4c15f0ba298a490b66abac0fefc3a44ff1b8004c38cf140d27c027f1f80784"
+checksum = "0b5bb40f891520c77dceb1acc73865d959dd017c4cad524224873aa7fa17b5f0"
 dependencies = [
  "clap",
  "filetime",
@@ -5867,7 +5867,7 @@ dependencies = [
  "nix 0.31.3",
  "rustix",
  "thiserror 2.0.21",
- "uucore 0.12.0",
+ "uucore 0.13.0",
  "walkdir",
  "windows-sys 0.61.2",
 ]
@@ -6164,6 +6164,7 @@ dependencies = [
  "fluent-syntax",
  "glob",
  "icu_locale",
+ "itertools 0.15.0",
  "libc",
  "nix 0.31.3",
  "num-traits",
@@ -6175,8 +6176,10 @@ dependencies = [
  "unic-langid",
  "unicode-width 0.2.3",
  "uucore_procs 0.13.0",
+ "walkdir",
  "wild",
  "windows-sys 0.61.2",
+ "xattr",
 ]
 
 [[package]]
