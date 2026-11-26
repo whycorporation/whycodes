@@ -1302,3 +1302,27 @@ fn stream_error_message_keeps_what_there_is() {
     );
     assert_eq!(msg(serde_json::json!({"code": true})), "provider error");
 }
+
+#[tokio::test]
+async fn chat_sse_reads_data_lines_without_the_optional_space() {
+    let body = concat!(
+        "data:{\"choices\":[{\"delta\":{\"content\":\"tight\"}}]}
+",
+        "data:[DONE]
+",
+    );
+    let mut stream = chat_sse_from_bytes(scripted_bytes([Ok(body.as_bytes().to_vec())]), "openai");
+    let mut text = String::new();
+    let mut stopped = false;
+    while let Some(ev) = stream.next().await {
+        match ev.unwrap() {
+            StreamEvent::TextDelta { text: t } => text.push_str(&t),
+            StreamEvent::MessageStop => stopped = true,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "tight");
+    assert!(stopped);
+    assert_eq!(sse_data("event: x"), None);
+    assert_eq!(sse_data("data:  two"), Some(" two"));
+}

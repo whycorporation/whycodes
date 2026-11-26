@@ -394,10 +394,9 @@ struct CodexSse {
 
 impl CodexSse {
     fn push_data_line(&mut self, line: &str) {
-        if line.is_empty() || !line.starts_with("data: ") {
+        let Some(data) = crate::openai_compat::sse_data(line) else {
             return;
-        }
-        let data = &line[6..];
+        };
         if data == "[DONE]" {
             if !self.done {
                 self.pending.push_back(Ok(StreamEvent::MessageStop));
