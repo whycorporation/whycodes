@@ -214,12 +214,18 @@ struct ChatSse {
     think: crate::think_tags::ThinkTags,
 }
 
+/// The payload of an SSE `data:` line. The space after the colon is
+/// optional in the spec; a `data:{...}` line was dropped before.
+pub(crate) fn sse_data(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("data:")?;
+    Some(rest.strip_prefix(' ').unwrap_or(rest))
+}
+
 impl ChatSse {
     fn push_data_line(&mut self, line: &str) {
-        if line.is_empty() || !line.starts_with("data: ") {
+        let Some(data) = sse_data(line) else {
             return;
-        }
-        let data = &line[6..];
+        };
         if data == "[DONE]" {
             self.flush_think();
             self.pending.push_back(Ok(StreamEvent::MessageStop));

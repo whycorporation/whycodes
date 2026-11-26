@@ -633,10 +633,9 @@ struct AnthropicSse {
 
 impl AnthropicSse {
     fn push_data_line(&mut self, line: &str) {
-        if line.is_empty() || !line.starts_with("data: ") {
+        let Some(data) = crate::openai_compat::sse_data(line) else {
             return;
-        }
-        let data = &line[6..];
+        };
         if data == "[DONE]" {
             self.pending.push_back(Ok(StreamEvent::MessageStop));
             self.done = true;

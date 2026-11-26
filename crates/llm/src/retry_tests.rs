@@ -80,6 +80,11 @@ fn jitter_and_retry_after_floor() {
     assert_eq!(full_jitter(Duration::ZERO), Duration::ZERO);
     let j = full_jitter(Duration::from_millis(20));
     assert!(j <= Duration::from_millis(20));
+    // Successive calls spread out instead of repeating one value.
+    let spread: std::collections::HashSet<Duration> = (0..32)
+        .map(|_| full_jitter(Duration::from_secs(1000)))
+        .collect();
+    assert!(spread.len() > 16, "{spread:?}");
     let huge = full_jitter(Duration::from_secs(u64::MAX / 2));
     assert!(huge <= Duration::from_secs(u64::MAX / 2));
     let p = RetryPolicy {
