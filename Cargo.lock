@@ -5874,15 +5874,15 @@ dependencies = [
 
 [[package]]
 name = "uu_cut"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2087dececd3be61b5671c0978605e0fa9ecbe707294137896efdb2848094326"
+checksum = "17bc307e4e3aaed4fe898ebe6fff3380d2557943312c014fc60d05bad498c126"
 dependencies = [
  "bstr",
  "clap",
  "fluent",
  "memchr",
- "uucore 0.12.0",
+ "uucore 0.13.0",
 ]
 
 [[package]]
