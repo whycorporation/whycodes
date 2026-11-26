@@ -13,3 +13,5 @@ pub use sdk::{
     SessionInfo, SessionList, SetModelRequest, StructuredAttempt, StructuredResult,
     ToolCallSummary, TurnResult, UsageSnapshot, extract_json, validate_instance, validate_schema,
 };
+/// For SDK clients decoding a chunked event stream.
+pub use whycodes_core::Utf8Stream;

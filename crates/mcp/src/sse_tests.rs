@@ -99,3 +99,15 @@ fn empty_blank_line_does_not_dispatch_and_colonless_field() {
     p.push("\n");
     assert_eq!(p.take_events()[0].data, "a");
 }
+
+#[test]
+fn push_bytes_keeps_a_character_split_across_chunks() {
+    let body = "data: {\"t\":\"日本\"}\n\n".as_bytes();
+    let mut parser = SseParser::new();
+    for b in body {
+        parser.push_bytes(&[*b]);
+    }
+    let events = parser.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].data, "{\"t\":\"日本\"}");
+}
