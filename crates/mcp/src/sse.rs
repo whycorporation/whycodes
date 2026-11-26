@@ -18,11 +18,19 @@ pub struct SseParser {
     data_lines: Vec<String>,
     id: Option<String>,
     pending: VecDeque<SseEvent>,
+    /// Holds a character split across two byte chunks.
+    utf8: whycodes_core::Utf8Stream,
 }
 
 impl SseParser {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Feed raw body bytes; a character cut between chunks waits for its end.
+    pub fn push_bytes(&mut self, chunk: &[u8]) {
+        let text = self.utf8.push(chunk);
+        self.push(&text);
     }
 
     pub fn push(&mut self, chunk: &str) {

@@ -271,6 +271,7 @@ async fn event_stream_covers_poll_states() {
     let mut pending = EventStream {
         bytes: Box::pin(OncePendingThenNone { n: 0 }),
         buf: String::new(),
+        utf8: whycodes_protocol::Utf8Stream::new(),
         done: false,
     };
     assert!(pending.next().await.is_none());
@@ -278,6 +279,7 @@ async fn event_stream_covers_poll_states() {
     let mut already_done = EventStream {
         bytes: futures::stream::empty().boxed(),
         buf: String::new(),
+        utf8: whycodes_protocol::Utf8Stream::new(),
         done: true,
     };
     assert!(already_done.next().await.is_none());
@@ -285,6 +287,7 @@ async fn event_stream_covers_poll_states() {
     let mut bad = EventStream {
         bytes: futures::stream::iter([Ok(b"data: not-json\n\n".to_vec())]).boxed(),
         buf: String::new(),
+        utf8: whycodes_protocol::Utf8Stream::new(),
         done: false,
     };
     let err = bad.next().await.unwrap().unwrap_err();
@@ -294,6 +297,7 @@ async fn event_stream_covers_poll_states() {
         bytes: futures::stream::iter([Ok(b"data: {\"ev\":\"cancelled\"}\r\n\r\n".to_vec())])
             .boxed(),
         buf: String::new(),
+        utf8: whycodes_protocol::Utf8Stream::new(),
         done: false,
     };
     assert!(matches!(
@@ -308,6 +312,7 @@ async fn event_stream_covers_poll_states() {
         ])
         .boxed(),
         buf: String::new(),
+        utf8: whycodes_protocol::Utf8Stream::new(),
         done: false,
     };
     match split.next().await.unwrap().unwrap() {
@@ -315,6 +320,26 @@ async fn event_stream_covers_poll_states() {
         other => panic!("{other:?}"),
     }
     assert!(split.next().await.is_none());
+
+    // `ç` and the `\r\n` both straddle a chunk boundary.
+    let frame = "data: {\"ev\":\"turn_done\",\"text\":\"ç\"}\r\n\r\n".as_bytes();
+    let at = frame.iter().position(|&b| b == 0xc3).unwrap() + 1;
+    let crlf_at = frame.len() - 1;
+    let mut multibyte = EventStream {
+        bytes: futures::stream::iter([
+            Ok(frame[..at].to_vec()),
+            Ok(frame[at..crlf_at].to_vec()),
+            Ok(frame[crlf_at..].to_vec()),
+        ])
+        .boxed(),
+        buf: String::new(),
+        utf8: whycodes_protocol::Utf8Stream::new(),
+        done: false,
+    };
+    match multibyte.next().await.unwrap().unwrap() {
+        SdkEvent::TurnDone { text } => assert_eq!(text, "ç"),
+        other => panic!("{other:?}"),
+    }
 
     let reqwest_err = reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(50))
@@ -327,6 +352,7 @@ async fn event_stream_covers_poll_states() {
     let mut stream_err = EventStream {
         bytes: futures::stream::iter([Err(reqwest_err)]).boxed(),
         buf: String::new(),
+        utf8: whycodes_protocol::Utf8Stream::new(),
         done: false,
     };
     let err = stream_err.next().await.unwrap().unwrap_err();

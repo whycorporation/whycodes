@@ -15,6 +15,7 @@ pub mod todo;
 pub mod tokens;
 pub mod tool;
 pub mod types;
+pub mod utf8_stream;
 
 pub use edit_trailer::{edit_trailer, parse_edit_trailers};
 pub use error::{Error, ErrorKind, Result, TransportError};
@@ -38,6 +39,7 @@ pub use todo::{
 };
 pub use tool::{Tool, ToolContext, ToolFuture};
 pub use types::{ApprovalMode, fallback_tool_call_id};
+pub use utf8_stream::Utf8Stream;
 
 #[cfg(test)]
 mod tests;
