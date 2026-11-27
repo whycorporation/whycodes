@@ -240,3 +240,25 @@ fn lookup_in_dir_with_exts_finds_pathext_and_skips_missing() {
     assert!(lookup_in_dir_with_exts(dir.path(), "tool", &[".BAT".into()]).is_none());
     assert!(lookup_in_dir_with_exts(dir.path(), "missing", &[".CMD".into()]).is_none());
 }
+
+/// npm puts a POSIX `sh` script and a `.cmd` shim side by side
+/// (`typescript-language-server` + `typescript-language-server.cmd`).
+/// Windows can start only the shim.
+#[test]
+fn lookup_prefers_a_pathext_shim_over_the_extensionless_script() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["tool", "tool.CMD"] {
+        let file = dir.path().join(name);
+        fs::write(&file, b"echo").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    let found = lookup_in_dir_with_exts(dir.path(), "tool", &[".CMD".into()]).unwrap();
+    assert_eq!(found.file_name().unwrap(), "tool.CMD");
+    // No PATHEXT (Unix): the script itself is the executable.
+    let found = lookup_in_dir_with_exts(dir.path(), "tool", &[]).unwrap();
+    assert_eq!(found.file_name().unwrap(), "tool");
+}
