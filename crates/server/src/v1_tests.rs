@@ -771,3 +771,51 @@ async fn list_session_helpers_skip_missing_and_failed_db_rows() {
     assert_eq!(db_sessions.len(), 1);
     assert_eq!(db_sessions[0].id, "db-only");
 }
+
+#[tokio::test]
+async fn a_queued_run_does_not_take_over_the_running_one() {
+    let _home = crate::http_tests::IsolatedHome::new();
+    let mut registry = whycodes_llm::provider::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "ollama",
+        [whycodes_llm::ScriptedStep::Text("queued-ok".into())],
+    )));
+    let state = crate::http_tests::test_state_with_registry(Some(registry));
+    let session = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
+    let id = session.id.clone();
+    let handle = state.insert_session(session);
+
+    // A first run is in flight: it holds the session and owns its cancel flag.
+    let running = handle.lock().await;
+    let first_cancel = new_cancel_flag();
+    state.register_cancel(&id, Arc::clone(&first_cancel));
+
+    let queued = run(
+        State(state.clone()),
+        Path(id.clone()),
+        Json(RunRequest {
+            message: "v1-queued-unique".into(),
+            provider: Some("ollama".into()),
+            model: Some("tiny-v1-queued".into()),
+            max_turns: Some(1),
+            auto_approve: Some(true),
+        }),
+    )
+    .await
+    .unwrap();
+
+    // Cancel still reaches the run that is actually running.
+    assert!(state.request_cancel(&id));
+    assert!(whycodes_agent::events::is_cancelled(&Some(first_cancel)));
+
+    // The first run ends; the queued one then runs to completion, uncancelled.
+    state.take_cancel(&id);
+    drop(running);
+    let bytes = axum::body::to_bytes(queued.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("queued-ok"), "{text}");
+    assert!(!text.contains("cancelled"), "{text}");
+    assert!(!state.request_cancel(&id), "the queued run left its flag");
+}
