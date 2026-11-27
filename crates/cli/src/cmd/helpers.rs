@@ -355,6 +355,30 @@ pub(crate) fn note_backfill_persist(result: Result<(), impl std::fmt::Display>) 
     }
 }
 
+/// Save the session after a turn. A failure is logged, not fatal: the history
+/// is intact in memory and the next save retries.
+pub(crate) fn persist_session(session: &whycodes_session::session::Session) {
+    note_session_persist(open_db().and_then(|db| Ok(session.save_to_db(&db)?)));
+}
+
+pub(crate) fn note_session_persist(result: anyhow::Result<()>) {
+    if let Err(err) = result {
+        tracing::warn!(error = %err, "failed to persist session");
+    }
+}
+
+/// Write one CI event line to stdout. A failed write means the reader went
+/// away; the turn's result still decides the exit code, so log it and go on.
+pub(crate) fn emit_ci(event: CiEvent) {
+    note_ci_emit(event.emit_stdout());
+}
+
+pub(crate) fn note_ci_emit(result: std::io::Result<()>) {
+    if let Err(err) = result {
+        tracing::debug!(error = %err, "failed to write CI event to stdout");
+    }
+}
+
 pub(crate) fn open_db() -> anyhow::Result<whycodes_storage::db::Database> {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
     std::fs::create_dir_all(&data_dir)?;
@@ -798,10 +822,9 @@ pub(crate) fn emit_headless_setup_error(format: OutputFormat, message: &str) -> 
             Err(anyhow::anyhow!("{}", message))
         }
         OutputFormat::Json | OutputFormat::StreamJson => {
-            let _ = CiEvent::Error {
+            emit_ci(CiEvent::Error {
                 message: message.to_string(),
-            }
-            .emit_stdout();
+            });
             Err(anyhow::anyhow!("{}", message))
         }
     }
@@ -876,14 +899,13 @@ pub(crate) async fn run_headless_turn(
     let cwd = session.project_path.display().to_string();
 
     if format == OutputFormat::StreamJson {
-        let _ = CiEvent::Init {
+        emit_ci(CiEvent::Init {
             session_id: session_id.clone(),
             provider: provider.to_string(),
             model: model.to_string(),
             agent: agent_name.to_string(),
             cwd,
-        }
-        .emit_stdout();
+        });
     }
 
     let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
@@ -950,7 +972,7 @@ pub(crate) fn emit_turn_outcome(
                     }
                 }
                 OutputFormat::Json | OutputFormat::StreamJson => {
-                    let _ = meta.ok(response).emit_stdout();
+                    emit_ci(meta.ok(response));
                 }
             }
             Ok(())
@@ -962,18 +984,17 @@ pub(crate) fn emit_turn_outcome(
                     eprintln!("{} {}", "Error:".red().bold(), msg);
                 }
                 OutputFormat::Json => {
-                    let _ = meta.err(&msg).emit_stdout();
+                    emit_ci(meta.err(&msg));
                 }
                 OutputFormat::StreamJson => {
                     if is_cancel_message(&msg) {
-                        let _ = CiEvent::Cancelled.emit_stdout();
+                        emit_ci(CiEvent::Cancelled);
                     } else {
-                        let _ = CiEvent::Error {
+                        emit_ci(CiEvent::Error {
                             message: msg.clone(),
-                        }
-                        .emit_stdout();
+                        });
                     }
-                    let _ = meta.err(&msg).emit_stdout();
+                    emit_ci(meta.err(&msg));
                 }
             }
             Err(msg)

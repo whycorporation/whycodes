@@ -230,6 +230,14 @@ fn persist_branch_change(session: &whycodes_session::session::Session) {
     }
 }
 
+/// A REPL slash command that prints a list (`/models`, `/agent`, `/connect`)
+/// says why when the list could not be produced.
+pub(crate) fn note_slash_listing(result: anyhow::Result<()>) {
+    if let Err(err) = result {
+        eprintln!("{} {err}", "✗".red());
+    }
+}
+
 /// A failed save is logged, not fatal: the tree is intact in memory and the
 /// next turn's save retries.
 pub(crate) fn note_branch_persist(result: whycodes_session::Result<()>) {
@@ -871,15 +879,11 @@ pub(crate) async fn cmd_run(
                     println!("\n{}", response);
                 }
                 // Retain is spawned inside Agent::run_turn (async; best-effort).
-                if let Ok(db) = open_db() {
-                    let _ = session.save_to_db(&db);
-                }
+                persist_session(&session);
             }
             Err(e) => {
                 eprintln!("{} {}", "Error:".red().bold(), e);
-                if let Ok(db) = open_db() {
-                    let _ = session.save_to_db(&db);
-                }
+                persist_session(&session);
                 return Err(anyhow::anyhow!("{}", e));
             }
         }
@@ -1280,7 +1284,7 @@ pub(crate) async fn cmd_run(
                     continue;
                 }
                 "/models" => {
-                    let _ = super::provider::cmd_model(&ModelCmd::List).await;
+                    note_slash_listing(super::provider::cmd_model(&ModelCmd::List).await);
                     println!("Current: {}/{}", provider.cyan(), model.cyan());
                     if !rest.is_empty() {
                         match parse_models_slash(rest) {
@@ -1363,7 +1367,7 @@ pub(crate) async fn cmd_run(
                 }
                 "/agent" | "/agents" => {
                     if rest.is_empty() {
-                        let _ = super::provider::cmd_agent(None).await;
+                        note_slash_listing(super::provider::cmd_agent(None).await);
                         println!("Current agent: {}", agent_name.cyan());
                     } else {
                         match switch_agent(rest, &config, &project_dir, &provider, &model) {
@@ -1398,7 +1402,7 @@ pub(crate) async fn cmd_run(
                         ) {
                             println!("{line}");
                         }
-                        let _ = super::provider::cmd_provider(&ProviderCmd::List).await;
+                        note_slash_listing(super::provider::cmd_provider(&ProviderCmd::List).await);
                     }
                     continue;
                 }
@@ -1606,16 +1610,12 @@ pub(crate) async fn cmd_run(
                     Some(serde_json::json!({ "error": e.to_string() })),
                 );
                 // Persist even on error so a crash mid-debug still has history.
-                if let Ok(db) = open_db() {
-                    let _ = session.save_to_db(&db);
-                }
+                persist_session(&session);
             }
         }
     }
     // Final flush + exit summary (same shape as the TUI exit path).
-    if let Ok(db) = open_db() {
-        let _ = session.save_to_db(&db);
-    }
+    persist_session(&session);
     let model_label = format!("{provider}/{model}");
     print!(
         "{}",
@@ -2003,7 +2003,7 @@ pub(crate) fn fold_parallel_joins(
             Err(msg) => {
                 any_failed = true;
                 if structured {
-                    let _ = CiEvent::Error { message: msg }.emit_stdout();
+                    emit_ci(CiEvent::Error { message: msg });
                 } else {
                     eprintln!("{} {}", "Error:".red().bold(), msg);
                 }
@@ -2073,14 +2073,13 @@ pub(crate) async fn run_one_parallel_turn(
     };
 
     if format == OutputFormat::StreamJson {
-        let _ = wrap(CiEvent::Init {
+        emit_ci(wrap(CiEvent::Init {
             session_id: session_id.clone(),
             provider: provider.to_string(),
             model: model.to_string(),
             agent: agent_name.to_string(),
             cwd: project_dir.display().to_string(),
-        })
-        .emit_stdout();
+        }));
     }
 
     let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
@@ -2092,11 +2091,10 @@ pub(crate) async fn run_one_parallel_turn(
             return;
         }
         if let Some(ci) = turn_event_to_ci(ev) {
-            let _ = CiEvent::Session {
+            emit_ci(CiEvent::Session {
                 session_id: sid.clone(),
                 event: Box::new(ci),
-            }
-            .emit_stdout();
+            });
         }
     });
 
@@ -2146,10 +2144,10 @@ pub(crate) fn emit_parallel_outcome(
                     }
                 }
                 OutputFormat::Json => {
-                    let _ = meta.ok(response).emit_stdout();
+                    emit_ci(meta.ok(response));
                 }
                 OutputFormat::StreamJson => {
-                    let _ = wrap(meta.ok(response)).emit_stdout();
+                    emit_ci(wrap(meta.ok(response)));
                 }
             }
             false
@@ -2161,18 +2159,17 @@ pub(crate) fn emit_parallel_outcome(
                     eprintln!("{} {}", "Error:".red().bold(), msg);
                 }
                 OutputFormat::Json => {
-                    let _ = meta.err(&msg).emit_stdout();
+                    emit_ci(meta.err(&msg));
                 }
                 OutputFormat::StreamJson => {
                     if is_cancel_message(&msg) {
-                        let _ = wrap(CiEvent::Cancelled).emit_stdout();
+                        emit_ci(wrap(CiEvent::Cancelled));
                     } else {
-                        let _ = wrap(CiEvent::Error {
+                        emit_ci(wrap(CiEvent::Error {
                             message: msg.clone(),
-                        })
-                        .emit_stdout();
+                        }));
                     }
-                    let _ = wrap(meta.err(&msg)).emit_stdout();
+                    emit_ci(wrap(meta.err(&msg)));
                 }
             }
             true

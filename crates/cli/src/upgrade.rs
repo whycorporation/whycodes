@@ -307,8 +307,9 @@ pub fn replace_binary(target: &Path, bytes: &[u8]) -> Result<()> {
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
     }
 
-    if target.exists() && std::fs::rename(target, &displaced).is_err() {
-        let _ = std::fs::remove_file(&staged);
+    let had_binary = target.exists();
+    if had_binary && std::fs::rename(target, &displaced).is_err() {
+        remove_leftover(&staged);
         bail!(
             "could not move the current binary aside at {} — close any running whycodes and retry",
             target.display()
@@ -317,13 +318,44 @@ pub fn replace_binary(target: &Path, bytes: &[u8]) -> Result<()> {
 
     if let Err(e) = std::fs::rename(&staged, target) {
         // Put the original back rather than leaving nothing installed.
-        let _ = std::fs::rename(&displaced, target);
-        let _ = std::fs::remove_file(&staged);
-        return Err(e).with_context(|| format!("installing to {}", target.display()));
+        let restored = if had_binary {
+            std::fs::rename(&displaced, target)
+        } else {
+            Ok(())
+        };
+        remove_leftover(&staged);
+        return Err(install_error(e, target, restored, &displaced));
     }
 
-    let _ = std::fs::remove_file(&displaced);
+    remove_leftover(&displaced);
     Ok(())
+}
+
+/// The error for a failed install. When the previous binary could not be put
+/// back either, nothing is installed at `target`: say where the old one is.
+pub(crate) fn install_error(
+    install: std::io::Error,
+    target: &Path,
+    restored: std::io::Result<()>,
+    displaced: &Path,
+) -> anyhow::Error {
+    let err = anyhow::Error::new(install).context(format!("installing to {}", target.display()));
+    match restored {
+        Ok(()) => err,
+        Err(restore) => err.context(format!(
+            "the previous binary could not be put back ({restore}); rename {} to {} by hand",
+            displaced.display(),
+            target.display()
+        )),
+    }
+}
+
+/// Remove a file an upgrade left behind. Failure is expected while an older
+/// session still runs from it (Windows); the next upgrade tries again.
+pub(crate) fn remove_leftover(path: &Path) {
+    if let Err(err) = std::fs::remove_file(path) {
+        tracing::debug!(path = %path.display(), error = %err, "could not remove upgrade leftover");
+    }
 }
 
 /// Removes earlier upgrades' displaced binaries and returns a free name for
@@ -338,7 +370,7 @@ pub(crate) fn free_displaced_path(dir: &Path) -> PathBuf {
                 .to_string_lossy()
                 .starts_with(".whycodes.old")
             {
-                let _ = std::fs::remove_file(entry.path());
+                remove_leftover(&entry.path());
             }
         }
     }
