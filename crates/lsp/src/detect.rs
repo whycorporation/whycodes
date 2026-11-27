@@ -131,18 +131,19 @@ fn lookup_in_dir(dir: &Path, command: &str) -> Option<PathBuf> {
     lookup_in_dir_with_exts(dir, command, &pathext())
 }
 
+/// `PATHEXT` names before the bare one. npm installs a POSIX `sh` script
+/// next to each `.cmd` shim (`pyright-langserver` + `pyright-langserver.cmd`);
+/// on Windows every file counts as executable, so the bare name matched the
+/// script, which cannot be started (os error 193).
 fn lookup_in_dir_with_exts(dir: &Path, command: &str, exts: &[String]) -> Option<PathBuf> {
-    let direct = dir.join(command);
-    if is_executable(&direct) {
-        return Some(direct);
-    }
     for ext in exts {
         let candidate = dir.join(format!("{command}{ext}"));
         if is_executable(&candidate) {
             return Some(candidate);
         }
     }
-    None
+    let direct = dir.join(command);
+    is_executable(&direct).then_some(direct)
 }
 
 /// `command` on `PATH` (does not shell out to `which`).

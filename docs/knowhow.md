@@ -144,6 +144,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-11-28 — Windows: npm-installed language servers never started
+
+**Symptom:** On Windows, `lsp` found `typescript-language-server`,
+`pyright-langserver` and other npm-installed servers on `PATH` and then
+failed to start them: `%1 is not a valid Win32 application` (os error 193).
+
+**Root cause:** npm writes a POSIX `sh` script next to each `.cmd` shim
+(`npx` and `npx.cmd`). `lookup_in_dir_with_exts` tried the bare name first,
+and off Unix every regular file counts as executable, so it returned the
+script.
+
+**Fix:** `PATHEXT` candidates are tried before the bare name
+(`crates/lsp/src/detect.rs`). Unix has no `PATHEXT`, so nothing changes
+there.
+
+**Prevention:** On Windows a file existing does not make it startable.
+Resolve a bare command through `PATHEXT` first, as `whycodes-mcp`
+`resolve_on_path` does. Test:
+`lookup_prefers_a_pathext_shim_over_the_extensionless_script`.
+
 ### 2026-11-27 — A `/v1` run kept going after its client disconnected
 
 **Symptom:** A client that closed the `run` event stream mid-turn (crash,
