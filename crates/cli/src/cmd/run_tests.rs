@@ -414,3 +414,13 @@ fn repl_switch_refuses_a_row_from_an_older_tree() {
     note_branch_persist(Ok(()));
     note_branch_persist(Err(whycodes_session::SessionError::msg("disk full")));
 }
+
+#[test]
+fn best_effort_helpers_accept_both_outcomes() {
+    note_session_persist(Ok(()));
+    note_session_persist(Err(anyhow::anyhow!("disk full")));
+    note_ci_emit(Ok(()));
+    note_ci_emit(Err(std::io::Error::other("closed")));
+    note_slash_listing(Ok(()));
+    note_slash_listing(Err(anyhow::anyhow!("no providers")));
+}

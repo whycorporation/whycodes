@@ -5634,6 +5634,38 @@ fn replace_binary_works_while_an_old_displaced_binary_cannot_be_removed() {
 }
 
 #[test]
+fn install_error_names_the_displaced_binary_when_restore_fails() {
+    use std::path::Path;
+    let target = Path::new("bin/whycodes");
+    let displaced = Path::new("bin/.whycodes.old");
+    let fail = || std::io::Error::other("denied");
+
+    let restored = crate::upgrade::install_error(fail(), target, Ok(()), displaced);
+    let text = format!("{restored:#}");
+    assert!(text.starts_with("installing to "), "{text}");
+    assert!(!text.contains(".whycodes.old"), "{text}");
+
+    let stranded = crate::upgrade::install_error(fail(), target, Err(fail()), displaced);
+    let text = format!("{stranded:#}");
+    assert!(
+        text.starts_with("the previous binary could not be put back (denied)"),
+        "{text}"
+    );
+    assert!(text.contains(".whycodes.old"), "{text}");
+    assert!(text.contains("installing to "), "{text}");
+}
+
+#[test]
+fn remove_leftover_tolerates_a_missing_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(".whycodes.new");
+    crate::upgrade::remove_leftover(&file);
+    std::fs::write(&file, b"x").unwrap();
+    crate::upgrade::remove_leftover(&file);
+    assert!(!file.exists());
+}
+
+#[test]
 fn replace_binary_parentless_errors() {
     let err = crate::upgrade::replace_binary(std::path::Path::new("whycodes"), b"x");
     let _ = err;
