@@ -432,7 +432,7 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
             truncate_to(msg, content_w as usize),
             Style::default().fg(colors.hint).bg(colors.panel),
         ));
-        let _ = buf.set_line(items_area.x, items_area.y, &line, content_w);
+        buf.set_line(items_area.x, items_area.y, &line, content_w);
     }
 
     for vis_row in 0..visible {
@@ -553,7 +553,7 @@ fn paint_row(
         spans.push(Span::styled(" ".repeat(width as usize - used), pad_style));
     }
     let line = Line::from(spans);
-    let _ = buf.set_line(x, y, &line, width);
+    buf.set_line(x, y, &line, width);
 }
 
 #[cfg(test)]

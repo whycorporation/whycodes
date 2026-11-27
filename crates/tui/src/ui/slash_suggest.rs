@@ -284,7 +284,7 @@ fn paint_row(
     }
     let line = Line::from(spans);
     // set_line writes graphemes without restyling the whole rect.
-    let _ = buf.set_line(x, y, &line, width);
+    buf.set_line(x, y, &line, width);
 }
 
 /// Longest command name in the list (at least 14, at most 24 columns), so
@@ -311,7 +311,7 @@ pub(crate) fn fill_bg(buf: &mut Buffer, area: Rect, bg: Color) {
 
 pub(crate) fn set_line(buf: &mut Buffer, x: u16, y: u16, text: &str, width: u16, style: Style) {
     let line = Line::from(Span::styled(text.to_string(), style));
-    let _ = buf.set_line(x, y, &line, width);
+    buf.set_line(x, y, &line, width);
 }
 
 pub(crate) fn truncate_to(s: &str, max: usize) -> String {

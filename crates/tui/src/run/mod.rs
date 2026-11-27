@@ -3215,6 +3215,21 @@ fn apply_pending_cancel(
     }
 }
 
+/// Unblock every tool still waiting on the user: questions are cancelled and
+/// permission prompts denied, so the agent can observe the cancel promptly.
+/// A send fails only when the turn already dropped its receiver.
+fn reject_pending(
+    question_queue: &mut std::collections::VecDeque<QuestionRequest>,
+    perm_queue: &mut std::collections::VecDeque<whycodes_agent::PermissionRequest>,
+) {
+    while let Some(req) = question_queue.pop_front() {
+        let _ = req.reply.send(Err(QuestionError::Cancelled));
+    }
+    while let Some(req) = perm_queue.pop_front() {
+        let _ = req.reply.send(PermissionReply::Deny);
+    }
+}
+
 fn begin_cancel(
     app: &mut TuiApp,
     cancel_flag: &Option<CancelFlag>,
@@ -3225,14 +3240,7 @@ fn begin_cancel(
     if let Some(flag) = cancel_flag.as_ref() {
         request_cancel(flag);
     }
-    // Unblock any interactive wait so the agent can observe cancel promptly.
-    while let Some(req) = pending_question_queue.pop_front() {
-        let _ = req.reply.send(Err(QuestionError::Cancelled));
-    }
-    while let Some(req) = pending_perm_queue.pop_front() {
-        // Deny — tool layer treats false as "user refused".
-        let _ = req.reply.send(PermissionReply::Deny);
-    }
+    reject_pending(pending_question_queue, pending_perm_queue);
     if cancel_requested_at.is_none() {
         *cancel_requested_at = Some(Instant::now());
     }
@@ -3259,12 +3267,7 @@ fn force_stop_turn(
     if let Some(flag) = rt.cancel_flag.as_ref() {
         request_cancel(flag);
     }
-    while let Some(req) = rt.pending_question_queue.pop_front() {
-        let _ = req.reply.send(Err(QuestionError::Cancelled));
-    }
-    while let Some(req) = rt.pending_perm_queue.pop_front() {
-        let _ = req.reply.send(PermissionReply::Deny);
-    }
+    reject_pending(&mut rt.pending_question_queue, &mut rt.pending_perm_queue);
 
     if let Some(h) = rt.turn_join.take() {
         h.abort();
@@ -3962,7 +3965,7 @@ fn apply_turn_outcome(
             if let Some((sid, title)) = pending_async_title.take()
                 && rt.session.id == sid
             {
-                let _ = rt.session.apply_generated_title(&title);
+                rt.session.apply_generated_title(&title);
             }
             app.session_title = rt.session.title.clone();
             if !text.is_empty()
@@ -4046,7 +4049,7 @@ fn apply_turn_outcome(
             if let Some((sid, title)) = pending_async_title.take()
                 && rt.session.id == sid
             {
-                let _ = rt.session.apply_generated_title(&title);
+                rt.session.apply_generated_title(&title);
             }
             app.session_title = rt.session.title.clone();
             app.finish_open_thinking();
@@ -4177,12 +4180,7 @@ fn close_session_slot(
         }
     } else if close_idx < runtimes.len() {
         let mut bg = runtimes.remove(close_idx);
-        while let Some(req) = bg.pending_perm_queue.pop_front() {
-            let _ = req.reply.send(PermissionReply::Deny);
-        }
-        while let Some(req) = bg.pending_question_queue.pop_front() {
-            let _ = req.reply.send(Err(QuestionError::Cancelled));
-        }
+        reject_pending(&mut bg.pending_question_queue, &mut bg.pending_perm_queue);
         if let Some(h) = bg.turn_join.take() {
             h.abort();
         }
@@ -4732,12 +4730,7 @@ async fn apply_auth_flow_event(
 }
 
 fn shutdown_runtime_queues(rt: &mut SessionRuntime) {
-    while let Some(req) = rt.pending_perm_queue.pop_front() {
-        let _ = req.reply.send(PermissionReply::Deny);
-    }
-    while let Some(req) = rt.pending_question_queue.pop_front() {
-        let _ = req.reply.send(Err(QuestionError::Cancelled));
-    }
+    reject_pending(&mut rt.pending_question_queue, &mut rt.pending_perm_queue);
     if let Some(flag) = rt.cancel_flag.as_ref() {
         request_cancel(flag);
     }
@@ -5290,7 +5283,7 @@ fn spawn_local_turn(
         // Kick off small-model title refine without awaiting — the
         // main loop applies the title when title_tx delivers.
         if auto_title && result.is_ok() {
-            let _ = agent.spawn_title_refine(
+            agent.spawn_title_refine(
                 &session,
                 &title_provider,
                 &title_session_model,
@@ -6410,12 +6403,12 @@ fn handle_question_key(
         }
         // Multi-question navigate (←/→ between questions)
         KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('[') if !state.free_text_focus => {
-            let _ = state.go_prev_question();
+            state.go_prev_question();
             app.dialogs.push(DialogKind::Question(state));
             true
         }
         KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(']') if !state.free_text_focus => {
-            let _ = state.go_next_question();
+            state.go_next_question();
             app.dialogs.push(DialogKind::Question(state));
             true
         }
