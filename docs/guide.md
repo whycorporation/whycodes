@@ -630,6 +630,9 @@ Events on `/v1/sessions/:id/run` are tagged `ev` (`text_delta`, `tool_start`,
 `permission_request`, `turn_done`, …). Unknown tags become `Unknown`.
 `run()` auto-approves tool `Ask`s and `question`; `run_events()` does not —
 answer with `respond_to_permission` / `respond_to_question`.
+Closing the event stream before `turn_done` cancels the run: a stream
+cannot be joined again, so a turn nobody listens to stops instead of
+spending tokens.
 `launch({ inherit_logins: false })` uses a private `WHYCODES_HOME`
 (config, sessions, auth, memory, skills, browser profile).
 `get_history` / `peek`, `list_models` / `set_model`, `rename` / `rewind` /

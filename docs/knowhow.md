@@ -144,6 +144,25 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-11-27 — A `/v1` run kept going after its client disconnected
+
+**Symptom:** A client that closed the `run` event stream mid-turn (crash,
+timeout, Ctrl+C in a script) left the turn running in the daemon. It spent
+tokens, held the session so the next run queued behind it, and every
+permission ask waited out its 300 s timeout.
+
+**Root cause:** The turn runs on its own task and the SSE stream only
+forwards its events. Dropping the stream dropped the receiver; nothing told
+the turn.
+
+**Fix:** The stream owns a `CancelOnDisconnect` guard. Dropped before the
+run ended, it sets the run's cancel flag. It is built outside the
+`stream!` block so a stream dropped before its first poll still cancels.
+
+**Prevention:** A detached task that works for one HTTP response needs a
+drop guard on that response's body. Test:
+`a_run_is_cancelled_when_its_client_leaves`.
+
 ### 2026-11-27 — A second `/v1` run on a session took over the first one's cancel and asks
 
 **Symptom:** With a run in flight, a second `POST /v1/sessions/:id/run` for

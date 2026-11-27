@@ -275,6 +275,10 @@ pub async fn run(
         result
     });
 
+    let mut listener = CancelOnDisconnect {
+        cancel,
+        ended: false,
+    };
     let stream = async_stream::stream! {
         while let Some(ev) = rx.recv().await {
             if matches!(&ev, TurnEvent::Status(s) if s == RUN_DONE) {
@@ -286,6 +290,7 @@ pub async fn run(
                 yield Ok::<_, Infallible>(Event::default().data(payload));
             }
         }
+        listener.run_ended();
         match run_task.await {
             Ok(Ok(text)) => {
                 if let Ok(payload) = serde_json::to_string(&SdkEvent::TurnDone { text }) {
@@ -317,6 +322,33 @@ pub async fn run(
     };
 
     Ok(Sse::new(stream).keep_alive(keep).into_response())
+}
+
+/// Cancels a run whose event stream was dropped before the run ended: the
+/// client is gone, a `/v1` stream cannot be joined again, and nobody is left
+/// to read the output or answer an ask. Without this the turn ran on, spent
+/// tokens and held the session until it finished by itself.
+struct CancelOnDisconnect {
+    cancel: whycodes_agent::events::CancelFlag,
+    ended: bool,
+}
+
+impl CancelOnDisconnect {
+    /// A method, not a field write: the stream must own the whole guard. A
+    /// field write captures only the `bool`, and the guard would drop (and
+    /// cancel) when the handler returns.
+    fn run_ended(&mut self) {
+        self.ended = true;
+    }
+}
+
+impl Drop for CancelOnDisconnect {
+    fn drop(&mut self) {
+        if !self.ended {
+            tracing::debug!("v1: client left mid-run; cancelling the turn");
+            whycodes_agent::events::request_cancel(&self.cancel);
+        }
+    }
 }
 
 /// Make this run the one `cancel` and permission asks for `session_id` reach.
