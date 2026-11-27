@@ -324,7 +324,7 @@ pub struct LegacySseTransport {
     headers: HeaderMap,
     post_url: String,
     rx: mpsc::UnboundedReceiver<SseEvent>,
-    _reader: tokio::task::JoinHandle<()>,
+    _reader: SseReader,
     next_id: u64,
 }
 
@@ -536,17 +536,26 @@ impl LegacySseTransport {
             headers: HeaderMap::new(),
             post_url: "http://127.0.0.1:1/messages".into(),
             rx,
-            _reader: tokio::spawn(async {}),
+            _reader: SseReader(tokio::spawn(async {})),
             next_id: 1,
         }
     }
 }
 
-fn spawn_sse_reader(
-    response: reqwest::Response,
-    tx: mpsc::UnboundedSender<SseEvent>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
+/// The task reading the long-lived SSE GET; aborted on drop. A dropped
+/// `JoinHandle` only detaches, and the task notices a gone receiver only when
+/// it has an event to send, so a server that just sends keep-alives kept the
+/// task and its connection for the life of the process.
+struct SseReader(tokio::task::JoinHandle<()>);
+
+impl Drop for SseReader {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+fn spawn_sse_reader(response: reqwest::Response, tx: mpsc::UnboundedSender<SseEvent>) -> SseReader {
+    SseReader(tokio::spawn(async move {
         let mut stream = response.bytes_stream();
         let mut parser = SseParser::new();
         while let Some(chunk) = stream.next().await {
@@ -558,7 +567,7 @@ fn spawn_sse_reader(
                 return;
             }
         }
-    })
+    }))
 }
 
 fn handle_sse_chunk(
