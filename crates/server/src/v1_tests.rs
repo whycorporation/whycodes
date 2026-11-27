@@ -819,3 +819,39 @@ async fn a_queued_run_does_not_take_over_the_running_one() {
     assert!(!text.contains("cancelled"), "{text}");
     assert!(!state.request_cancel(&id), "the queued run left its flag");
 }
+
+#[tokio::test]
+async fn a_run_is_cancelled_when_its_client_leaves() {
+    let _home = crate::http_tests::IsolatedHome::new();
+    let mut registry = whycodes_llm::provider::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "ollama",
+        [whycodes_llm::ScriptedStep::Hang(Duration::from_secs(60))],
+    )));
+    let state = crate::http_tests::test_state_with_registry(Some(registry));
+    let session = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
+    let id = session.id.clone();
+    let handle = state.insert_session(session);
+
+    let resp = run(
+        State(state.clone()),
+        Path(id.clone()),
+        Json(RunRequest {
+            message: "v1-disconnect-unique".into(),
+            provider: Some("ollama".into()),
+            model: Some("tiny-v1-disconnect".into()),
+            max_turns: Some(1),
+            auto_approve: Some(true),
+        }),
+    )
+    .await
+    .unwrap();
+    // The run holds the session while the provider hangs.
+    assert!(handle.try_lock().is_err());
+
+    drop(resp);
+    let session = tokio::time::timeout(Duration::from_secs(10), handle.lock())
+        .await
+        .expect("the turn kept running after its client left");
+    assert!(!session.messages.is_empty());
+}
