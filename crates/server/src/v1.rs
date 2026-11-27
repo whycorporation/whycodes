@@ -212,8 +212,16 @@ pub async fn run(
     let warm_minutes = state.config.session.cache_warm_minutes;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
     let cancel = new_cancel_flag();
-    state.register_cancel(&session_id, Arc::clone(&cancel));
-    state.perm.register_run(&session_id, tx.clone());
+    // A run owns the session's cancel flag and event sink only while it holds
+    // the session. Registered before that, a second run for the same session
+    // replaced the first one's: `cancel` stopped the queued run instead of
+    // the running one, the running one's permission asks went to the other
+    // stream, and its cleanup then removed the queued run's registration.
+    let mut held = None;
+    if let Ok(session) = Arc::clone(&handle).try_lock_owned() {
+        own_run(&state, &session_id, &cancel, &tx);
+        held = Some(session);
+    }
     let cancel_for_task = Arc::clone(&cancel);
     let sid = session_id.clone();
     let state_done = state.clone();
@@ -226,9 +234,16 @@ pub async fn run(
     let run_task = tokio::spawn(async move {
         let result = RUN
             .scope(scope, async {
-                let mut session = handle.lock().await;
+                let mut session = match held {
+                    Some(session) => session,
+                    None => {
+                        let session = Arc::clone(&handle).lock_owned().await;
+                        own_run(&state_done, &sid, &cancel_for_task, &tx);
+                        session
+                    }
+                };
                 session.add_user_message(&req.message);
-                agent
+                let result = agent
                     .run_turn_with_events(
                         &mut session,
                         TurnOpts {
@@ -237,21 +252,23 @@ pub async fn run(
                             api_key: &api_key,
                             max_turns,
                             events: Some(tx.clone()),
-                            cancel: Some(cancel_for_task),
+                            cancel: Some(Arc::clone(&cancel_for_task)),
                         },
                     )
-                    .await
+                    .await;
+                warn_persist(
+                    "v1: failed to save session after run",
+                    save_session(&session),
+                );
+                // Still holding the session: the next run registers after this.
+                state_done.take_cancel(&sid);
+                state_done.perm.finish_run(&sid);
+                result
             })
             .await;
-        warn_persist(
-            "v1: failed to save session after run",
-            save_session(&*handle.lock().await),
-        );
         crate::heap::after_turn();
         let route = (provider.clone(), model.clone(), api_key.clone());
         crate::keep_warm::spawn(Arc::clone(&agent), Arc::clone(&handle), route, warm_minutes);
-        state_done.take_cancel(&sid);
-        state_done.perm.finish_run(&sid);
         // The channel itself may never close: a `bash` call hands a sender to
         // the agent's background registry, which lives as long as the daemon.
         crate::routes::emit_status(&tx, RUN_DONE);
@@ -300,6 +317,17 @@ pub async fn run(
     };
 
     Ok(Sse::new(stream).keep_alive(keep).into_response())
+}
+
+/// Make this run the one `cancel` and permission asks for `session_id` reach.
+fn own_run(
+    state: &AppState,
+    session_id: &str,
+    cancel: &whycodes_agent::events::CancelFlag,
+    tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>,
+) {
+    state.register_cancel(session_id, Arc::clone(cancel));
+    state.perm.register_run(session_id, tx.clone());
 }
 
 #[derive(Deserialize)]

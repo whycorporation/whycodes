@@ -144,6 +144,28 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-11-27 — A second `/v1` run on a session took over the first one's cancel and asks
+
+**Symptom:** With a run in flight, a second `POST /v1/sessions/:id/run` for
+the same session made `cancel` stop the queued run instead of the running
+one. The running turn's permission asks arrived on the second client's
+stream. When the first run ended, the queued one could no longer be
+cancelled and its asks reached nobody (each waited out the 300 s timeout).
+
+**Root cause:** `run` put its cancel flag and event sink into per-session
+maps before the task took the session lock, so a queued run replaced the
+running one's entries. The running one's cleanup then removed the queued
+run's entries by session id.
+
+**Fix:** A run registers only once it holds the session, and unregisters
+before letting go of it (`own_run` in `crates/server/src/v1.rs`). An
+uncontended run still takes the lock inside the handler, so `cancel` works
+as soon as `run` has answered.
+
+**Prevention:** State keyed by session id that belongs to one run must be
+written and removed under that session's lock. Test:
+`a_queued_run_does_not_take_over_the_running_one`.
+
 ### 2026-11-27 — Dropped MCP SSE transport kept its connection (detached reader)
 
 **Symptom:** An MCP server on the legacy HTTP+SSE transport that only sends
