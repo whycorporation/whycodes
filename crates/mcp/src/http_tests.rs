@@ -803,3 +803,74 @@ async fn legacy_sse_covers_endpoint_wait_and_post_paths() {
         .to_string();
     assert!(err.contains("HTTP POST"), "{err}");
 }
+
+/// An SSE server that names its endpoint and then only sends keep-alive
+/// comments. Resolves the returned channel once the client's connection is
+/// gone (a write fails).
+async fn spawn_keepalive_sse(endpoint: bool) -> (String, tokio::sync::oneshot::Receiver<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/sse", listener.local_addr().unwrap());
+    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut buf = [0u8; 1024];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = stream.read(&mut buf).await.unwrap();
+            request.extend_from_slice(&buf[..n]);
+        }
+        let head =
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
+        stream.write_all(head.as_bytes()).await.unwrap();
+        if endpoint {
+            let event = "event: endpoint\ndata: /messages\n\n";
+            stream.write_all(event.as_bytes()).await.unwrap();
+        }
+        while stream.write_all(b": keep-alive\n\n").await.is_ok() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        closed_tx.send(()).unwrap();
+    });
+    (url, closed_rx)
+}
+
+#[tokio::test]
+async fn dropping_the_legacy_transport_closes_its_sse_connection() {
+    let (url, closed) = spawn_keepalive_sse(true).await;
+    let transport = LegacySseTransport::connect(&url, &HashMap::new())
+        .await
+        .unwrap();
+    drop(transport);
+    tokio::time::timeout(Duration::from_secs(5), closed)
+        .await
+        .expect("the SSE connection stayed open after the transport was dropped")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_connect_that_never_gets_an_endpoint_closes_its_sse_connection() {
+    let (url, closed) = spawn_keepalive_sse(false).await;
+    let err = LegacySseTransport::connect(&url, &HashMap::new())
+        .await
+        .err()
+        .expect("no endpoint event was sent");
+    assert!(err.to_string().contains("timed out"), "{err}");
+    tokio::time::timeout(Duration::from_secs(5), closed)
+        .await
+        .expect("the SSE connection stayed open after connect failed")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn sse_reader_stops_by_itself_when_nobody_receives() {
+    let (url, _closed) = spawn_keepalive_sse(true).await;
+    let response = reqwest::get(&url).await.unwrap();
+    let (tx, rx) = mpsc::unbounded_channel();
+    drop(rx);
+    let mut reader = spawn_sse_reader(response, tx);
+    tokio::time::timeout(Duration::from_secs(5), &mut reader.0)
+        .await
+        .expect("the reader kept running with no receiver")
+        .unwrap();
+}

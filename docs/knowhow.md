@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-11-27 — Dropped MCP SSE transport kept its connection (detached reader)
+
+**Symptom:** An MCP server on the legacy HTTP+SSE transport that only sends
+keep-alive comments kept one open connection and one task per dropped or
+failed connect, for the life of the process.
+
+**Root cause:** `LegacySseTransport` held the reader task as a
+`JoinHandle`. Dropping a `JoinHandle` detaches the task; it does not stop
+it. The reader notices a dropped receiver only when it has an event to
+send, and a keep-alive comment is not an event. A `connect` that timed out
+waiting for the `endpoint` event left the same task behind.
+
+**Fix:** The handle lives in `SseReader`, whose `Drop` aborts the task, so
+the response body (and the connection) goes with the transport.
+
+**Prevention:** A spawned task that owns a connection or a child process
+needs an owner that aborts it; a `JoinHandle` field is not one. Aborting
+early also removed the only indirect coverage of the reader's own exit
+path, so that path has its own test. Tests:
+`dropping_the_legacy_transport_closes_its_sse_connection`,
+`a_connect_that_never_gets_an_endpoint_closes_its_sse_connection`,
+`sse_reader_stops_by_itself_when_nobody_receives`.
+
 ### 2026-11-09 — Daemon heap grew with every session (index watcher ignored `.gitignore`)
 
 **Symptom:** A soak of `whycodes serve` (thousands of `/v1` sessions on a
