@@ -148,7 +148,7 @@ Rust API guidelines: **küçük, odaklı modüller**; `lib.rs` re-export. `confi
 
 `cli`: `Commands` enum `cli/src/args.rs`; gövdeler `cli/src/cmd/{auth,session,github,…}.rs` (#46).
 
-`tui`: event loop `run/mod.rs`; slash / persist / tests sibling modules (#46).
+`tui`: event loop `run/mod.rs`; slash / persist / prompts / sessions / turn / keys / models / boot / terminal / tests sibling modules (#46).
 
 ### 7. God-struct: her şey `pub`
 
