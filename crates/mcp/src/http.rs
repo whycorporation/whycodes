@@ -43,6 +43,23 @@ fn request_timeout() -> Duration {
     )
 }
 
+/// Bound on a `tools/call`, which lasts as long as the tool does: a build, a
+/// browser session or a generation job outlasts the minute that suits
+/// protocol traffic. Still bounded, so a dead server cannot hold a run with
+/// nobody at the keyboard forever.
+fn tool_call_timeout() -> Duration {
+    sse_timeout(cfg!(test), Duration::from_secs(600), Duration::from_secs(2))
+}
+
+/// How long to wait for the answer to `method`: `other`, or the tool bound.
+fn timeout_for(method: &str, other: Duration) -> Duration {
+    if method == "tools/call" {
+        tool_call_timeout()
+    } else {
+        other
+    }
+}
+
 fn sse_timeout(for_test: bool, production: Duration, test: Duration) -> Duration {
     if for_test { test } else { production }
 }
@@ -240,7 +257,7 @@ impl StreamableHttpTransport {
         let builder = self
             .client
             .post(&self.url)
-            .timeout(request_timeout())
+            .timeout(timeout_for(method, request_timeout()))
             .header(ACCEPT, ACCEPT_BOTH)
             .header(CONTENT_TYPE, "application/json")
             .body(body);
@@ -389,7 +406,7 @@ impl LegacySseTransport {
         let response = self
             .client
             .post(&self.post_url)
-            .timeout(request_timeout())
+            .timeout(timeout_for(method, request_timeout()))
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, ACCEPT_BOTH)
             .headers(self.headers.clone())
@@ -398,9 +415,10 @@ impl LegacySseTransport {
             .await
             .map_err(|e| sse_post_failed(&self.post_url, e))?;
 
+        let wait = timeout_for(method, sse_response_timeout());
         let status = response.status();
         if status.as_u16() == 202 || status.as_u16() == 204 {
-            return self.wait_for_response(id).await;
+            return self.wait_for_response(id, wait).await;
         }
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
@@ -425,10 +443,10 @@ impl LegacySseTransport {
                 })?;
                 return unwrap_rpc(rpc, id);
             }
-            return self.wait_for_response(id).await;
+            return self.wait_for_response(id, wait).await;
         }
         drop(response);
-        self.wait_for_response(id).await
+        self.wait_for_response(id, wait).await
     }
 
     pub async fn send_notification(
@@ -467,12 +485,13 @@ impl LegacySseTransport {
         )))
     }
 
-    async fn wait_for_response(&mut self, expected_id: u64) -> Result<serde_json::Value> {
-        self.wait_for_response_until(
-            expected_id,
-            tokio::time::Instant::now() + sse_response_timeout(),
-        )
-        .await
+    async fn wait_for_response(
+        &mut self,
+        expected_id: u64,
+        wait: Duration,
+    ) -> Result<serde_json::Value> {
+        self.wait_for_response_until(expected_id, tokio::time::Instant::now() + wait)
+            .await
     }
 
     async fn wait_for_response_until(
