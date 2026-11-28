@@ -289,7 +289,10 @@ async fn wait_for_response_filters_events_and_times_out() {
         id: None,
     })
     .unwrap();
-    let result = t.wait_for_response(1).await.unwrap();
+    let result = t
+        .wait_for_response(1, sse_response_timeout())
+        .await
+        .unwrap();
     assert_eq!(result["ok"], true);
 
     let (tx, rx) = mpsc::unbounded_channel();
@@ -300,18 +303,30 @@ async fn wait_for_response_filters_events_and_times_out() {
         id: None,
     })
     .unwrap();
-    let err = t.wait_for_response(1).await.unwrap_err().to_string();
+    let err = t
+        .wait_for_response(1, sse_response_timeout())
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("failed to parse JSON-RPC"), "{err}");
 
     let (_tx, rx) = mpsc::unbounded_channel();
     let mut t = LegacySseTransport::from_rx_for_test(rx);
-    let err = t.wait_for_response(1).await.unwrap_err().to_string();
+    let err = t
+        .wait_for_response(1, sse_response_timeout())
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("timed out"), "{err}");
 
     let (tx, rx) = mpsc::unbounded_channel();
     drop(tx);
     let mut t = LegacySseTransport::from_rx_for_test(rx);
-    let err = t.wait_for_response(1).await.unwrap_err().to_string();
+    let err = t
+        .wait_for_response(1, sse_response_timeout())
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("SSE stream closed"), "{err}");
 
     let (_tx, rx) = mpsc::unbounded_channel();
@@ -872,5 +887,63 @@ async fn sse_reader_stops_by_itself_when_nobody_receives() {
     tokio::time::timeout(Duration::from_secs(5), &mut reader.0)
         .await
         .expect("the reader kept running with no receiver")
+        .unwrap();
+}
+
+/// A server that answers every request `delay` after it arrives.
+async fn spawn_slow_mcp(delay: Duration) -> String {
+    use axum::routing::post;
+    let app = axum::Router::new().route(
+        "/mcp",
+        post(move |body: String| async move {
+            let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+                .as_u64()
+                .unwrap();
+            tokio::time::sleep(delay).await;
+            (
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                json_rpc_result(id, serde_json::json!({"content": []})),
+            )
+        }),
+    );
+    format!("http://{}/mcp", spawn_app(app).await)
+}
+
+#[tokio::test]
+async fn a_tool_call_may_outlast_the_protocol_request_bound() {
+    let slow = request_timeout() * 2;
+    assert!(slow < tool_call_timeout());
+    assert_eq!(
+        timeout_for("tools/call", request_timeout()),
+        tool_call_timeout()
+    );
+    assert_eq!(
+        timeout_for("tools/list", request_timeout()),
+        request_timeout()
+    );
+
+    let url = spawn_slow_mcp(slow).await;
+    let mut t = StreamableHttpTransport::new(&url, &HashMap::new()).unwrap();
+    t.send_request("tools/call", None).await.unwrap();
+    let err = t.send_request("tools/list", None).await.unwrap_err();
+    assert!(err.to_string().contains("HTTP POST"), "{err}");
+}
+
+#[tokio::test]
+async fn a_legacy_tool_call_waits_longer_for_its_sse_answer() {
+    let slow = sse_response_timeout() * 2;
+    let (tx, rx) = mpsc::unbounded_channel();
+    let mut t = LegacySseTransport::from_rx_for_test(rx);
+    tokio::spawn(async move {
+        tokio::time::sleep(slow).await;
+        tx.send(SseEvent {
+            event: None,
+            data: json_rpc_result(1, serde_json::json!({"content": []})),
+            id: None,
+        })
+        .unwrap();
+    });
+    t.wait_for_response(1, timeout_for("tools/call", sse_response_timeout()))
+        .await
         .unwrap();
 }

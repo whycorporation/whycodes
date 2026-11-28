@@ -1112,6 +1112,7 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 # url = "https://mcp.example.com/mcp"
 # type = "http"   # or "sse" / "auto"
 # headers = { Authorization = "Bearer …" }
+# A remote tool call may run for 10 minutes; other requests time out after 60 s.
 
 [[agents]]
 name = "build"
